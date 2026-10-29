@@ -46,6 +46,10 @@ never through a parallel mechanism. The complement holds too: every extension is
 never instead of** — with every extension off, OML is a full memory provider (the FR-10..12
 floor, [roadmap](roadmap.md); [critical path](critical-path.md) M2), and features like
 vocabularies only ever extend that base, at no cost beyond one extra MCP tool listing until a workarea's policy opts in.
+The API makes the layering structural ([ADR-0022](../adr/ADR-0022-two-ring-api.md)): the
+provider is the `/v1` ring, under a compatibility covenant and with the target workarea carried
+by the token itself; the lab is the `/v2` ring, where the steroids evolve without ever touching
+the foundation.
 
 ## Evidence
 

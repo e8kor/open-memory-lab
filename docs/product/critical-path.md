@@ -51,7 +51,9 @@ demonstrated on the local profile. **Every later milestone depends on M1.**
 ## M2 — Provider floor
 
 **Goal.** OML is usable as an agent's **only** memory. This is the milestone that makes the
-product a provider rather than a governance demo.
+product a provider rather than a governance demo — and it is exactly the `/v1` provider ring of
+[ADR-0022](../adr/ADR-0022-two-ring-api.md), whose compatibility covenant (FR-21) is declared
+against the surface this milestone finishes.
 
 **Items.** Retrieval (FTS plus pgvector, [retrieval](../architecture/retrieval.md));
 attachments ([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md)); the MCP facade with

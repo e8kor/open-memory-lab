@@ -25,12 +25,14 @@ service over the same one transport. The remaining question is which protocol is
 ## Decision
 
 - **d1 — One versioned JSON HTTP API is the contract; everything else is a client of it.**
-  `/v1/...` JSON over HTTPS with `Authorization: Bearer <api-key>`; tenant, role and scope derive
+  JSON over HTTPS with `Authorization: Bearer <api-key>`; tenant, role and scope derive
   server-side from the key, never from the request (ADR-0007, ADR-0010). The MCP facade (d2), the
   CLI (ADR-0015), and any future surface call the same routes under the same
   authorization — there is no verb that exists only on a facade, and no facade that may say more
-  than `/v1` says. Versioning is in the path; `/v1` is additive-only, and a breaking change is a
-  `/v2`, not a quiet field change.
+  than the API says. Versioning is in the path, in two stability rings
+  ([ADR-0022](ADR-0022-two-ring-api.md)): `/v1` is the memory-provider foundation under a
+  compatibility covenant (additive-only once FR-21 declares it stable), and `/v2` is the evolving
+  memory lab — one listener, one OpenAPI document, two change velocities.
 
 - **d2 — MCP is a stateless streamable-HTTP facade over the agent-safe verb subset.** The server
   declares stateless operation: no server-assigned session id, each tool call independent and
@@ -72,7 +74,7 @@ service over the same one transport. The remaining question is which protocol is
 
 - There is exactly one contract to document, test, and keep honest: the OpenAPI document in
   [api/openapi.yaml](../api/openapi.yaml) matches [api/http-api.md](../api/http-api.md), and the
-  MCP tool list is derivable from (and checked against) the `/v1` routes it fronts. Drift between
+  MCP tool list is derivable from (and checked against) the routes it fronts on both rings. Drift between
   facade and API is a test failure, not a support ticket.
 - Stateless MCP means no server push in v1: an agent polls the events tail rather than being
   notified. That is a real limitation, stated here; the revisit trigger is named in the rejected

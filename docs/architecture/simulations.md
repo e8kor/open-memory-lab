@@ -35,7 +35,7 @@ A `simulations` row (id, tenant, state, audience) gives each simulation its iden
 column-level definition lives in the [Postgres schema](../data/postgres-schema.md). The **audience**
 is a journalled list of API key ids and grant references: the closed set of keys that can see into
 the simulation. The audience is set when the simulation is created and changed afterwards only by a
-journalled admin act: `POST /v1/simulations/{id}/audience` ([HTTP API](../api/http-api.md)) adds and
+journalled admin act: `POST /v2/simulations/{id}/audience` ([HTTP API](../api/http-api.md)) adds and
 removes entries and lands in the chain as a `simulation.audience_changed` event ([event
 catalog](../data/event-catalog.md)). Because every change is a journalled event, the membership at
 any moment is the fold of the opening event and the audience changes since — reconstructible from
@@ -75,7 +75,7 @@ ends. This is deliberate. A simulation with no reviewer is a channel where an ad
 unreviewed content; rather than carve an exception, the design lets such a simulation exist and be
 useless. The cost is operator friction (a misconfigured simulation looks stuck); the stuck state is
 visible in `oml status` queue depths and the fix — an audience correction through
-`POST /v1/simulations/{id}/audience`, journalled as `simulation.audience_changed` — is auditable.
+`POST /v2/simulations/{id}/audience`, journalled as `simulation.audience_changed` — is auditable.
 
 The deeper reason to run the full pipeline is evidence parity: a simulated memory that influenced a
 crew's behaviour has the same decision trail as a real one — who wrote it, who scanned it, who

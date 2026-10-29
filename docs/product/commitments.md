@@ -98,6 +98,8 @@ produces the number or the decision.
 - The vocabulary v1 slice (prefixes, term lifecycle, releases, scanner, read surface) — FR-19.
 - Vocabulary expansion recall, closure storage, mapping quality, and the per-vocabulary
   human-verdict load — FR-20.
+- The `/v1` provider-ring compatibility covenant: dormant until the v1-stable declaration —
+  FR-21 ([ADR-0022](../adr/ADR-0022-two-ring-api.md)).
 - Open questions, each a decision not yet taken: embedding model and boundary (RS-1), MCP
   OAuth (RS-2), federation (RS-3), the Merkle specification (RS-4), sampling-policy semantics
   (RS-5), the connector surface (RS-6), MWK rotation (RS-7), tenant-wide erased-digest

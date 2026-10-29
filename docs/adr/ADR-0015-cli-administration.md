@@ -20,7 +20,8 @@ to keep truthful.
 
 A web console was considered and declined — a product decision whose reasons stand in the
 rejected alternatives below. `oml` is one binary talking to the
-same `/v1` HTTP API as every agent (ADR-0014 d1), with operator, admin or
+same HTTP API as every agent (ADR-0014 d1) — on its lab ring, `/v2`
+([ADR-0022](ADR-0022-two-ring-api.md)), since every ceremony is administration — with operator, admin or
 dreamer keys; it holds no verb the API lacks, and no service stands between it and `oml-server` —
 no backend-for-frontend, no admin service holding its own state between a person and the
 service.
@@ -93,5 +94,5 @@ service.
 |---|---|
 | **A TUI dashboard as a v1 deliverable** | A terminal UI re-creates the console's presentation burden (layout, state vocabulary rendered as marks, live refresh) without the browser's reach, and it would sit on exactly the verbs `oml status`/`oml doctor --json` already expose. If demand shows — operators repeatedly building the same watch scripts — it becomes an FR on the [roadmap](../product/roadmap.md) with that demand as its evidence, layered over the same API. |
 | **A web console, even a minimal one** | "Minimal" does not stay minimal: a console accretes duties — recall views, graph pictures, dashboards, assistants — because the surface exists and each addition looks small on its own. A web console also buys back everything the decline avoids — origin policy, sessions, CSP, a second presentation of every state to keep truthful. Declined whole: every administration duty — key ceremonies, review, mass-act previews, evidence export, settings, status — has its home in d1–d6 or in the API's own read verbs, and nothing load-bearing needs a browser. |
-| **An admin API separate from `/v1`** | Two contracts to version and audit, and an invitation for admin verbs to escape the taxonomy and the journal. ADR-0014 d1 already settles it: one API, and the CLI is a client like any other — the verb ceiling lives in roles, not in network topology. |
+| **An admin API separate from the agent API** | Two contracts to version and audit, and an invitation for admin verbs to escape the taxonomy and the journal. ADR-0014 d1 already settles it: one API, and the CLI is a client like any other — the verb ceiling lives in roles, not in network topology. (ADR-0022's `/v2` lab ring is not this: same listener, same contract document, same taxonomy — a stability ring, not a second API.) |
 | **Driving administration through MCP tools** | Admin verbs on an agent-facing protocol blur the verb ceiling R1 exists to enforce; evidence bundles and chunked uploads are not tool calls (ADR-0014, rejected alternatives); and the admin population gains nothing from MCP framing over plain HTTP plus a purpose-built CLI. |

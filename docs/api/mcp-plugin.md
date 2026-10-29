@@ -4,8 +4,13 @@
 
 This page declares the surface an AI agent wires into its tool loop: an MCP
 server speaking the streamable HTTP transport, mounted on `oml-server` as a
-facade over the versioned [JSON HTTP API](http-api.md). Every tool below
-translates to one `/v1` call; nothing exists here that the HTTP API does not
+facade over the two-ring [JSON HTTP API](http-api.md). Every tool below
+translates to one call on its ring of the HTTP API
+([ADR-0022](../adr/ADR-0022-two-ring-api.md)): provider tools ride `/v1`, lab
+reads and proposals ride `/v2` — invisible at the tool level. The ring split
+changes no tool shape, and the verb ceiling is unchanged: which ring a tool
+rides is an implementation mapping noted per tool below, never a tool
+property. Nothing exists here that the HTTP API does not
 also offer, and much exists there that this surface deliberately does not
 (D13). The tool catalog is the **agent-safe subset**: the verbs a writing or
 recalling agent needs, and none of the verbs that change what others may see.
@@ -183,7 +188,7 @@ the declared lineage enter the admission pipeline as one claim, **held on
 arrival** — scanned, then reviewed by an identity that did not write it,
 and visible to others only after ratification (R2, R3;
 [admission](../architecture/admission.md)). Success here means *accepted for
-review*, never *published*.
+review*, never *published*. (Rides `POST /v1/memories` — the provider ring.)
 
 **Who may call:** keys with writer effective access on the target workarea.
 
@@ -204,8 +209,12 @@ review*, never *published*.
 }
 ```
 
-- `workarea` — the target node id. Paths are derived, grants bind to node
-  ids; a path given here is resolved to its node first
+- `workarea` — **optional** (ADR-0022 d4): omitted, the submission targets
+  the key's journalled default workarea; present, it is an override honored
+  only within the key's grants. A key with neither a default nor a value here
+  is refused (`request.workarea_unresolved`). The value is the target node
+  id — paths are derived, grants bind to node ids; a path given here is
+  resolved to its node first
   ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
 - `attachments` — upload sessions previously completed via
   [`oml_attach`](#oml_attach). The session's recorded digest is bound into
@@ -227,7 +236,9 @@ review*, never *published*.
   `derives_from` is not detectable by the service, so lineage-based review
   exclusion is exactly as good as the declared graph (R2 scope,
   [audit and lineage](../architecture/audit-and-lineage.md)).
-- `idempotency_key` — scoped to (key, workarea). A retry with the same key
+- `idempotency_key` — scoped to (key, workarea), where the workarea component
+  is the resolved target — the key's default or the explicit override
+  (ADR-0022 d4). A retry with the same key
   and an identical request returns the stored response; the same key with a
   *different* request is a typed error, never a second write (D13,
   [http-api.md](http-api.md)).
@@ -274,7 +285,8 @@ an idempotency-key reuse with a different request; a banned author or source
 Search promoted memories within a workarea subtree. FTS and vector search are
 served from the Postgres serving tier, never the lake
 ([retrieval](../architecture/retrieval.md), D12). Every recall is logged to
-the read log: key, workarea, query digest, returned ids, timestamp.
+the read log: key, workarea, query digest, returned ids, timestamp. (Rides
+`POST /v1/memories/recall` — the provider ring.)
 
 **Who may call:** keys with reader effective access on the scope.
 
@@ -288,7 +300,9 @@ the read log: key, workarea, query digest, returned ids, timestamp.
 }
 ```
 
-`scope` names one node; the search covers that node's subtree intersected
+`scope` is **optional** (ADR-0022 d4): omitted, the search covers the key's
+default workarea's subtree; present, it names one node as an override within
+the key's grants. Either way the search covers that node's subtree intersected
 with the key's effective read access. Subtree scoping rides the derived-path
 filter column of the serving indexes
 ([retrieval](../architecture/retrieval.md#the-serving-tier)); hybrid
@@ -350,7 +364,8 @@ nonexistent node, fail closed). Example:
 
 Submit a **derived fact**: a conclusion distilled from memories the agent has
 already read, carrying the lineage that produced it. Mechanically it is one
-`POST /v1/memories` with `verb: "learn"` and `kind: derived_fact` — the same
+`POST /v1/memories` (the provider ring) with `verb: "learn"` and
+`kind: derived_fact` — the same
 admission pipeline as [`oml_remember`](#oml_remember), held on arrival, same
 non-author review, journalled as `submission.learn` — but `derives_from` is
 the point of the verb: it must be non-empty, and a call with empty or omitted
@@ -360,7 +375,9 @@ whose author cannot or will not name its lineage is submitted through
 [`oml_remember`](#oml_remember) with `kind: derived_fact` instead (journalled
 `submission.remember`), where the undeclared-derivation caveat applies: the
 service cannot know what the writer really read, so the lineage closure is
-only as good as what writers declare.
+only as good as what writers declare. `workarea` is optional here exactly as
+on [`oml_remember`](#oml_remember): omitted, the key's default workarea is
+the target (ADR-0022 d4).
 
 **Who may call:** keys with writer effective access on the target workarea.
 
@@ -420,7 +437,8 @@ is in the simulation's audience (D10,
 Manage a **resumable upload session** for a file, image or PDF (D3). The
 session is the unit a memory references: open it with the expected plaintext
 SHA-256 and size, move the bytes, then hand the session id to
-[`oml_remember`](#oml_remember).
+[`oml_remember`](#oml_remember). (Rides `/v1/attachments/*` — the provider
+ring.)
 
 The chunk bytes themselves do **not** travel over MCP. Tool messages are
 JSON; base64 would inflate every chunk by a third and push attachment-sized
@@ -494,7 +512,8 @@ Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal i
 journalled and **pending**; it confers nothing and changes no access until a
 *different* dreamer ratifies it (R2 extends to edges). Ratification is not on
 this surface — it is a dreamer(review) verb behind the serve ceremony on the
-[HTTP API](http-api.md).
+[HTTP API](http-api.md). (Rides `POST /v2/claim-edges` /
+`POST /v2/workareas/{id}/edges` — the lab ring.)
 
 **Who may call:** keys with dreamer(propose) effective access. For a
 workarea edge: propose access on at least one endpoint **and** reader access
@@ -557,7 +576,8 @@ the closed set for workarea edges. Example:
 The caller's own submissions and where each stands: held, promoted, demoted,
 rejected, erased. This is the only view a writer has of its held rows — held content is
 invisible to everyone but its author and its reviewers until ratified (R3) —
-and the honest answer to "did my memory make it".
+and the honest answer to "did my memory make it". (Rides the own-work
+listing, `GET /v1/memories?own=true` — the provider ring.)
 
 **Who may call:** any reader, writer, dreamer or admin key; the result is
 scoped to the calling key's own submissions by construction. Operator keys
@@ -627,6 +647,7 @@ the decision trail belongs to the evidence export, an admin surface.
 One workarea as the calling key is allowed to see it: identity, derived path,
 status, crew record, immediate structure, and — the part an agent actually
 needs before writing — the verbs this key's effective access carries there.
+(Rides `GET /v2/workareas/{id}` and its sibling reads — the lab ring.)
 
 **Who may call:** keys with reader effective access on the node.
 
@@ -635,6 +656,9 @@ needs before writing — the verbs this key's effective access carries there.
 ```json
 { "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
 ```
+
+`workarea` is **optional**: omitted, the tool describes the key's default
+workarea (ADR-0022 d4).
 
 **Output**
 
@@ -680,9 +704,12 @@ state, and supersession chains within a subtree. The contract is
 **serialize, don't compute**: the server returns the subgraph inside the
 key's read scope; closure computation, path finding and ranking are the
 client's problem. That keeps the server's work bounded and the output
-auditable, at the cost of chattier clients on deep graphs.
+auditable, at the cost of chattier clients on deep graphs. (Rides the lab
+ring's graph reads — `GET /v2/claim-edges` and
+`GET /v2/memories/{id}/lineage`.)
 
-**Who may call:** keys with reader effective access on the scope. Reads are
+**Who may call:** keys with reader effective access on the scope. `scope` is
+optional: omitted, it is the key's default workarea (ADR-0022 d4). Reads are
 logged like any read.
 
 **Input**
@@ -733,9 +760,10 @@ agent that wants to know "what happened since I last looked" calls with its
 stored `after_seq` and gets the next page of events plus the current
 `head_seq`. The server remembers nothing about the caller between calls;
 losing the stored sequence means re-reading, never a gap the server must
-repair.
+repair. (Rides `GET /v2/events` — the lab ring.)
 
-**Who may call:** keys with reader effective access; the tail is filtered to
+**Who may call:** keys with reader effective access; `scope` is optional
+(omitted, the key's default workarea — ADR-0022 d4), and the tail is filtered to
 events whose subject the key could read. R3 applies to the stream exactly as
 to reads: another writer's held submission does not appear here before
 promotion — the tail cannot be used to watch the review queue from outside.
@@ -793,8 +821,8 @@ silent restart from zero.
 
 Read the tenant's vocabularies: term lookup, deterministic typeahead,
 hierarchy over the per-release closure, and SSSOM-shaped mappings. One tool,
-four actions — each translates to one `GET /v1/vocab/*` call
-([http-api.md](http-api.md#vocabularies)). Strictly read-only at the reader
+four actions — each translates to one `GET /v2/vocab/*` call (the lab ring;
+[http-api.md](http-api.md#vocabularies)). Strictly read-only at the reader
 ceiling: proposing a term or mapping is [`oml_remember`](#oml_remember) with
 the matching `kind`, and nothing on this surface deprecates, ratifies or cuts
 a release.
@@ -907,4 +935,6 @@ Operational notes:
 
 This surface is owned by ADR-0014 ([decision register](../adr/index.md)): one
 versioned JSON HTTP API with MCP as a stateless streamable-HTTP facade, and
-idempotency records.
+idempotency records. The two-ring split each tool rides, and the
+token-derived target workarea that made the `workarea` arguments optional,
+are [ADR-0022](../adr/ADR-0022-two-ring-api.md)'s.
