@@ -21,7 +21,11 @@ decided, not built.
 - **d1 — The fence exists as a row, not a convention.** A `simulations` table — id, tenant,
   state, audience — gives the fence mechanical existence. The audience is a journalled list of
   key ids and grant references; creating a simulation, changing its audience and ending it are
-  journalled admin acts. A simulation write that names no simulation row is refused.
+  journalled admin acts, each with its own event type (`simulation.opened`,
+  `simulation.audience_changed`, `simulation.ended` — the
+  [event catalog](../data/event-catalog.md)) and its own admin endpoint on the
+  [HTTP API](../api/http-api.md). The audience at any moment is the fold of the opening event and
+  the audience changes since. A simulation write that names no simulation row is refused.
 
 - **d2 — Every simulation write is an ordinary journalled event with an indelible mark.** It is
   attributed, signed into the tenant's chain, and carries `provenance: simulation` plus its
@@ -40,12 +44,18 @@ decided, not built.
   They are served only to keys in the audience: every read path — FTS, vector, fetch, graph —
   applies the predicate (provenance ≠ simulation OR key ∈ audience). Simulation rows stay out of
   the shared FTS and vector indexes and are indexed per simulation, so a leak would require a
-  missing predicate *and* a wrong index, not either alone.
+  missing predicate *and* a wrong index, not either alone. Tip resolution applies the same fence:
+  taint never captures the default tip. Tip computation for keys outside the audience ignores
+  simulation-tainted versions — `provenance: simulation` rows and sim-derived claims alike — so a
+  claim's default tip is bit-for-bit what it would be if the simulation did not exist. A promoted
+  tainted supersession of a real claim is served as an audience-scoped overlay tip; the shared tip
+  index never records a tainted version, and an act that would make one the default served tip is
+  refused (`simulation.tip_refused`).
 
 - **d5 — Taint propagates through lineage.** A claim whose lineage closure touches a simulation
-  row carries that `simulation_id` as sim-derived, is refused promotion into `validated`, is
-  demoted or re-reviewed when its simulation ends, and is listed in the simulations section of
-  every evidence export. The closure is the declared graph, with the limit
+  row carries that `simulation_id` as sim-derived, is refused promotion into `validated`, never
+  takes a claim's default served tip (d4), is demoted or re-reviewed when its simulation ends,
+  and is listed in the simulations section of every evidence export. The closure is the declared graph, with the limit
   [ADR-0001](ADR-0001-the-constitution.md) d6 states: undeclared derivation is not detectable.
 
 - **d6 — Nesting is forbidden by construction.** A submission whose `derives_from` includes a
@@ -70,9 +80,11 @@ decided, not built.
   journal payload envelope, `memories`, and every lake table
   ([Postgres schema](../data/postgres-schema.md), [Delta tables](../data/delta-tables.md)), plus
   per-simulation FTS/vector indexes instead of rows in the shared ones
-  ([retrieval](../architecture/retrieval.md)). The reconciler can check the containment
-  mechanically — a simulation row in a shared index or a `validated` workarea is a finding, not
-  a debate.
+  ([retrieval](../architecture/retrieval.md)). d4's tip rule is likewise a schema commitment:
+  the served-tip index excludes `provenance: simulation` rows and sim-derived claims, and
+  audience overlay tips live beside it, per simulation. The reconciler can check the containment
+  mechanically — a simulation row in a shared index, in a `validated` workarea or in the default
+  tip position is a finding, not a debate.
 - The cost of d3 is that simulations are as slow as reality: they consume real review capacity
   from their audience's dreamers. That is accepted — a simulation that skipped review would not
   exercise the system it claims to test, and comparability with production behaviour is the

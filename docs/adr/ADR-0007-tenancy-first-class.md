@@ -41,9 +41,10 @@ and the STRIDE analysis written against hostile co-tenants are declared in
   touch many tenants' data by nature, and each gets the narrowest grant that
   does its one job ([security](../architecture/security.md) owns the full map):
   the **lake-writer** iterates per tenant under a `SET`-tenant, RLS-scoped
-  session role (no `BYPASSRLS`), and its KMS grant is
-  generate-data-key/encrypt only — never decrypt, so its compromise cannot read
-  a single body, its own writes included; the **reconciler** runs read-only with
+  session role (no `BYPASSRLS`), and holds no KMS grant at all — body
+  ciphertext is produced once at admission and the lake-writer moves those
+  bytes verbatim, so its compromise cannot read a single body nor substitute
+  bytes without tripping the keyless digest check; the **reconciler** runs read-only with
   no KMS grant at all (it compares ciphertext digests keylessly) and emits every
   repair through the outbox via `oml-server` as a journalled act; the
   **indexer** runs under its own per-tenant credentials, never the signing key,

@@ -72,12 +72,18 @@ that snapshot's transaction metadata records as applied**
 reconciler compares like with like, never the live journal head against a lake
 snapshot that has not seen it yet.
 
-Digest comparison is over **ciphertext digests**. Lake rows and object-store
-metadata carry the ciphertext digest precisely so a key-less process can
-verify bytes ([storage.md](storage.md)); the reconciler checks that the
-ciphertext digest in the store matches the one in the journal fold without
-ever holding a DEK. Plaintext-digest verification is scoped to the serving
-path, which holds keys ([retrieval.md](retrieval.md)).
+Digest comparison is over **ciphertext digests**, and the journal side owns
+the comparand: every event that first journals a body or attachment
+(`submission.remember`, `submission.learn`, `simulation.write`,
+`submission.attach`) carries the ciphertext digest of the stored encrypted
+object alongside the plaintext digest, under the signature
+([storage.md](storage.md); payload shapes in
+[data/event-catalog.md](../data/event-catalog.md)). The reconciler checks
+that the digest of the bytes actually held by the lake row or object store
+matches the ciphertext digest in the journal fold without ever holding a
+DEK — journal against store, never store against store. Plaintext-digest
+verification is scoped to the serving path, which holds keys
+([retrieval.md](retrieval.md)).
 
 ## The finding vocabulary is closed
 
@@ -90,8 +96,8 @@ design gap to be raised, not an eighth ad-hoc label:
 | `orphan` | a store holds a row no journal event accounts for |
 | `duplicate` | more than one live row represents one (artifact_id, version) |
 | `state-mismatch` | the row exists, but its state disagrees with the fold (e.g. the journal says demoted, the lake row says promoted) |
-| `digest-mismatch` | the row's ciphertext digest disagrees with the journal fold's — checked keylessly, as above |
-| `stale-frontier` | a store's recorded frontier lags the outbox beyond the declared bound; the data may be internally consistent but is behind |
+| `digest-mismatch` | the ciphertext digest of a stored object or lake row disagrees with the ciphertext digest the submission event journalled — checked keylessly, as above; the plaintext digest is never this check's input |
+| `stale-frontier` | a store's recorded frontier lags the outbox beyond the declared bound; the data may be internally consistent but is behind — including when a long-running Postgres transaction holds back the snapshot horizon that bounds the batch cut ([storage.md](storage.md)): the stable-prefix rule turns a late-committing outbox row into lag reported here, never into loss |
 | `dead-lettered` | the lake-writer dead-lettered a row and journalled a materialize-skipped event ([storage.md](storage.md)); reconciliation surfaces it as a standing finding until it is repaired, so dead-lettering can never become silent loss |
 
 The vocabulary is closed on purpose: alert routing, the `oml doctor` contract,

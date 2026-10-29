@@ -56,7 +56,10 @@ Everything here is decided, not built.
   what it may never do is exercise both on the same lineage. The closure check is only as good
   as the declared graph (ADR-0001 d6).
 
-- **d6 — Admin is not a reviewer.** Admin verdicts on content are refused by the server. An
+- **d6 — Admin is not a reviewer.** Admin verdicts on content are refused by the server, and the
+  rule is enforced structurally at issuance: the service refuses to mint or amend a key that
+  combines the admin role with dreamer-class grants (typed refusal `access.role_exclusive`,
+  [errors](../api/errors.md)) — a person holding both duties holds two keys. An
   admin needing to write an ordinary claim uses a writer-scoped key; that write is held and
   non-author-reviewed like any other. "Edit or create by hand" is this path and no other —
   free-form manipulation of content exists only inside the simulation channel

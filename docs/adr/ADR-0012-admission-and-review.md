@@ -15,6 +15,21 @@ swapping the policy, never the write-eligibility rule. The lifecycle state machi
 contract are owned by [admission](../architecture/admission.md); the review ceremony transcript
 by [CLI sessions](../cli/sessions.md). Everything here is decided, not built.
 
+One boundary this record draws deliberately: **declaring lineage is attribution, not an act of
+connection-establishment**, so submitting a claim whose `derives_from` names another author's
+claim requires only writer effective access — no dreamer class is needed to cite what one has
+read. The integrity weight of the declaration lands on review instead, in two ways. First, every
+named ancestor expands the row's reviewer-exclusion set: R2 is enforced over the whole lineage
+closure (d4), so a key or principal anywhere in the declared ancestry can never review the row —
+a writer cannot shrink its reviewer pool to friends by what it declares, only exclude more
+identities, and a submission whose closure excludes every eligible reviewer in scope simply
+fails closed under d6: it stays held, promotes never, and dead-letters on expiry — unreviewable
+is unpromotable, not a refusal at the door (reviewer unavailability is deliberately not an API
+error; [admission](../architecture/admission.md), [errors](../api/errors.md)). Second, a false
+or padded lineage is itself a review-rejectable offense: reviewers are served the declared
+ancestry with the claim, and a lineage that misattributes is grounds for rejection like any
+other defect of the claim.
+
 ## Decision
 
 - **d1 — The pipeline stages, in order.** capture → quarantine → deterministic scan →

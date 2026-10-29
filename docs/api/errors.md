@@ -60,6 +60,7 @@ Every non-2xx response under `/v1`:
 | `access.not_found` | 404 | The resource does not exist, **or** lies outside the key's effective read scope, **or** is a simulation row and the key is outside that simulation's audience. Indistinguishable by design. | Reads fail closed as absence: the service never confirms the existence of what a key may not see (D7, D10, R3). |
 | `access.author_only` | 403 | A writer key proposes a supersession of a claim it did not author. | A writer proposes supersessions of its own claims only; editing another author's claim is the dreamer's edit-as-proposal path (D9). |
 | `access.issuer_ceiling` | 403 | Key issuance (or a grant on it) requests a role above the issuer's; an operator key issues anything beyond a tenant's first admin key. | A key is issued with a role no higher than the issuer's (D9); authority never amplifies through issuance. |
+| `access.role_exclusive` | 403 | Key issuance or a grant amendment would combine the `admin` role with a dreamer-class grant on one key. | Admin is never a reviewer (D9): a key never combines admin with dreamer verbs. A person holding both duties holds two keys, so the journal shows which capacity acted ([roles-and-keys](../architecture/roles-and-keys.md)). |
 | `access.banned` | 403 | Admission-time check: the submitting principal or source is under an active ban. | Bans are journalled admin acts checked at every admission from the moment they are imposed (D9); lifting one is an equally journalled act. |
 
 ## `request` — the request itself
@@ -91,6 +92,7 @@ A successful replay is not an error: it answers the stored response with header
 | `submission.scan_veto` | 422 | The deterministic scan, running in the same call as capture, vetoes the submission (`details.finding` names the rule class that fired). The veto is journalled as a rejection. | The scan is rules, not a model: same input, same verdict, reproducible from the journalled rule-set version — and it can veto but never promote (D11; [admission](../architecture/admission.md)). |
 | `submission.attachment_missing` | 422 | The submission binds an attachment digest with no completed upload session owned by this key. | The claim and its files are one signed unit; the envelope binds only bytes the service already holds and has digest-verified (D3). |
 | `submission.simulation_id_required` | 422 | `derives_from` touches a simulation row but the submission does not carry that row's `simulation_id`. | Taint propagates and nesting is forbidden: a derivation from a simulation row carries that simulation's id, server-enforced, so one end-act demotes the closure (D10). |
+| `submission.lineage_required` | 422 | A `verb: "learn"` submission arrives with an empty or omitted `derives_from`. | `learn` asserts a derived claim, so its lineage is required, never optional; a derived conclusion whose author cannot or will not name lineage is submitted as `remember` with `kind: derived_fact` ([http-api](http-api.md)). |
 | `submission.tip_conflict` | 409 | A supersession's target is not the current served tip — at submission, or re-checked at promotion when a competing supersession won in between. | Supersession promotion CAS-checks its target is the current tip; the tip flip is one journalled fact, never a lost update ([postgres-schema](../data/postgres-schema.md)). |
 | `submission.claim_key_conflict` | 409 | A new claim's `claim_key` collides with a non-erased claim in the same workarea; or a reassignment would collide at its destination without recording a re-key. | `claim_key` is unique per (tenant, workarea) over non-erased rows; a colliding move is refused unless the journalled move event records the re-key (D7). |
 | `submission.universe_refused` | 409 | A claim write addresses the tenant's `universe` root. | Universe is permanently `committed` governance structure and refuses direct claim writes — claims live in crew workareas (D7). |
@@ -100,7 +102,7 @@ A successful replay is not an error: it answers the stored response with header
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
 | `workarea.frozen` | 409 | A `validated` workarea is asked to accept what freeze forbids: a new write, a promotion into it, a reassignment into it, a new child under it, or a re-parent into it. | `validated` is frozen: the only mutations it admits are demote, erasure, and crew-metadata update, each journalled (D8). |
-| `workarea.transition_refused` | 409 | A backward transition is requested (none exist); `validated` is proposed while a child is not validated; any transition is proposed on `universe`. | The status ladder moves forward only — development → committed → validated — and an area becomes validated only when all its children are (D8). |
+| `workarea.transition_refused` | 409 | A backward transition is requested (none exist); a rung is skipped (`validated` proposed from `development`); `validated` is proposed while a child is not validated; any transition is proposed on `universe`. | The status ladder moves forward only — development → committed → validated — and an area becomes validated only when all its children are (D8). |
 
 The two-party ceremony around transitions — proposer plus a second, non-proposing ratifier — is
 refused through `review.ratifier_is_proposer` below, because it is the same independence rule.
@@ -123,6 +125,7 @@ not advertise. The codes below fire where the caller has already named the simul
 | `simulation.audience_refused` | 403 | A key outside the simulation's journalled audience writes with that `simulation_id`, or posts a verdict on one of its rows. | Simulation rows are written, read and reviewed only by keys in the audience; a simulation with no dreamer in its audience can promote nothing — fail closed (D10). |
 | `simulation.ended` | 409 | A write or verdict names a simulation that has ended. | Ending a simulation is a journalled act that demotes its rows; nothing accretes to a closed channel (D10). |
 | `simulation.taint_refused` | 409 | A promotion or reassignment would place a simulation row, or a claim whose lineage closure touches one (sim-derived), into a `validated` workarea. | Taint propagates and simulation rows never enter validated workareas (D10). |
+| `simulation.tip_refused` | 409 | A promotion, supersession ratification or tip-override would make a `provenance: simulation` row or sim-derived claim the default served tip of a claim lineage. | Taint never captures the default tip: tainted versions shadow the tip only for the simulation's audience as an overlay tip; the default tip of a real claim is bit-for-bit indifferent to every simulation (D10). |
 
 ## `upload` — attachment sessions
 
@@ -173,12 +176,12 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 |---|---|
 | 400 | `request.validation`, `request.idempotency_key_required` |
 | 401 | `auth.missing`, `auth.invalid` |
-| 403 | `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
+| 403 | `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.claim_key_conflict`, `submission.universe_refused`, `workarea.frozen`, `workarea.transition_refused`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `upload.session_invalid`, `export.not_ready` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.claim_key_conflict`, `submission.universe_refused`, `workarea.frozen`, `workarea.transition_refused`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
-| 422 | `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |

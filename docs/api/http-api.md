@@ -117,7 +117,7 @@ per-tenant journal sequence is meaningful to clients and is the resume point a c
 
 | Endpoint | Verb ceiling (effective access unless noted) |
 |---|---|
-| `POST /v1/memories` | writer; dreamer(propose) when `derives_from` names another author's claim |
+| `POST /v1/memories` | writer — whatever `derives_from` names; lineage is attribution, not an act of connection |
 | `POST /v1/memories/recall` | reader |
 | `GET /v1/memories` | reader; `own=true` admits any tenant role, own rows only |
 | `GET /v1/memories/{artifact_id}` | reader; the author, for its own held rows |
@@ -142,11 +142,12 @@ per-tenant journal sequence is meaningful to clients and is the resume point a c
 | `GET /v1/review/queue` · `POST /v1/review/next` · `POST /v1/review/verdicts` · `POST /v1/review/reopen` | dreamer(review); refused per row by lineage-closure exclusion |
 | `POST /v1/keys` and every key, grant, denial verb | admin (key role); operator only for a tenant's first admin key |
 | `GET /v1/bans` · `POST /v1/bans` · `POST /v1/bans/{ban_id}/lift` | admin (key role) |
-| `GET /v1/simulations` · `POST /v1/simulations` · `POST /v1/simulations/{id}/end` | admin (key role) |
+| `GET /v1/simulations` · `GET /v1/simulations/{id}` · `POST /v1/simulations` · `POST /v1/simulations/{id}/audience` · `POST /v1/simulations/{id}/end` | admin (key role) |
 | `POST /v1/memories/{artifact_id}/reassign` · `/demote` · `/erase`, `POST /v1/claims/tip-override` | admin (key role) |
 | `POST /v1/exports` · `GET /v1/exports` · `GET /v1/exports/{export_id}` · `/bundle` | admin (key role) |
 | `GET /v1/settings` · `POST /v1/settings/validate` · `POST /v1/settings/apply` | admin (key role) |
 | `POST /v1/tenants` | operator (key role) |
+| `POST /v1/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) |
 | `GET /healthz` · `GET /readyz` | none (unauthenticated) |
 
 Promote, sign and delete appear nowhere in this table on purpose: promotion is an effect of
@@ -174,10 +175,19 @@ One endpoint for the two submission verbs; `verb` selects the journal event
 }
 ```
 
-- `verb: "learn"` asserts a derived claim: `derives_from` must be non-empty. An omitted derivation
-  is undetectable by the service — the lineage closure is as good as what writers declare
+- `verb: "learn"` asserts a derived claim: `derives_from` must be non-empty, and an empty or
+  omitted `derives_from` is refused (`submission.lineage_required`) — on every surface that fronts
+  this verb, the MCP plugin's `oml_learn` included. A derived conclusion whose author cannot or
+  will not name lineage is submitted as `verb: "remember"` with `kind: derived_fact` (journalled
+  `submission.remember`), where the honesty rule carries the caveat: an undeclared derivation is
+  undetectable by the service — the lineage closure is as good as what writers declare
   (the constitution's honesty rule, [ADR-0001](../adr/ADR-0001-the-constitution.md), stated
   plainly on [admission.md](../architecture/admission.md)).
+- Submitting with `derives_from` requires only writer effective access, even when the lineage
+  names another author's claim — declaring an ancestor is attribution, not an edit of it.
+  The declaration has review consequences, not authorization ones: every named ancestor expands
+  the row's reviewer-exclusion set (R2 over the lineage closure), and a false lineage is grounds
+  for rejection at review ([ADR-0012](../adr/ADR-0012-admission-and-review.md)).
 - `kind` ∈ `memory` | `derived_fact` | `steering`. A steering row is held and reviewed like any
   claim and is never ranked at recall (D12).
 - Every attachment digest must name a **completed** upload session owned by this key, or the
@@ -289,7 +299,7 @@ Reads require reader effective access on the node; nodes outside scope are absen
 | `POST /v1/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?}`. Refused under a `validated` parent (`workarea.frozen`). |
 | `POST /v1/workareas/{id}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
 | `POST /v1/workareas/{id}/crew` | **admin.** Journalled crew-metadata update; allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
-| `POST /v1/workareas/{id}/edges` | Propose an edge `{to_workarea_id, label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`. Requires dreamer(propose) effective access on at least one endpoint and reader effective access on both (an admin key qualifies only through dreamer-class grants it holds). → `202`, pending. |
+| `POST /v1/workareas/{id}/edges` | Propose an edge `{to_workarea_id, label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`. Requires dreamer(propose) effective access on at least one endpoint and reader effective access on both (an admin who must act here holds a separate dreamer key — a key never combines admin with dreamer grants, `access.role_exclusive`). → `202`, pending. |
 | `POST /v1/workarea-edges/{edge_id}/ratify` | Ratify under dreamer(review) effective access on **both** endpoints; the proposer is refused (`review.ratifier_is_proposer`, R2 extends to edges). |
 | `POST /v1/workareas/{id}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
 | `POST /v1/workareas/{id}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot ([workareas.md](../architecture/workareas.md) transition matrix). |
@@ -343,7 +353,10 @@ promotion time, plus the per-workarea independence axis — are owned by
 ## Keys, grants, denials
 
 Admin key role throughout; a grant's role never exceeds the key's role ceiling, and an issued
-key's role never exceeds the issuer's (`access.issuer_ceiling`). Key values appear exactly once,
+key's role never exceeds the issuer's (`access.issuer_ceiling`). One combination is refused
+outright: a key holding the admin role never carries dreamer-class grants — minting or amending
+one answers `access.role_exclusive` (the two-key rule: admin ≠ reviewer,
+[roles-and-keys.md](../architecture/roles-and-keys.md)). Key values appear exactly once,
 in the issuance response; the journal records `key.issued` with `value_disclosed: false`
 (show-once ceremony, D14).
 
@@ -352,7 +365,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 | `POST /v1/keys` | Issue: `{role, grants: [{workarea_node_id, role, deny: [...]}], expiry?, label?, principal?}` → `201` with the key **value, shown once**. An operator key must add `tenant_id` and may issue only a tenant's first admin key. |
 | `GET /v1/keys` · `GET /v1/keys/{key_id}` | Listing and detail: role, principal, grants, denials, epoch, issuance/revocation events. Never values. |
 | `POST /v1/keys/{key_id}/revoke` | Journalled revocation; effective at the next permission-epoch check. |
-| `POST /v1/keys/{key_id}/rotate` | Issue a successor with grants reproduced from the journalled records, `{overlap}` scheduling the old key's expiry; one journalled act links old and new. Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
+| `POST /v1/keys/{key_id}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants reproduced from the journalled records — with `{grace}` bounding the old key's remaining life. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `POST /v1/keys/{key_id}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
 | `POST /v1/keys/{key_id}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
 | `POST /v1/keys/{key_id}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. |
@@ -361,8 +374,13 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 `POST /v1/tenants` (**operator**) creates a tenant; the operator then issues its first admin key
 and nothing else — operator keys never read, write or review content (`access.verb_ceiling`).
-Bootstrap of the first operator key is a deployment ceremony, not an API call
-([deployment.md](../operations/deployment.md)).
+
+`POST /v1/bootstrap/claim` is the one endpoint authenticated by something other than an API key:
+the single-use, expiring **enrollment token** the Helm bootstrap job minted
+([deployment.md](../operations/deployment.md)). `{enrollment_token}` → `201` with the root
+operator key, value shown once; the token is consumed on first use, and a consumed, expired or
+unknown token answers `auth.invalid` with `details.reason` naming which. The `oml bootstrap claim`
+ceremony fronts exactly this call ([cli/reference.md](../cli/reference.md)).
 
 ## Bans
 
@@ -384,6 +402,14 @@ role for the channel objects; the writes inside a simulation are ordinary submis
   response says so in a `warnings` field rather than refusing.
 - `GET /v1/simulations` · `GET /v1/simulations/{id}` — state, audience, rows written, sim-derived
   taints outside it.
+- `POST /v1/simulations/{id}/audience` — `{add: [{"key_id": …} | {"grant_ref": …}], remove: [...],
+  reason?}`, at least one of `add`/`remove` non-empty, `Idempotency-Key` required → `200` with the
+  resulting audience. Corrects a simulation's audience — the only recovery from the fail-closed
+  no-dreamer state short of ending it; journalled as `simulation.audience_changed`, and the same
+  `warnings` field as creation fires when the corrected audience still holds no dreamer key.
+  Removal takes effect on the next read; past reads stand in the read log. Refusals:
+  `access.verb_ceiling` (non-admin), `simulation.ended`, `request.validation` (empty `add`+`remove`),
+  `access.not_found`.
 - `POST /v1/simulations/{id}/end` — `{dry_run}`: preview lists every row and taint the end would
   touch; the real act is journalled, demotes the simulation's rows and triggers re-review of
   tainted claims → `202` (the demotion closure proceeds through the pipeline).
@@ -392,7 +418,10 @@ Refusals this channel generates on *other* endpoints: non-audience keys never se
 (`access.not_found` on reads — the predicate is applied on every read path); non-audience writes
 and verdicts naming a simulation answer `simulation.audience_refused`; acts naming an ended
 simulation answer `simulation.ended`; promotion or reassignment that would put a simulation row or
-sim-derived taint into a `validated` area answers `simulation.taint_refused`.
+sim-derived taint into a `validated` area answers `simulation.taint_refused`; a promotion,
+supersession ratification or tip-override that would make a tainted version the *default* served
+tip answers `simulation.tip_refused` — taint shadows the tip only for the audience, as an overlay
+([simulations.md](../architecture/simulations.md)).
 
 ## Claim administration
 

@@ -13,7 +13,11 @@ Two rules govern every payload:
 
 - **Digest-only content.** A payload references bodies and attachments only as digests or
   per-artifact-DEK ciphertext references, never plaintext. The signature covers the
-  digest/ciphertext envelope, so chain verification survives crypto-shredding (D1).
+  digest/ciphertext envelope, so chain verification survives crypto-shredding (D1). Every event
+  that first journals a body or attachment carries both the plaintext digest (content identity)
+  and the ciphertext digest of the stored per-artifact-DEK encrypted object, computed at admission
+  and covered by `signed_bytes` — the ciphertext digest is what the key-less reconciler compares
+  store bytes against ([architecture/reconciliation.md](../architecture/reconciliation.md)).
 - **Attribution in the clear.** `principal`, `api_key_id` and timestamps sit in the envelope, not
   the payload, and are not erased by shredding — attribution-metadata erasure is a tracked FR in
   the [roadmap](../product/roadmap.md).
@@ -56,6 +60,7 @@ Writes enter held; nothing in this family changes visibility. Pipeline:
   "artifact_id": "…", "workarea_id": "…", "claim_key": "deploy-runbook",
   "version": 3, "kind": "memory",
   "plaintext_digest": "sha256:…", "body_bytes": 18240,
+  "ciphertext_digest": "sha256:…",
   "attachments": ["sha256:…", "sha256:…"],
   "derives_from": ["artifact_id…"],
   "provenance": "agent",
@@ -74,6 +79,7 @@ else until ratified.
   "artifact_id": "…", "workarea_id": "…", "claim_key": "…",
   "version": 1, "kind": "derived_fact",
   "plaintext_digest": "sha256:…",
+  "ciphertext_digest": "sha256:…",
   "derives_from": ["artifact_id…", "artifact_id…"],
   "provenance": "agent", "simulation_id": null,
   "scan": {"result": "pass", "scanner_version": "…"}
@@ -81,9 +87,13 @@ else until ratified.
 ```
 
 Same admission as `remember` but the claim is derived from named prior claims, so `derives_from` is
-expected rather than optional — an omitted derivation is undetectable by the service (the honesty
-rule of [ADR-0001](../adr/ADR-0001-the-constitution.md)), and the lineage closure is only as good
-as what writers declare.
+**required**: a `learn` submission with empty or omitted lineage is refused at capture
+(`submission.lineage_required`, [errors.md](../api/errors.md)) and this event is never written for
+one. A derived conclusion without nameable lineage is submitted as `remember` with
+`kind: derived_fact` and journals `submission.remember`. The honesty rule of
+[ADR-0001](../adr/ADR-0001-the-constitution.md) still bounds what the required field proves: the
+service cannot verify that a declared lineage is complete or true, so the lineage closure is only
+as good as what writers declare.
 
 ### submission.attach
 
@@ -404,7 +414,20 @@ Authorization changes. Semantics: [roles-and-keys](../architecture/roles-and-key
 ```
 
 An operator creates a tenant — the root of the issuance chain; the operator then issues the
-tenant's first admin key and nothing else.
+tenant's first admin key and nothing else. Journalled in the **reserved provider tenant's chain**
+([storage.md](../architecture/storage.md)); the new tenant's own chain opens with
+`tenant.genesis` below.
+
+### tenant.genesis
+
+```json
+{"tenant_id": "…", "name": "…", "provider_seq": 2, "created_event_id": "…"}
+```
+
+The first event of every non-provider tenant chain: a predecessor-less anchor that roots the
+tenant's chain by **reference** to the provider-chain `tenant.created` event that created it — a
+reference, not a second numbering. Chain verification of a tenant starts here and checks the
+reference against the provider chain.
 
 ### key.issued
 
@@ -431,11 +454,14 @@ revocation implies.
 ### key.rotated
 
 ```json
-{"old_key_id": "…", "new_key_id": "…", "overlap_until": "2026-11-12T00:00:00Z"}
+{"old_key_id": "…", "new_key_id": "…", "grace_until": "2026-11-12T00:00:00Z"}
 ```
 
-One journalled act links old and new key ids: the successor is issued with grants reproduced from
-the journalled records, and the old key's expiry is scheduled to `overlap_until`.
+One journalled act carries both key ids and the grace deadline: the successor is minted with a new
+key id, linked to the old by `rotated_from`, its grants reproduced from the journalled grant
+records; the old key stays usable through the bounded grace window and is revoked at `grace_until`
+— a journalled `key.revoked` citing this event as cause, with the epoch bump revocation always
+carries.
 
 ### grant.issued
 
@@ -519,6 +545,23 @@ The fenced provenance channel. Semantics and taint rules:
 Opens a simulation with a journalled audience; a simulation whose audience holds no dreamer key can
 promote nothing (fail closed).
 
+### simulation.audience_changed
+
+```json
+{
+  "simulation_id": "…",
+  "added": [{"key_id": "…"}],
+  "removed": [{"grant_ref": "…"}],
+  "reason": "replace departed reviewer"
+}
+```
+
+An admin corrects a live simulation's audience (`POST /v1/simulations/{id}/audience` — the only
+recovery from the fail-closed no-dreamer state short of ending it); at least one of
+`added`/`removed` is non-empty, and the audience at any seq is the fold of `simulation.opened`
+plus every `audience_changed` since — that fold is what makes audience membership reconstructible
+from the journal. Removal takes effect on the next read; past reads stand in the read log.
+
 ### simulation.write
 
 ```json
@@ -526,6 +569,7 @@ promote nothing (fail closed).
   "artifact_id": "…", "workarea_id": "…", "claim_key": "…",
   "version": 1, "kind": "memory",
   "plaintext_digest": "sha256:…",
+  "ciphertext_digest": "sha256:…",
   "derives_from": ["…"],
   "provenance": "simulation",
   "simulation_id": "…",
@@ -559,7 +603,8 @@ Ends the simulation; its rows are demoted and sim-derived taints re-reviewed thr
 {
   "export_id": "…", "kind": "evidence",
   "from_seq": 0, "include_simulations": false,
-  "requested_by_key_id": "…"
+  "requested_by_key_id": "…",
+  "exporter": {"name": "…", "version": "…"}
 }
 ```
 

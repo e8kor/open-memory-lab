@@ -108,8 +108,8 @@ CREATE TABLE memories (
         CHECK (provenance IN ('agent', 'human', 'connector', 'simulation')),
     simulation_id     uuid        REFERENCES simulations (id),
     sim_derived_ids   uuid[]      NOT NULL DEFAULT '{}',   -- taint: simulations in lineage closure
-    plaintext_digest  bytea,
-    ciphertext_digest bytea,
+    plaintext_digest  bytea,   -- journalled in the submission event: content identity
+    ciphertext_digest bytea,   -- journalled in the same event: the key-less reconciler's comparand
     body_ref          jsonb       NOT NULL,  -- {class: quarantine|object|lake, ref: …}
     kind              text        NOT NULL,  -- memory | derived_fact | steering | …
     created_at        timestamptz NOT NULL,
@@ -124,17 +124,32 @@ CREATE UNIQUE INDEX memories_claim_version
     ON memories (tenant_id, workarea_id, claim_key, version)
     WHERE state <> 'erased';
 
--- the served tip: at most one version of a claim is what readers get.
+-- the default served tip: at most one version of a claim is what
+-- non-audience readers get. Taint never enters this index: a tainted
+-- version shadows the tip only for its simulation's audience (below).
 CREATE UNIQUE INDEX memories_served_tip
     ON memories (tenant_id, workarea_id, claim_key)
-    WHERE is_tip AND state = 'promoted';
+    WHERE is_tip AND state = 'promoted'
+      AND provenance <> 'simulation' AND sim_derived_ids = '{}';
+
+-- audience overlay tips: per simulation, a tainted promoted version may
+-- shadow a claim's tip for that simulation's audience only. Simulation end
+-- demotes overlay rows; the default tip above never moved.
+-- (a lineage-tainted row with NULL simulation_id keys its overlay by the
+-- sole live simulation in sim_derived_ids, resolved at promotion time)
+CREATE UNIQUE INDEX memories_overlay_tip
+    ON memories (tenant_id, workarea_id, claim_key, simulation_id)
+    WHERE is_tip AND state = 'promoted'
+      AND (provenance = 'simulation' OR sim_derived_ids <> '{}');
 
 CREATE INDEX memories_workarea ON memories (tenant_id, workarea_id, state);
 ```
 
-The blueprint phrases the tip index per `(tenant, claim_key)`; because `claim_key` is namespaced by
-workarea and a reassignment that would collide on `claim_key` is refused unless the move event
-records a re-key, the workarea-qualified spelling above is the enforceable form of the same rule.
+The workarea-qualified index above is the enforceable spelling of the one-served-tip rule:
+`claim_key` is namespaced by workarea, and a reassignment that would collide on `claim_key` is
+refused unless the move event records a re-key, so `(tenant, workarea_id, claim_key)` is the
+identity a tip is unique under — a `(tenant, claim_key)` shorthand would be either too strict
+(one tip across workareas) or unenforceable.
 Two invariants live in transaction logic, not DDL: a supersession promotion CAS-checks that its
 target is still the current tip before flipping `is_tip`, and a claim moved to a stricter-policy
 workarea re-enters `held`.
@@ -210,6 +225,7 @@ CREATE TABLE api_keys (
         CHECK (role IN ('reader', 'writer', 'dreamer', 'admin', 'operator')),
     principal  text        NOT NULL,
     issued_by  uuid        REFERENCES api_keys (id),  -- issuer ceiling checked at issuance
+    rotated_from uuid      REFERENCES api_keys (id),  -- successor link; predecessor revoked at grace end
     expiry     timestamptz,
     revoked_at timestamptz
 );
@@ -282,7 +298,8 @@ The delivery machinery between the commit point and the lake, plus request repla
 
 ```sql
 CREATE TABLE outbox (
-    seq              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- single drain stream
+    seq              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- single drain stream;
+                                          -- assigned at insert, visible only at commit
     tenant_id        uuid   NOT NULL,
     kind             text   NOT NULL
         CHECK (kind IN ('bronze-event', 'materialize', 'retract', 'export')),
@@ -322,10 +339,16 @@ CREATE TABLE idempotency (
 ```
 
 Every outbox insert happens inside the same serialized transaction as its journal event, so outbox
-`seq` order is consistent with each tenant's chain order. The identity column may have gaps
-(aborted transactions); the lake-writer drains in `seq` order and the Delta transaction version —
-not `lake_frontier` — is the recovery authority, which is why the frontier table is labelled a
-cache (D2, declared in [storage](../architecture/storage.md)). An idempotency record is claimed in
+`seq` order is consistent with each tenant's chain order. Across tenants nothing is serialized, and
+`seq` is assigned at insert while visibility arrives only at commit — so a smaller `seq` can become
+visible after a larger one has been read, and the identity column has permanent gaps (aborted
+transactions) as well as transient ones (still-in-flight transactions). The lake-writer therefore
+drains only the **stable prefix**: rows whose inserting transaction is older than every transaction
+still active at scan time (below the oldest active txid of the scan's snapshot), as declared in
+[storage](../architecture/storage.md) — a late-committing row is cut into a later batch, never
+skipped. The Delta transaction version — not `lake_frontier` — is the recovery authority, which is
+why the frontier table is labelled a cache (D2, declared in
+[storage](../architecture/storage.md)). An idempotency record is claimed in
 its own transaction before any side effect: same `idem_key` with a different `request_digest` is a
 typed error; replay with the same digest returns the stored `response`.
 
@@ -403,6 +426,7 @@ CREATE TABLE memory_embeddings (
     version       integer NOT NULL,
     workarea_path ltree   NOT NULL,   -- filter column for subtree-scoped queries
     embedding     vector  NOT NULL,   -- dimension bound to the embedding model: open RS
+    embedder      text    NOT NULL,   -- plugin identity+version that produced the row (ADR-0019)
     PRIMARY KEY (tenant_id, artifact_id, version)
 ) PARTITION BY LIST (tenant_id);
 

@@ -53,11 +53,18 @@ materialization for a tenant forever.
 - **d4 — Exactly-once by per-table Delta application transaction ids; the Delta log is the sole
   recovery authority.** Every batch commit carries appId `oml-lakewriter` with version = the last
   applied outbox seq, recorded and checked **per table** on replay: a table skips any batch whose
-  seq is at or below its last transaction version. The Postgres frontier column is a cache for
+  seq is at or below its last transaction version. Batches are cut only from the outbox's **stable
+  prefix**: outbox `seq` is assigned at insert but visible only at commit, so the cut bounds
+  batch-end by the snapshot horizon — rows whose inserting transaction is older than every
+  transaction still active at scan time — and the frontier advances only within that prefix. A
+  late-committing row therefore lands in a later batch, never behind the frontier, and a
+  long-running transaction surfaces as frontier lag (ADR-0017's `stale-frontier`), never as loss.
+  The Postgres frontier column is a cache for
   observability, never consulted for recovery; the global frontier advances only when every table
   the batch touched has committed. A retried batch is reconstructed deterministically from the
   (frontier, batch-end seq) pair recorded in the transaction action — never re-cut by time or
-  size. Whether delta-rs exposes application transaction ids in exactly this shape is cited from
+  size, and never different from the first attempt, because nothing can commit into recorded
+  bounds after the cut. Whether delta-rs exposes application transaction ids in exactly this shape is cited from
   delta-rs documentation with a fetch date at implementation-spec time, and "exactly-once,
   verified by conformance test" is the exit criterion of the delta-rs conformance FR on the
   [roadmap](../product/roadmap.md). Until that row closes, the mechanism is a design assumption,
@@ -80,8 +87,9 @@ materialization for a tenant forever.
 - **d7 — The lake row carries everything reconciliation needs, with bodies encrypted and
   attribution in the clear.** Per-tenant table prefixes; rows carry artifact_id, workarea_id (the
   stable key, with path-at-write kept as history), writer identity, principal, timestamps,
-  provenance class, plaintext digest and ciphertext digest, and state. Bodies are per-artifact-DEK
-  ciphertext. This honors the commissioning requirement — pure memory data, who and when wrote
+  provenance class, plaintext digest and ciphertext digest (both journalled in the submission
+  event, ADR-0002 d5, so the fold — not the store — owns the reconciler's comparand), and state.
+  Bodies are per-artifact-DEK ciphertext. This is the lake's purpose honored in full — pure memory data, who and when wrote
   them, what space — with bodies encrypted at rest; the attribution columns' own erasure boundary
   is stated where erasure is decided (ADR-0005 of this register), not glossed here.
 

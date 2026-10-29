@@ -9,7 +9,7 @@ administration surface, declines a web console, and gives the reasons.
 
 ## Context
 
-OML's commissioning is explicit: administration is a CLI; there is no web UI. That is not a
+OML commits to CLI administration: there is no web UI. That is not a
 deferral dressed as a decision — the deployment (ADR-0016) ships no console workload, the API
 (ADR-0014) reserves no console routes, and the threat model never has to answer
 for a browser origin, a session cookie, a CSP, or a sandboxed frame. The people who administer OML
@@ -92,6 +92,6 @@ service.
 | Alternative | Why not |
 |---|---|
 | **A TUI dashboard as a v1 deliverable** | A terminal UI re-creates the console's presentation burden (layout, state vocabulary rendered as marks, live refresh) without the browser's reach, and it would sit on exactly the verbs `oml status`/`oml doctor --json` already expose. If demand shows — operators repeatedly building the same watch scripts — it becomes an FR on the [roadmap](../product/roadmap.md) with that demand as its evidence, layered over the same API. |
-| **A web console, even a minimal one** | The commissioning excludes it, and "minimal" does not stay minimal: a console accretes duties — recall views, graph pictures, dashboards, assistants — because the surface exists and each addition looks small on its own. A web console also buys back everything the decline avoids — origin policy, sessions, CSP, a second presentation of every state to keep truthful. Declined whole: every administration duty — key ceremonies, review, mass-act previews, evidence export, settings, status — has its home in d1–d6 or in the API's own read verbs, and nothing load-bearing needs a browser. |
+| **A web console, even a minimal one** | "Minimal" does not stay minimal: a console accretes duties — recall views, graph pictures, dashboards, assistants — because the surface exists and each addition looks small on its own. A web console also buys back everything the decline avoids — origin policy, sessions, CSP, a second presentation of every state to keep truthful. Declined whole: every administration duty — key ceremonies, review, mass-act previews, evidence export, settings, status — has its home in d1–d6 or in the API's own read verbs, and nothing load-bearing needs a browser. |
 | **An admin API separate from `/v1`** | Two contracts to version and audit, and an invitation for admin verbs to escape the taxonomy and the journal. ADR-0014 d1 already settles it: one API, and the CLI is a client like any other — the verb ceiling lives in roles, not in network topology. |
 | **Driving administration through MCP tools** | Admin verbs on an agent-facing protocol blur the verb ceiling R1 exists to enforce; evidence bundles and chunked uploads are not tool calls (ADR-0014, rejected alternatives); and the admin population gains nothing from MCP framing over plain HTTP plus a purpose-built CLI. |

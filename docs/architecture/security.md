@@ -59,10 +59,11 @@ narrowest grant that lets it do its one job, and none holds the signing key.
 **oml-lakewriter** drains the outbox and materializes lake rows. It iterates **per tenant**: for
 each tenant's batch it opens a Postgres session under a `SET`-tenant, RLS-scoped session role — it
 sees one tenant at a time, under the same RLS policies as everyone else, with **no `BYPASSRLS`**.
-Its KMS grant is **generate-data-key / encrypt only, never decrypt**: it can wrap new DEKs and
-write ciphertext bodies to the lake, but a compromised lake-writer cannot decrypt a single body,
-its own writes included. It writes to the lake under the per-tenant storage credential for the
-tenant it is currently serving.
+It holds **no KMS grant at all**: body ciphertext is produced exactly once, at admission by
+oml-server under the artifact's DEK, and the journalled ciphertext digest is computed over those
+bytes — the lake-writer moves them verbatim and never re-encrypts, so a compromised lake-writer
+cannot decrypt a single body nor substitute bytes without tripping the keyless digest check. It
+writes to the lake under the per-tenant storage credential for the tenant it is currently serving.
 
 **oml-reconciler** compares the lake against the journal fold ([reconciliation.md](reconciliation.md)).
 It runs **read-only**: a read-only Postgres role, read access to the lake, and **no KMS grant at
@@ -93,7 +94,7 @@ Who loads what. "Never" entries are the point of the table.
 |---|---|---|---|---|---|
 | ed25519 deployment signing key | **loads it (every replica)** | never | never | never | never |
 | KMS: decrypt (unwrap DEKs) | serving path only | **never** | **never** | **never** — reads promoted plaintext on the serving side of decryption ([retrieval.md](retrieval.md)) | never |
-| KMS: generate-data-key / encrypt | yes (admission) | yes (lake writes) | never | never | never |
+| KMS: generate-data-key / encrypt | yes (admission — the single encryption locus; lake copies are these same bytes) | **never** — moves admission-produced ciphertext verbatim | never | never | never |
 | Postgres role | RLS-scoped service role | per-tenant `SET`-tenant RLS role, no `BYPASSRLS` | read-only RLS role | per-tenant RLS role | none (talks HTTP) |
 | Object-store credentials | quarantine + bodies | per-tenant lake prefixes | read-only | read (promoted bodies) | none |
 | API keys | verifies hashes; never stores values | holds none | holds none | holds none | bearer of operator/admin/dreamer keys |
@@ -113,10 +114,14 @@ What the design does *not* claim: per-replica keys, HSM-resident signing, or thr
 Those are possible hardenings with real operational cost, and none is committed — if one becomes a
 requirement it enters the roadmap as its own row.
 
-**The KEK never leaves KMS.** Per-artifact DEKs are wrapped and unwrapped by KMS calls; no OML
-process ever holds the KEK. Crypto-shredding ([audit-and-lineage.md](audit-and-lineage.md))
-destroys the wrapped DEK, and the encrypt-only grants above mean that destruction cannot be undone
-by any service that merely writes data.
+**The KEK never leaves KMS — and it rotates on a schedule.** Per-artifact DEKs are wrapped and
+unwrapped by KMS calls; no OML process ever holds the KEK. Crypto-shredding
+([audit-and-lineage.md](audit-and-lineage.md)) destroys the wrapped DEK, and the custody map above
+means that destruction cannot be undone by any service that merely writes data. One copy class
+outlives the live row: wrapped-DEK copies in Postgres backups and WAL. The commitment that bounds
+it: KEK rotation re-wraps **live** DEKs only; a retired KEK is destroyed once no retained backup
+predates its retirement, and that destruction is a journalled act. From then on the wrapped-DEK
+copies in older backups are noise — there is no KEK left that can unwrap them.
 
 ## STRIDE, redone for hostile co-tenants
 
@@ -128,7 +133,7 @@ remains. Nothing in this table is built or measured; every control is a design c
 | **S**poofing | Steal or phish another tenant's bearer key; present it as that tenant. | Keys are stored as hashes, shown once at issuance and journalled as issued-without-value ([roles-and-keys.md](roles-and-keys.md)); expiry on every key; revocation is a journalled act effective at the next permission-epoch check; tenant is derived from the key, so a stolen key spoofs *one tenant's one role*, never a chosen tenant. | A bearer key is full capability of that key until expiry or revocation. Key theft on the client side is outside OML's reach; short expiry and scoped grants bound the blast radius, they do not remove it. |
 | **T**ampering | Use leaked lake/storage credentials to rewrite another tenant's lake rows or objects; or corrupt Postgres rows. | Per-tenant lake prefixes and per-tenant storage credentials bound a leak to one tenant. The lake is derived, never authoritative, and serves no client read ([storage.md](storage.md)) — tampered lake rows mislead analytics, not serving. The reconciler's digest-mismatch finding class detects divergence keylessly ([reconciliation.md](reconciliation.md)). In Postgres: journal tables are append-only (REVOKE UPDATE/DELETE plus guard trigger); the per-tenant hash chain and signatures make any rewrite of history fail verification. | Tampering between reconciler runs is live until detected; detection latency is the reconciler's cadence. A Postgres superuser is outside the model — the deployment's DBA is trusted. |
 | **R**epudiation | A writer denies having written a claim; a reviewer denies a verdict; a tenant disputes what was served. | Every mutation is a signed, hash-chained, attributed journal event (key id, principal, timestamp). Verdicts are bound to a serve record of exactly what was reviewed (serve_id, below). Reads are logged with per-batch digests anchored into the journal ([retrieval.md](retrieval.md)). The evidence export replays the decision trail per memory ([audit-and-lineage.md](audit-and-lineage.md)). | Attribution says which *key* acted. Binding a key to a human or crew member is the tenant's key-hygiene problem; shared keys dilute repudiation evidence and the docs say so rather than pretending otherwise. |
-| **I**nformation disclosure | Read another tenant's memories across the shared database or the shared search machinery; or exfiltrate via the lake. | RLS keyed by `tenant_id` on every table, with no service role holding `BYPASSRLS`. Tenant never taken from the request. Embeddings and FTS are physically partitioned per tenant — there is no cross-tenant index to leak through, and ranking never sees foreign rows. Within a tenant, simulation rows are additionally excluded from the shared indexes and served only to the simulation's audience ([simulations.md](simulations.md)). Lake bodies are per-artifact-DEK ciphertext; lake access without KMS decrypt yields digests and attribution, not content. | Attribution metadata (writer, principal, timestamps, workarea path) is in the clear in the lake by commissioning requirement; its erasure is a tracked FR ([audit-and-lineage.md](audit-and-lineage.md)). Side channels (timing, resource contention on shared replicas) are not addressed in v1. |
+| **I**nformation disclosure | Read another tenant's memories across the shared database or the shared search machinery; or exfiltrate via the lake. | RLS keyed by `tenant_id` on every table, with no service role holding `BYPASSRLS`. Tenant never taken from the request. Embeddings and FTS are physically partitioned per tenant — there is no cross-tenant index to leak through, and ranking never sees foreign rows. Within a tenant, simulation rows are additionally excluded from the shared indexes and served only to the simulation's audience ([simulations.md](simulations.md)). Lake bodies are per-artifact-DEK ciphertext; lake access without KMS decrypt yields digests and attribution, not content. | Attribution metadata (writer, principal, timestamps, workarea path) is in the clear in the lake by design requirement — who wrote what, when, where is what the lake is for ([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)); its erasure is a tracked FR ([audit-and-lineage.md](audit-and-lineage.md)). Side channels (timing, resource contention on shared replicas) are not addressed in v1. |
 | **D**enial of service | Flood writes, uploads or queries to starve co-tenants on shared replicas, Postgres, or review capacity. | Quotas and rate limits are journalled grant attributes; exceeding one returns a typed 429 naming the rule ([errors.md](../api/errors.md)). Upload sessions are bounded and digest-checked. Admission fails closed rather than queueing unboundedly ([admission.md](admission.md)). Bans cut a hostile author or source off at admission (below). | **v1 enforcement is per-replica token buckets at limit/N — a documented approximation.** With N replicas and uneven load balancing, a tenant can transiently exceed or be unfairly denied its global limit; there is no shared counter in v1. Resolving the approximation — shared enforcement, or a recorded decision keeping it with a stated error bound — is [FR-8](../product/roadmap.md). Per-tenant chain locks mean one tenant cannot serialize another's writes, but shared CPU/IO contention on replicas remains. |
 | **E**levation of privilege | Mint a stronger key; keep using a revoked or widened-then-narrowed grant; act as reviewer on one's own work. | **Issuer ceiling**: a key is issued with a role no higher than its issuer's — no chain of issuance ever ascends ([roles-and-keys.md](roles-and-keys.md)). **Permission epochs**: every grant change bumps the epoch, invalidating cached effective-access computations, so revocation and deny changes take effect at the next check, reproducibly from journalled grants ([workareas.md](workareas.md)). Verb ceiling R1: no agent-callable surface promotes, signs, demotes or deletes, whatever the key. Admin ≠ reviewer; reviewer ≠ author enforced against the lineage closure at promotion time ([roles-and-keys.md](roles-and-keys.md)). Operator never reads or writes content. | Cache-invalidation latency between a revocation commit and the next epoch check is a bounded window, stated rather than hidden; its bound is a deployment parameter. Collusion between distinct keys is not an elevation the ceiling can stop — see residual risks. |
 
@@ -190,7 +195,7 @@ flowchart LR
   end
 
   subgraph priv["Privileged services — outside the TCB, no signing key"]
-    LW["oml-lakewriter<br/>SET-tenant RLS sessions<br/>KMS encrypt-only"]
+    LW["oml-lakewriter<br/>SET-tenant RLS sessions<br/>keyless — moves ciphertext verbatim"]
     RC["oml-reconciler<br/>read-only, keyless<br/>repairs via outbox through oml-server"]
     IX["oml-indexer<br/>own per-tenant credentials"]
   end
@@ -204,7 +209,6 @@ flowchart LR
   S -- "wrap / unwrap DEK" --> KMS
   PG -- "outbox drain" --> LW
   LW --> DL
-  LW -- "generate-data-key / encrypt only" --> KMS
   RC -. "read-only" .-> PG
   RC -. "read-only" .-> DL
   RC -- "repair proposals" --> S

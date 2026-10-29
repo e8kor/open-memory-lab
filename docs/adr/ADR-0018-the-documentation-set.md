@@ -4,7 +4,7 @@
 
 ## Context
 
-OML's documentation set is written from one blueprint and describes a system that is decided
+OML's documentation set describes a system that is decided
 and not built. A doc set for an unbuilt system earns trust only through discipline: a tier
 boundary that keeps engineering vocabulary off client pages, a sourcing rule that marks every
 unverified claim, and one declaration site per rule so pages cannot drift apart.
@@ -75,8 +75,8 @@ bind every writer, and it is the page a reviewer holds any other page against.
     | roles | `reader`, `writer`, `dreamer`, `admin`, `operator` — exactly these words | synonyms, extra roles |
 
 - **d5 — One declaration site per rule or identifier.** Each rule, table, state machine or
-  identifier family is declared on exactly one page — the blueprint's decision-to-page map
-  decides which — and linked from everywhere else. A paraphrase in a second page is the drift
+  identifier family is declared on exactly one page — the [decision register](index.md)
+  records which page owns which decision — and linked from everywhere else. A paraphrase in a second page is the drift
   this rule exists to prevent; the cost is an extra click, paid deliberately.
 
 - **d6 — The set stays machine-readable: llms.txt and frontmatter.** `docs/llms.txt` is the
@@ -102,5 +102,5 @@ bind every writer, and it is the page a reviewer holds any other page against.
   scoped claim until it is run), and the MCP OAuth RS row written in d3's fixed form.
 - d6's enforcement gap is a known cost: frontmatter and llms.txt contracts held only by review
   will drift. Whether OML grows
-  generated-index tooling is genuinely open; the blueprint decides no tooling, and this record
+  generated-index tooling is genuinely open; this record decides no tooling for v1 and
   does not invent it.

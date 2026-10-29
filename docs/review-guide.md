@@ -7,7 +7,8 @@ open to challenge, and challenging one here is far cheaper than discovering it w
 production. This page lists the decisions a reviewer should examine, in the order in which an
 error would be most expensive, with the page that carries each one. The full decision register is
 at [adr/index.md](adr/index.md); the open questions each decision leaves are tracked as FR/RS
-rows in the [roadmap](product/roadmap.md).
+rows in the [roadmap](product/roadmap.md). If the vocabulary below is new, read
+[Concepts](concepts.md) first — it explains each term and links the page that decides it.
 
 ## 1. The constitution and its one exception (ADR-0001)
 
@@ -45,8 +46,10 @@ erasing is a journalled event plus key destruction. The guarantee is deliberatel
 and attachment bytes, and the design enumerates every copy class (journal, outbox, lake versions
 and checkpoints, object-store versions, search indexes, backups, read logs, caches) with its
 disposition — including the honest ones: plaintext-derived index entries persist in backups until
-the retention window expires, and attribution metadata (who wrote it, when, where) is **not**
-erased by shredding; its erasure is an open roadmap item. **Check:** is this boundary defensible
+the retention window expires; wrapped per-artifact keys in those same backups remain usable key
+copies until the retired wrapping key is destroyed, bounding erasure against backups at backup
+retention window plus KEK rotation period; and attribution metadata (who wrote it, when, where)
+is **not** erased by shredding — its erasure is an open roadmap item. **Check:** is this boundary defensible
 for the deployments you expect? Is the copy-class inventory complete? Does any page anywhere
 drift from the sanctioned phrasing ("produces the evidence an auditor asks for") into a
 compliance claim? Carried by
@@ -59,8 +62,9 @@ One role name, `dreamer`, carries two capability classes separated at promotion 
 refused whenever the dreamer appears anywhere in the row's lineage closure. Simulations are a
 fenced provenance channel: every simulation write carries an indelible marker, is served only to
 the simulation's audience, stays out of shared indexes, and taint propagates — anything derived
-from a simulation row inherits the marker, cannot enter validated workareas, and is demoted or
-re-reviewed when the simulation ends. **Check:** is promotion-time lineage-closure enforcement
+from a simulation row inherits the marker, cannot enter validated workareas, never captures the
+default served tip (a promoted tainted supersession is served only as the audience's overlay
+tip), and is demoted or re-reviewed when the simulation ends. **Check:** is promotion-time lineage-closure enforcement
 computationally and operationally realistic? Is the taint rule airtight given that derivation
 declaration is voluntary (see decision 1)? Does the audience fence hold across every read path —
 search, vector, fetch, graph? Carried by
@@ -71,7 +75,7 @@ search, vector, fetch, graph? Carried by
 
 Tenancy is first-class: tenant identity derives server-side from the API key, Postgres row-level
 security applies to every table, and the privileged services are designed rather than waved
-through — the lake-writer runs RLS-scoped per tenant with an encrypt-only key grant, the
+through — the lake-writer runs RLS-scoped per tenant and keyless, moving admission-produced ciphertext verbatim, the
 reconciler runs read-only and emits repairs through the front door, and only the API server holds
 the signing key. Rate limiting is honestly approximate in v1 (per-replica token buckets at
 limit/N). **Check:** the STRIDE model redone for hostile co-tenants — are the privileged-service

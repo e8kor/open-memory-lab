@@ -41,6 +41,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Concepts: concepts.md
   - Review guide: review-guide.md
   - Product:
       - Positioning: product/positioning.md
@@ -90,3 +91,4 @@ nav:
       - ADR-0016: adr/ADR-0016-kubernetes-workloads.md
       - ADR-0017: adr/ADR-0017-reconciliation.md
       - ADR-0018: adr/ADR-0018-the-documentation-set.md
+      - ADR-0019: adr/ADR-0019-hexagonal-architecture-and-plugins.md
