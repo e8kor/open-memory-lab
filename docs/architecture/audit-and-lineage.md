@@ -149,7 +149,7 @@ acts in one journalled operation:
 ```mermaid
 flowchart LR
     A["erase request<br/><i>admin key, journalled</i>"] --> B["erase event appended<br/><i>signed, in the tenant chain</i>"]
-    B --> C["DEK destroyed<br/><i>artifact_keys.destroyed_at set,<br/>live wrapped key destroyed;<br/>backup copies decay with KEK retirement</i>"]
+    B --> C["DEK destroyed<br/><i>artifact_keys.destroyed_at set,<br/>live wrapped key destroyed#59;<br/>backup copies decay with KEK retirement</i>"]
     C --> D["live derived copies removed<br/><i>tsvector, pgvector, caches</i>"]
     D --> E["every ciphertext copy<br/>everywhere is now noise"]
     B -.-> F["chain still verifies:<br/>signatures cover digests,<br/>never bodies"]
