@@ -46,6 +46,8 @@ nav:
   - Product:
       - Positioning: product/positioning.md
       - Roadmap: product/roadmap.md
+      - Commitments: product/commitments.md
+      - Critical path: product/critical-path.md
   - Architecture:
       - Overview: architecture/overview.md
       - Admission: architecture/admission.md
@@ -92,3 +94,4 @@ nav:
       - ADR-0017: adr/ADR-0017-reconciliation.md
       - ADR-0018: adr/ADR-0018-the-documentation-set.md
       - ADR-0019: adr/ADR-0019-hexagonal-architecture-and-plugins.md
+      - ADR-0020: adr/ADR-0020-dataset-onboarding.md

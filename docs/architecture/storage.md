@@ -33,8 +33,8 @@ below, and the journal table grows without compaction.
 ### Durability domain
 
 The journal's durability claim requires synchronous quorum replication:
-`synchronous_commit = remote_write` or `remote_apply` with quorum synchronous
-standbys. Without it, a failover can lose committed-and-acknowledged journal
+`synchronous_commit = on` or `remote_apply` with quorum synchronous standbys
+(`remote_write` does not survive a standby OS crash and does not carry the claim). Without it, a failover can lose committed-and-acknowledged journal
 events, which would be a silent violation of the append-only promise. The
 production profile therefore treats quorum sync as a requirement of the design,
 not a tuning choice.

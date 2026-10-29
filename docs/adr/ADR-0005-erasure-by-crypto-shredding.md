@@ -59,7 +59,9 @@ commitment about the design, enforced by nothing until the conformance work the
   | `bronze.events`, including all Delta versions and checkpoints | digest-only mirror of journal events | never needs touching |
   | `silver`/`gold` body columns | per-artifact-DEK ciphertext | unreadable at DEK destruction; superseded parquet versions and checkpoints keep the ciphertext until VACUUM and checkpoint cleanup run — that retention bound is part of the erasure SLO, not an afterthought |
   | object-store versions (`oml-bodies`, quarantine) | ciphertext | unreadable at DEK destruction; versioned copies stay ciphertext |
-  | pgvector rows, tsvector entries | **plaintext-derived** (embeddings, token lists) | removed from live tables at erase time; persist in Postgres base backups and WAL until the named backup retention window expires — that is the honest statement, and the window is part of the erasure SLO |
+  | pgvector rows, tsvector entries | **plaintext-derived** (embeddings, token lists) | removed in the same transaction as the erase event; persist in Postgres base backups and WAL until the named backup retention window expires — that is the honest statement, and the window is part of the erasure SLO |
+  | Postgres temp/spill files and standby replicas' disks | transient plaintext-derived content; every standby holds the primary's WAL and table copies | bounded by at-rest volume encryption and OS temp-file lifetime; standbys inherit every bound in this table |
+  | OS/block-level volume snapshots of the Postgres volume | everything the volume held at snapshot time, wrapped DEKs included, outside the base-backup accounting | if the deployment takes them, their retention window joins the SLO composition exactly as base backups do, and the deployment backup table lists them |
   | `artifact_keys.wrapped_dek` in Postgres base backups and WAL | **a usable copy of the wrapped DEK** — key material, not content | live row nulled at erase; copies in base backups and WAL survive the backup retention window, and while the wrapping KEK lives a restored backup plus KMS unwrap could recover the DEK and decrypt every surviving ciphertext copy. The designed answer: scheduled KEK rotation re-wraps **live** DEKs only, and a retired KEK is destroyed once the backup horizon has passed, invalidating every wrapped-DEK copy in older backups — erasure completes against live stores immediately and against backups no later than **backup retention window + KEK rotation period** |
   | `read_events` | query digests, memory ids | retention-bounded by tenant policy (owned by the [retrieval](../architecture/retrieval.md) and [audit](../architecture/audit-and-lineage.md) pages); in this inventory because it outlives the body |
   | caches (serving-path decrypts, CLI output, client-side copies inside OML's control) | plaintext | bounded TTLs inside the deployment; anything outside the deployment's control is outside the claim, and the documentation says so |
@@ -69,7 +71,7 @@ commitment about the design, enforced by nothing until the conformance work the
   physically gone from derived and backup copies, and unlockable by no surviving key copy, within
   the named retention bounds", and the bounds (VACUUM/checkpoint cadence, backup retention
   window, KEK rotation period) are part of the erasure SLO — all
-  unmeasured until built, tracked on the [roadmap](../product/roadmap.md). Second, the claim
+  unmeasured until built, tracked as FR-17 on the [roadmap](../product/roadmap.md). Second, the claim
   spans exactly the copies OML controls; a client that read a body before erasure holds what it
   holds.
 

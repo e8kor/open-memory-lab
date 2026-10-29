@@ -108,6 +108,8 @@ CREATE TABLE memories (
         CHECK (provenance IN ('agent', 'human', 'connector', 'simulation')),
     simulation_id     uuid        REFERENCES simulations (id),
     sim_derived_ids   uuid[]      NOT NULL DEFAULT '{}',   -- taint: simulations in lineage closure
+    manifest_id       uuid,       -- reserved: dataset imports (ADR-0020, post-v1); NULL for organic claims
+    review_scope      text,       -- reserved: 'sampled(<manifest>)' | 'individual' (ADR-0020); NULL = individual
     plaintext_digest  bytea,   -- journalled in the submission event: content identity
     ciphertext_digest bytea,   -- journalled in the same event: the key-less reconciler's comparand
     body_ref          jsonb       NOT NULL,  -- {class: quarantine|object|lake, ref: …}
@@ -302,7 +304,8 @@ CREATE TABLE outbox (
                                           -- assigned at insert, visible only at commit
     tenant_id        uuid   NOT NULL,
     kind             text   NOT NULL
-        CHECK (kind IN ('bronze-event', 'materialize', 'retract', 'export')),
+        CHECK (kind IN ('bronze-event', 'materialize', 'retract', 'export',
+                        'import-materialize')),  -- reserved: ADR-0020, post-v1
     journal_event_id uuid   NOT NULL REFERENCES journal (event_id),
     payload          jsonb  NOT NULL,   -- digest / ciphertext references only
     created_at       timestamptz NOT NULL DEFAULT now()

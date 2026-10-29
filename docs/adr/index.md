@@ -28,6 +28,7 @@ rows the records open.
 | [ADR-0017](ADR-0017-reconciliation.md) | Reconciliation is an incremental, journalled fold with a closed finding vocabulary | accepted design | the journal as fold source, the finding classes, journalled repair |
 | [ADR-0018](ADR-0018-the-documentation-set.md) | The documentation set: tiers, honesty discipline, llms.txt, frontmatter | accepted design | the tier boundary, the writing rules, the fixed vocabulary |
 | [ADR-0019](ADR-0019-hexagonal-architecture-and-plugins.md) | Hexagonal architecture and plugin modularity | accepted design | the pure domain core, ports as traits, thin binary compositions, the plugin points and their law |
+| [ADR-0020](ADR-0020-dataset-onboarding.md) | Dataset onboarding: the import manifest | accepted design — post-v1 | the manifest as the reviewed claim at dataset grain, seeded sampling review, one chain event per import, the per-manifest wrapping-key tier, the resurrection fence |
 
 ## Format
 
