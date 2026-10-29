@@ -139,6 +139,7 @@ per-tenant journal sequence is meaningful to clients and is the resume point a c
 | `POST /v1/workareas/{id}/transitions` | dreamer or admin |
 | `POST /v1/workareas/{id}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin |
 | `GET /v1/events` | reader |
+| `GET /v1/vocab/suggest` · `GET /v1/vocab/terms/{curie}` · `GET /v1/vocab/terms/{curie}/hierarchy` · `GET /v1/vocab/mappings` | reader |
 | `GET /v1/review/queue` · `POST /v1/review/next` · `POST /v1/review/verdicts` · `POST /v1/review/reopen` | dreamer(review); refused per row by lineage-closure exclusion |
 | `POST /v1/keys` and every key, grant, denial verb | admin (key role); operator only for a tenant's first admin key |
 | `GET /v1/bans` · `POST /v1/bans` · `POST /v1/bans/{ban_id}/lift` | admin (key role) |
@@ -188,8 +189,13 @@ One endpoint for the two submission verbs; `verb` selects the journal event
   The declaration has review consequences, not authorization ones: every named ancestor expands
   the row's reviewer-exclusion set (R2 over the lineage closure), and a false lineage is grounds
   for rejection at review ([ADR-0012](../adr/ADR-0012-admission-and-review.md)).
-- `kind` ∈ `memory` | `derived_fact` | `steering`. A steering row is held and reviewed like any
-  claim and is never ranked at recall (D12).
+- `kind` ∈ `memory` | `derived_fact` | `steering` | `term` | `term_mapping` | `vocab_release`. A
+  steering row is held and reviewed like any claim and is never ranked at recall (D12). The three
+  vocabulary kinds ride this same endpoint and pipeline — proposing a term, a mapping or a release
+  pin is an ordinary submission into a vocabulary workarea
+  ([Vocabularies](#vocabularies) below) — and a vocabulary workarea refuses
+  `provenance: simulation` submissions of these kinds (deterministic scan-class veto): a demoted
+  simulation row must never squat a permanent CURIE.
 - Every attachment digest must name a **completed** upload session owned by this key, or the
   submit is refused (`submission.attachment_missing`).
 - A `derives_from` that touches a simulation row forces `simulation_id` to that row's simulation
@@ -220,8 +226,20 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 
 Ranked retrieval over **promoted** rows in scope: FTS + vector, served from Postgres, never from
 the lake (D12; [retrieval.md](../architecture/retrieval.md)). Request: `workarea_id` (a subtree
-root the key reads), `query`, `k`, optional `kinds` filter, `include_bodies`. Response separates
-what is ranked from what is not:
+root the key reads), `query`, `k`, optional `kinds` filter, `include_bodies`, and two optional
+vocabulary fields:
+
+- `terms` — CURIEs; filters to rows whose `terms` annotation cites any of them. A CURIE the key
+  cannot read matches nothing (fail closed, as `derives_from` does).
+- `expand_terms` ∈ `none` (default) | `descendants` — widens the `terms` filter before retrieval:
+  each CURIE expands to its `is_a` descendants, resolved **per CURIE against the release pinned by
+  the vocabulary that owns the expanded prefix** (a per-release closure lookup,
+  [Vocabularies](#vocabularies)). Expansion changes the filter, never the ranking: steering order
+  and `k` are untouched.
+
+The `kinds` filter deliberately excludes the vocabulary kinds — term, mapping and release rows are
+excluded from the shared recall indexes by default (vocabulary workarea policy may opt in,
+ADR-0021). Response separates what is ranked from what is not:
 
 ```json
 {
@@ -296,7 +314,7 @@ Reads require reader effective access on the node; nodes outside scope are absen
 | `GET /v1/workareas/{id}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
 | `GET /v1/workareas/{id}/edges` | Labelled `related` edges touching the node, `pending` and `ratified`, with proposer and ratifier. Edges confer zero access. |
 | `GET /v1/workareas/{id}/status` | Status, the review policy object in force, pending transitions. |
-| `POST /v1/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?}`. Refused under a `validated` parent (`workarea.frozen`). |
+| `POST /v1/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). Refused under a `validated` parent (`workarea.frozen`). |
 | `POST /v1/workareas/{id}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
 | `POST /v1/workareas/{id}/crew` | **admin.** Journalled crew-metadata update; allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
 | `POST /v1/workareas/{id}/edges` | Propose an edge `{to_workarea_id, label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`. Requires dreamer(propose) effective access on at least one endpoint and reader effective access on both (an admin who must act here holds a separate dreamer key — a key never combines admin with dreamer grants, `access.role_exclusive`). → `202`, pending. |
@@ -318,6 +336,31 @@ pipeline ([admission.md](../architecture/admission.md)).
 - `POST /v1/claim-edges/{edge_id}/ratify` — dreamer(review), never the proposer, and refused when
   the ratifying key or principal appears in either endpoint's lineage closure
   (`review.author_in_lineage`).
+
+## Vocabularies
+
+The thin read surface over AI+Human vocabularies — terms, hierarchy, mappings and releases are
+claims in vocabulary workareas, ridden through the ordinary pipeline; the model is owned by
+ADR-0021 ([decision register](../adr/index.md)) and
+[ontologies.md](../architecture/ontologies.md). Everything here is reader-ceiling, cursor-paginated
+per the convention, and fails closed as absence: an unknown CURIE and one outside the key's read
+scope are indistinguishable (`access.not_found` on the term get, an empty match elsewhere).
+
+| Endpoint | Returns |
+|---|---|
+| `GET /v1/vocab/suggest?q=…&workarea_id=…` | Deterministic prefix+label typeahead over granted vocabulary workareas: `curie`, `label`, `term_status` per suggestion. Matching, never interpretation — no model runs here. |
+| `GET /v1/vocab/terms/{curie}` | The term's served tip: owning workarea, version, `term_status` (`active` \| `deprecated` — a structural payload field that survives shredding), definition presence (the CURIE is permanent, the body erasable), ratified `successors` with their relation (`replaced_by` \| `consider`), and the releases whose pin includes it. |
+| `GET /v1/vocab/terms/{curie}/hierarchy?direction=…&release=…` | `parents` \| `children` \| `ancestors` \| `descendants` over ratified `is_a` — served from the per-release closure materialized at release ratification (a lookup, never a traversal: serialize, don't compute). `release` is optional and defaults to the latest ratified release of the owning vocabulary. |
+| `GET /v1/vocab/mappings?term=…` | Ratified SSSOM-shaped mappings touching the term: `subject`, `object`, `predicate` (`exactMatch` \| `closeMatch` \| `broadMatch` \| `narrowMatch` \| `relatedMatch`), `justification`, `ratified_at`. Both endpoints persist — a mapping never merges. |
+
+There are no vocabulary write endpoints: `term`, `term_mapping` and `vocab_release` submissions
+ride [`POST /v1/memories`](#submit-post-v1memories) with those `kind` values — held, scanned,
+reviewed and ratified like any claim, with the shipped review policy defaulting
+`replaced_by` deprecations, `exactMatch` mappings and `vocab_release` pins to human-required
+verdicts (tenant-tunable). Vocabulary workareas refuse `provenance: simulation` submissions of
+these kinds. The typed refusals this surface adds — `vocab.cycle_refused`,
+`vocab.prefix_conflict`, `vocab.unknown_curie`, `vocab.inactive_curie` (whose `details` carry the
+successors for one-hop self-healing) — are declared in [errors.md](errors.md).
 
 ## Events tail
 

@@ -29,6 +29,7 @@ rows the records open.
 | [ADR-0018](ADR-0018-the-documentation-set.md) | The documentation set: tiers, honesty discipline, llms.txt, frontmatter | accepted design | the tier boundary, the writing rules, the fixed vocabulary |
 | [ADR-0019](ADR-0019-hexagonal-architecture-and-plugins.md) | Hexagonal architecture and plugin modularity | accepted design | the pure domain core, ports as traits, thin binary compositions, the plugin points and their law |
 | [ADR-0020](ADR-0020-dataset-onboarding.md) | Dataset onboarding: the import manifest | accepted design — post-v1 | the manifest as the reviewed claim at dataset grain, seeded sampling review, one chain event per import, the per-manifest wrapping-key tier, the resurrection fence |
+| [ADR-0021](ADR-0021-ai-human-ontologies.md) | AI+Human ontologies: vocabularies as governed claims | accepted design | terms as claims with permanent CURIEs, releases as journalled pins with a materialized closure, SSSOM mappings, the vocab scanner, policy-placed human verdicts over an issuance-time attestation |
 
 ## Format
 

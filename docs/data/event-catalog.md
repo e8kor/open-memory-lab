@@ -319,11 +319,15 @@ Tree and edge governance. Rules: [workareas](../architecture/workareas.md).
 {
   "workarea_id": "…", "parent_id": "…",
   "name": "crew-redline", "status": "development",
-  "crew": {"name": "redline", "charter_uri": "…", "external_manager": "…"}
+  "crew": {"name": "redline", "charter_uri": "…", "external_manager": "…"},
+  "prefix": null
 }
 ```
 
-A new node under an existing parent; refused when the parent is validated.
+A new node under an existing parent; refused when the parent is validated. A non-null `prefix`
+registers the workarea as a vocabulary ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the
+prefix is tenant-unique and **permanent** — never reused or reassigned, even after the vocabulary
+retires — and `vocab_prefixes` folds from exactly these events.
 
 ### workarea.reparent
 
@@ -435,12 +439,16 @@ reference against the provider chain.
 {
   "key_id": "…", "role": "writer", "principal": "crew-redline/agent-3",
   "issued_by_key_id": "…", "expiry": "2027-10-29T00:00:00Z",
-  "value_disclosed": false
+  "value_disclosed": false,
+  "held_by": "agent"
 }
 ```
 
 A key issued without its value (show-once ceremony; the journal never learns the secret), under the
-issuer ceiling: role no higher than the issuer's.
+issuer ceiling: role no higher than the issuer's. `held_by` is the issuing admin's journalled
+attestation that the key is held by a human or an agent — the server verifies the attestation,
+never the humanness ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `human_required_classes`
+consumes it, and the evidence export shows it.
 
 ### key.revoked
 

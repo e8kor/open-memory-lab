@@ -37,7 +37,8 @@ service over the same one transport. The remaining question is which protocol is
   carrying its own bearer key; SSE resumability and server push are out of scope for v1. The tool
   list is exactly the verb ceiling R1 allows an agent: `remember`, `recall`, `learn`, attachment
   upload, relate-propose, own-work status, workarea info, graph and lineage reads (scoped to the
-  key's grants, serialized by the server — serialize-don't-compute), and an events tail. Never
+  key's grants, serialized by the server — serialize-don't-compute), an events tail, and the
+  vocabulary reads added under this rule by [ADR-0021](ADR-0021-ai-human-ontologies.md) d9. Never
   promote, sign, demote, delete, or any admin verb — not as hidden tools, not behind flags; the
   facade cannot widen what the wire may say.
   The MCP authorization story beyond bearer keys (the spec's OAuth 2.1 profile) is an RS row on

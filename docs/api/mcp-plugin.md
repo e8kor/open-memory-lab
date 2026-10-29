@@ -81,7 +81,10 @@ with spec revision, fetch date and verified client support.
 
 **No promote, sign, demote, delete or admin verb exists on this surface.**
 Not refused — absent. The `tools/list` result is the entire surface, and it
-contains nine read-and-propose tools. There is no tool whose success changes
+contains ten read-and-propose tools (nine at ADR-0014's writing; the tenth,
+[`oml_vocab`](#oml_vocab), is owned as a count change in ADR-0014's terms — the
+one non-zero default cost the vocabulary capability adds, ~100 tokens in every
+`tools/list`). There is no tool whose success changes
 what *other* keys can read, except by entering the admission pipeline as a
 held submission that an independent reviewer must ratify
 ([admission](../architecture/admission.md), R3).
@@ -169,6 +172,7 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
 | [`oml_workarea_info`](#oml_workarea_info) | One workarea: status, crew, the caller's effective verbs | reader |
 | [`oml_graph`](#oml_graph) | Scoped claims-and-edges read; serialize, don't compute | reader |
 | [`oml_events_tail`](#oml_events_tail) | Poll journal events in scope, from a client-held cursor | reader |
+| [`oml_vocab`](#oml_vocab) | Resolve vocabulary terms: suggest, get, hierarchy, mappings — read-only | reader |
 
 ---
 
@@ -206,10 +210,18 @@ review*, never *published*.
 - `attachments` — upload sessions previously completed via
   [`oml_attach`](#oml_attach). The session's recorded digest is bound into
   the signed submission envelope (D3).
-- `kind` — `memory` (the default) | `derived_fact` | `steering`, as on the
-  HTTP submit ([http-api.md](http-api.md)). `kind: derived_fact` here is the
+- `kind` — `memory` (the default) | `derived_fact` | `steering` |
+  `term` | `term_mapping` | `vocab_release`, as on the HTTP submit
+  ([http-api.md](http-api.md)). `kind: derived_fact` here is the
   path for a derived conclusion whose lineage cannot or will not be named —
-  [`oml_learn`](#oml_learn) requires non-empty `derives_from`.
+  [`oml_learn`](#oml_learn) requires non-empty `derives_from`. Proposing
+  vocabulary — a `term` or `term_mapping` — is this same ordinary submit into
+  a vocabulary workarea the key holds writer grants on; `vocab_release` is
+  also a claim and rides the same path, but ratifying one is a
+  human-required verdict under the shipped review policy (as are
+  `replaced_by` deprecations and `exactMatch` mappings) — no release is ever
+  cut by an agent tool. Vocabulary workareas refuse `provenance: simulation`
+  submissions of these kinds ([http-api.md](http-api.md#vocabularies)).
 - `derives_from` — artifact ids this memory derives from. Lineage is
   **declared**, and the honesty rule applies in full: a writer that omits
   `derives_from` is not detectable by the service, so lineage-based review
@@ -776,6 +788,77 @@ polling interval, by design in v1.
 **Refusals** — scope outside read access (`access.not_found`); a malformed or
 foreign `after_seq` value is a typed `request.validation` refusal, never a
 silent restart from zero.
+
+## `oml_vocab`
+
+Read the tenant's vocabularies: term lookup, deterministic typeahead,
+hierarchy over the per-release closure, and SSSOM-shaped mappings. One tool,
+four actions — each translates to one `GET /v1/vocab/*` call
+([http-api.md](http-api.md#vocabularies)). Strictly read-only at the reader
+ceiling: proposing a term or mapping is [`oml_remember`](#oml_remember) with
+the matching `kind`, and nothing on this surface deprecates, ratifies or cuts
+a release.
+
+**Who may call:** keys with reader effective access on the vocabulary
+workarea(s) involved. Vocabularies outside scope are absent, fail closed.
+
+**Input** — `action` ∈ `suggest` | `get` | `hierarchy` | `mappings`:
+
+- `suggest` — `{q, workarea_id?, limit?, cursor?}`: prefix+label typeahead
+  over granted vocabulary workareas, deterministic matching only. Returns
+  `{curie, label, term_status}` per suggestion.
+- `get` — `{curie}`: the term's served tip.
+- `hierarchy` — `{curie, direction: parents | children | ancestors |
+  descendants, release?, limit?, cursor?}`: a lookup over the closure
+  materialized at release ratification; `release` defaults to the owning
+  vocabulary's latest ratified release.
+- `mappings` — `{term, limit?, cursor?}`: ratified mappings touching the
+  CURIE — subject, object, predicate, justification, `ratified_at`.
+
+```json
+{ "action": "get", "curie": "proc:supplier-quote" }
+```
+
+**Output** — `get` returns `term_status` and the ratified successor pointers,
+so an agent whose citation is stale self-heals in one hop:
+
+```json
+{
+  "curie": "proc:supplier-quote",
+  "workarea_id": "wa_01JB2Z1C3E5G7J9L2N4Q6S8UWY",
+  "version": 4,
+  "term_status": "deprecated",
+  "definition_state": "present",
+  "successors": [
+    { "curie": "proc:price-quote", "relation": "replaced_by" }
+  ],
+  "releases": ["rel_01JB2Z2D4F6H8K1M3P5R7TVXZB"]
+}
+```
+
+`replaced_by` is safe for automated rewiring; `consider` requires judgment.
+The same two codes an agent meets when *citing* terms on a submit apply here
+in read form: an unknown or out-of-scope CURIE is absence
+(`access.not_found` — the read twin of `vocab.unknown_curie`, which fails a
+citation closed exactly as `derives_from` does), and a submission citing a
+deprecated term under `enforcement: require` is refused with
+`vocab.inactive_curie`, whose `details` carry the successors and relation —
+under `annotate`, the citation records a finding and never blocks
+([errors.md](errors.md)).
+
+**Refusals** — a CURIE or vocabulary outside read scope, indistinguishable
+from one that does not exist. Example:
+
+```json
+{
+  "error": {
+    "code": "access.not_found",
+    "rule": "CURIE resolution fails closed within the key's effective read scope (D7)",
+    "message": "no readable term proc:supplier-quote for this key",
+    "retryable": false
+  }
+}
+```
 
 ---
 

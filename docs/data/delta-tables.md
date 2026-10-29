@@ -212,7 +212,7 @@ commits.
 | `artifact_id` | STRING | utf8 | no | Claim artifact UUID — MERGE key, with `version` |
 | `version` | LONG | int64 | no | Version within the `claim_key` lineage — MERGE key |
 | `claim_key` | STRING | utf8 | no | Groups versions of one claim |
-| `kind` | STRING | utf8 | no | `memory` \| `derived_fact` \| `steering` \| … |
+| `kind` | STRING | utf8 | no | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` (+ `dataset_manifest`, ADR-0020) |
 | `state` | STRING | utf8 | no | `promoted` \| `demoted` \| `erased` \| `held` — `held` is reachable **only** by the reassign-to-stricter-policy retract below, never by admission |
 | `workarea_id` | STRING | utf8 | no | Stable workarea node id; updated by reassign |
 | `workarea_path_at_write` | STRING | utf8 | no | ltree path as derived at write time — history, not identity; **immutable**, moves are read from bronze and `gold.areas` |

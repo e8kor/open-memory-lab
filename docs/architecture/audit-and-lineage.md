@@ -186,6 +186,7 @@ here rather than restating it.
 | `read_events` | Memory ids and query digests, not bodies | Retention-bounded by tenant policy ([retrieval](retrieval.md)); in this inventory because a query digest can correlate with erased content until its window closes |
 | Serving-path caches | Decrypted bodies in flight | Invalidated at erase; any cache added later enters this inventory as a named copy class before it ships |
 | Attribution metadata (writer identity, principal, timestamps, workarea path) | Plaintext, in journal, metadata rows and lake rows | **Not erased by crypto-shredding.** Its erasure or pseudonymization is a tracked FR with an exit criterion in the [roadmap](../product/roadmap.md) — open, not solved |
+| `terms` CURIE annotations ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) | Clear vocabulary labels on claims — they semantically label even an erased claim ("this erased claim was tagged X") | **Not erased by crypto-shredding**, same class as attribution metadata above; inherited by the same FR |
 
 ### The honest boundary
 

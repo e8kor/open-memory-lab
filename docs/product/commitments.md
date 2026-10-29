@@ -28,6 +28,7 @@ include.
 | C11 | No client key exceeds its role's verb ceiling (R1). [Roles and keys](../architecture/roles-and-keys.md). | Server-side per-role check; promote, sign and delete appear in no client verb column; every transport is an adapter over `oml-app`. | The adapter rule of [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md) d3. |
 | C12 | `self_signed` rows never leave their workarea and never enter silver or gold. [Workareas](../architecture/workareas.md), [delta tables](../data/delta-tables.md). | An indelible schema mark; the lake exclusion is checkable by the [reconciler](../architecture/reconciliation.md). | Reconciler coverage. |
 | C13 | A review verdict counts once, for exactly what was served. [Admission](../architecture/admission.md), [ADR-0012](../adr/ADR-0012-admission-and-review.md). | Server-side single-use serve binding to (reviewer key, artifact version, digest set). | Server-side state; no client replay path exists. |
+| C14 | A promoted term's CURIE is permanent (never re-mintable with a different meaning), the `is_a`/`replaced_by` graphs are acyclic, and simulations cannot mint vocabulary. [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md). | The minted-at-first-promotion rule and the cycle refusal are `oml-domain` invariants (like the tip CAS); the simulation veto is a deterministic scan-class refusal. | `oml-domain` encoding the invariants (ADR-0019 d1); humanness of a human-required verdict is an issuance-time **attestation**, never verified by the server. |
 
 ## 2. Guaranteed within stated bounds
 
@@ -94,10 +95,14 @@ produces the number or the decision.
 - Lake-writer throughput and Delta commit latency — FR-16.
 - Erasure-SLO bounds, measured — FR-17.
 - Full-genesis reconciler runtime and quorum write latency — FR-18.
+- The vocabulary v1 slice (prefixes, term lifecycle, releases, scanner, read surface) — FR-19.
+- Vocabulary expansion recall, closure storage, mapping quality, and the per-vocabulary
+  human-verdict load — FR-20.
 - Open questions, each a decision not yet taken: embedding model and boundary (RS-1), MCP
   OAuth (RS-2), federation (RS-3), the Merkle specification (RS-4), sampling-policy semantics
   (RS-5), the connector surface (RS-6), MWK rotation (RS-7), tenant-wide erased-digest
-  matching (RS-8), external chain-head anchoring (RS-9).
+  matching (RS-8), external chain-head anchoring (RS-9), the `oml:` upper-vocabulary register
+  (RS-10), the external-ontology import profile (RS-11).
 
 ## 4. Never claimed
 

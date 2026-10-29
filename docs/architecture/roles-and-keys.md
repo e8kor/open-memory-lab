@@ -32,6 +32,17 @@ whose grants include reader scope — not a writer key with implied read. Which 
 exercise in a given workarea is therefore resolved from effective access at call time, never from
 the role name alone.
 
+Every role above is designed to be held by an agent, and human principals hold the same roles
+through the same keys — there is no human-only role and no agent-only ceiling. Where a policy
+requires a *human* verdict (`human_required_classes`, [admission.md](admission.md)), the
+requirement is satisfied through a journalled, issuance-time attestation: a key attribute
+`held_by: human`, attested by the issuing admin, carried in the issuance event and shown in
+evidence exports. The honesty boundary is the same sentence: the server verifies the
+attestation, never the humanness — a mis-attested key is an admin's journalled misstatement, not
+a server failure. `human_required_classes` consumes exactly this attribute: only verdicts from
+keys attested `held_by: human` satisfy it ([ontologies](ontologies.md),
+[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)).
+
 ## Permission matrix
 
 Verbs are journalled acts; the matrix states which role's keys may invoke each one. A dash means

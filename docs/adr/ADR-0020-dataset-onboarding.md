@@ -35,8 +35,9 @@ partial loads and refusals are journalled, never silent.
   ([admission](../architecture/admission.md)). The manifest body is normative and carries: the
   source locator with a snapshot pin (Delta version, Parquet digest set, CSV digest, or
   warehouse query plus as-of); a deterministic, versioned schema-mapping spec — columns to
-  `claim_key` (unique within the snapshot), body, attribution/producer, event-time — whose
-  digest rides the signed envelope; the transform's plugin identity and version
+  `claim_key` (unique within the snapshot), body, attribution/producer, event-time, and the rows'
+  `kind` (default `memory`; `kind: term` is the reserved external-ontology import profile, RS-11) —
+  whose digest rides the signed envelope; the transform's plugin identity and version
   ([ADR-0019](ADR-0019-hexagonal-architecture-and-plugins.md)); the row count, mapping-failure
   count and failure-report digest; **two Merkle roots** — per-row plaintext digests and per-row
   ciphertext digests, in a fixed leaf order; and declared provenance and licensing, in the same

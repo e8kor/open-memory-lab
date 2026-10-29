@@ -26,7 +26,9 @@ Every verb below is designed, not built; no transcript or flag on this page has 
 - **Mass operations default to `--dry-run`** and require `--apply` to act — the
   preview-every-mass-act rule: an act whose reach the operator has not seen is an act the
   operator has not decided. On this page that covers `bans add`, `keys revoke --matching`,
-  `workareas re-parent`, and `simulations end`; each such synopsis lists `[--apply]`.
+  `workareas re-parent`, and `simulations end`; each such synopsis lists `[--apply]`. The same
+  discipline extends to **irreversible single acts**: `workareas create --prefix` states that a
+  prefix is permanent and asks for confirmation before registering it.
   Single-target verbs whose synopsis lists `[--dry-run]` (`claims reassign`, `erase`) act by
   default; there `--dry-run` is an explicit opt-in preview, not the default.
 - **Names resolve to ids.** Workareas may be named by path for convenience, but every grant, act
@@ -127,7 +129,7 @@ them into `propose` and `ratify` run under different keys.
 
 | Verb | Does |
 |---|---|
-| `oml workareas create <parent> <name> [--crew-name …] [--charter-uri …] [--external-manager …]` | Create a child workarea in `development`. Refused under a `validated` parent. |
+| `oml workareas create <parent> <name> [--crew-name …] [--charter-uri …] [--external-manager …] [--prefix <PREFIX>]` | Create a child workarea in `development`. Refused under a `validated` parent. `--prefix` registers a vocabulary workarea ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the prefix is tenant-unique and **permanent** — the command states this and confirms before acting — and requires the crew flags (a vocabulary needs a named curator crew). |
 | `oml workareas tree [--root <workarea>] [--status]` | The tenant tree from `universe` down, with status and crew per node. |
 | `oml workareas show <workarea>` | One node: id, path (derived), status, crew metadata, edges, policy snapshot in force. |
 | `oml workareas crew set <workarea> --crew-name … [--charter-uri …]` | Journalled crew-metadata update. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
@@ -216,7 +218,7 @@ what to do next. Both emit the same four named signals — the contract that
 | Signal | Meaning | Unhealthy looks like |
 |---|---|---|
 | **Queue depth per step** | Items waiting at each admission step: quarantine, scan, review, ratification ([admission](../architecture/admission.md)). | Review depth growing without bound — arrival rate exceeds review capacity, which is exactly the unmeasured quantity [FR-2](../product/roadmap.md) tracks. |
-| **Review availability** | Whether each workarea's review policy can currently be satisfied — at least one eligible non-author dreamer reachable. | A workarea failing closed: writes held indefinitely because no eligible reviewer exists. |
+| **Review availability** | Whether each workarea's review policy can currently be satisfied — at least one eligible non-author dreamer reachable. Two vocabulary refinements of the same signal ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): a vocabulary workarea with no active dreamer grant is flagged orphaned ("propose freeze" is the named next action), and a workarea whose policy names `human_required_classes` with no attested-human dreamer key in scope is a review-availability warning. | A workarea failing closed: writes held indefinitely because no eligible reviewer exists. |
 | **Outbox frontier lag** | Journal head seq minus the lake writer's applied frontier, per tenant ([storage](../architecture/storage.md)). | A rising frontier lag with a healthy journal — the lake writer is down, split-brained-and-fenced, or stuck. |
 | **Dead-letter count** | Rows the lake writer abandoned after its retry budget. Each is already a journalled `materialize-skipped` event and a named reconciler finding ([reconciliation](../architecture/reconciliation.md)). | Any nonzero count that is not shrinking; repair is a journalled re-enqueue, not a manual table edit. |
 
