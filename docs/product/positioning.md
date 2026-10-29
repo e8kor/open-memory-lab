@@ -51,10 +51,10 @@ Nothing here is built, so the honest inventory of evidence is short:
 
 ### The market claim, in its only permitted form
 
-As of the last market check (searches of 2026-09-08, re-read 2026-10-06), **no provider ships
-structural, multi-party, evidence-bearing admission control for agent memory** — a gate that
-is enforced by the system rather than by convention, that requires a reviewing identity
-distinct from the writer, and that leaves a signed decision record. *This claim is to be
+As of the last market check (fetched 2026-10-29, confirming the checks of 2026-09-08 and
+2026-10-06), **no provider ships structural, multi-party, evidence-bearing admission control for
+agent memory** — a gate that is enforced by the system rather than by convention, that requires a
+reviewing identity distinct from the writer, and that leaves a signed decision record. *This claim is to be
 re-verified by live search, with a fetch date, before any publication asserts it* (roadmap row
 FR-9); until that re-verification, it describes the market of late 2026, not the market of the
 day you read this.
@@ -63,8 +63,10 @@ The broader claim — that no provider gates memory writes at all — is dead, a
 saying why. The September 2026 market check found that the Mnemosyne memory provider had
 shipped a write-approval switch (v3.14.0, July 2026): writes stage to a pending directory, and
 a tool replays approved records. That falsified the categorical claim. What it did not close
-is the scoped gap: in that mechanism the approver is whoever runs the tool — the writing agent
-included — no second identity is required, and no signed decision record is produced. A
+is the scoped gap, and a source-level read on 2026-10-29 confirmed each limb: the apply tool
+carries no approver identity — the writing agent can approve its own staged writes; the gate
+covers only remember/batch while update, forget and invalidate bypass staging; the audit log is
+unsigned and fail-open; and no multi-party approval exists through v4.0.0 (2026-10-26). A
 staging flag is a weekend of work; the distance between a staging flag and an evidence-bearing
 gate is this whole product — and that distance is also what a competitor would have to build,
 which is why the claim carries a standing re-verification duty rather than a publication date.
