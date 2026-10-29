@@ -1,0 +1,2056 @@
+openapi: 3.1.0
+info:
+  title: Open Memory Lab HTTP API
+  version: 0.1.0-design
+  summary: The /v1 JSON API of OML, an agentic external memory provider.
+  description: >-
+    Status: design draft for review — decided, not built. This spec is the machine-readable form
+    of docs/api/http-api.md and declares the same contract; the typed error taxonomy is declared
+    in docs/api/errors.md and mirrored here as the ErrorCode enum. Authorization model: bearer API
+    keys carrying one role (reader, writer, dreamer, admin, operator); tenant is derived
+    server-side from the key, never from the request. Roles do not nest. Read verbs require
+    reader effective access on the named workarea; write verbs writer; propose/review verbs
+    dreamer (two capability classes, one role); admin and operator verbs require that key role
+    itself — the per-operation description states the ceiling ("Requires: ..."). The verb ceiling
+    is constitutional (R1): no agent-facing role reaches promote, sign, demote, delete or any
+    admin verb. Reads fail closed as absence (404 access.not_found). Every state-creating POST
+    requires an Idempotency-Key header; replays return the stored response with header
+    Idempotency-Replay: true. Field spellings are design identifiers — normative in shape,
+    adjustable at implementation without a design change.
+servers:
+  - url: /
+    description: Deployment-relative; OML is deployed per installation, there is no central host.
+security:
+  - bearerAuth: []
+tags:
+  - name: memories
+  - name: attachments
+  - name: claim-edges
+  - name: workareas
+  - name: events
+  - name: review
+  - name: keys
+  - name: bans
+  - name: simulations
+  - name: claim-administration
+  - name: exports
+  - name: settings
+  - name: tenants
+  - name: health
+
+paths:
+  /v1/memories:
+    post:
+      tags: [memories]
+      operationId: submitMemory
+      summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
+      description: 'Requires: writer effective access; dreamer(propose) when derives_from names another author''s claim. Journals submission.remember or submission.learn.'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitRequest' }
+      responses:
+        '202':
+          description: Held, visible to no one else until ratified (R3).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubmitAccepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        default: { $ref: '#/components/responses/Error' }
+    get:
+      tags: [memories]
+      operationId: searchMemories
+      summary: Structured, paginated listing of memory summaries.
+      description: 'Requires: reader effective access; own=true admits any tenant role for its own rows only. Others'' held rows are never returned (R3).'
+      parameters:
+        - { name: workarea_id, in: query, schema: { type: string } }
+        - { name: claim_key, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
+        - { name: kind, in: query, schema: { type: string, enum: [memory, derived_fact, steering] } }
+        - { name: own, in: query, schema: { type: boolean, default: false } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: until, in: query, schema: { type: string, format: date-time } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of memory summaries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryPage' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/memories/recall:
+    post:
+      tags: [memories]
+      operationId: recallMemories
+      summary: Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
+      description: 'Requires: reader effective access on the subtree. Read-shaped POST: no Idempotency-Key. Logged by query digest (D12). Recall quality unmeasured — FR-4.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecallRequest' }
+      responses:
+        '200':
+          description: Steering first and never ranked, then scored hits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecallResponse' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/memories/{artifact_id}:
+    get:
+      tags: [memories]
+      operationId: getMemory
+      summary: One memory with body (decrypted on the serving path) and attachment descriptors.
+      description: 'Requires: reader effective access; the author may fetch its own held or rejected version. Erased answers 410 lifecycle.erased.'
+      parameters: [{ $ref: '#/components/parameters/ArtifactId' }]
+      responses:
+        '200':
+          description: The memory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Memory' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/memories/{artifact_id}/lineage:
+    get:
+      tags: [memories]
+      operationId: getLineage
+      summary: The derivation closure, pending and ratified edges, serialized as stored.
+      description: 'Requires: reader effective access. Serialize, don''t compute (D13); out-of-scope nodes are elided to redacted ids.'
+      parameters: [{ $ref: '#/components/parameters/ArtifactId' }]
+      responses:
+        '200':
+          description: The lineage closure.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Lineage' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/memories/{artifact_id}/supersede:
+    post:
+      tags: [memories]
+      operationId: proposeSupersession
+      summary: Propose a replacement version; a new attributed submission, held like any write.
+      description: 'Requires: writer (own claims only — access.author_only otherwise) or dreamer(propose). Target must be the current tip: submission.tip_conflict, re-checked at promotion.'
+      parameters:
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SupersedeRequest' }
+      responses:
+        '202':
+          description: The proposed replacement, held.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubmitAccepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/memories/{artifact_id}/reassign:
+    post:
+      tags: [claim-administration]
+      operationId: reassignClaim
+      summary: Journalled move between workareas, recording both policy snapshots.
+      description: 'Requires: admin key role. Stricter-policy destination re-enters held; refused into validated (workarea.frozen); claim_key collision refused without re_key.'
+      parameters:
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReassignRequest' }
+      responses:
+        '200':
+          description: Moved (or the dry-run preview).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/memories/{artifact_id}/demote:
+    post:
+      tags: [claim-administration]
+      operationId: demoteClaim
+      summary: Journalled demotion; bytes are kept (R4).
+      description: 'Requires: admin key role.'
+      parameters:
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DemoteRequest' }
+      responses:
+        '200':
+          description: Demoted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/memories/{artifact_id}/erase:
+    post:
+      tags: [claim-administration]
+      operationId: eraseClaim
+      summary: Journalled crypto-shred — erase event plus DEK destruction, scoped to body and attachment bytes.
+      description: 'Requires: admin key role. dry_run returns the erasure inventory per copy class. Attribution metadata survives — FR-1.'
+      parameters:
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EraseRequest' }
+      responses:
+        '202':
+          description: Erase journalled, DEK destroyed (or the dry-run inventory).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/claims/tip-override:
+    post:
+      tags: [claim-administration]
+      operationId: tipOverride
+      summary: Designate an earlier promoted version as the served tip — explicit and journalled, never a silent re-rank.
+      description: 'Requires: admin key role. Journals lifecycle.tip_override.'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TipOverrideRequest' }
+      responses:
+        '200':
+          description: Tip overridden.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/attachments/uploads:
+    post:
+      tags: [attachments]
+      operationId: createUploadSession
+      summary: Open a resumable upload session recording the expected plaintext digest up front.
+      description: 'Requires: writer effective access. The session is scoped to the uploading key and expires (D3).'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadSessionCreate' }
+      responses:
+        '201':
+          description: The session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/attachments/uploads/{session_id}/parts/{part_number}:
+    put:
+      tags: [attachments]
+      operationId: putUploadPart
+      summary: Upload one part; replaying a part is harmless (verified by digest at completion).
+      description: 'Requires: writer, session owner. No Idempotency-Key — a part is addressed by (session, part_number).'
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string } }
+        - { name: part_number, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '204': { description: Part stored. }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/attachments/uploads/{session_id}/complete:
+    post:
+      tags: [attachments]
+      operationId: completeUploadSession
+      summary: Assemble, hash, compare against the expected digest; store encrypted on match.
+      description: 'Requires: writer, session owner. upload.digest_mismatch when the bytes are not what the session promised.'
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Content-addressed attachment stored, inert until a submission binds it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadComplete' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/attachments/{digest}:
+    get:
+      tags: [attachments]
+      operationId: getAttachment
+      summary: Fetch attachment bytes, decrypted on the serving path, plaintext digest verified before serving.
+      description: 'Requires: reader access to a promoted claim binding the digest; the author for own held; a reviewer under a valid serve_id. Logged as a read.'
+      parameters:
+        - { name: digest, in: path, required: true, schema: { $ref: '#/components/schemas/Digest' } }
+        - { name: serve_id, in: query, schema: { type: string }, description: Reviewer fetch under a serve binding. }
+      responses:
+        '200':
+          description: The plaintext bytes.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/claim-edges:
+    get:
+      tags: [claim-edges]
+      operationId: listClaimEdges
+      summary: Paginated claim-graph read, pending and ratified, scoped to read access.
+      description: 'Requires: reader effective access.'
+      parameters:
+        - { name: workarea_id, in: query, schema: { type: string } }
+        - { name: artifact_id, in: query, schema: { type: string } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of claim edges.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimEdgePage' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [claim-edges]
+      operationId: proposeClaimEdge
+      summary: Propose a claim-to-claim connection; pending until ratified.
+      description: 'Requires: dreamer(propose). The claim-edge label vocabulary is not fixed by the design (open detail, roadmap).'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimEdgeProposal' }
+      responses:
+        '202':
+          description: Pending edge.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimEdge' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/claim-edges/{edge_id}/ratify:
+    post:
+      tags: [claim-edges]
+      operationId: ratifyClaimEdge
+      summary: Ratify a proposed claim edge.
+      description: 'Requires: dreamer(review); never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage) — R2.'
+      parameters:
+        - { name: edge_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Ratified edge.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimEdge' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas:
+    get:
+      tags: [workareas]
+      operationId: resolveWorkarea
+      summary: Resolve a workarea node by derived path (grants bind to node ids, never paths).
+      description: 'Requires: reader effective access on the node.'
+      parameters:
+        - { name: path, in: query, required: true, schema: { type: string }, description: Derived ltree path. }
+      responses:
+        '200':
+          description: The node.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workarea' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [workareas]
+      operationId: createWorkarea
+      summary: Create a child workarea in development.
+      description: 'Requires: admin key role. Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkareaCreate' }
+      responses:
+        '201':
+          description: The new node.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workarea' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas/{workarea_id}:
+    get:
+      tags: [workareas]
+      operationId: getWorkarea
+      summary: One node — id, parent, derived path, status, crew record.
+      description: 'Requires: reader effective access.'
+      parameters: [{ $ref: '#/components/parameters/WorkareaId' }]
+      responses:
+        '200':
+          description: The node.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workarea' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas/{workarea_id}/tree:
+    get:
+      tags: [workareas]
+      operationId: getWorkareaTree
+      summary: The subtree, paginated; nodes outside read scope are omitted.
+      description: 'Requires: reader effective access.'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of nodes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkareaPage' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas/{workarea_id}/edges:
+    get:
+      tags: [workareas]
+      operationId: listWorkareaEdges
+      summary: Labelled related edges touching the node, pending and ratified; edges confer zero access.
+      description: 'Requires: reader effective access.'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of edges.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkareaEdgePage' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [workareas]
+      operationId: proposeWorkareaEdge
+      summary: Propose a labelled edge from this node; pending until ratified.
+      description: 'Requires: dreamer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7).'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkareaEdgeProposal' }
+      responses:
+        '202':
+          description: Pending edge.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkareaEdge' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workarea-edges/{edge_id}/ratify:
+    post:
+      tags: [workareas]
+      operationId: ratifyWorkareaEdge
+      summary: Ratify a proposed workarea edge.
+      description: 'Requires: dreamer(review) effective access on BOTH endpoints; never the proposer (review.ratifier_is_proposer — R2 extends to edges).'
+      parameters:
+        - { name: edge_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Ratified edge.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkareaEdge' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas/{workarea_id}/status:
+    get:
+      tags: [workareas]
+      operationId: getWorkareaStatus
+      summary: Status, the review policy object in force, pending transitions.
+      description: 'Requires: reader effective access.'
+      parameters: [{ $ref: '#/components/parameters/WorkareaId' }]
+      responses:
+        '200':
+          description: Status view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkareaStatus' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas/{workarea_id}/reparent:
+    post:
+      tags: [workareas]
+      operationId: reparentWorkarea
+      summary: Journalled single-transaction descendant path rewrite; dry_run previews paths and grants affected.
+      description: 'Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen).'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReparentRequest' }
+      responses:
+        '200':
+          description: Re-parented (or the dry-run preview).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas/{workarea_id}/crew:
+    post:
+      tags: [workareas]
+      operationId: updateCrewMetadata
+      summary: Journalled crew-metadata update; allowed on validated areas (freeze covers claims, not metadata).
+      description: 'Requires: admin key role.'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CrewRecord' }
+      responses:
+        '200':
+          description: Updated node.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workarea' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas/{workarea_id}/transitions:
+    post:
+      tags: [workareas]
+      operationId: proposeTransition
+      summary: Propose a forward status transition; pending until a second party ratifies.
+      description: 'Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused).'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransitionProposal' }
+      responses:
+        '202':
+          description: Pending transition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transition' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/workareas/{workarea_id}/transitions/{transition_id}/ratify:
+    post:
+      tags: [workareas]
+      operationId: ratifyTransition
+      summary: Ratify a pending transition; journalled with the policy snapshot.
+      description: 'Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions).'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { name: transition_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Ratified transition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transition' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/events:
+    get:
+      tags: [events]
+      operationId: tailEvents
+      summary: The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
+      description: 'Requires: reader effective access. Paginates by after_seq; full-chain verification is served by the chain export.'
+      parameters:
+        - { name: after_seq, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Events after the given seq, plus the current head seq.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventsPage' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/review/queue:
+    get:
+      tags: [review]
+      operationId: reviewQueue
+      summary: Held-item counts and oldest ages per workarea in the reviewer's scope.
+      description: 'Requires: dreamer(review) effective access.'
+      parameters:
+        - { name: workarea, in: query, schema: { type: string }, description: Subtree filter. }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: Queue depths.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewQueuePage' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/review/next:
+    post:
+      tags: [review]
+      operationId: reviewNext
+      summary: Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under an expiring serve_id.
+      description: 'Requires: dreamer(review). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workarea: { type: string, description: Subtree filter. }
+      responses:
+        '200':
+          description: The serve.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Serve' }
+        '204': { description: Nothing in scope waits. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/review/verdicts:
+    post:
+      tags: [review]
+      operationId: postVerdict
+      summary: Verdict against a valid serve; the journalled verdict records the served digests.
+      description: 'Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure). Resulting state: promoted, held (more verdicts needed) or rejected.'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerdictRequest' }
+      responses:
+        '200':
+          description: Verdict recorded; resulting state stated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerdictResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/review/reopen:
+    post:
+      tags: [review]
+      operationId: reopenRejection
+      summary: Non-author reopen of a rejection — a journalled verb, not a resubmission.
+      description: 'Requires: dreamer(review); the original author is refused (review.author_in_lineage).'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReopenRequest' }
+      responses:
+        '200':
+          description: Returned to the review queue.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys:
+    get:
+      tags: [keys]
+      operationId: listKeys
+      summary: Key ids, roles, principals, labels, expiries — never values.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { name: role, in: query, schema: { $ref: '#/components/schemas/Role' } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of keys.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KeyPage' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [keys]
+      operationId: issueKey
+      summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
+      description: 'Requires: admin key role; operator only with tenant_id, for a tenant''s first admin key. Journalled as issued-without-value (show-once ceremony).'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KeyIssueRequest' }
+      responses:
+        '201':
+          description: The key, value shown once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KeyIssued' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys/{key_id}:
+    get:
+      tags: [keys]
+      operationId: getKey
+      summary: One key — grants, denials, epoch, issuance and revocation events. Never the value.
+      description: 'Requires: admin key role.'
+      parameters: [{ $ref: '#/components/parameters/KeyId' }]
+      responses:
+        '200':
+          description: The key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Key' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys/{key_id}/revoke:
+    post:
+      tags: [keys]
+      operationId: revokeKey
+      summary: Journalled revocation, effective at the next permission-epoch check.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys/{key_id}/rotate:
+    post:
+      tags: [keys]
+      operationId: rotateKey
+      summary: Issue a successor with grants reproduced from the journalled records; one journalled act links old and new.
+      description: 'Requires: admin key role. Per key in v1; bulk crew rotation is open — FR-6.'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap: { type: string, description: 'Overlap window before the old key expires, e.g. "72h".' }
+      responses:
+        '201':
+          description: The successor key, value shown once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KeyIssued' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys/{key_id}/grants:
+    post:
+      tags: [keys]
+      operationId: addGrant
+      summary: Bind the key to a workarea node id (never a path) with optional per-grant deny masks; epoch bump.
+      description: 'Requires: admin key role. A grant''s role never exceeds the key''s role ceiling (access.issuer_ceiling).'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GrantRequest' }
+      responses:
+        '201':
+          description: The grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Grant' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys/{key_id}/grants/{grant_id}/revoke:
+    post:
+      tags: [keys]
+      operationId: revokeGrant
+      summary: Journalled grant removal; epoch bump.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { name: grant_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys/{key_id}/denials:
+    post:
+      tags: [keys]
+      operationId: addDenial
+      summary: Create or extend the key's global deny object — deny-wins across all its grants.
+      description: 'Requires: admin key role. Distinct from a per-grant deny mask.'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DenialRequest' }
+      responses:
+        '201':
+          description: The denial.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Denial' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys/{key_id}/denials/{denial_id}/lift:
+    post:
+      tags: [keys]
+      operationId: liftDenial
+      summary: Journalled lift of a global denial.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { name: denial_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Lifted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/keys/{key_id}/effective-access:
+    get:
+      tags: [keys]
+      operationId: getEffectiveAccess
+      summary: The resolved answer — what this key may do where, and which deny produced each hole.
+      description: 'Requires: admin key role. Reproducible from journalled grants by construction (permission epoch).'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { name: workarea, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Effective access.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EffectiveAccess' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/bans:
+    get:
+      tags: [bans]
+      operationId: listBans
+      summary: Active and lifted bans, with who imposed and who lifted each.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of bans.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BanPage' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [bans]
+      operationId: imposeBan
+      summary: Ban an author or source, checked at every admission; dry_run returns the reach preview without journalling.
+      description: 'Requires: admin key role.'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BanRequest' }
+      responses:
+        '200':
+          description: Dry-run reach preview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BanPreview' }
+        '201':
+          description: Ban imposed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ban' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/bans/{ban_id}/lift:
+    post:
+      tags: [bans]
+      operationId: liftBan
+      summary: Journalled lift; the ban row stays as history (no silent removal of governance acts).
+      description: 'Requires: admin key role.'
+      parameters:
+        - { name: ban_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Lifted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ban' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/simulations:
+    get:
+      tags: [simulations]
+      operationId: listSimulations
+      summary: Simulations with state and audience.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { name: ended, in: query, schema: { type: boolean } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of simulations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationPage' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [simulations]
+      operationId: openSimulation
+      summary: Open a simulation with a journalled audience; no dreamer in the audience means nothing can promote (fail closed, warned).
+      description: 'Requires: admin key role (D10).'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SimulationCreate' }
+      responses:
+        '201':
+          description: The simulation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Simulation' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/simulations/{simulation_id}:
+    get:
+      tags: [simulations]
+      operationId: getSimulation
+      summary: One simulation — audience, rows written, sim-derived taints outside it.
+      description: 'Requires: admin key role.'
+      parameters: [{ name: simulation_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: The simulation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Simulation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/simulations/{simulation_id}/end:
+    post:
+      tags: [simulations]
+      operationId: endSimulation
+      summary: Journalled end — demotes the simulation's rows and triggers re-review of tainted claims; dry_run lists everything the end would touch.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { name: simulation_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run: { type: boolean, default: false }
+      responses:
+        '202':
+          description: End journalled; demotion closure proceeding (or the dry-run listing).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/exports:
+    get:
+      tags: [exports]
+      operationId: listExports
+      summary: Export jobs and their states.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of jobs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportPage' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [exports]
+      operationId: createExport
+      summary: Start an async export job — the signed evidence bundle, or the digest-only chain stream for client-side verification.
+      description: 'Requires: admin key role. The export act is itself journalled; simulations are excluded unless asked for and then listed separately.'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExportRequest' }
+      responses:
+        '202':
+          description: Job accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportJob' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/exports/{export_id}:
+    get:
+      tags: [exports]
+      operationId: getExport
+      summary: Job state — running, done or failed.
+      description: 'Requires: admin key role.'
+      parameters: [{ name: export_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportJob' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/exports/{export_id}/bundle:
+    get:
+      tags: [exports]
+      operationId: downloadExportBundle
+      summary: The signed bundle; export.not_ready before the job is done.
+      description: 'Requires: admin key role.'
+      parameters: [{ name: export_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: The signed bundle.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/settings:
+    get:
+      tags: [settings]
+      operationId: getSettings
+      summary: The configured document as last applied; effective=true adds running values with every divergence marked per key.
+      description: 'Requires: admin key role.'
+      parameters:
+        - { name: effective, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Configured (and optionally effective) settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettingsView' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/settings/validate:
+    post:
+      tags: [settings]
+      operationId: validateSettings
+      summary: Server-side validation without applying; a retired settings key is refused by name, with its replacement.
+      description: 'Requires: admin key role. Read-shaped POST: no Idempotency-Key.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettingsDocument' }
+      responses:
+        '200':
+          description: Findings, including settings.retired_key findings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettingsValidation' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/settings/apply:
+    post:
+      tags: [settings]
+      operationId: applySettings
+      summary: Validate, journal, apply; refused whole on any validation error, and there is no force flag.
+      description: 'Requires: admin key role. Journals system.settings_applied.'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettingsDocument' }
+      responses:
+        '200':
+          description: Applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActResult' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/tenants:
+    post:
+      tags: [tenants]
+      operationId: createTenant
+      summary: Create a tenant; the operator then issues its first admin key and nothing else.
+      description: 'Requires: operator key role. Operator keys never read, write or review content (access.verb_ceiling).'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '201':
+          description: The tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string }
+                  name: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
+  /healthz:
+    get:
+      tags: [health]
+      operationId: healthz
+      summary: Liveness; unauthenticated, no tenant data.
+      security: []
+      responses:
+        '200':
+          description: The process runs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: readyz
+      summary: Readiness — Postgres reachable and the startup fork check passed; unauthenticated.
+      security: []
+      responses:
+        '200':
+          description: The replica can serve.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ready' }
+        '503':
+          description: Not ready, with per-check detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ready' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: OML API key
+      description: >-
+        One key, one role (reader | writer | dreamer | admin | operator), grants scoping it to
+        workarea subtrees. Tenant derives from the key server-side. Each operation's description
+        states its ceiling; refusals are typed (access.verb_ceiling, access.grant_refused,
+        access.not_found) per docs/api/errors.md.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, maxLength: 256 }
+      description: >-
+        Claims an idempotency record (key_id, workarea, idem_key) before side effects. Replay of
+        the same request returns the stored response with header Idempotency-Replay: true; the
+        same key with a different request digest is refused (idempotency.digest_mismatch).
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+      description: Opaque, from the previous page's next_cursor; scoped to the key and expiring.
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema: { type: string }
+    WorkareaId:
+      name: workarea_id
+      in: path
+      required: true
+      schema: { type: string }
+    KeyId:
+      name: key_id
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Error:
+      description: Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unauthorized:
+      description: auth.missing or auth.invalid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NotFound:
+      description: access.not_found — absent or outside read scope, indistinguishable by design.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Conflict:
+      description: A 409-class conflict (idempotency.*, submission.tip_conflict, workarea.frozen, review.serve_invalid, …).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Gone:
+      description: lifecycle.erased — a journalled crypto-shred, never a silent deletion.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    TooLarge:
+      description: request.payload_too_large.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unprocessable:
+      description: A 422-class refusal (submission.scan_veto, upload.digest_mismatch, settings.*, …).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  schemas:
+    Digest:
+      type: string
+      pattern: '^sha256:[0-9a-f]{64}$'
+      description: SHA-256 of plaintext unless a field says ciphertext.
+
+    Role:
+      type: string
+      enum: [reader, writer, dreamer, admin, operator]
+
+    ErrorCode:
+      type: string
+      description: The closed error vocabulary; identical to docs/api/errors.md by construction.
+      enum:
+        - auth.missing
+        - auth.invalid
+        - access.verb_ceiling
+        - access.grant_refused
+        - access.not_found
+        - access.author_only
+        - access.issuer_ceiling
+        - access.banned
+        - request.validation
+        - request.idempotency_key_required
+        - request.payload_too_large
+        - idempotency.in_progress
+        - idempotency.digest_mismatch
+        - submission.scan_veto
+        - submission.attachment_missing
+        - submission.simulation_id_required
+        - submission.tip_conflict
+        - submission.claim_key_conflict
+        - submission.universe_refused
+        - workarea.frozen
+        - workarea.transition_refused
+        - review.author_in_lineage
+        - review.ratifier_is_proposer
+        - review.serve_invalid
+        - simulation.audience_refused
+        - simulation.ended
+        - simulation.taint_refused
+        - upload.session_invalid
+        - upload.digest_mismatch
+        - lifecycle.erased
+        - limit.rate
+        - limit.quota
+        - export.not_ready
+        - settings.retired_key
+        - settings.invalid
+        - system.internal
+        - system.unavailable
+
+    ErrorEnvelope:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message, rule, retryable]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string, description: "Human-readable; unstable, never parsed." }
+            rule: { type: string, description: The design rule the refusal names; stable per code. }
+            details: { type: object, additionalProperties: true }
+            retryable: { type: boolean, description: True only where the identical request can succeed later (Retry-After header present). }
+        request_id: { type: string, description: Mirrors the X-Request-Id response header. }
+
+    SubmitRequest:
+      type: object
+      required: [verb, workarea_id, claim_key, kind, body]
+      properties:
+        verb: { type: string, enum: [remember, learn], description: learn requires non-empty derives_from. }
+        workarea_id: { type: string }
+        claim_key: { type: string, description: "Groups versions of one claim; unique per (tenant, workarea) over non-erased rows." }
+        kind: { type: string, enum: [memory, derived_fact, steering] }
+        body: { type: string, description: Text body; binary content goes through attachments. }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/Digest' }
+          description: Each digest must name a completed upload session owned by this key.
+        derives_from:
+          type: array
+          items: { type: string }
+          description: Artifact ids; the declared lineage (omission is undetectable — honesty rule).
+        simulation_id: { type: [string, 'null'], description: Required when derives_from touches a simulation row; key must be in the audience. }
+        simulated_time: { type: [string, 'null'], format: date-time, description: "Declared data, never backdating — the journal keeps the real timestamp." }
+
+    SubmitAccepted:
+      type: object
+      required: [artifact_id, claim_key, version, state]
+      properties:
+        artifact_id: { type: string }
+        claim_key: { type: string }
+        version: { type: integer }
+        state: { type: string, const: held }
+        plaintext_digest: { $ref: '#/components/schemas/Digest' }
+        scan:
+          type: object
+          properties:
+            result: { type: string }
+            scanner_version: { type: string }
+        journal_seq: { type: integer }
+
+    AttachmentDescriptor:
+      type: object
+      properties:
+        digest: { $ref: '#/components/schemas/Digest' }
+        media_type: { type: string }
+        size_bytes: { type: integer }
+
+    MemorySummary:
+      type: object
+      required: [artifact_id, claim_key, version, workarea_id, kind, state]
+      properties:
+        artifact_id: { type: string }
+        claim_key: { type: string }
+        version: { type: integer }
+        tip: { type: boolean, description: Whether this version is the served tip of its claim. }
+        workarea_id: { type: string }
+        workarea_path: { type: string, description: Derived at read time; grants bind to node ids. }
+        kind: { type: string, enum: [memory, derived_fact, steering] }
+        state: { type: string, enum: [held, promoted, demoted, rejected, erased] }
+        principal: { type: string }
+        provenance: { type: string, enum: [agent, human, connector, simulation] }
+        simulation_id: { type: [string, 'null'] }
+        self_signed: { type: boolean, description: Marked rows under the bounded development exception; never promote beyond their workarea. }
+        plaintext_digest: { $ref: '#/components/schemas/Digest' }
+        derives_from: { type: array, items: { type: string } }
+        attachments: { type: array, items: { $ref: '#/components/schemas/AttachmentDescriptor' } }
+        created_at: { type: string, format: date-time }
+        promoted_at: { type: [string, 'null'], format: date-time }
+
+    Memory:
+      allOf:
+        - { $ref: '#/components/schemas/MemorySummary' }
+        - type: object
+          properties:
+            body: { type: string, description: Decrypted on the serving path only. }
+
+    MemoryPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/MemorySummary' } }
+        next_cursor: { type: [string, 'null'] }
+
+    RecallRequest:
+      type: object
+      required: [workarea_id, query]
+      properties:
+        workarea_id: { type: string, description: Subtree root the key reads. }
+        query: { type: string }
+        k: { type: integer, minimum: 1, maximum: 100, default: 8 }
+        kinds: { type: array, items: { type: string, enum: [memory, derived_fact] } }
+        include_bodies: { type: boolean, default: true }
+
+    RecallResponse:
+      type: object
+      required: [steering, hits]
+      properties:
+        steering:
+          type: array
+          items: { $ref: '#/components/schemas/Memory' }
+          description: Precede hits and carry no score — never ranked (D12).
+        hits:
+          type: array
+          items:
+            type: object
+            required: [memory, score]
+            properties:
+              memory: { $ref: '#/components/schemas/Memory' }
+              score: { type: number }
+        query_digest: { $ref: '#/components/schemas/Digest' }
+
+    Lineage:
+      type: object
+      required: [artifact_id, nodes, edges]
+      properties:
+        artifact_id: { type: string }
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              artifact_id: { type: string }
+              claim_key: { type: string }
+              version: { type: integer }
+              redacted: { type: boolean, description: Outside the key's read scope; bare id only. }
+        edges:
+          type: array
+          items:
+            type: object
+            properties:
+              from_artifact_id: { type: string }
+              to_artifact_id: { type: string }
+              kind: { type: string, enum: [derives_from, claim_edge] }
+              state: { type: string, enum: [pending, ratified] }
+
+    SupersedeRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string }
+        kind: { type: string, enum: [memory, derived_fact, steering] }
+        attachments: { type: array, items: { $ref: '#/components/schemas/Digest' } }
+        derives_from: { type: array, items: { type: string }, description: The superseded target is included implicitly. }
+        reason: { type: string }
+
+    ReassignRequest:
+      type: object
+      required: [workarea_id]
+      properties:
+        workarea_id: { type: string, description: Destination node. }
+        re_key: { type: [string, 'null'], description: New claim_key when the move would collide at the destination. }
+        dry_run: { type: boolean, default: false }
+
+    DemoteRequest:
+      type: object
+      required: [version, reason]
+      properties:
+        version: { type: integer }
+        reason: { type: string }
+
+    EraseRequest:
+      type: object
+      properties:
+        dry_run: { type: boolean, default: false, description: Returns the erasure inventory — every copy class and its disposition. }
+
+    TipOverrideRequest:
+      type: object
+      required: [workarea_id, claim_key, to_version, reason]
+      properties:
+        workarea_id: { type: string }
+        claim_key: { type: string }
+        to_version: { type: integer }
+        reason: { type: string }
+
+    ActResult:
+      type: object
+      description: Outcome of a journalled act, or a dry-run preview when dry_run was true.
+      properties:
+        journal_seq: { type: [integer, 'null'], description: Null for a dry run — nothing was journalled. }
+        event_id: { type: [string, 'null'] }
+        dry_run: { type: boolean }
+        preview: { type: object, additionalProperties: true, description: "Reach preview for mass acts (paths rewritten, rows demoted, inventory)." }
+
+    UploadSessionCreate:
+      type: object
+      required: [expected_digest, size_bytes, media_type]
+      properties:
+        expected_digest: { $ref: '#/components/schemas/Digest' }
+        size_bytes: { type: integer, minimum: 1 }
+        media_type: { type: string }
+
+    UploadSession:
+      type: object
+      required: [session_id, expected_digest, state]
+      properties:
+        session_id: { type: string }
+        expected_digest: { $ref: '#/components/schemas/Digest' }
+        size_bytes: { type: integer }
+        media_type: { type: string }
+        state: { type: string, enum: [open, complete, expired, aborted] }
+        parts:
+          type: array
+          items:
+            type: object
+            properties:
+              part_number: { type: integer }
+              size_bytes: { type: integer }
+        expires_at: { type: string, format: date-time }
+
+    UploadComplete:
+      type: object
+      required: [digest, state]
+      properties:
+        digest: { $ref: '#/components/schemas/Digest' }
+        ciphertext_digest: { $ref: '#/components/schemas/Digest' }
+        state: { type: string, const: complete }
+
+    ClaimEdgeProposal:
+      type: object
+      required: [from_artifact_id, to_artifact_id, label]
+      properties:
+        from_artifact_id: { type: string }
+        to_artifact_id: { type: string }
+        label: { type: string, description: Vocabulary not fixed by the design (open detail). }
+
+    ClaimEdge:
+      type: object
+      required: [edge_id, from_artifact_id, to_artifact_id, state]
+      properties:
+        edge_id: { type: string }
+        from_artifact_id: { type: string }
+        to_artifact_id: { type: string }
+        label: { type: string }
+        state: { type: string, enum: [pending, ratified] }
+        proposer_key_id: { type: string }
+        ratifier_key_id: { type: [string, 'null'] }
+
+    ClaimEdgePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ClaimEdge' } }
+        next_cursor: { type: [string, 'null'] }
+
+    CrewRecord:
+      type: object
+      description: Recorded, not operated — OML never contacts the external manager.
+      properties:
+        name: { type: string }
+        charter_uri: { type: string }
+        external_manager: { type: string }
+
+    Workarea:
+      type: object
+      required: [id, parent_id, path, status]
+      properties:
+        id: { type: string }
+        parent_id: { type: [string, 'null'], description: Null only for the tenant universe root. }
+        path: { type: string, description: Derived ltree path; never the grant target. }
+        status: { type: string, enum: [development, committed, validated] }
+        crew: { $ref: '#/components/schemas/CrewRecord' }
+        created_at: { type: string, format: date-time }
+
+    WorkareaCreate:
+      type: object
+      required: [parent_id, name]
+      properties:
+        parent_id: { type: string }
+        name: { type: string }
+        crew: { $ref: '#/components/schemas/CrewRecord' }
+
+    WorkareaPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Workarea' } }
+        next_cursor: { type: [string, 'null'] }
+
+    WorkareaEdgeProposal:
+      type: object
+      required: [to_workarea_id, label]
+      properties:
+        to_workarea_id: { type: string }
+        label: { type: string, enum: [relates_to, continues, derived_from, mirrors] }
+
+    WorkareaEdge:
+      type: object
+      required: [edge_id, from_workarea_id, to_workarea_id, label, state]
+      properties:
+        edge_id: { type: string }
+        from_workarea_id: { type: string }
+        to_workarea_id: { type: string }
+        label: { type: string, enum: [relates_to, continues, derived_from, mirrors] }
+        state: { type: string, enum: [pending, ratified] }
+        proposer_key_id: { type: string }
+        ratifier_key_id: { type: [string, 'null'] }
+
+    WorkareaEdgePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/WorkareaEdge' } }
+        next_cursor: { type: [string, 'null'] }
+
+    ReviewPolicy:
+      type: object
+      description: The per-workarea review policy object (journalled record; admission page owns it).
+      properties:
+        k: { type: integer }
+        required_roles: { type: array, items: { type: string } }
+        human_required_classes: { type: array, items: { type: string } }
+        independence_axis: { type: string }
+        held_item_expiry: { type: string }
+
+    WorkareaStatus:
+      type: object
+      required: [workarea_id, status]
+      properties:
+        workarea_id: { type: string }
+        status: { type: string, enum: [development, committed, validated] }
+        policy: { $ref: '#/components/schemas/ReviewPolicy' }
+        pending_transitions: { type: array, items: { $ref: '#/components/schemas/Transition' } }
+
+    ReparentRequest:
+      type: object
+      required: [new_parent_id]
+      properties:
+        new_parent_id: { type: string }
+        dry_run: { type: boolean, default: false }
+
+    TransitionProposal:
+      type: object
+      required: [to]
+      properties:
+        to: { type: string, enum: [committed, validated], description: Forward only; backward transitions do not exist. }
+
+    Transition:
+      type: object
+      required: [transition_id, workarea_id, to, state]
+      properties:
+        transition_id: { type: string }
+        workarea_id: { type: string }
+        to: { type: string, enum: [committed, validated] }
+        state: { type: string, enum: [pending, ratified] }
+        proposed_by_key_id: { type: string }
+        ratified_by_key_id: { type: [string, 'null'] }
+        policy_snapshot: { $ref: '#/components/schemas/ReviewPolicy' }
+
+    JournalEvent:
+      type: object
+      description: The event-catalog envelope; payloads are digest-only, never body plaintext (D1).
+      required: [seq, event_id, event_type, at]
+      properties:
+        seq: { type: integer }
+        event_id: { type: string }
+        event_type: { type: string }
+        prev_hash: { type: string }
+        hash: { type: string }
+        sig: { type: string }
+        principal: { type: string }
+        api_key_id: { type: string }
+        at: { type: string, format: date-time }
+        payload: { type: object, additionalProperties: true }
+
+    EventsPage:
+      type: object
+      required: [items, head_seq]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/JournalEvent' } }
+        head_seq: { type: integer, description: "Current per-tenant chain head, for measuring lag." }
+
+    ReviewQueuePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              workarea_id: { type: string }
+              workarea_path: { type: string }
+              held: { type: integer }
+              oldest_age_seconds: { type: integer }
+        next_cursor: { type: [string, 'null'] }
+
+    ServedDigests:
+      type: object
+      properties:
+        body: { $ref: '#/components/schemas/Digest' }
+        attachments: { type: array, items: { $ref: '#/components/schemas/Digest' } }
+        replaces: { $ref: '#/components/schemas/Digest' }
+
+    Serve:
+      type: object
+      required: [serve_id, expires_at, item, served_digests]
+      properties:
+        serve_id: { type: string, description: "Bound server-side to (reviewer key, artifact version, attachment digest set); consumed by its first verdict." }
+        expires_at: { type: string, format: date-time }
+        item: { $ref: '#/components/schemas/Memory' }
+        replaces: { $ref: '#/components/schemas/Memory', description: "For a supersession, the version it replaces." }
+        served_digests: { $ref: '#/components/schemas/ServedDigests' }
+
+    VerdictRequest:
+      type: object
+      required: [serve_id, verdict]
+      properties:
+        serve_id: { type: string }
+        verdict: { type: string, enum: [approve, reject] }
+        reason: { type: string, description: Required to reject. }
+
+    VerdictResult:
+      type: object
+      required: [artifact_id, version, verdict, state]
+      properties:
+        artifact_id: { type: string }
+        version: { type: integer }
+        verdict: { type: string, enum: [approve, reject] }
+        state: { type: string, enum: [promoted, held, rejected], description: held means the policy's k needs more verdicts. }
+        ratification_event_id: { type: [string, 'null'] }
+
+    ReopenRequest:
+      type: object
+      required: [artifact_id, version, reason]
+      properties:
+        artifact_id: { type: string }
+        version: { type: integer }
+        reason: { type: string }
+
+    GrantRequest:
+      type: object
+      required: [workarea_node_id, role]
+      properties:
+        workarea_node_id: { type: string, description: "Node id, never a path." }
+        role: { $ref: '#/components/schemas/Role' }
+        deny:
+          type: array
+          items:
+            type: object
+            properties:
+              subtree_node_id: { type: string }
+          description: Per-grant masks; each masks a subtree within this grant only.
+
+    Grant:
+      allOf:
+        - { $ref: '#/components/schemas/GrantRequest' }
+        - type: object
+          required: [grant_id, epoch]
+          properties:
+            grant_id: { type: string }
+            epoch: { type: integer }
+
+    DenialRequest:
+      type: object
+      required: [workarea_node_id]
+      properties:
+        workarea_node_id: { type: string }
+        reason: { type: string }
+
+    Denial:
+      type: object
+      required: [denial_id, workarea_node_id, epoch]
+      properties:
+        denial_id: { type: string }
+        workarea_node_id: { type: string }
+        epoch: { type: integer }
+        lifted: { type: boolean }
+
+    KeyIssueRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { $ref: '#/components/schemas/Role' }
+        grants: { type: array, items: { $ref: '#/components/schemas/GrantRequest' } }
+        expiry: { type: string, format: date-time }
+        label: { type: string }
+        principal: { type: string }
+        tenant_id: { type: string, description: "Operator keys only, for a tenant's first admin key." }
+
+    Key:
+      type: object
+      required: [key_id, role]
+      properties:
+        key_id: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        principal: { type: string }
+        label: { type: string }
+        expiry: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        grants: { type: array, items: { $ref: '#/components/schemas/Grant' } }
+        denials: { type: array, items: { $ref: '#/components/schemas/Denial' } }
+        epoch: { type: integer }
+
+    KeyIssued:
+      allOf:
+        - { $ref: '#/components/schemas/Key' }
+        - type: object
+          required: [value]
+          properties:
+            value: { type: string, description: "The secret — returned exactly once, journalled as issued-without-value." }
+
+    KeyPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Key' } }
+        next_cursor: { type: [string, 'null'] }
+
+    EffectiveAccess:
+      type: object
+      required: [key_id, epoch, entries]
+      properties:
+        key_id: { type: string }
+        epoch: { type: integer }
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              workarea_node_id: { type: string }
+              path: { type: string }
+              role: { $ref: '#/components/schemas/Role' }
+              masked_by: { type: [string, 'null'], description: "The deny (per-grant or global) that produced a hole, when one does." }
+
+    BanRequest:
+      type: object
+      required: [subject_kind, subject]
+      properties:
+        subject_kind: { type: string, enum: [principal, source] }
+        subject: { type: string }
+        reason: { type: string }
+        dry_run: { type: boolean, default: false, description: Returns the reach preview without journalling. }
+
+    Ban:
+      type: object
+      required: [ban_id, subject_kind, subject]
+      properties:
+        ban_id: { type: string }
+        subject_kind: { type: string, enum: [principal, source] }
+        subject: { type: string }
+        reason: { type: string }
+        imposed_by_key_id: { type: string }
+        imposed_at: { type: string, format: date-time }
+        lifted_by_key_id: { type: [string, 'null'] }
+        lifted_at: { type: [string, 'null'], format: date-time }
+
+    BanPreview:
+      type: object
+      description: Reach preview — nothing journalled.
+      properties:
+        keys_affected: { type: array, items: { type: string } }
+        held_refusals: { type: integer }
+        workareas_touched: { type: array, items: { type: string } }
+
+    BanPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Ban' } }
+        next_cursor: { type: [string, 'null'] }
+
+    SimulationCreate:
+      type: object
+      required: [audience]
+      properties:
+        audience:
+          type: array
+          items:
+            type: object
+            properties:
+              key_id: { type: string }
+              grant_ref: { type: string }
+        label: { type: string }
+
+    Simulation:
+      type: object
+      required: [simulation_id, state, audience]
+      properties:
+        simulation_id: { type: string }
+        state: { type: string, enum: [open, ended] }
+        audience:
+          type: array
+          items:
+            type: object
+            properties:
+              key_id: { type: string }
+              grant_ref: { type: string }
+        label: { type: string }
+        opened_at: { type: string, format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+        warnings: { type: array, items: { type: string }, description: E.g. no dreamer in the audience — nothing can promote (fail closed). }
+
+    SimulationPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Simulation' } }
+        next_cursor: { type: [string, 'null'] }
+
+    ExportRequest:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [evidence, chain], description: "Signed evidence bundle, or digest-only chain stream for client-side verification." }
+        from_seq: { type: integer }
+        include_simulations: { type: boolean, default: false, description: "When true, simulation rows are listed separately by simulation_id." }
+
+    ExportJob:
+      type: object
+      required: [export_id, kind, state]
+      properties:
+        export_id: { type: string }
+        kind: { type: string, enum: [evidence, chain] }
+        state: { type: string, enum: [running, done, failed] }
+        requested_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        bundle_bytes: { type: [integer, 'null'] }
+
+    ExportPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ExportJob' } }
+        next_cursor: { type: [string, 'null'] }
+
+    SettingsDocument:
+      type: object
+      description: The settings document; its schema is not fixed by this design — the contract is show/validate/apply and the retired-key refusal.
+      additionalProperties: true
+
+    SettingsView:
+      type: object
+      properties:
+        configured: { $ref: '#/components/schemas/SettingsDocument' }
+        applied_at: { type: string, format: date-time }
+        applied_event_id: { type: string }
+        effective: { $ref: '#/components/schemas/SettingsDocument' }
+        divergences:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              configured: {}
+              effective: {}
+              cause: { type: string, description: "Defaulted value, not-yet-picked-up change, or per-replica variance." }
+
+    SettingsValidation:
+      type: object
+      required: [valid, findings]
+      properties:
+        valid: { type: boolean }
+        findings:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string, description: settings.retired_key or settings.invalid. }
+              key: { type: string }
+              replacement: { type: [string, 'null'], description: "For a retired key, the setting that replaced it." }
+              message: { type: string }
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, const: ok }
+
+    Ready:
+      type: object
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+        checks:
+          type: object
+          additionalProperties: { type: string }
+          description: Per-check detail, e.g. postgres, fork_check.

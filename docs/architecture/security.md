@@ -1,0 +1,256 @@
+# Security and tenancy
+
+**Status:** design draft for review · decided, not built
+
+This page owns decision **D6**: the tenancy model, the controls on privileged services, the key
+custody map, and the threat model — written against hostile co-tenants from the start, not
+retrofitted onto a single-operator assumption. The signing chain and commit protocol this page
+leans on are declared in [storage.md](storage.md); roles, the issuer ceiling and ban verbs in
+[roles-and-keys.md](roles-and-keys.md); grants, denies and the permission epoch in
+[workareas.md](workareas.md); the admission pipeline in [admission.md](admission.md); the erasure
+inventory and read log in [audit-and-lineage.md](audit-and-lineage.md).
+
+The attacker this page is written against is not an outsider. It is a **hostile co-tenant**: a
+party with valid API keys on the same deployment, sharing the same Postgres cluster, the same
+object store, the same oml-server replicas, who wants to read, corrupt, impersonate or starve
+another tenant. Every control below is judged against that attacker first.
+
+## Tenancy model
+
+Tenancy is first-class, not a column added later.
+
+**Tenant is derived server-side from the API key, never from the request.** No request parameter,
+header, path segment or MCP tool argument names a tenant. oml-server resolves the bearer key to its
+`api_keys` row and takes `tenant_id` from there; a request that tries to name a tenant has no
+vocabulary to do it in. This removes the entire class of confused-deputy bugs in which a valid key
+is combined with someone else's tenant identifier.
+
+**Row-level security on every table, keyed by `tenant_id`.** Every Postgres table in the
+[PostgreSQL schema](../data/postgres-schema.md) carries an RLS policy; there is no table exempted for convenience. Service roles run with RLS
+enforced — no role used by any OML workload holds `BYPASSRLS` (see privileged services below). RLS
+is the second fence behind application-level scoping: a query that escapes a `WHERE` clause bug
+still cannot cross a tenant boundary, because the policy is evaluated by Postgres, not by our code.
+The cost is stated plainly: RLS predicates sit on every query plan, and the performance of
+per-tenant partitioned indexes under RLS is unmeasured — tracked with the pgvector FR in the
+[roadmap](../product/roadmap.md).
+
+**Per-tenant isolation extends through every storage layer:**
+
+- **Journal chains are per tenant** — one chain-head row per `tenant_id`, per-tenant `seq`, so one
+  tenant's write rate never serializes against another's chain lock, and a tenant's evidence export
+  verifies its own chain without touching anyone else's ([storage.md](storage.md)).
+- **Lake table prefixes are per tenant**, and when the object store is externalized, **storage
+  credentials are per tenant** — a credential leak for one tenant's prefix does not open another's.
+- **Embeddings and FTS are partitioned**: `memory_embeddings` is list-partitioned by `tenant_id`
+  with per-partition HNSW indexes and RLS on top ([retrieval.md](retrieval.md)). There is no
+  shared vector space across tenants; a nearest-neighbour query physically cannot return another
+  tenant's row, rather than merely filtering it out after ranking.
+- **Quarantine and body objects are keyed under per-tenant paths**
+  (`oml-quarantine/<tenant>/<digest>`, `oml-bodies/<tenant>/<digest>`).
+
+What is shared is the deployment: the Postgres cluster, the oml-server replicas and their signing
+key, the KMS, the lake-writer. The controls on those shared components are the next two sections.
+
+## Privileged services are designed, not waved through
+
+Three workloads touch many tenants' data by nature. Each runs under its own credentials, with the
+narrowest grant that lets it do its one job, and none holds the signing key.
+
+**oml-lakewriter** drains the outbox and materializes lake rows. It iterates **per tenant**: for
+each tenant's batch it opens a Postgres session under a `SET`-tenant, RLS-scoped session role — it
+sees one tenant at a time, under the same RLS policies as everyone else, with **no `BYPASSRLS`**.
+Its KMS grant is **generate-data-key / encrypt only, never decrypt**: it can wrap new DEKs and
+write ciphertext bodies to the lake, but a compromised lake-writer cannot decrypt a single body,
+its own writes included. It writes to the lake under the per-tenant storage credential for the
+tenant it is currently serving.
+
+**oml-reconciler** compares the lake against the journal fold ([reconciliation.md](reconciliation.md)).
+It runs **read-only**: a read-only Postgres role, read access to the lake, and **no KMS grant at
+all** — digest comparison is over ciphertext digests, keylessly, by design (D3 records the
+ciphertext digest in object metadata precisely so the reconciler never needs a key). When it finds
+a discrepancy, it does not repair in place: repairs are **emitted through the outbox via
+oml-server**, as journalled acts under the reconciler's own identity. A compromised reconciler can
+therefore lie in its findings but cannot silently alter data — every repair it causes is a signed
+journal event someone can audit.
+
+**oml-indexer** computes embeddings and FTS entries over promoted rows. It runs under its own
+per-tenant credentials and never the signing key. It necessarily handles plaintext (you cannot
+embed ciphertext); it holds no KMS decrypt grant: promoted plaintext reaches it on the serving
+side of decryption ([retrieval.md](retrieval.md)), keeping oml-server the single decryption locus.
+Where the embedding model runs is the embedding RS row in the
+[roadmap](../product/roadmap.md); an answer that required an indexer decrypt grant would revise
+this custody map as its own journalled decision.
+
+The common pattern: **the authority to make something true (sign a journal event) lives only in
+oml-server; privileged services hold the authority to copy, compare and derive, each scoped so its
+compromise is bounded and its actions leave journal evidence.**
+
+## Key custody map
+
+Who loads what. "Never" entries are the point of the table.
+
+| Material | oml-server | oml-lakewriter | oml-reconciler | oml-indexer | `oml` CLI |
+|---|---|---|---|---|---|
+| ed25519 deployment signing key | **loads it (every replica)** | never | never | never | never |
+| KMS: decrypt (unwrap DEKs) | serving path only | **never** | **never** | **never** — reads promoted plaintext on the serving side of decryption ([retrieval.md](retrieval.md)) | never |
+| KMS: generate-data-key / encrypt | yes (admission) | yes (lake writes) | never | never | never |
+| Postgres role | RLS-scoped service role | per-tenant `SET`-tenant RLS role, no `BYPASSRLS` | read-only RLS role | per-tenant RLS role | none (talks HTTP) |
+| Object-store credentials | quarantine + bodies | per-tenant lake prefixes | read-only | read (promoted bodies) | none |
+| API keys | verifies hashes; never stores values | holds none | holds none | holds none | bearer of operator/admin/dreamer keys |
+
+Two statements in this map deserve their own sentences.
+
+**The signing key lives only in oml-server — and in every oml-server replica.** Each replica loads
+the same deployment signing key from a Kubernetes Secret or KMS; what is unique is chain-head
+assignment in Postgres, not the process holding the key ([storage.md](storage.md)). The signature
+therefore attests *the deployment*, not an individual process, and the threat model says so without
+flinching: **compromise of any oml-server replica is compromise of the signing key.** An attacker
+on one replica can sign arbitrary events for as long as the compromise lasts. The mitigations are
+recovery-shaped, not prevention-shaped: the per-tenant chain makes forged history detectable by any
+holder of a prior chain head, the startup fork check refuses to extend a chain that does not verify
+against the last signed head, and key rotation after a suspected compromise is a journalled act.
+What the design does *not* claim: per-replica keys, HSM-resident signing, or threshold signatures.
+Those are possible hardenings with real operational cost, and none is committed — if one becomes a
+requirement it enters the roadmap as its own row.
+
+**The KEK never leaves KMS.** Per-artifact DEKs are wrapped and unwrapped by KMS calls; no OML
+process ever holds the KEK. Crypto-shredding ([audit-and-lineage.md](audit-and-lineage.md))
+destroys the wrapped DEK, and the encrypt-only grants above mean that destruction cannot be undone
+by any service that merely writes data.
+
+## STRIDE, redone for hostile co-tenants
+
+Each row names the threat as a co-tenant would mount it, the controls that answer it, and what
+remains. Nothing in this table is built or measured; every control is a design commitment.
+
+| Threat | Co-tenant attack | Controls | Residual |
+|---|---|---|---|
+| **S**poofing | Steal or phish another tenant's bearer key; present it as that tenant. | Keys are stored as hashes, shown once at issuance and journalled as issued-without-value ([roles-and-keys.md](roles-and-keys.md)); expiry on every key; revocation is a journalled act effective at the next permission-epoch check; tenant is derived from the key, so a stolen key spoofs *one tenant's one role*, never a chosen tenant. | A bearer key is full capability of that key until expiry or revocation. Key theft on the client side is outside OML's reach; short expiry and scoped grants bound the blast radius, they do not remove it. |
+| **T**ampering | Use leaked lake/storage credentials to rewrite another tenant's lake rows or objects; or corrupt Postgres rows. | Per-tenant lake prefixes and per-tenant storage credentials bound a leak to one tenant. The lake is derived, never authoritative, and serves no client read ([storage.md](storage.md)) — tampered lake rows mislead analytics, not serving. The reconciler's digest-mismatch finding class detects divergence keylessly ([reconciliation.md](reconciliation.md)). In Postgres: journal tables are append-only (REVOKE UPDATE/DELETE plus guard trigger); the per-tenant hash chain and signatures make any rewrite of history fail verification. | Tampering between reconciler runs is live until detected; detection latency is the reconciler's cadence. A Postgres superuser is outside the model — the deployment's DBA is trusted. |
+| **R**epudiation | A writer denies having written a claim; a reviewer denies a verdict; a tenant disputes what was served. | Every mutation is a signed, hash-chained, attributed journal event (key id, principal, timestamp). Verdicts are bound to a serve record of exactly what was reviewed (serve_id, below). Reads are logged with per-batch digests anchored into the journal ([retrieval.md](retrieval.md)). The evidence export replays the decision trail per memory ([audit-and-lineage.md](audit-and-lineage.md)). | Attribution says which *key* acted. Binding a key to a human or crew member is the tenant's key-hygiene problem; shared keys dilute repudiation evidence and the docs say so rather than pretending otherwise. |
+| **I**nformation disclosure | Read another tenant's memories across the shared database or the shared search machinery; or exfiltrate via the lake. | RLS keyed by `tenant_id` on every table, with no service role holding `BYPASSRLS`. Tenant never taken from the request. Embeddings and FTS are physically partitioned per tenant — there is no cross-tenant index to leak through, and ranking never sees foreign rows. Within a tenant, simulation rows are additionally excluded from the shared indexes and served only to the simulation's audience ([simulations.md](simulations.md)). Lake bodies are per-artifact-DEK ciphertext; lake access without KMS decrypt yields digests and attribution, not content. | Attribution metadata (writer, principal, timestamps, workarea path) is in the clear in the lake by commissioning requirement; its erasure is a tracked FR ([audit-and-lineage.md](audit-and-lineage.md)). Side channels (timing, resource contention on shared replicas) are not addressed in v1. |
+| **D**enial of service | Flood writes, uploads or queries to starve co-tenants on shared replicas, Postgres, or review capacity. | Quotas and rate limits are journalled grant attributes; exceeding one returns a typed 429 naming the rule ([errors.md](../api/errors.md)). Upload sessions are bounded and digest-checked. Admission fails closed rather than queueing unboundedly ([admission.md](admission.md)). Bans cut a hostile author or source off at admission (below). | **v1 enforcement is per-replica token buckets at limit/N — a documented approximation.** With N replicas and uneven load balancing, a tenant can transiently exceed or be unfairly denied its global limit; there is no shared counter in v1. Resolving the approximation — shared enforcement, or a recorded decision keeping it with a stated error bound — is [FR-8](../product/roadmap.md). Per-tenant chain locks mean one tenant cannot serialize another's writes, but shared CPU/IO contention on replicas remains. |
+| **E**levation of privilege | Mint a stronger key; keep using a revoked or widened-then-narrowed grant; act as reviewer on one's own work. | **Issuer ceiling**: a key is issued with a role no higher than its issuer's — no chain of issuance ever ascends ([roles-and-keys.md](roles-and-keys.md)). **Permission epochs**: every grant change bumps the epoch, invalidating cached effective-access computations, so revocation and deny changes take effect at the next check, reproducibly from journalled grants ([workareas.md](workareas.md)). Verb ceiling R1: no agent-callable surface promotes, signs, demotes or deletes, whatever the key. Admin ≠ reviewer; reviewer ≠ author enforced against the lineage closure at promotion time ([roles-and-keys.md](roles-and-keys.md)). Operator never reads or writes content. | Cache-invalidation latency between a revocation commit and the next epoch check is a bounded window, stated rather than hidden; its bound is a deployment parameter. Collusion between distinct keys is not an elevation the ceiling can stop — see residual risks. |
+
+## serve_id binding as anti-replay
+
+The review ceremony's serve record is a security mechanism, not an ergonomic one, so its properties
+are restated here (the ceremony itself is declared in [cli/reference.md](../cli/reference.md), the
+policy it executes in [admission.md](admission.md)).
+
+A verdict is accepted only under a `serve_id` that oml-server bound, server-side, to the tuple
+**(reviewer key, artifact version, attachment digest set)**. The serve expires, is **consumed by
+its first verdict**, and is **invalidated by any change to the served content**. The journalled
+verdict records the digests that were served. This closes four replay-shaped attacks at once:
+
+- **Verdict replay** — a captured approve cannot be submitted twice; the serve is single-use.
+- **Bait-and-switch** — content changed after serving (a new version, a swapped attachment)
+  invalidates the serve; the verdict that arrives references digests that no longer match and is
+  refused.
+- **Verdict transplant** — a verdict minted under one reviewer key cannot be submitted by another;
+  the binding names the key.
+- **Blind approval** — a reviewer cannot ratify what was never served to it; no valid serve, no
+  verdict, enforced server-side regardless of what the client claims.
+
+The residual is honest: serve binding proves what was *served*, not what was *read*. A negligent
+reviewer that approves without looking produces the same evidence as a diligent one; the
+independence axis and reciprocal-approval statistics ([roles-and-keys.md](roles-and-keys.md)) make
+that pattern visible over time, they do not prevent a single instance.
+
+## Bans are enforced at admission
+
+A ban is a journalled admin act against an author or source, and it is **checked at admission** —
+the first step of the pipeline, before quarantine, scanning or review spend a cycle
+([admission.md](admission.md)). A banned principal's write is refused with a typed error at the
+door; nothing from it is held, stored or queued for review. This makes bans a denial-of-service
+control as much as a content control: a hostile or compromised writer identity is cut off before it
+can consume quarantine storage or reviewer capacity. Lifting a ban is an equally journalled act,
+and the CLI previews a ban's reach with `--dry-run` before it lands
+([cli/reference.md](../cli/reference.md)). A ban names an author or source; it is not a tenant-wide
+switch, and it does not touch rows already promoted — demotion and erasure remain the journalled
+verbs for those.
+
+## Trust boundaries
+
+```mermaid
+flowchart LR
+  subgraph clients["Tenant clients — untrusted"]
+    A["Agent / crew<br/>(bearer API key)"]
+    CLI["oml CLI<br/>(operator / admin / dreamer key)"]
+  end
+
+  subgraph tcb["TCB: oml-server replicas"]
+    S["oml-server<br/>holds the deployment signing key<br/>decrypts DEKs on the serving path<br/>derives tenant from key"]
+  end
+
+  subgraph data["Data plane — RLS enforced, no BYPASSRLS role exists"]
+    PG[("PostgreSQL<br/>journal · metadata · outbox<br/>RLS on every table")]
+    OS[("Object store<br/>quarantine + bodies<br/>ciphertext, per-tenant paths")]
+    DL[("Delta Lake<br/>per-tenant prefixes<br/>ciphertext bodies, derived only")]
+  end
+
+  subgraph priv["Privileged services — outside the TCB, no signing key"]
+    LW["oml-lakewriter<br/>SET-tenant RLS sessions<br/>KMS encrypt-only"]
+    RC["oml-reconciler<br/>read-only, keyless<br/>repairs via outbox through oml-server"]
+    IX["oml-indexer<br/>own per-tenant credentials"]
+  end
+
+  KMS["KMS<br/>KEK never leaves"]
+
+  A -- "HTTPS, bearer key" --> S
+  CLI -- "HTTPS, bearer key" --> S
+  S --> PG
+  S --> OS
+  S -- "wrap / unwrap DEK" --> KMS
+  PG -- "outbox drain" --> LW
+  LW --> DL
+  LW -- "generate-data-key / encrypt only" --> KMS
+  RC -. "read-only" .-> PG
+  RC -. "read-only" .-> DL
+  RC -- "repair proposals" --> S
+  IX --> PG
+```
+
+Boundary crossings, read off the diagram: everything a tenant can do crosses exactly one boundary,
+into oml-server, carrying a bearer key — there is no client path to Postgres, the object store, the
+lake or KMS. The signing authority never crosses out of the TCB. The privileged services sit
+between the data stores but hold no authority to sign and (lake-writer, reconciler) no authority to
+decrypt; their writes either go through RLS-scoped sessions or come back around through oml-server
+as journalled acts.
+
+## Residual risks, stated plainly
+
+Design commitments above reduce these; none removes them. Each is carried honestly rather than
+rounded up to a guarantee.
+
+1. **Undeclared derivation is undetectable.** The reviewer-independence rule R2 excludes a
+   reviewer whose key or principal appears in a row's *declared* lineage closure. A writer that
+   omits `derives_from` defeats that closure, and the service cannot know. Lineage exclusion is
+   exactly as good as the declared graph — the constitution states this honesty rule itself
+   ([ADR-0001 in the decision register](../adr/index.md)), and this page repeats it because a
+   security reader must not infer more.
+2. **Collusion is made visible, not impossible.** Two keys approving each other's work pass every
+   per-row check. The independence axis (distinct principal, optionally distinct crew/manager) and
+   the reciprocal-approval statistics in the evidence export
+   ([audit-and-lineage.md](audit-and-lineage.md)) are detection instruments for a human auditor,
+   not prevention.
+3. **Rate limiting is a per-replica approximation.** Token buckets at limit/N per replica, no
+   shared counter in v1; transient over- and under-admission is expected under skewed load
+   balancing. Its resolution is [FR-8](../product/roadmap.md).
+4. **Replica compromise is signing-key compromise.** Stated in the custody map; repeated here
+   because it is the largest single trust assumption in the design. Detection (fork check, chain
+   verification against prior heads) and journalled rotation are the answer; prevention via
+   per-replica or HSM keys is not committed.
+5. **The platform operator is trusted.** A Postgres superuser, a KMS administrator, or whoever
+   holds the Kubernetes Secrets can read attribution metadata, destroy or exfiltrate keys, and
+   rewrite unprotected state. OML's evidence (signed chains held by tenants via exports) makes
+   some of this detectable after the fact; none of it is prevented. OML is a trusted-provider
+   design, and no page claims otherwise.
+6. **Attribution metadata outlives erasure.** Crypto-shredding destroys body and attachment
+   bytes; who wrote what, when, where remains, in Postgres and in the lake, until the
+   attribution-erasure FR lands ([audit-and-lineage.md](audit-and-lineage.md),
+   [roadmap](../product/roadmap.md)).
+
+Everything on this page is decided, not built; no control here has been penetration-tested,
+load-tested or measured, and the roadmap rows named above are where each open edge is tracked to an
+exit criterion.

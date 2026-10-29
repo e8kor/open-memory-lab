@@ -1,0 +1,817 @@
+# The agent plugin: MCP over streamable HTTP
+
+**Status:** design draft for review · decided, not built
+
+This page declares the surface an AI agent wires into its tool loop: an MCP
+server speaking the streamable HTTP transport, mounted on `oml-server` as a
+facade over the versioned [JSON HTTP API](http-api.md). Every tool below
+translates to one `/v1` call; nothing exists here that the HTTP API does not
+also offer, and much exists there that this surface deliberately does not
+(D13). The tool catalog is the **agent-safe subset**: the verbs a writing or
+recalling agent needs, and none of the verbs that change what others may see.
+
+## Transport: streamable HTTP, stateless
+
+The plugin runs the MCP streamable HTTP transport in stateless mode, declared
+up front:
+
+- **No server session id.** The server issues no `Mcp-Session-Id`; a client
+  that sends one is ignored, not refused. `initialize` is answered honestly
+  (protocol version, capabilities, server name) and nothing is stored.
+- **Every tool call is independent.** Each HTTP POST carries one complete
+  JSON-RPC request and receives one complete JSON response
+  (`Content-Type: application/json`). The server opens no SSE stream in
+  response to a POST, and `GET` on the MCP endpoint — the server-initiated
+  stream — is refused.
+- **SSE push, resumability and server-initiated messages are out of scope for
+  v1.** There are no subscriptions, no progress notifications, no
+  server-to-client requests.
+
+Why this fits, stated with its cost:
+
+- `oml-server` runs as N stateless replicas behind one service
+  ([deployment](../operations/deployment.md)). A session id would demand
+  sticky routing or shared session state for a surface that needs neither;
+  stateless mode lets any replica answer any call.
+- Agents crash, restart and retry. A session to resume is a failure mode to
+  handle; an independent call retried with the same
+  [idempotency key](#oml_remember) is a no-op by construction
+  ([idempotency records](http-api.md), D13).
+- No tool in the catalog needs push. The one tool shaped like a stream,
+  [`oml_events_tail`](#oml_events_tail), is a poll from a client-held journal
+  sequence — which is exactly what stateless mode permits.
+- The cost is real and accepted: an agent that wants to react to events polls
+  and pays the latency of its polling interval, and long-running server-side
+  work cannot stream progress. If a v1 use case surfaces that needs push, that
+  is a new decision, not a quiet extension.
+
+The MCP specification revision the implementation pins, and the transport
+behavior verified against it, are recorded with a fetch date at implementation
+time — the same sourcing discipline the auth question below already follows.
+
+## Authentication: bearer keys
+
+Every HTTP request carrying an MCP message presents the agent's API key:
+
+```
+Authorization: Bearer oml_k_01JB2X8F0YQZ6W4N7R9T3VH5MD
+```
+
+The mapping is entirely server-side (D6): the key resolves to a tenant, a
+role, and a set of grants over workarea subtrees
+([roles and keys](../architecture/roles-and-keys.md),
+[workareas](../architecture/workareas.md)). No request field names a tenant,
+and a tenant named in a request body would be ignored in favor of the key's.
+A call without a valid key is refused before any tool dispatch. There is no
+anonymous tool, including `tools/list`.
+
+One key per agent identity is not a convenience but a correctness input:
+attribution, the reviewer-is-never-the-author check (R2) and the
+reciprocal-approval statistics in the evidence export all key off the
+(key, principal) pair. A key shared across crew members makes their work
+mutually indistinguishable to every one of those mechanisms.
+
+The MCP specification defines an OAuth 2.1 authorization model; OML ships
+bearer keys in v1. Whether and when OML adopts OAuth is an open research
+row with a sourcing requirement on it — see
+[RS-2 in the roadmap](../product/roadmap.md), which may only be finalized
+with spec revision, fetch date and verified client support.
+
+## The verb ceiling: what this surface can never do (R1)
+
+**No promote, sign, demote, delete or admin verb exists on this surface.**
+Not refused — absent. The `tools/list` result is the entire surface, and it
+contains nine read-and-propose tools. There is no tool whose success changes
+what *other* keys can read, except by entering the admission pipeline as a
+held submission that an independent reviewer must ratify
+([admission](../architecture/admission.md), R3).
+
+Concretely:
+
+- Promotion is an effect of ratification inside the admission pipeline, never
+  a callable verb — on any surface
+  ([permission matrix](../architecture/roles-and-keys.md#permission-matrix)).
+- Signing is done by `oml-server` with the deployment key
+  ([storage](../architecture/storage.md)); no client signs anything.
+- Review verdicts and connection ratification are dreamer(review) verbs on
+  the [HTTP API](http-api.md), bound to the serve ceremony — a server-issued,
+  expiring `serve_id` consumed by its first verdict (D14,
+  [review guide](../review-guide.md)). They are deliberately not MCP tools:
+  the catalog stays writer/reader/propose-safe, so handing an agent this
+  plugin config hands it no path to a verdict, whatever role its key carries.
+- Demote, erase, key issuance, workarea creation, reassignment, bans and
+  simulations are admin or operator verbs on the HTTP API and
+  [CLI](../cli/reference.md).
+
+An agent that tries anyway gets the MCP-level refusal for an unknown tool:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "error": {
+    "code": -32602,
+    "message": "Unknown tool: oml_promote. This surface carries no promote, sign, demote, delete or admin verb (R1); see tools/list for the complete catalog."
+  }
+}
+```
+
+## Catalog conventions
+
+- **Who may call** states the role class whose grants carry the verb, per the
+  [permission matrix](../architecture/roles-and-keys.md#permission-matrix).
+  Authorization is resolved from the key's *effective access* in the named
+  workarea at call time — union of grants, attenuated by denies, deny-wins
+  ([workareas](../architecture/workareas.md#effective-access-union-of-attenuated-grants-then-deny-wins)) —
+  never from the role name alone. A writer key recalls only where it also
+  holds reader-scope grants.
+- **Errors** are the typed, fail-closed taxonomy of the HTTP API, surfaced as
+  MCP tool results with `isError: true` and the typed error object as
+  structured content. Every error names the rule that refused the call. The
+  taxonomy — spellings, retryability, HTTP status mapping including the 429
+  quota family — is declared in [errors.md](errors.md); the examples below
+  use its codes, and a retryable refusal carries a `Retry-After` header in
+  seconds. One shared example, the per-replica-approximated quota
+  limit (D6, [FR-8](../product/roadmap.md)):
+
+```json
+{
+  "error": {
+    "code": "limit.quota",
+    "rule": "tenant quota (journalled grant attribute; enforced per replica at limit/N)",
+    "message": "write quota exhausted for this key's tenant",
+    "retryable": true
+  }
+}
+```
+
+- **Out-of-scope reads fail closed without leaking existence**: asking about
+  a workarea or artifact the key cannot read returns the same typed error as
+  asking about one that does not exist.
+- **Pagination** is cursor-based everywhere a list can grow; the client holds
+  the cursor (stateless), and the cursor contract — including the events
+  tail's deliberate `after_seq` exception — is owned by
+  [http-api.md](http-api.md).
+- **Simulation fencing** applies to every read tool below: rows with
+  `provenance: simulation` are served only to keys in that simulation's
+  audience ([simulations](../architecture/simulations.md)). This is a
+  predicate, not an error — fenced rows are simply absent.
+- All identifiers in the examples are illustrative.
+
+| Tool | One line | Role class |
+|---|---|---|
+| [`oml_remember`](#oml_remember) | Submit a memory — held on arrival | writer |
+| [`oml_recall`](#oml_recall) | Search promoted memories in a subtree; steering first | reader |
+| [`oml_learn`](#oml_learn) | Submit a derived fact with declared lineage — held on arrival | writer |
+| [`oml_attach`](#oml_attach) | Open or inspect a resumable upload session | writer |
+| [`oml_relate_propose`](#oml_relate_propose) | Propose a claim↔claim or workarea↔workarea edge | dreamer (propose) |
+| [`oml_my_work`](#oml_my_work) | Status of the caller's own submissions | any content role (own work only) |
+| [`oml_workarea_info`](#oml_workarea_info) | One workarea: status, crew, the caller's effective verbs | reader |
+| [`oml_graph`](#oml_graph) | Scoped claims-and-edges read; serialize, don't compute | reader |
+| [`oml_events_tail`](#oml_events_tail) | Poll journal events in scope, from a client-held cursor | reader |
+
+---
+
+## `oml_remember`
+
+Submit a memory. The text, any attachments (by upload-session reference) and
+the declared lineage enter the admission pipeline as one claim, **held on
+arrival** — scanned, then reviewed by an identity that did not write it,
+and visible to others only after ratification (R2, R3;
+[admission](../architecture/admission.md)). Success here means *accepted for
+review*, never *published*.
+
+**Who may call:** keys with writer effective access on the target workarea.
+
+**Input**
+
+```json
+{
+  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "claim_key": "supplier-quote-am-7741",
+  "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.",
+  "attachments": [
+    { "upload_session": "ups_01JB2XD9W6E4T2Y8U1O3PA5SKF" }
+  ],
+  "derives_from": [
+    "art_01JB2WYT5H8K3N6Q9S2VX4ZC7B"
+  ],
+  "idempotency_key": "crew-procure/run-4412/step-9"
+}
+```
+
+- `workarea` — the target node id. Paths are derived, grants bind to node
+  ids; a path given here is resolved to its node first
+  ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
+- `attachments` — upload sessions previously completed via
+  [`oml_attach`](#oml_attach). The session's recorded digest is bound into
+  the signed submission envelope (D3).
+- `derives_from` — artifact ids this memory derives from. Lineage is
+  **declared**, and the honesty rule applies in full: a writer that omits
+  `derives_from` is not detectable by the service, so lineage-based review
+  exclusion is exactly as good as the declared graph (R2 scope,
+  [audit and lineage](../architecture/audit-and-lineage.md)).
+- `idempotency_key` — scoped to (key, workarea). A retry with the same key
+  and an identical request returns the stored response; the same key with a
+  *different* request is a typed error, never a second write (D13,
+  [http-api.md](http-api.md)).
+
+**Output**
+
+```json
+{
+  "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
+  "claim_key": "supplier-quote-am-7741",
+  "version": 1,
+  "state": "held",
+  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "attachments_bound": 1,
+  "idempotent_replay": false
+}
+```
+
+`claim_key` groups the versions of one claim; the caller supplies it, unique
+per workarea over non-erased claims (`submission.claim_key_conflict` on
+collision — [http-api.md](http-api.md)). Proposing a *new version* of an
+existing claim — supersession of the caller's own claim — is a writer verb on
+the [HTTP API](http-api.md) and is not in this v1 tool catalog.
+
+**Refusals** — writing without writer effective access on the node; writing
+into a `validated` (frozen) workarea or directly into `universe`; an unknown
+or incomplete upload session; a digest mismatch between session and envelope;
+an idempotency-key reuse with a different request; a banned author or source
+(checked at admission). Example — frozen target:
+
+```json
+{
+  "error": {
+    "code": "workarea.frozen",
+    "rule": "status ladder: a validated workarea refuses new writes (D8)",
+    "message": "workarea wa_01JB2XCQ… is validated; writes are refused. Demote, erasure and crew-metadata update are its only admissible mutations, none on this surface.",
+    "retryable": false
+  }
+}
+```
+
+## `oml_recall`
+
+Search promoted memories within a workarea subtree. FTS and vector search are
+served from the Postgres serving tier, never the lake
+([retrieval](../architecture/retrieval.md), D12). Every recall is logged to
+the read log: key, workarea, query digest, returned ids, timestamp.
+
+**Who may call:** keys with reader effective access on the scope.
+
+**Input**
+
+```json
+{
+  "query": "current aluminium quote Accra Metals validity",
+  "scope": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "k": 8
+}
+```
+
+`scope` names one node; the search covers that node's subtree intersected
+with the key's effective read access. Subtree scoping rides the derived-path
+filter column of the serving indexes
+([retrieval](../architecture/retrieval.md#the-serving-tier)); hybrid
+FTS + vector is the only search mode.
+
+**Output** — the steering-first contract, visible in the shape itself:
+
+```json
+{
+  "steering": [
+    {
+      "artifact_id": "art_01JB2V8K3M6P9R2T5W8Z1CF4HQ",
+      "kind": "steering",
+      "text": "Prefer quotes with an explicit validity date; treat undated quotes as expired.",
+      "workarea_path": "universe.procurement"
+    }
+  ],
+  "hits": [
+    {
+      "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
+      "claim_key": "supplier-quote-am-7741",
+      "version": 1,
+      "state": "promoted",
+      "score": 0.83,
+      "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.",
+      "workarea_path": "universe.procurement.metals-crew",
+      "promoted_at": "2026-10-27T14:11:08Z",
+      "attachments": [
+        { "sha256": "9f2c41aa…", "media_type": "application/pdf", "size_bytes": 184233 }
+      ]
+    }
+  ]
+}
+```
+
+The contract (D12, declared in
+[retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)):
+**steering rows precede hits and are never ranked** — they carry no score and
+no position among the hits, however well or badly they match the query. Hits
+are promoted rows only; the caller's own held rows do not appear here
+(use [`oml_my_work`](#oml_my_work)). Recall quality and latency are
+unmeasured — [FR-4](../product/roadmap.md).
+
+**Refusals** — scope outside the key's read access (same error as a
+nonexistent node, fail closed). Example:
+
+```json
+{
+  "error": {
+    "code": "access.not_found",
+    "rule": "effective access (D7); unknown and out-of-scope are indistinguishable",
+    "message": "no readable workarea wa_01JB2ZZZ… for this key",
+    "retryable": false
+  }
+}
+```
+
+## `oml_learn`
+
+Submit a **derived fact**: a conclusion distilled from memories the agent has
+already read, carrying the lineage that produced it. Mechanically it is
+`oml_remember` with `kind: derived_fact` — the same admission pipeline, held
+on arrival, same non-author review — but the contract differs: `derives_from`
+is the point of the verb. A derived fact submitted with empty lineage is
+accepted (the service cannot know what the writer really read — the honesty
+rule again) and is worth less under review for exactly that reason; the
+[review guide](../review-guide.md) tells reviewers to weigh the declared
+lineage.
+
+**Who may call:** keys with writer effective access on the target workarea.
+
+**Input**
+
+```json
+{
+  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "claim_key": "accra-metals-price-anchor",
+  "text": "Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations.",
+  "derives_from": [
+    "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
+    "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
+    "art_01JB2A2C4E6G8J1L3N5Q7S9UWY"
+  ],
+  "idempotency_key": "crew-procure/run-4412/distill-2"
+}
+```
+
+**Output**
+
+```json
+{
+  "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE",
+  "claim_key": "accra-metals-price-anchor",
+  "version": 1,
+  "kind": "derived_fact",
+  "state": "held",
+  "lineage_declared": 3,
+  "idempotent_replay": false
+}
+```
+
+**Refusals** — everything `oml_remember` refuses, plus the lineage checks:
+a `derives_from` target the key cannot read is refused as unknown (fail
+closed, no existence leak), and a target inside a simulation forces the
+simulation fence — a submission deriving from a simulation row must carry
+that row's `simulation_id`, server-enforced, which this key can only do if it
+is in the simulation's audience (D10,
+[simulations](../architecture/simulations.md#no-nesting)). Example:
+
+```json
+{
+  "error": {
+    "code": "access.not_found",
+    "rule": "lineage targets must be readable by the submitting key (fail closed)",
+    "message": "derives_from[1] names no artifact readable by this key",
+    "retryable": false
+  }
+}
+```
+
+## `oml_attach`
+
+Manage a **resumable upload session** for a file, image or PDF (D3). The
+session is the unit a memory references: open it with the expected plaintext
+SHA-256 and size, move the bytes, then hand the session id to
+[`oml_remember`](#oml_remember).
+
+The chunk bytes themselves do **not** travel over MCP. Tool messages are
+JSON; base64 would inflate every chunk by a third and push attachment-sized
+payloads through the agent's context. The session's parts are PUT to the
+versioned HTTP API under the same bearer key; this tool opens and inspects
+sessions, nothing more. That split is the accepted cost of keeping the MCP
+surface small; an agent whose harness cannot issue a plain HTTP PUT cannot
+attach files through this plugin.
+
+**Who may call:** keys with writer effective access (the session binds to a
+workarea only when a submission references it).
+
+**Input** — open a session:
+
+```json
+{
+  "action": "open",
+  "media_type": "application/pdf",
+  "size_bytes": 184233,
+  "expected_digest": "sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b"
+}
+```
+
+**Output**
+
+```json
+{
+  "upload_session": "ups_01JB2XD9W6E4T2Y8U1O3PA5SKF",
+  "state": "open",
+  "part_size_bytes": 8388608,
+  "parts_expected": 1,
+  "upload_path": "/v1/attachments/uploads/ups_01JB2XD9W6E4T2Y8U1O3PA5SKF/parts/{part_number}",
+  "expires_at": "2026-10-29T18:40:00Z"
+}
+```
+
+**Input** — inspect after a crash or retry (`action: "status"` with the
+session id) returns `state` (`open` | `complete` | `aborted` | `expired`),
+the parts received, and the next part to send — this is what
+"resumable" means: a retry resumes the recorded session rather than
+improvising (D3). On the last part the server verifies the plaintext digest;
+on match the session is `complete` and referenceable, the object is stored
+content-addressed and encrypted per artifact
+([storage](../architecture/storage.md)). A digest mismatch at completion
+moves the session to `aborted` — terminal, open a new one; the refusal is
+`upload.digest_mismatch`, and the mismatched bytes never bind to a claim.
+
+Every attachment of a claim is served to its reviewer before a verdict
+counts, and what review *means* per attachment type — extracted text where a
+deterministic extractor exists, provenance + digest + scan result for opaque
+binaries — is stated honestly in [admission](../architecture/admission.md).
+
+**Refusals** — a key without writer effective access; a session quota or size
+ceiling (typed 429/413 family, [errors.md](errors.md)); referencing an
+incomplete or mismatched session from `oml_remember`. Example:
+
+```json
+{
+  "error": {
+    "code": "upload.digest_mismatch",
+    "rule": "a session records its expected digest; bytes that do not match never bind (D3)",
+    "message": "session ups_01JB2XD9… received bytes with sha256 1c44…, expected 9f2c…; session is terminal, open a new one",
+    "retryable": false
+  }
+}
+```
+
+## `oml_relate_propose`
+
+Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
+journalled and **pending**; it confers nothing and changes no access until a
+*different* dreamer ratifies it (R2 extends to edges). Ratification is not on
+this surface — it is a dreamer(review) verb behind the serve ceremony on the
+[HTTP API](http-api.md).
+
+**Who may call:** keys with dreamer(propose) effective access. For a
+workarea edge: propose access on at least one endpoint **and** reader access
+on both. For a claim edge: both claims readable by the key. The
+edge-authority rule is declared in
+[workareas](../architecture/workareas.md#edge-authority).
+
+**Input** — a workarea edge (closed label set: `relates_to`, `continues`,
+`derived_from`, `mirrors`):
+
+```json
+{
+  "kind": "workarea",
+  "label": "continues",
+  "from": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "to": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+  "note": "metals-crew Q1 planning continues the Q4 negotiation workarea"
+}
+```
+
+A claim edge uses `kind: "claim"` with artifact ids as endpoints; claim-edge
+proposals are part of the admission pipeline and enter the lineage closure
+computed at promotion time, pending and ratified alike
+([audit and lineage](../architecture/audit-and-lineage.md)). The claim-edge
+label vocabulary is not fixed by the design — an open detail tracked in the
+[roadmap](../product/roadmap.md) ([http-api.md](http-api.md)); the proposal
+event's payload shape is owned by the
+[event catalog](../data/event-catalog.md).
+
+**Output**
+
+```json
+{
+  "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
+  "kind": "workarea",
+  "label": "continues",
+  "state": "pending",
+  "proposer_key": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+  "awaiting": "ratification by a dreamer(review) key on both endpoints, ratifier ≠ proposer (R2)"
+}
+```
+
+**Refusals** — missing propose access on every endpoint; an endpoint outside
+read scope (fail closed, indistinguishable from nonexistent); a label outside
+the closed set for workarea edges. Example:
+
+```json
+{
+  "error": {
+    "code": "access.not_found",
+    "rule": "edge proposal requires dreamer(propose) on ≥1 endpoint and reader on both (D7)",
+    "message": "endpoint 'to' names no workarea readable by this key",
+    "retryable": false
+  }
+}
+```
+
+## `oml_my_work`
+
+The caller's own submissions and where each stands: held, promoted, demoted,
+rejected, erased. This is the only view a writer has of its held rows — held content is
+invisible to everyone but its author and its reviewers until ratified (R3) —
+and the honest answer to "did my memory make it".
+
+**Who may call:** any reader, writer, dreamer or admin key; the result is
+scoped to the calling key's own submissions by construction. Operator keys
+are refused — the operator never writes, reads or reviews content.
+
+**Input**
+
+```json
+{
+  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "state": "held",
+  "limit": 20
+}
+```
+
+Both filters optional; omit them for everything the key wrote, newest first.
+
+**Output**
+
+```json
+{
+  "items": [
+    {
+      "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE",
+      "claim_key": "accra-metals-price-anchor",
+      "version": 1,
+      "kind": "derived_fact",
+      "state": "held",
+      "submitted_at": "2026-10-29T16:02:51Z",
+      "held_expires_at": "2026-11-05T16:02:51Z"
+    },
+    {
+      "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
+      "claim_key": "supplier-quote-am-7741",
+      "version": 1,
+      "kind": "memory",
+      "state": "promoted",
+      "submitted_at": "2026-10-27T13:58:20Z",
+      "promoted_at": "2026-10-27T14:11:08Z"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+`held_expires_at` reflects the workarea's review policy object (held-item
+expiry, [admission](../architecture/admission.md#review-policy-objects)): the
+gate fails closed, so an item nobody reviews in time does not silently
+promote. The tool returns no reviewer identity and no verdict reasoning —
+the decision trail belongs to the evidence export, an admin surface.
+
+**Refusals** — an operator key:
+
+```json
+{
+  "error": {
+    "code": "access.verb_ceiling",
+    "rule": "operator never writes, reads or reviews content (D9)",
+    "message": "operator keys have no own-work view",
+    "retryable": false
+  }
+}
+```
+
+## `oml_workarea_info`
+
+One workarea as the calling key is allowed to see it: identity, derived path,
+status, crew record, immediate structure, and — the part an agent actually
+needs before writing — the verbs this key's effective access carries there.
+
+**Who may call:** keys with reader effective access on the node.
+
+**Input**
+
+```json
+{ "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
+```
+
+**Output**
+
+```json
+{
+  "id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "path": "universe.procurement.metals-crew",
+  "status": "committed",
+  "crew": {
+    "name": "metals-crew",
+    "charter_uri": "https://crews.example.com/metals/charter.md",
+    "external_manager": "crewd.example.com"
+  },
+  "parent": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+  "children": [
+    { "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3", "path_leaf": "q1-2027", "status": "development" }
+  ],
+  "edges": [
+    { "label": "continues", "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX", "state": "ratified" }
+  ],
+  "my_effective_verbs": ["recall", "read", "graph_read", "remember", "learn", "attach"],
+  "permission_epoch": 41
+}
+```
+
+`status` tells the agent what the node will refuse before it tries:
+`development` may run relaxed, marked self-signed review by tenant policy;
+`committed` requires full non-author review; `validated` refuses new writes
+entirely ([the status ladder](../architecture/workareas.md#the-status-ladder-d8)).
+The crew record is recorded, not operated — OML stores it and journals its
+changes; the crew is managed elsewhere. `my_effective_verbs` is a derived
+answer, reproducible from journalled grants at the stated permission epoch;
+children and edges outside the key's read scope are absent, not marked.
+
+**Refusals** — a node outside read scope, same `access.not_found` error as
+[`oml_recall`](#oml_recall), fail closed.
+
+## `oml_graph`
+
+A scoped read of claims and their edges: the declared lineage
+(`derives_from`), claim↔claim connection edges with their pending/ratified
+state, and supersession chains within a subtree. The contract is
+**serialize, don't compute**: the server returns the subgraph inside the
+key's read scope; closure computation, path finding and ranking are the
+client's problem. That keeps the server's work bounded and the output
+auditable, at the cost of chattier clients on deep graphs.
+
+**Who may call:** keys with reader effective access on the scope. Reads are
+logged like any read.
+
+**Input**
+
+```json
+{
+  "scope": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "roots": ["art_01JB2XJH8K1M3P5R7T9W2YA4CE"],
+  "depth": 2,
+  "limit": 100
+}
+```
+
+**Output**
+
+```json
+{
+  "claims": [
+    { "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "claim_key": "accra-metals-price-anchor", "version": 1, "kind": "derived_fact", "state": "promoted", "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" },
+    { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1, "kind": "memory", "state": "promoted", "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
+  ],
+  "edges": [
+    { "kind": "derives_from", "from": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "to": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "state": "declared" },
+    { "kind": "connection", "label": "…", "from": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "to": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH", "state": "pending", "edge_id": "ce_01JB2YA1C3E5G7J9L2N4Q6S8UW" }
+  ],
+  "truncated": false,
+  "next_cursor": null
+}
+```
+
+What the graph shows is the **declared** graph, and only that — undeclared
+derivation is invisible to the service and therefore to this tool
+([audit and lineage](../architecture/audit-and-lineage.md)). Nodes outside
+the key's scope are absent; an edge whose far endpoint is unreadable appears
+with the endpoint id only, body-less, so the shape is honest without leaking
+content. The simulation predicate applies: simulation rows and their edges
+are served only inside the audience.
+
+**Refusals** — scope outside read access (`access.not_found`, fail closed);
+a `depth`/`limit` above the served ceiling returns the typed limit error from
+[errors.md](errors.md) rather than a truncated answer pretending to be whole.
+
+## `oml_events_tail`
+
+Poll the journalled event stream for the key's scope, from the last journal
+sequence the client processed. This is the stateless substitute for push: an
+agent that wants to know "what happened since I last looked" calls with its
+stored `after_seq` and gets the next page of events plus the current
+`head_seq`. The server remembers nothing about the caller between calls;
+losing the stored sequence means re-reading, never a gap the server must
+repair.
+
+**Who may call:** keys with reader effective access; the tail is filtered to
+events whose subject the key could read. R3 applies to the stream exactly as
+to reads: another writer's held submission does not appear here before
+promotion — the tail cannot be used to watch the review queue from outside.
+
+**Input**
+
+```json
+{
+  "scope": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "after_seq": 418,
+  "limit": 50
+}
+```
+
+Omit `after_seq` to start from the newest events (the response says where
+you are); event types and payload shapes are owned by the
+[event catalog](../data/event-catalog.md).
+
+**Output**
+
+```json
+{
+  "events": [
+    {
+      "seq": 419,
+      "event_type": "lifecycle.promote",
+      "at": "2026-10-29T16:40:12Z",
+      "subject": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1 },
+      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND"
+    },
+    {
+      "seq": 423,
+      "event_type": "workarea.relate_ratified",
+      "at": "2026-10-29T16:52:30Z",
+      "subject": { "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P" }
+    }
+  ],
+  "head_seq": 431,
+  "idle": false
+}
+```
+
+Sequence numbers are the per-tenant journal sequence (D1): gaps in a filtered
+tail are normal — they are the events this key may not see — and order is
+the chain's order, so two agents tailing the same scope see the same events
+in the same order. The cost of poll-over-push is stated above under
+[transport](#transport-streamable-http-stateless): reaction latency is the
+polling interval, by design in v1.
+
+**Refusals** — scope outside read access (`access.not_found`); a malformed or
+foreign `after_seq` value is a typed `request.validation` refusal, never a
+silent restart from zero.
+
+---
+
+## Wiring it into your agent
+
+A generic MCP client configuration — the shape most harnesses accept, adjust
+the key names to yours:
+
+```json
+{
+  "mcpServers": {
+    "oml": {
+      "type": "http",
+      "url": "https://oml.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${OML_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Operational notes:
+
+- **One key per agent.** Issue each crew member its own key
+  ([key issuance](../architecture/roles-and-keys.md#key-lifecycle), via the
+  [CLI](../cli/reference.md)); attribution, review independence and the
+  collusion statistics depend on it. Keep the key in the environment, never
+  in the config file you commit.
+- **Role fits the job.** A recalling agent gets a key with reader grants; a
+  writing agent, writer grants (plus reader scope where it must also recall);
+  a proposing agent, dreamer(propose). A reviewing crew member does not use
+  this plugin for its verdicts — verdicts live on the
+  [HTTP API](http-api.md) behind the serve ceremony.
+- **Retry with intent.** Put a stable `idempotency_key` on every
+  `oml_remember`/`oml_learn` your harness might retry; retries then cost
+  nothing and duplicate nothing.
+- **Expect `held`.** A successful write is a claim under test. Poll
+  [`oml_my_work`](#oml_my_work) or [`oml_events_tail`](#oml_events_tail) if
+  the agent's plan depends on its memory becoming visible to others.
+- Liveness for your own infrastructure: `oml-server` exposes `/healthz` and
+  `/readyz` ([deployment](../operations/deployment.md)); the MCP endpoint
+  itself has no separate probe.
+
+## Decision record
+
+This surface is owned by ADR-0014 ([decision register](../adr/index.md)): one
+versioned JSON HTTP API with MCP as a stateless streamable-HTTP facade, and
+idempotency records.
