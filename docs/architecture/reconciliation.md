@@ -1,3 +1,10 @@
+<!--
+id: architecture/reconciliation
+tier: engineering
+status: design draft for review · decided, not built
+answers: how oml-reconciler proves the derived stores still agree with the journal; which findings the closed vocabulary admits; how each finding is repaired
+-->
+
 # Reconciliation: the journal is the fold source
 
 **Status:** design draft for review · decided, not built

@@ -1,4 +1,13 @@
+<!--
+id: index
+tier: client
+status: design draft for review · decided, not built
+answers: what Open Memory Lab is, the problem it solves, what it guarantees in plain words, and where to read next
+-->
+
 # Open Memory Lab
+
+Design revision **0.1.0-design** — see the [changelog](changelog.md).
 
 **Status:** design draft for review · decided, not built
 

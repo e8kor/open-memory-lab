@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0015-cli-administration
+tier: engineering
+status: accepted design
+answers: why the CLI is the whole administration surface, why a web console is declined, and what that refusal costs
+-->
+
 # ADR-0015 — The CLI is the administration surface; a web console is declined
 
 **Status:** accepted design · 2026-10-29

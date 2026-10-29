@@ -1,3 +1,10 @@
+<!--
+id: architecture/storage
+tier: engineering
+status: design draft for review · decided, not built
+answers: where the transactional commit point is; how the per-tenant signed hash chain, the outbox protocol and the derived lake interlock; where attachment bytes live
+-->
+
 # Storage: commit point, chain, outbox, lake
 
 **Status:** design draft for review · decided, not built
@@ -70,6 +77,11 @@ Append-only is enforced mechanically, not by convention: `REVOKE UPDATE,
 DELETE` on `journal` plus a guard trigger. Row-level security scopes every
 table by tenant ([security.md](security.md)).
 
+The byte-level chain mechanics — the enumerated signed envelope fields, RFC 8785
+canonicalization of `signed_bytes`, the hash, the signature, the genesis rule and
+the verification procedure, with computed test vectors — are declared normatively
+in [data/chain-format.md](../data/chain-format.md).
+
 **Signing, stated honestly (D17).** The **lead** loads the deployment signing
 key (Kubernetes Secret/KMS); followers never do
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)). What is
@@ -115,6 +127,33 @@ full erasure of attribution metadata is an open, tracked FR with an exit
 criterion — see the attribution-metadata erasure row in
 [product/roadmap.md](../product/roadmap.md) and the boundary statement in
 [audit-and-lineage.md](audit-and-lineage.md).
+
+## Time
+
+The single authoritative source for a journal event's `at` is the **Postgres
+primary's clock, read inside the committing transaction**. No application clock
+participates: a server replica's clock, a client's clock, and a declared
+`simulated_time` ([simulations.md](simulations.md)) are never what `at` records.
+One clock per deployment means two events' timestamps are comparable without
+asking which machine stamped them.
+
+Chain order is `seq`, and only `seq`. Timestamps are informational: a failover
+to a standby with a differing clock, or a clock step on the primary, can make
+`at` regress between consecutive `seq` values without violating any guarantee —
+verification orders by `seq` and never by `at`
+([data/chain-format.md](../data/chain-format.md)). The expectation in every
+profile — standalone, docker, kubernetes
+([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) — is NTP (or
+the platform's equivalent) on the host that runs Postgres. Without it, chain
+integrity and ordering do not degrade; what degrades is everything compared
+against wall clock — serve expiries, `key.rotated` grace deadlines, read-log
+batch windows, retention and backup horizons — all of which drift with the
+clock, silently.
+
+Evidence exports carry this caveat: a bundle's timestamps are the primary's
+clock at commit, informational and possibly non-monotonic across failover;
+order is proven by `seq` alone
+([audit-and-lineage.md](audit-and-lineage.md)).
 
 ## The lake and the outbox protocol (D2)
 
@@ -343,5 +382,5 @@ exclusively a consequence of promotion, carried by the outbox
 
 ## Decision record
 
-This page declares D1, D2 and D3, registered as ADR-0002, ADR-0003 and
-ADR-0004 in the [decision register](../adr/index.md).
+This page declares D1, D2, D3 and D5, registered as ADR-0002, ADR-0003,
+ADR-0004 and ADR-0006 in the [decision register](../adr/index.md).

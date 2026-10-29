@@ -1,3 +1,10 @@
+<!--
+id: architecture/admission
+tier: engineering
+status: design draft for review · decided, not built
+answers: what the admission pipeline does between capture and release; what a review policy object contains; who supplies review capacity and what happens when it is absent
+-->
+
 # Admission
 
 **Status:** design draft for review · decided, not built
@@ -58,7 +65,10 @@ Reading the diagram:
   event (digest or ciphertext reference only — never body plaintext), the metadata row in
   state `held`, and an outbox row. The write is durable iff that transaction commits; the
   commit protocol is [storage](storage.md)'s to define. The author can see and supersede their
-  own held claim; nobody else can see it at all. Bans are checked at capture, before quarantine
+  own held claim; nobody else can see it at all. Claim text is Unicode-normalized to **NFC** at
+  this step — before the plaintext digest is computed and before the scan runs — so the digest,
+  the scan verdict and every downstream index see one canonical byte form; what search does with
+  the normalized text is [retrieval](retrieval.md)'s to state. Bans are checked at capture, before quarantine
   or scan: a banned author's or source's submission is refused at the door with a typed error,
   and nothing from it is held, stored or queued ([roles and keys](roles-and-keys.md),
   [security](security.md)). Everything networked and everything deterministic completes
@@ -164,6 +174,58 @@ policy's pinned release — the scan verdict records that release id alongside t
 a deterministic finding doubles as a routing mechanism: the shipped vocabulary defaults place the
 human verdict on exactly those findings, and no parallel human-gate machinery exists.
 
+## The rule-set registry
+
+The scan's rules ship as a versioned **rule set**, and one identifier names the exact rule set a
+deployment runs: `ruleset_vN`. The identifier is pinned per deployment and journalled in every
+scan verdict — it is what the `scanner_version` field of the submission events carries
+([event-catalog.md](../data/event-catalog.md)) — which is what makes a verdict reproducible
+later: same input, same pinned rule set, same verdict, no caveat. Changing the pin is a
+deployment act; verdicts taken under an earlier pin stay valid against it, and nothing is
+re-scanned retroactively. The rule set loads at process start, and a replica that cannot load
+its pinned rule set **fails readiness and serves nothing**
+([deployment — probes](../operations/deployment.md#probes)): the scanner is in-process
+deterministic rules, so "scanner unavailable" can only ever mean "this replica is not ready" —
+never "writes admitted unscanned".
+
+Finding classes are named `family.condition` — the same shape as the
+[error taxonomy](../api/errors.md)'s codes, deliberately, but a **separate closed vocabulary**:
+a finding class is review-policy vocabulary that `human_required_classes` may name, never an API
+refusal. The API-side veto is always one code, `submission.scan_veto`, whose `details.finding`
+carries the class that fired. Like the error taxonomy, the registry is closed: a new class is a
+design change — a new `ruleset_vN` and a new row here — never an ad-hoc string.
+
+The v1 shipped registry:
+
+| Class | Fires on | Default |
+|---|---|---|
+| `secret.private_key` | A named private-key pattern — PEM-delimited key blocks, OpenSSH private keys — in claim text or deterministically extracted attachment text | veto |
+| `secret.api_token` | A named credential-token pattern: provider-prefixed tokens the pattern list enumerates, OML's own `oml_` key format among them | veto |
+| `secret.credential_pair` | A named user-and-password pattern — connection strings, basic-auth URLs | veto |
+| `format.encoding` | Declared text that is not valid UTF-8 or cannot be NFC-normalized (the normalization step above has nothing lawful to produce) | veto |
+| `format.media_type_mismatch` | Attachment bytes whose leading structure contradicts the declared media type | veto |
+| `vocab.term_pending` | A citation of a CURIE that exists but is still held — distinct from unknown ([ontologies](ontologies.md)) | annotate |
+| `vocab.deprecation_replaced_by` | A term deprecation carrying a `replaced_by` successor ([ontologies](ontologies.md)) | annotate |
+| `vocab.mapping_exactMatch` | A `term_mapping` claim asserting the `exactMatch` predicate ([ontologies](ontologies.md)) | annotate |
+| `vocab.deprecated_successor` | A deprecation whose named successor is itself already deprecated at ratification time — judgment, not law ([ontologies](ontologies.md)) | annotate |
+
+The **default** column is the class's behavior when no policy says otherwise: a `veto` class
+refuses the submission (`submission.scan_veto`, journalled as a rejection); an `annotate` class
+records the finding on the held item and never blocks. The `secret.*` and `format.*` families
+ship in the default scanner set; the `vocab.*` family is emitted only by the vocab scanner,
+selected where a workarea's `vocabulary_policy` names a vocabulary (above). The exact pattern
+lists behind the `secret.*` classes are rule-set content, versioned by `ruleset_vN`, not
+enumerated on this page — what is fixed here is the class vocabulary a policy can name.
+
+`human_required_classes` references entries of this registry **by exact class name**. That is
+the routing mechanism the vocab scanner paragraph above already uses: a deterministic finding
+whose class a workarea's policy names requires at least one human verdict for ratification, and
+no parallel human-gate machinery exists. The shipped vocabulary defaults name
+`vocab.deprecation_replaced_by` and `vocab.mapping_exactMatch`
+([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); a tenant may tune any class in or out by
+the journalled policy act, including to zero
+([ontologies](ontologies.md) owns the zero-human conditions).
+
 ## Review policy objects
 
 Each workarea carries a review policy object: a journalled record, versioned by the journal
@@ -200,7 +262,11 @@ is a client, with a key whose verb ceiling is exactly the dreamer surface
 the rules (author in the lineage closure, no valid serve, policy not met), not to produce
 verdicts. Human review through the CLI is the exception path, reserved by
 `human_required_classes` and available whenever a person holds a dreamer key
-([CLI reference](../cli/reference.md) owns the review ceremony).
+([CLI reference](../cli/reference.md) owns the review ceremony). The crew-facing contract — the
+reviewer surface a crew's agent implements, serve handling, and verdict recording end to end —
+is specified in [reviewer crews](../api/reviewer-crews.md). The worked crew integration flow —
+queue, next, attachment fetch, verdict — is
+[reviewer-crews](../api/reviewer-crews.md#walkthrough-approve).
 
 A verdict counts only against a valid serve: the server binds a serve to (reviewer key,
 artifact version, attachment digest set), expires it, consumes it on first verdict, and

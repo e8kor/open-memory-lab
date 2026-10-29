@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0021-ai-human-ontologies
+tier: engineering
+status: accepted design
+answers: why shared vocabularies are governed claims on the existing pipeline rather than a separate ontology service
+-->
+
 # ADR-0021 — AI+Human ontologies: vocabularies as governed claims
 
 **Status:** accepted design · 2026-10-29

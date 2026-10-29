@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0005-erasure-by-crypto-shredding
+tier: engineering
+status: accepted design
+answers: how an append-only chain coexists with the right to erasure; what crypto-shredding destroys, what the erasure inventory scopes, and where the honest boundary of the claim lies
+-->
+
 # ADR-0005 — Erasure by crypto-shredding, with a named inventory and an honest boundary
 
 **Status:** accepted design · 2026-10-29

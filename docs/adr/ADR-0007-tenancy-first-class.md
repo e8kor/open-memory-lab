@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0007-tenancy-first-class
+tier: engineering
+status: accepted design
+answers: why tenancy is a first-class design object rather than an operator convention, and what isolates hostile co-tenants on shared infrastructure
+-->
+
 # ADR-0007 — Tenancy is first-class
 
 **Status:** accepted design · 2026-10-29

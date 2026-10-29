@@ -1,3 +1,10 @@
+<!--
+id: review-guide
+tier: engineering
+status: design draft for review · decided, not built
+answers: which decisions a reviewer should examine, in the order an error would be most expensive, and where each is declared
+-->
+
 # Review guide
 
 **Status:** design draft for review · decided, not built

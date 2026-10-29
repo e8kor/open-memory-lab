@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0001-the-constitution
+tier: engineering
+status: accepted design
+answers: what the four constitutional rules R1–R4 commit, and what the one bounded development exception permits and marks
+-->
+
 # ADR-0001 — The constitution: four rules, one bounded development exception
 
 **Status:** accepted design · 2026-10-29

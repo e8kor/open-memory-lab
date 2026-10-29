@@ -1,3 +1,10 @@
+<!--
+id: architecture/retrieval
+tier: engineering
+status: design draft for review · decided, not built
+answers: where reads are served from and in what order; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope
+-->
+
 # Retrieval: reads are served from Postgres, journalled
 
 **Status:** design draft for review · decided, not built
@@ -58,6 +65,33 @@ Recall accepts a `terms` filter (CURIE annotations, ADR-0021) and
 a graph walk at query time. Expansion resolves per CURIE against the release
 pinned by the vocabulary that owns the expanded prefix; steering order, `k`
 and the token-budget row (FR-11) are untouched by expansion.
+
+### Text handling
+
+`memories_fts` rows are built with the Postgres text-search configuration named
+by the deployment setting `search.fts_config`
+([configuration](../operations/configuration.md)), **default `simple`**. The
+default is chosen for honesty, not quality: `simple` stems nothing and
+language-detects nothing, so it never silently corrupts tokens of a language
+the configuration did not expect — a multilingual corpus under an
+English-stemming configuration degrades non-English recall without any signal
+that it has. The cost is stated plainly: with no stemming, morphological
+variants do not match — a query for "deploy" does not find "deployments" — and
+FTS recall for morphology-rich languages is lower than a language-specific
+configuration would give. How much lower is unmeasured, like every retrieval
+number (FR-4).
+
+Two consequences of the setting's scope:
+
+- **Changing it implies a full FTS reindex**: every `tsvector` row was built
+  with one configuration, and rows built under different configurations do not
+  compare. The setting is deployment-level in v1 for exactly this reason; a
+  per-tenant (or per-workarea) FTS configuration is a tracked deferral in
+  [product/roadmap.md](../product/roadmap.md) (per-tenant FTS configuration),
+  not a quiet gap.
+- **Input is already canonical**: claim text is NFC-normalized at admission,
+  before digesting and scanning ([admission](admission.md) owns the mechanics),
+  so the index never holds two byte spellings of one string.
 
 ### pgvector layout
 

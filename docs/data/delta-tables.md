@@ -1,3 +1,10 @@
+<!--
+id: data/delta-tables
+tier: engineering
+status: design draft for review · decided, not built
+answers: every lake table column by column — Delta and Arrow types, partitioning, per-table commit protocol, and the maintenance that keeps the lake compact and erasable
+-->
+
 # Delta tables
 
 **Status:** design draft for review · decided, not built
@@ -118,6 +125,63 @@ design refuses the "mostly single writer, probably fine" posture because the
 lake-writer leader lease can and will overlap during failover, and conditional
 put plus the per-table transaction-version conflict below is exactly the fence
 that makes that overlap safe.
+
+## Reading the lake
+
+The lake serves no client read, but it is built to be read — by the
+reconciler, by metadata analytics, and by whatever Delta-capable engine a
+tenant points at its own prefix. This section states the reader contract.
+
+**The protocol pin.** What a reader must support is set by what the single
+lake-writer emits, and that follows directly from the capabilities this page
+already pins:
+
+- **No deletion vectors.** Deletion vectors are read-only in delta-rs (the
+  load-bearing negative citation above), so the writer never enables the
+  deletion-vectors table feature; every retract and erase is a copy-on-write
+  file rewrite. A reader therefore needs no DV support to read these tables
+  correctly.
+- **Timestamps are microsecond UTC** (`timestamp[µs, UTC]`), per the
+  [type conventions](#type-conventions).
+- **Application transaction ids** appear in the log on every commit (the
+  [commit protocol](#the-commit-protocol-instantiated-per-table)); readers may
+  ignore them, and the reconciler reads them deliberately.
+- **Column mapping, and the exact reader/writer protocol versions and
+  feature flags delta-rs stamps on a new table**, are not decided by anything
+  the existing D17 notes imply — they are **pinned at M3 when the writer
+  lands, tracked by the M3 exit criteria**
+  ([critical path](../product/critical-path.md)). Until that pin exists, no
+  page states a protocol version number.
+
+**Discovery: the prefix layout is the catalog.** No catalog service — Hive
+metastore, Glue, Unity, or any equivalent — ships in v1, explicitly. A reader
+discovers tables by the [per-tenant prefix layout](#per-tenant-prefix-layout)
+above: the path *is* the table identity, and the layout is fixed by this page
+rather than negotiated at runtime. The cost is that readers carry paths
+instead of names, and renaming is impossible without a migration; the benefit
+is one less service whose availability and access control would sit in front
+of every lake read.
+
+**Reader identity and access.** A lake reader holds **read-only object-store
+credentials scoped to the tenant's prefix** — attachable because each tenant's
+lake is its own prefix (D6) — and nothing else: no Postgres role, no KMS
+grant, and **never a path through `oml-server`**, which serves client reads
+from Postgres only ([architecture/retrieval.md](../architecture/retrieval.md)).
+What such a reader can see is what the security model says ciphertext-bearing
+tables yield without a KMS grant: digests, attribution and structure, never
+content ([architecture/security.md](../architecture/security.md)). The
+time-travel caveat from the top of this page binds readers too: superseded
+row versions remain readable until VACUUM removes them, which is priced into
+the [erasure bound](#the-erasure-slo-interaction), not wished away.
+
+**Engine compatibility.** Any Delta-protocol-conformant reader that supports
+the pinned protocol — Spark, Trino, DuckDB's Delta reader, or delta-rs itself —
+can read these tables. That sentence is a statement about the **protocol pin,
+not a tested matrix**: no engine has been run against these tables, because
+the tables do not exist. The honest form of the compatibility claim is
+"conforms to Delta protocol version X as pinned at M3"; a per-engine
+compatibility table would be a claim about measurements nobody has made, and
+this page does not carry one.
 
 ## The commit protocol, instantiated per table
 

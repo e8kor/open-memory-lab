@@ -1,3 +1,10 @@
+<!--
+id: concepts
+tier: engineering
+status: design draft for review · decided, not built
+answers: what each term of the design vocabulary means, in reading order, and which page or ADR decides it
+-->
+
 # Concepts
 
 **Status:** design draft for review · decided, not built
@@ -185,6 +192,18 @@ audience-scoped overlay tip and the claim everyone else sees is bit-for-bit indi
 the simulation's existence. Ending a simulation is a journalled act that demotes its rows and
 its tainted closure; exports list a simulation's content separately, forever.
 
+## Overlay tip
+
+When a simulation promotes a tainted supersession of a real claim, that version becomes an
+**overlay tip**: keys inside the simulation's audience see it shadow the claim's default tip;
+for every other key, tip resolution ignores tainted versions entirely, so the default tip is
+bit-for-bit what it would be if the simulation did not exist. The shared tip index never
+records an overlay tip, any act that would make a tainted version the default served tip is
+refused, and when the simulation ends its overlay tips demote with the rest of the tainted
+closure — the default tip never moved, so nothing needs restoring
+([simulations](architecture/simulations.md) owns the fence;
+[retrieval](architecture/retrieval.md) owns tip resolution on the read path).
+
 ## The journal and evidence
 
 Every state change is a **journal** event: signed by the deployment key, hash-chained
@@ -199,6 +218,18 @@ reciprocal-approval statistics, and simulations listed separately. The sanctione
 all of it, everywhere in this documentation: the system **produces the evidence an auditor
 asks for** — never "compliant", never "audit-ready".
 
+## The fold
+
+A **fold** is how derived state comes out of the journal: replay the events in sequence and
+accumulate what they imply. The metadata tables that serve reads (`memories` and its
+satellites) are the fold the commit point maintains transactionally, in the same transaction
+as the journal event itself ([storage](architecture/storage.md)). The reconciler re-runs the
+same fold independently — incrementally, from a journalled cursor — and compares the result
+against the live stores, so "the derived stores still agree with the journal" is a standing
+proof run as a job, not an assumed property; when they disagree, the repair is built from the
+current fold, never from the defective row
+([reconciliation](architecture/reconciliation.md)).
+
 ## The lake
 
 The Delta **lake** is derived, never serving: a lakehouse of lake-zone tables (`bronze`,
@@ -207,6 +238,18 @@ by a single keyless writer. It exists for reconciliation, lineage, analytics and
 exports; no client read is ever answered from it, bodies in it are ciphertext, and when
 journal and lake disagree, the journal wins and the lake is repaired. Held bodies never reach
 it at all.
+
+## Steering
+
+A **steering** row is a standing instruction a workarea's governance put in force: a claim of
+kind `steering`, written, held and non-author-reviewed like any other claim. What makes it a
+distinct concept is the **recall-ordering contract**
+([retrieval](architecture/retrieval.md)): a recall returns every applicable steering row of
+the queried scope first, **unranked**, and only then the hits, ranked by the query. Steering
+precedes hits precisely because it must not compete with them for rank — a steering row that
+relevance scoring could bury fails exactly when an agent most needs the instruction. The
+contract is part of the API surface: clients may rely on the segment order, and nothing a
+client sends re-ranks the steering segment.
 
 ## Where each concept is decided
 
@@ -226,5 +269,8 @@ it at all.
 | The evidence export and erasure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) |
 | The lake and the outbox | [architecture/storage.md](architecture/storage.md), [data/delta-tables.md](data/delta-tables.md) | [ADR-0003](adr/ADR-0003-delta-lake-derived-lakehouse.md) |
 | Reads and the read log | [architecture/retrieval.md](architecture/retrieval.md) | [ADR-0013](adr/ADR-0013-reads-served-from-postgres.md) |
+| Steering and the recall order | [architecture/retrieval.md](architecture/retrieval.md) | [ADR-0013](adr/ADR-0013-reads-served-from-postgres.md) |
+| The overlay tip | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
+| The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](architecture/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
 | The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
 | The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4 |

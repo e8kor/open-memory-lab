@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0010-roles-and-keys
+tier: engineering
+status: accepted design
+answers: why exactly five roles exist; how API keys are issued, scoped and banned; where provider-level bootstrap authority lives
+-->
+
 # ADR-0010 — Roles and keys: reader, writer, dreamer, admin, operator
 
 **Status:** accepted design · 2026-10-29

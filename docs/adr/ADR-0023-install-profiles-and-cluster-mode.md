@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0023-install-profiles-and-cluster-mode
+tier: engineering
+status: accepted design
+answers: why standalone, docker and Kubernetes are three first-class install profiles under one conformance bar, and how cluster-mode lead/follower supersedes every-replica-signs
+-->
+
 # ADR-0023 — Three install profiles, one conformance bar; cluster-mode lead/follower
 
 **Status:** accepted design · 2026-10-29

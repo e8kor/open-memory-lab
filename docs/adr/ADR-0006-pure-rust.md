@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0006-pure-rust
+tier: engineering
+status: accepted design
+answers: why the implementation is pure Rust; what named trigger would admit Scala/Spark outside the trusted computing base
+-->
+
 # ADR-0006 — Pure Rust, with Scala/Spark behind a named trigger outside the TCB
 
 **Status:** accepted design · 2026-10-29
@@ -101,7 +108,7 @@ smallest possible runtime. The hot-path rules the stack must obey are recorded i
     | Driving adapters | `oml-transport-http`, `oml-transport-mcp` | the HTTP surface (both rings, [ADR-0022](ADR-0022-two-ring-api.md)) and the MCP facade as adapters over `oml-app` |
     | Plugins | `oml-scan-*`, `oml-embed-*`, `oml-export-*` | compiled-in implementations behind the scanner/embedder/exporter ports, under ADR-0019's plugin law |
     | Binaries | `oml-server-lead`, `oml-server-follower`, `oml-lakewriter`, `oml-reconciler`, `oml-indexer` | thin compositions: each wires `oml-domain` + `oml-app` to the adapter set its job needs. The server ships as two compositions for cluster mode ([ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md)): `oml-server-lead` composes the signer port and KMS; `oml-server-follower` composes KMS serving decrypt only and **no signer port** — "a follower cannot sign" is a dependency-graph fact plus a secret that is never mounted, the same pattern as C7's keyless lake-writer |
-    | CLI | `oml-cli` | a thin `/v1` HTTP client ([ADR-0015](ADR-0015-cli-administration.md)); composes no port trait and no domain crate — it reaches the hexagon only through the HTTP transport |
+    | CLI | `oml-cli` | a thin `/v1`-and-`/v2` HTTP client ([ADR-0015](ADR-0015-cli-administration.md)) — every ceremony rides `/v2`; nothing administrative rides `/v1` ([ADR-0022](ADR-0022-two-ring-api.md)); composes no port trait and no domain crate — it reaches the hexagon only through the HTTP transport |
 
     This layout is the enforcement home of "constitution in the core": only `oml-domain`
     encodes invariants, adapters hold no policy, and a binary that lacks a port in its

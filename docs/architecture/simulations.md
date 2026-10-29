@@ -1,3 +1,10 @@
+<!--
+id: architecture/simulations
+tier: engineering
+status: design draft for review · decided, not built
+answers: how a simulation fences counterfactual memory mechanically; how taint propagates through lineage and is served only to the audience
+-->
+
 # Simulations
 
 **Status:** design draft for review · decided, not built

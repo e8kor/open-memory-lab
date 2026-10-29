@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0002-postgresql-system-of-record
+tier: engineering
+status: accepted design
+answers: why PostgreSQL is the sole system of record and commit point; why each tenant gets a signed hash chain; what the synchronous journal durability domain covers
+-->
+
 # ADR-0002 — PostgreSQL is the system of record: one commit point, per-tenant signed chains, a synchronous journal domain
 
 **Status:** accepted design · 2026-10-29 · [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) d13 supersedes d6's every-replica-loads-the-key statement — the signing key is the lead's alone; the attests-the-deployment boundary stands

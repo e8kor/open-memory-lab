@@ -1,3 +1,10 @@
+<!--
+id: architecture/overview
+tier: engineering
+status: design draft for review · decided, not built
+answers: what the system looks like end to end — context, containers, module structure, the five runtime scenarios, and where each constitutional rule is enforced
+-->
+
 # Architecture overview
 
 **Status:** design draft for review · decided, not built

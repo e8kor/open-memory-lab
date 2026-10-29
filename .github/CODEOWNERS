@@ -1,0 +1,7 @@
+# Every change lands through a review by the maintainer (see CONTRIBUTING.md, "Who approves").
+# This file widens as contributors arrive.
+
+* @e8kor
+
+# The decision register is called out explicitly: ADR changes are governance changes.
+docs/adr/ @e8kor

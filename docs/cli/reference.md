@@ -1,3 +1,10 @@
+<!--
+id: cli/reference
+tier: engineering
+status: design draft for review · decided, not built
+answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own
+-->
+
 # CLI reference
 
 **Status:** design draft for review · decided, not built
@@ -199,7 +206,7 @@ export **produces the evidence an auditor asks for** — never "compliant", neve
 | Verb | Does |
 |---|---|
 | `oml audit export --out <dir> [--from <seq>] [--include-simulations]` | Signed evidence bundle: per-memory decision trail, per-tenant chain verification, grants history, read log scoped to its retention window, reciprocal-approval statistics per key pair, and — only with the flag — simulation rows, listed separately by `simulation_id`. The export act is itself journalled. |
-| `oml audit verify-chain [--from <seq>] [--genesis]` | Recompute and verify the per-tenant hash chain and signatures from the local export or live from the server. Digest-only journal payloads mean verification survives crypto-shredding (D1). `--genesis` runs the full-history verification that the reconciler otherwise runs as an occasional named job ([reconciliation](../architecture/reconciliation.md)). |
+| `oml audit verify-chain [--from <seq>] [--genesis]` | Recompute and verify the per-tenant hash chain and signatures from the local export or live from the server. Digest-only journal payloads mean verification survives crypto-shredding (D1). Prints the signing key set in use — each key's fingerprint, the lowercase-hex SHA-256 of the 32 raw public-key bytes, and whether it is current or superseded per `system.signing_key_rotated` — the value a recipient confirms over an independent channel ([chain-format](../data/chain-format.md)). `--genesis` runs the full-history verification that the reconciler otherwise runs as an occasional named job ([reconciliation](../architecture/reconciliation.md)). |
 
 ## `oml settings` — configured vs effective
 

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Open-ended questions and alternatives
+    url: https://github.com/e8kor/open-memory-lab/discussions
+    about: Not yet a specific finding? Discussions is the place for questions, alternatives worth weighing, and anything exploratory.
+  - name: Report a security vulnerability (once code exists)
+    url: https://github.com/e8kor/open-memory-lab/security/advisories/new
+    about: Private vulnerability reporting. During the design phase, security-relevant design flaws are welcome as public design-review findings — see SECURITY.md.

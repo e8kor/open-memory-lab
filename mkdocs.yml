@@ -2,7 +2,15 @@ site_name: Open Memory Lab
 site_description: An external memory provider for AI agents — every memory is a claim under test.
 site_url: https://e8kor.github.io/open-memory-lab/
 repo_url: https://github.com/e8kor/open-memory-lab
+edit_uri: edit/main/docs/
 docs_dir: docs
+copyright: >
+  Code licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE">Apache-2.0</a> ·
+  documentation licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE-docs">CC BY 4.0</a>
+
+validation:
+  nav:
+    omitted_files: warn
 
 theme:
   name: material
@@ -23,6 +31,8 @@ theme:
     - navigation.sections
     - navigation.top
     - content.code.copy
+    - content.action.edit
+    - content.action.view
     - toc.integrate
 
 markdown_extensions:
@@ -43,11 +53,13 @@ nav:
   - Home: index.md
   - Concepts: concepts.md
   - Review guide: review-guide.md
+  - Spec changelog: changelog.md
   - Product:
       - Positioning: product/positioning.md
       - Roadmap: product/roadmap.md
       - Commitments: product/commitments.md
       - Critical path: product/critical-path.md
+      - Compliance: product/compliance.md
   - Architecture:
       - Overview: architecture/overview.md
       - Admission: architecture/admission.md
@@ -64,18 +76,33 @@ nav:
       - PostgreSQL schema: data/postgres-schema.md
       - Delta tables: data/delta-tables.md
       - Event catalog: data/event-catalog.md
+      - Chain format: data/chain-format.md
   - API:
       - HTTP API: api/http-api.md
       - MCP plugin: api/mcp-plugin.md
       - Errors: api/errors.md
+      - Reviewer crews: api/reviewer-crews.md
   - CLI:
       - Reference: cli/reference.md
       - Sessions: cli/sessions.md
   - Operations:
       - Deployment: operations/deployment.md
+      - Configuration: operations/configuration.md
       - Observability: operations/observability.md
+      - Runbooks: operations/runbooks.md
+      - Failure modes: operations/failure-modes.md
+      - Upgrades: operations/upgrades.md
+      - Restore: operations/restore.md
+      - Disaster recovery: operations/disaster-recovery.md
+      - Capacity: operations/capacity.md
+  - Engineering:
+      - Workspace plan: engineering/workspace-plan.md
+      - Test strategy: engineering/test-strategy.md
+      - CI and toolchain: engineering/ci-and-toolchain.md
+      - Benchmark harness: engineering/benchmark-harness.md
   - Decisions:
       - Index: adr/index.md
+      - ADR template: adr/TEMPLATE.md
       - ADR-0001: adr/ADR-0001-the-constitution.md
       - ADR-0002: adr/ADR-0002-postgresql-system-of-record.md
       - ADR-0003: adr/ADR-0003-delta-lake-derived-lakehouse.md

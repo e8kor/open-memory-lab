@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0004-bodies-and-attachments
+tier: engineering
+status: accepted design
+answers: how bodies and attachments are content-addressed, encrypted per artifact, and referenced digest-only in the journal
+-->
+
 # ADR-0004 — Bodies and attachments: content-addressed, per-artifact encryption, digest-only journal
 
 **Status:** accepted design · 2026-10-29

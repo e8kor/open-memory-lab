@@ -1,3 +1,10 @@
+<!--
+id: product/critical-path
+tier: client
+status: design draft for review · decided, not built
+answers: which milestone must exist before which, M0 through M6, and why — build order and dependency without dates
+-->
+
 # Critical path
 
 **Status:** design draft for review · decided, not built
@@ -11,28 +18,105 @@ rows with verifiable criteria — not when its code merges.
 ## M0 — De-risking spikes, before any milestone
 
 **Goal.** Retire the ecosystem assumptions that could invalidate recorded decisions, before
-code accumulates on top of them. In order:
+code accumulates on top of them. Each spike is a **runnable experiment**: candidate versions
+named up front, a numbered scenario matrix with an exact pass/fail assertion per row, a stated
+environment, and a finding recorded in the template at the end of this section — a spike without
+an assertion is a demo, and a finding nobody recorded never happened. Version candidates below
+are exactly that: candidates at writing time, confirmed or replaced by the recorded finding; no
+version is a fact until a finding pins it.
 
-1. **delta-rs transaction-identifier conformance.** Verify that applied-version state survives
-   a checkpoint written mid-sequence, `VACUUM`, restart, and the transaction-identifier
-   retention settings — and pin those settings; run the same cases on `file://`
-   (the standalone profile's backend, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)),
-   including the local-filesystem conditional-put self-test and the NFS refusal. A failure here
-   invalidates [ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md) d4 (the Delta log as
-   sole recovery authority); the named fallback is a Postgres applied-ledger as the recovery
-   authority. Feeds [FR-3](roadmap.md)'s extended harness.
-2. **Conditional put under degraded quorum.** Test conditional PUT on MinIO with a degraded
-   read quorum and verify lockless delta-rs commits on both MinIO and S3; pin the exact MinIO
-   release.
-3. **RLS hardening.** `FORCE ROW LEVEL SECURITY` on every tenant table, the
-   owner/migration-role split, `SET LOCAL` tenant discipline in pooled transactions — the
-   assumptions [commitments](commitments.md) C6 names. Cheap; do immediately.
-4. **pgvector ceiling probe.** HNSW build memory at corpus scale, per-tenant LIST-partition
-   overhead at thousands of tenants, iterative-scan caps. Folds into [FR-4](roadmap.md) and
-   [FR-7](roadmap.md).
+**Shared environment.** All four spikes run on the standalone rig shape: one host, local
+SSD/NVMe storage, containerized Postgres and MinIO at the pins the
+[deployment](../operations/deployment.md) page declares (`pgvector/pgvector:pg17`; the MinIO tag
+the spike itself pins). Spike 2 adds a four-node MinIO topology. The exact host spec is recorded
+per finding, never assumed.
 
-**Exit.** Each spike's finding recorded; any invalidated decision re-opened as an ADR
-amendment before M1 builds on it. **Everything depends on M0's findings standing.**
+### Spike 1 — delta-rs transaction-identifier conformance
+
+Tests [ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md) d4: the Delta log's per-table
+transaction identifiers as the **sole** recovery authority. **Candidates:** the newest `deltalake`
+(delta-rs) and `object_store` crate releases at spike time — both pre-1.0, so the exact pins are
+the finding's first recorded field. Run every scenario on both backends: `file://` (the
+standalone profile's backend, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md))
+and pinned MinIO.
+
+| # | Scenario | Pass assertion |
+|---|---|---|
+| S1.1 | Write N batches carrying txn (appId, version); kill the writer between a Delta commit and the frontier-cache update; restart | no batch applied twice or lost: table contents equal the source fold exactly; the recorded txn version equals the last committed batch |
+| S1.2 | Force a checkpoint mid-sequence, then restart | txn appId/version state readable after the checkpoint; the S1.1 equality still holds on resume |
+| S1.3 | `VACUUM`, then restart | txn state survives; a failure here **breaks ADR-0003 d4** and triggers the named fallback — a Postgres applied-ledger as recovery authority — as an ADR amendment before M1 |
+| S1.4 | Force transaction-identifier retention expiry (retention set below the test's duration) | the expiry behaviour is characterized, and a retention setting is pinned such that expiry cannot occur within the lake-writer's maximum restart gap — the `SetTransaction`-expiry hazard [FR-16](roadmap.md) names |
+| S1.5 | Two concurrent commit attempts on `file://` (the local-filesystem conditional-put self-test) | exactly one wins; the loser surfaces a conflict error, never a corrupt log |
+| S1.6 | Lake root on NFS | startup **refuses** with a reason, per ADR-0023's NFS refusal — a working write here is a fail, because it would be an unfenced one |
+
+Feeds [FR-3](roadmap.md)'s extended harness, which keeps these cases green forever after.
+
+### Spike 2 — conditional put under degraded quorum
+
+Tests the second fence of [ADR-0006](../adr/ADR-0006-pure-rust.md) d3: conditional PUT
+(`If-None-Match`) as the lockless Delta commit mechanism. **Candidates:** a MinIO release at or
+after conditional-write support; the spike pins the **exact release tag**, and that one pin is
+the fact the compose file and Helm chart consume
+([deployment](../operations/deployment.md)). Environment: four-node erasure-coded MinIO, plus S3.
+
+| # | Scenario | Pass assertion |
+|---|---|---|
+| S2.1 | Two writers race `PUT If-None-Match` on the same key, healthy cluster | exactly one succeeds, the other receives the conditional-put refusal — atomicity holds |
+| S2.2 | The same race with one node stopped (degraded but within write quorum) | the same single-winner outcome; any deviation is recorded and the deployment page's quorum guidance amended before M3 |
+| S2.3 | delta-rs lockless commit under commit contention on MinIO | conflict resolved through the conditional put: one commit wins, the other retries against the new version — no lock table, no corruption |
+| S2.4 | S2.3 repeated on S3 | same assertion |
+
+### Spike 3 — RLS hardening
+
+Tests the assumptions [commitments](commitments.md) C6 names. Cheap; do immediately.
+**Candidates:** Postgres 17 via the pinned `pgvector/pgvector:pg17` image.
+
+| # | Scenario | Pass assertion |
+|---|---|---|
+| S3.1 | `FORCE ROW LEVEL SECURITY` on every tenant table; query as the table **owner** | the owner's reads are filtered too — FORCE binds the owner, which is the clause the design leans on |
+| S3.2 | Owner/migration-role split: migrations run under the owner role; application roles carry no `BYPASSRLS` | migrations succeed; no application role can read across the policy |
+| S3.3 | `SET LOCAL` tenant discipline in pooled transactions: interleave two tenants' transactions on one connection | the tenant setting never survives a commit or rollback; a query with no tenant set returns zero rows or a typed error (which one is recorded — it becomes the documented behaviour) |
+| S3.4 | Hostile cross-tenant probe: a session set to tenant A runs every read shape the fold tables use, hunting tenant B rows | zero rows, in every shape |
+
+### Spike 4 — pgvector ceiling probe
+
+Probes the quantities [FR-4](roadmap.md) and [FR-7](roadmap.md) will measure properly, early
+enough to catch a wall. **Candidates:** the pgvector version bundled in the pinned pg17 image;
+corpus and dimension values are generator parameters recorded per finding (the embedding model
+itself is open — [RS-1](roadmap.md)), reusing the corpus recipes of the
+[benchmark harness](../engineering/benchmark-harness.md).
+
+| # | Scenario | Pass assertion |
+|---|---|---|
+| S4.1 | HNSW index build at 100 000 and 1 000 000 vectors, `maintenance_work_mem` varied | build memory and time **recorded** per setting — the spike's output is the recorded curve, not a verdict; an out-of-memory wall at these sizes is the finding that re-opens index strategy before M2 |
+| S4.2 | LIST partitions at 1 000 and 5 000 tenants, one HNSW index each | planner time, catalog overhead and per-partition memory recorded; any hard limit found is recorded with its trigger |
+| S4.3 | Iterative index scans under a low-selectivity workarea-subtree filter | the iterative-scan caps are characterized; a filtered query returns the full requested k or the shortfall is recorded |
+| S4.4 | After a `remote_apply` commit, an HNSW and a tsvector query on the sync standby | both return the new row; the pgvector standby-serving version threshold (claimed 0.7.0 — an [ADR-0024](../adr/ADR-0024-performance-foundation.md) unverified-ledger item) verified against the release notes and recorded. Folds into FR-25 scenario 10 |
+
+### The recorded-finding template
+
+One finding per scenario, committed to the repository and linked from the ADR clause it tests:
+
+```
+spike-finding: S<spike>.<scenario>
+date:          YYYY-MM-DD
+versions:      <exact pins: deltalake, object_store, MinIO tag, Postgres, pgvector, toolchain>
+settings:      <every non-default setting the scenario ran under>
+environment:   <host CPU/RAM/storage, topology>
+verdict:       pass | fail | inconclusive
+adr-clause:    <the ADR and clause this confirms or breaks, e.g. ADR-0003 d4>
+action:        none | ADR amendment opened (<link>)
+```
+
+**Exit.** Every scenario above has a recorded finding; any invalidated decision re-opened as an
+ADR amendment before M1 builds on it; and the **chain-format test vectors generated**: the
+cross-implementation vectors the [chain format](../data/chain-format.md) page specifies — RFC 8785
+(JCS) canonical bytes, SHA-256 hashes, RFC 8032 Ed25519 signatures, and the genesis event
+(`prev_hash` of 32 zero bytes, `tenant.genesis` at seq 1) — generated, cross-checked against at
+least one independent non-Rust JCS/Ed25519 implementation so the vectors are corroborated rather
+than self-confirmed, and committed as the fixtures every later tier verifies
+([test strategy](../engineering/test-strategy.md)). **Everything depends on M0's findings
+standing.**
 
 ## M1 — System of record
 
@@ -157,3 +241,28 @@ and [FR-23](roadmap.md) migration rehearsal; a security pass against
 - **User or agent profiles.** Declined; `derived_fact` claims and dreamer crews are the
   substitute, per the same boundary.
 - **A web console.** Declined in [ADR-0015](../adr/ADR-0015-cli-administration.md).
+
+## Traceability
+
+One row per milestone: the [roadmap](roadmap.md) rows its exit closes (or feeds, where the exit
+produces findings rather than closures), the ADRs it exercises for the first time, and the API
+surface it adds. The roadmap stays the honesty ledger — a row "closes" here only because that
+milestone's exit criteria say so there.
+
+| Milestone | FR/RS rows it closes | ADRs exercised | API surface added |
+|---|---|---|---|
+| M0 | none closed — findings feed [FR-3](roadmap.md), [FR-4](roadmap.md), [FR-7](roadmap.md), [FR-16](roadmap.md), and the chain-format test vectors | ADR-0002, ADR-0003, ADR-0006, ADR-0023, ADR-0024 — their ecosystem assumptions put under test | none |
+| M1 | none closed — the exit (invariant tests, one-commit-point and chain-order semantics) is the precondition of every later row | ADR-0001, ADR-0002, ADR-0006, ADR-0010, ADR-0015, ADR-0019, ADR-0023 (standalone) | minimal slices of both rings: submit and read-own on `/v1`; review and promote on `/v2`; the bootstrap ceremony |
+| M2 | [FR-10](roadmap.md), [FR-11](roadmap.md), [FR-12](roadmap.md); [FR-21](roadmap.md)'s covenant becomes declarable (gated on M2, closed at the v1-stable declaration) | ADR-0004, ADR-0013, ADR-0014, ADR-0022, ADR-0024 | the full `/v1` provider ring; the MCP tool catalog; batch submit; generated SDKs |
+| M3 | [FR-3](roadmap.md); [FR-16](roadmap.md) gets its numbers | ADR-0003, ADR-0016, ADR-0017 | none new on the provider ring; reconciler findings surface as [ADR-0017](../adr/ADR-0017-reconciliation.md) declares |
+| M4 | [FR-1](roadmap.md), [FR-17](roadmap.md), [FR-19](roadmap.md) | ADR-0005, ADR-0008, ADR-0009, ADR-0011, ADR-0012, ADR-0021 | the `/v2` lab-ring governance surface: workarea ladder ceremonies, simulations, erasure, evidence export, vocabulary lifecycle |
+| M5 | [FR-13](roadmap.md); [FR-14](roadmap.md) gets its numbers; [RS-4](roadmap.md)–[RS-8](roadmap.md) decided | ADR-0020 | the import-manifest surface on `/v2` |
+| M6 | [FR-2](roadmap.md), [FR-4](roadmap.md), [FR-7](roadmap.md), [FR-15](roadmap.md), [FR-18](roadmap.md), [FR-20](roadmap.md), [FR-22](roadmap.md), [FR-23](roadmap.md), [FR-24](roadmap.md), [FR-25](roadmap.md); [FR-9](roadmap.md) re-verified at publication | ADR-0023 (cluster mode, migration path), ADR-0024 (the harness against its rules), plus the security pass against [security](../architecture/security.md) | none — M6 measures what exists |
+
+Rows deliberately absent from every "closes" cell, because no milestone's exit closes them:
+[FR-5](roadmap.md), [FR-6](roadmap.md), [FR-8](roadmap.md) (commitments without a milestone
+home yet), and the open questions [RS-1](roadmap.md)–[RS-3](roadmap.md),
+[RS-9](roadmap.md)–[RS-14](roadmap.md), each of which closes by a recorded decision, not by a
+build milestone — [RS-1](roadmap.md) must in practice resolve before M2's retrieval work and
+[RS-14](roadmap.md) before M2's hydration path, and that ordering pressure is stated here rather
+than hidden.

@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0013-reads-served-from-postgres
+tier: engineering
+status: accepted design
+answers: why reads are served from Postgres as the one serving tier; why every read is journalled; why steering is applied ahead of hits
+-->
+
 # ADR-0013 — Reads are served from Postgres, journalled: one serving tier, a logged read path, steering ahead of hits
 
 **Status:** accepted design · 2026-10-29

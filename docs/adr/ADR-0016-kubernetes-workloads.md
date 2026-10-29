@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0016-kubernetes-workloads
+tier: engineering
+status: accepted design
+answers: why the Kubernetes profile is a set of workloads with two Helm profiles, and why deployment identity replaces volume identity
+-->
+
 # ADR-0016 — Kubernetes workloads, two Helm profiles, deployment identity replaces volume identity
 
 **Status:** accepted design · 2026-10-29 · **scope: this record governs the Kubernetes

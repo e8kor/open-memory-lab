@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0020-dataset-onboarding
+tier: engineering
+status: accepted design
+answers: how big-data datasets onboard through an import manifest (explicitly post-v1), and which cheap reservations v1 makes so the design stays possible
+-->
+
 # ADR-0020 — Dataset onboarding: the import manifest
 
 **Status:** accepted design · 2026-10-29 · explicitly post-v1 ([critical path](../product/critical-path.md) M5)

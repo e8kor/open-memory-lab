@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0011-simulations
+tier: engineering
+status: accepted design
+answers: why simulations are a fenced provenance channel with indelible marks, and how taint propagates to anything whose lineage touches a simulation row
+-->
+
 # ADR-0011 — Simulations are a fenced provenance channel with taint propagation
 
 **Status:** accepted design · 2026-10-29

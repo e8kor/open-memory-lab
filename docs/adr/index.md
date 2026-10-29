@@ -1,3 +1,10 @@
+<!--
+id: adr/index
+tier: engineering
+status: design draft for review · decided, not built
+answers: which decision records exist, what each decides, and which page owns which decision
+-->
+
 # Decision register
 
 **Status:** design draft for review · decided, not built
@@ -34,6 +41,35 @@ rows the records open.
 | [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) | Three install profiles, one conformance bar — and cluster mode | accepted design | standalone / docker / kubernetes with one conformance suite (FR-22); the software keyring's honest custody collapse; lead/follower cluster mode, lead-only by default, the lease never load-bearing |
 | [ADR-0024](ADR-0024-performance-foundation.md) | The performance foundation | accepted design | the hot-path discipline (only hash+sign+one insert inside the chain lock), the DEK serving cache as a copy class, batch submit as the throughput lever, latency targets as FR-25 rows, the measured-not-assumed stack registry |
 
+## The D-register: which page owns which decision
+
+[ADR-0018](ADR-0018-the-documentation-set.md) d5 gives every rule exactly one declaration
+site and makes this register record which page owns which decision handle. The `Dn` handles
+below are the decision citations used across the engineering tier: each is **declared** on
+exactly one owning page and only **cited** everywhere else. A `Dn` cited anywhere in the set
+that does not appear in this table is a defect in the citing page; a second page declaring
+one is a defect in that page.
+
+| Handle | Decision, in one line | Owning page | Decision record(s) |
+|---|---|---|---|
+| D1 | PostgreSQL is the sole transactional commit point: one transaction commits the signed journal event, the fold state and the outbox row, on a per-tenant signed hash chain | [architecture/storage.md](../architecture/storage.md) | [ADR-0002](ADR-0002-postgresql-system-of-record.md) |
+| D2 | The Delta lake is derived, fed exactly-once by a single lake-writer draining the outbox; it serves no client read, and when journal and lake disagree the journal wins | [architecture/storage.md](../architecture/storage.md) | [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) |
+| D3 | Bodies and attachments are content-addressed by plaintext digest, uploaded over resumable sessions, encrypted per artifact, and bound into the signed envelope by digest | [architecture/storage.md](../architecture/storage.md) | [ADR-0004](ADR-0004-bodies-and-attachments.md) |
+| D4 | Erasure is a journalled crypto-shred — DEK destruction scoped by the named copy-class inventory; the journal trail and attribution remain | [architecture/audit-and-lineage.md](../architecture/audit-and-lineage.md) | [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) |
+| D5 | The lake writer is pure-Rust delta-rs, and all lake maintenance runs inside the single lake-writer process — no second writer identity | [architecture/storage.md](../architecture/storage.md) (instantiated column-level in [data/delta-tables.md](../data/delta-tables.md)) | [ADR-0006](ADR-0006-pure-rust.md) |
+| D6 | Tenancy is first-class: tenant derived server-side from the key, RLS on every table, least-privilege privileged services, quotas as journalled grant attributes | [architecture/security.md](../architecture/security.md) | [ADR-0007](ADR-0007-tenancy-first-class.md) |
+| D7 | The workarea algebra: one universe tree per tenant, node-id grants attenuated by denies with deny-wins, labelled edges; universe refuses direct claim writes | [architecture/workareas.md](../architecture/workareas.md) | [ADR-0008](ADR-0008-workarea-algebra.md) |
+| D8 | The status ladder — development → committed → validated — moves forward only; validated is frozen, and transitions need a proposer and a separate ratifier | [architecture/workareas.md](../architecture/workareas.md) | [ADR-0009](ADR-0009-status-ladder.md) |
+| D9 | Roles are reader, writer, dreamer, admin, operator, each under a per-role verb ceiling; admin is never a reviewer, and issuance never amplifies authority | [architecture/roles-and-keys.md](../architecture/roles-and-keys.md) | [ADR-0010](ADR-0010-roles-and-keys.md) |
+| D10 | Simulations are a fenced provenance channel: indelible provenance, audience-scoped visibility, taint along the lineage closure, overlay tips never the default tip, end-of-simulation demotion | [architecture/simulations.md](../architecture/simulations.md) | [ADR-0011](ADR-0011-simulations.md) |
+| D11 | Admission is capture → deterministic scan (veto, never promote) → held → non-author review → ratification under a journalled policy snapshot; it fails closed by holding | [architecture/admission.md](../architecture/admission.md) | [ADR-0012](ADR-0012-admission-and-review.md) |
+| D12 | Reads are served from Postgres only and journalled; steering precedes hits unranked, and reads fail closed as absence | [architecture/retrieval.md](../architecture/retrieval.md) | [ADR-0013](ADR-0013-reads-served-from-postgres.md) |
+| D13 | One versioned, two-ring JSON HTTP surface with a closed fail-closed error taxonomy and idempotency by construction; MCP is a stateless facade over it | [api/http-api.md](../api/http-api.md) | [ADR-0014](ADR-0014-http-api-and-mcp-facade.md), [ADR-0022](ADR-0022-two-ring-api.md) |
+| D14 | The CLI is the administration surface — its verb set, the show-once key ceremony, the human review exception path; a web console is declined | [cli/reference.md](../cli/reference.md) | [ADR-0015](ADR-0015-cli-administration.md) |
+| D15 | What runs where: the Kubernetes workload set and replica counts, two Helm profiles, deployment identity in place of volume identity | [operations/deployment.md](../operations/deployment.md) | [ADR-0016](ADR-0016-kubernetes-workloads.md), [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) |
+| D16 | Reconciliation is an incremental, journalled fold of the journal with a closed finding vocabulary; every repair travels through journalled channels | [architecture/reconciliation.md](../architecture/reconciliation.md) | [ADR-0017](ADR-0017-reconciliation.md) |
+| D17 | Measured, not assumed: no page states a number for an unmeasured quantity, and every unmeasured or unverified claim resolves to exactly one roadmap row with an exit criterion | [product/roadmap.md](../product/roadmap.md) | [ADR-0018](ADR-0018-the-documentation-set.md) d3, [ADR-0024](ADR-0024-performance-foundation.md) |
+
 ## Format
 
 Every record has the same shape, and a record that drops a section is a defect:
@@ -47,3 +83,23 @@ Every record has the same shape, and a record that drops a section is a defect:
   the FR/RS rows it opens in the [roadmap](../product/roadmap.md);
 - **Rejected alternatives** — the roads not taken, each with the reason it lost (present on
   every record that weighed alternatives; ADR-0001 and ADR-0018 carry none).
+
+### Status lifecycle
+
+A record's Status line moves through a fixed lifecycle, each step dated:
+
+> proposed → accepted design → `accepted design · amended by ADR-nnnn` / `superseded by ADR-nnnn`
+
+An accepted record is never edited to say something different — a change of mind is a **new**
+record. The new record carries, directly under its own Status line, an **Amends:** line
+(`ADR-nnnn (dm, …)` — which record and which decision handles it changes) or a
+**Supersedes:** line (the whole earlier record is replaced); the earlier record's Status line
+gains the matching back-pointer and the earlier text stays in place as history. The `dn`
+handles exist exactly so an amendment can name what it touches.
+
+### Registering a new record
+
+A new ADR registers at three points, and missing any of them is a defect: the record file
+(`docs/adr/ADR-NNNN-short-slug.md`, next free number, numbers never reused), a row in this
+index's register table, and a nav entry in `mkdocs.yml`. [TEMPLATE.md](TEMPLATE.md) is the
+starting skeleton, matching the shape above.

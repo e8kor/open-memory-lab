@@ -1,3 +1,10 @@
+<!--
+id: operations/observability
+tier: engineering
+status: design draft for review · decided, not built
+answers: which metrics and structured-log fields each workload commits to emit, what oml doctor reads, and the starting points for alerting
+-->
+
 # Observability
 
 **Status:** design draft for review · decided, not built — every metric name
@@ -166,7 +173,9 @@ What logs may carry instead:
 - **Digests and ids** — `artifact_id`, `claim_key`, plaintext/ciphertext
   digests, journal seq, workarea node ids. The journal itself is digest-only
   ([storage](../architecture/storage.md)); logs get no more than the journal.
-- **Attribution** — `tenant_id`, `key_id`, principal, workarea. These survive
+- **Attribution** — `tenant_id`, `key_id`, workarea node ids — never
+  principal values: an actor is identified by key id, and the principal
+  folds out of the journal. These survive
   erasure by the stated boundary ([FR-1](../product/roadmap.md)); when FR-1
   closes with a pseudonymization act, log retention joins that act's
   inventory.
@@ -186,28 +195,83 @@ retention-bounded and digest-anchored to the journal
 exhaust and carry no authority. An auditor gets the evidence export, never a
 log archive.
 
+## SLOs
+
+SLIs are defined here over the exported metric names; **target percentages
+are deployment policy and do not appear on this page** — a target is a choice
+made against measured baselines, and no measurement of OML exists
+([FR-25](../product/roadmap.md), [FR-2](../product/roadmap.md),
+[FR-7](../product/roadmap.md)). What this section fixes is the formula: which
+requests count, which count against, and where the latency targets come from.
+
+- **Write availability.** Good events are write-route requests answered
+  without a 5xx; the denominator is all write-route requests. Two refusal
+  windows **count against this SLI, by design**: the fork-check hold-down
+  (the deployment refusing writes because the stored chain head did not
+  verify) and the lead-takeover window (writes refused until a new lead
+  holds the lease and passes the fork check) — both surface as
+  `system.unavailable` (503, [errors](../api/errors.md)). Excusing them
+  would hide the availability-for-integrity trade
+  [commitments](../product/commitments.md) §2 makes on purpose; counting
+  them is that trade made visible in the one number operators watch. The
+  takeover window's size is what [FR-24](../product/roadmap.md) measures.
+- **Read availability.** The same formula over read routes. Followers keep
+  reads flowing through a lead takeover ([deployment — the lead
+  lease](deployment.md)), so in a deployment with followers a takeover
+  should not dent this SLI — if it does, the single client-facing Service is
+  not routing reads around the lead, which is itself a finding.
+- **Latency.** Per-verb SLIs — submit, get, recall, supersede, attachment IO
+  — as the fraction of requests completing under the verb's target, computed
+  from the `oml_http_request_duration_seconds` histogram. The targets are
+  [FR-25](../product/roadmap.md)'s declared per-ring targets
+  ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d7), reused rather
+  than restated: no latency number appears here, and no target may be met by
+  weakening durability — the quorum floor is outside the optimizable budget.
+
+Example expressions, Prometheus shape — `$WINDOW`, the route sets and every
+`$…` value are deployment policy:
+
+```
+# write availability: non-5xx fraction on write routes
+  sum(rate(oml_http_request_duration_seconds_count{route=~"$WRITE_ROUTES", status!~"5.."}[$WINDOW]))
+/
+  sum(rate(oml_http_request_duration_seconds_count{route=~"$WRITE_ROUTES"}[$WINDOW]))
+
+# recall latency: fraction under the FR-25 recall target
+  sum(rate(oml_http_request_duration_seconds_bucket{route="recall", le="$FR25_RECALL_TARGET"}[$WINDOW]))
+/
+  sum(rate(oml_http_request_duration_seconds_count{route="recall"}[$WINDOW]))
+```
+
+One honesty note the formulas need: a deployment that is fully down exports
+nothing, so a metrics-only SLI overstates availability during total outages.
+A blackbox probe against `/readyz` is the standard complement; its
+configuration is a deployment-site choice like the rest of the scrape stack.
+
 ## Alerting starting points
 
 Starting points, not a tuned alert book: the structural alerts (zero/nonzero,
 boolean) are meaningful on day one; every threshold alert needs numbers this
 design does not have yet and must be set against measured baselines
-([FR-2](../product/roadmap.md), [FR-7](../product/roadmap.md)).
+([FR-2](../product/roadmap.md), [FR-7](../product/roadmap.md)). Each
+condition links its runbook — one anchored section per condition on the one
+[runbooks](runbooks.md) page.
 
 | Condition | Signal | Why it pages (or tickets) |
 |---|---|---|
-| Fork check failing | `/readyz` red on all `oml-server` replicas after restart; `chain_head` failing in doctor | The deployment is refusing writes because the chain head did not verify — by design it stays down until an operator resolves it ([deployment](deployment.md)). Page. |
-| Review unavailable | `review_availability: false` for a workarea | Admission fails closed; every write to that workarea will hold until expiry. Page if the workarea is in active use. |
-| Oldest held age approaching expiry | `oml_review_queue_oldest_age_seconds` vs. the policy's `held_item_expiry` | Items are about to dead-letter not because they are poison but because review capacity lagged — the failure mode [FR-2](../product/roadmap.md) exists to quantify. Alert ahead of the expiry, at a margin set locally. |
-| Dead letters present | `oml_dead_letter_count > 0`, or doctor's `dead_letter_count` | Every dead-lettered row is a journalled skip awaiting a human decision (re-enqueue or not). Ticket on first occurrence, page on growth. |
-| Frontier lag growing monotonically | `oml_outbox_frontier_lag_seconds` trend | Brief lag is normal (micro-batching, lease failover); monotonic growth means the lake-writer is down, conflicted, or poisoned. Alert on sustained growth, not on a fixed depth. |
-| Txn conflicts in steady state | `oml_delta_txn_conflicts_total` increasing outside failover windows | Two writers are alive; the second fence is absorbing what the lease should have prevented. Ticket: investigate lease churn. |
-| Lease churn | `oml_leader_lease_transitions_total` rate | Predicts frontier-lag spikes; usually node or kubelet trouble. Ticket. |
-| Lead takeovers in steady state | `oml_lead_takeovers_total` rate outside deploy windows | Every takeover is a write-refusal window ([deployment — the lead lease](deployment.md)); churn means the lead keeps losing its lease. Ticket, page if writes are failing. |
-| RLS denials | `oml_rls_denied_total > 0` | Expected zero. A service bug or an isolation probe — either way, investigate ([security](../architecture/security.md)). Ticket, page on spike. |
-| Repair halted | `oml_reconcile_repair_halts > 0` | A finding recurred past its attempt budget; auto-repair stopped on purpose and raised an operator condition ([reconciliation](../architecture/reconciliation.md)). Ticket, with the artifact id from doctor. |
-| Reconciler stale | `oml_reconcile_last_success_timestamp_seconds` older than a few schedules | `concurrencyPolicy: Forbid` means slow passes queue up silently; staleness is how that surfaces. Ticket. |
-| Backup job failed | store-level backup success signal | A missed backup stretches no erasure window, but a *changed retention configuration* or failed expiry does — and a failed backup chain breaks the restore ceremony ([deployment](deployment.md)). Ticket. |
-| Sustained 429s for one tenant | `oml_quota_rejections_total` rate | Either the tenant outgrew its journalled quota grant or the per-replica approximation is misbehaving under replica churn ([FR-8](../product/roadmap.md)). Ticket. |
+| [Fork check failing](runbooks.md#fork-check-failing) | `/readyz` red on all `oml-server` replicas after restart; `chain_head` failing in doctor | The deployment is refusing writes because the chain head did not verify — by design it stays down until an operator resolves it ([deployment](deployment.md)). Page. |
+| [Review unavailable](runbooks.md#review-unavailable) | `review_availability: false` for a workarea | Admission fails closed; every write to that workarea will hold until expiry. Page if the workarea is in active use. |
+| [Oldest held age approaching expiry](runbooks.md#oldest-held-approaching-expiry) | `oml_review_queue_oldest_age_seconds` vs. the policy's `held_item_expiry` | Items are about to dead-letter not because they are poison but because review capacity lagged — the failure mode [FR-2](../product/roadmap.md) exists to quantify. Alert ahead of the expiry, at a margin set locally. |
+| [Dead letters present](runbooks.md#dead-letters-present) | `oml_dead_letter_count > 0`, or doctor's `dead_letter_count` | Every dead-lettered row is a journalled skip awaiting a human decision (re-enqueue or not). Ticket on first occurrence, page on growth. |
+| [Frontier lag growing monotonically](runbooks.md#frontier-lag-growing) | `oml_outbox_frontier_lag_seconds` trend | Brief lag is normal (micro-batching, lease failover); monotonic growth means the lake-writer is down, conflicted, or poisoned. Alert on sustained growth, not on a fixed depth. |
+| [Txn conflicts in steady state](runbooks.md#txn-conflicts-in-steady-state) | `oml_delta_txn_conflicts_total` increasing outside failover windows | Two writers are alive; the second fence is absorbing what the lease should have prevented. Ticket: investigate lease churn. |
+| [Lease churn](runbooks.md#lease-churn) | `oml_leader_lease_transitions_total` rate | Predicts frontier-lag spikes; usually node or kubelet trouble. Ticket. |
+| [Lead takeovers in steady state](runbooks.md#lead-churn) | `oml_lead_takeovers_total` rate outside deploy windows | Every takeover is a write-refusal window ([deployment — the lead lease](deployment.md)); churn means the lead keeps losing its lease. Ticket, page if writes are failing. |
+| [RLS denials](runbooks.md#rls-denials) | `oml_rls_denied_total > 0` | Expected zero. A service bug or an isolation probe — either way, investigate ([security](../architecture/security.md)). Ticket, page on spike. |
+| [Repair halted](runbooks.md#repair-halted) | `oml_reconcile_repair_halts > 0` | A finding recurred past its attempt budget; auto-repair stopped on purpose and raised an operator condition ([reconciliation](../architecture/reconciliation.md)). Ticket, with the artifact id from doctor. |
+| [Reconciler stale](runbooks.md#reconciler-stale) | `oml_reconcile_last_success_timestamp_seconds` older than a few schedules | `concurrencyPolicy: Forbid` means slow passes queue up silently; staleness is how that surfaces. Ticket. |
+| [Backup job failed](runbooks.md#backup-failed) | store-level backup success signal | A missed backup stretches no erasure window, but a *changed retention configuration* or failed expiry does — and a failed backup chain breaks the restore ceremony ([restore](restore.md)). Ticket. |
+| [Sustained 429s for one tenant](runbooks.md#sustained-429s) | `oml_quota_rejections_total` rate | Either the tenant outgrew its journalled quota grant or the per-replica approximation is misbehaving under replica churn ([FR-8](../product/roadmap.md)). Ticket. |
 
 What this page does not decide: the scrape/alert stack (Prometheus, the
 managed equivalent, or none locally), dashboard layouts, and every numeric

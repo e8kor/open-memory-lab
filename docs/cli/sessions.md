@@ -1,3 +1,10 @@
+<!--
+id: cli/sessions
+tier: engineering
+status: design draft for review · decided, not built
+answers: what the administrative ceremonies are intended to feel like, as hand-written mockup transcripts — nothing on the page has run
+-->
+
 # CLI sessions
 
 **Status:** design draft for review · decided, not built · **every transcript below is a mockup**
@@ -48,7 +55,7 @@ enrollment secret accepted — consumed (single-use; a second claim is refused)
 root operator key — SHOWN ONCE, NOT RECOVERABLE, NOT JOURNALLED AS VALUE
 
     operator key id : key_op_000001
-    operator key    : oml_op_EXAMPLEVALUE_zj4Qm9tW8xKpN2rLcVbH
+    operator key    : oml_zj4Qm9tW8xKpN2rLcVbH7eGd1sYfA0uJn5iXqB3wTk6
 
 journal (provider) seq 1: key.issued {id: key_op_000001, role: operator, value_disclosed: false}
 store this value now; the server keeps only its hash.
@@ -67,7 +74,7 @@ $ oml tenants issue-admin aurora --label "aurora founding admin"
 issuing first admin key for tenant aurora — SHOWN ONCE
 
     key id : key_a1f3e2
-    key    : oml_sk_EXAMPLEVALUE_aurora_Hq7dPw3nXsYvK0mBtRj5
+    key    : oml_Hq7dPw3nXsYvK0mBtRj5E8cUa2LgZ1oD6fNyWm4SkP9
 
 journal (aurora) seq 2: key.issued {id: key_a1f3e2, role: admin, value_disclosed: false}
 
@@ -100,7 +107,7 @@ $ oml keys issue --role writer \
 key issued — SHOWN ONCE
 
     key id : key_9c44b7
-    key    : oml_sk_EXAMPLEVALUE_aurora_Wn2gLx8cQe5rTv0zYhDk
+    key    : oml_Wn2gLx8cQe5rTv0zYhDkJ7bMa3SfU1iGp9eC6nRw4Xj
     default workarea : wa_00004e (universe/research/corrosion) — provider-ring (/v1)
                        requests from this key target it when they name none
 
@@ -113,7 +120,7 @@ $ oml keys issue --role dreamer \
 key issued — SHOWN ONCE
 
     key id : key_51d0ac
-    key    : oml_sk_EXAMPLEVALUE_aurora_Fb6mZq1jUs4xNc9pKtRv
+    key    : oml_Fb6mZq1jUs4xNc9pKtRvA3eWd8HgL2oY7sBk5TmQ0Jx
 
 journal seq 816: key.issued {id: key_51d0ac, role: dreamer, value_disclosed: false}
 journal seq 817: grant.issued {key: key_51d0ac, wa_00004e: dreamer}
