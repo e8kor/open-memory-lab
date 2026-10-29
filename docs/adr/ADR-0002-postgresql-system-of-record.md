@@ -40,11 +40,12 @@ volume.
   journal.
 
 - **d2 — The journal's durability domain is synchronously quorum-replicated.** The guarantee in d1
-  holds only when the Postgres cluster runs `synchronous_commit = remote_write` or `remote_apply`
+  holds only when the Postgres cluster runs `synchronous_commit = on` or `remote_apply`
+  (`remote_write` does not survive a standby operating-system crash and does not carry this claim)
   with quorum synchronous standbys; the deployment profiles pin this. The local single-node
   profile cannot provide it, and its documentation says so rather than implying the production
   guarantee: on one node, "durable" means one disk. The cost is quorum round-trip latency on every
-  write; that latency is unmeasured and is tracked with the Postgres scale ceiling on the
+  write; that latency is unmeasured and is tracked as its own measurement row (FR-18) on the
   [roadmap](../product/roadmap.md).
 
 - **d3 — The hash chain is per tenant.** One chain-head row per `tenant_id`. Chain assignment —

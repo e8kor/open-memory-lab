@@ -80,6 +80,15 @@ What OML does not do, each by decision rather than omission, each with its alter
   teams that want their own dashboards on top. The [review guide](../review-guide.md)
   examines the choice, and the cost is acknowledged plainly: an operator who expects to click
   will not find anything to click.
+- **No automatic extraction.** OML never watches a conversation and decides what to remember.
+  A memory exists because an agent explicitly submitted a claim and stands as its attributed
+  author — automatic extraction would put the provider itself in the author's seat, with no one
+  to hold the reviewer rule against. Teams wanting extraction run it client-side and submit the
+  results.
+- **No profiles.** OML does not synthesize user or entity profiles from stored memories. The
+  designed substitute is explicit: derived-fact claims written by the crews themselves (and
+  consolidation of near-duplicates is likewise the dreamer crews' client-side work, not a
+  provider behavior).
 - **No question-answering service.** OML returns memories with their provenance; it does not
   synthesize answers from them. Its clients are agents that recall and reason for themselves,
   so a grounded Q&A layer belongs to the crew, not the provider. Teams wanting an

@@ -59,10 +59,12 @@ Two query-shape decisions:
 - **Iterative scan is enabled.** HNSW with a post-filter (RLS plus any
   workarea predicate) can return fewer than `k` rows when filtered candidates
   are discarded; iterative scan keeps pulling candidates from the graph until
-  the limit is satisfied or the scan is exhausted, trading extra index
-  traversal for not silently under-returning. That trade is the point: a
-  filtered search that quietly returns 3 of 10 requested hits is a correctness
-  bug wearing a latency costume.
+  the limit is satisfied or the configured scan ceiling is reached
+  (`hnsw.max_scan_tuples` and the scan-memory bound), trading extra index
+  traversal for far less silent under-returning. The ceiling and its tuning are
+  part of FR-4's measurement — under-return is reduced, not eliminated. The
+  trade is still the point: a filtered search that quietly returns 3 of 10
+  requested hits is a correctness bug wearing a latency costume.
 - **Subtree filtering is a filter column, not a join.** Each embedding row
   carries a workarea-path filter column (the derived `ltree` path of its
   workarea — paths are derived, node ids are the authority; see

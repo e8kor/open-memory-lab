@@ -27,7 +27,13 @@ is combined with someone else's tenant identifier.
 
 **Row-level security on every table, keyed by `tenant_id`.** Every Postgres table in the
 [PostgreSQL schema](../data/postgres-schema.md) carries an RLS policy; there is no table exempted for convenience. Service roles run with RLS
-enforced — no role used by any OML workload holds `BYPASSRLS` (see privileged services below). RLS
+enforced — no role used by any OML workload holds `BYPASSRLS` (see privileged services below).
+Two conditions make that true rather than assumed, and both are design commitments: every table
+sets `FORCE ROW LEVEL SECURITY`, and migrations run under a separate owner role no workload uses —
+a Postgres table's owner bypasses RLS by default, so a service role that owned its tables would
+silently not be subject to the policy. Workloads that set a tenant for the session (the
+lake-writer) do it with `SET LOCAL` inside the transaction, never session-level `SET`, so pooled
+connections cannot leak tenant context between batches. RLS
 is the second fence behind application-level scoping: a query that escapes a `WHERE` clause bug
 still cannot cross a tenant boundary, because the policy is evaluated by Postgres, not by our code.
 The cost is stated plainly: RLS predicates sit on every query plan, and the performance of
@@ -43,8 +49,9 @@ per-tenant partitioned indexes under RLS is unmeasured — tracked with the pgve
   credentials are per tenant** — a credential leak for one tenant's prefix does not open another's.
 - **Embeddings and FTS are partitioned**: `memory_embeddings` is list-partitioned by `tenant_id`
   with per-partition HNSW indexes and RLS on top ([retrieval.md](retrieval.md)). There is no
-  shared vector space across tenants; a nearest-neighbour query physically cannot return another
-  tenant's row, rather than merely filtering it out after ranking.
+  shared vector space across tenants: no HNSW graph spans tenants, so a correctly pruned query
+  never ranks foreign rows — and RLS remains the isolation authority if pruning fails, since
+  partition pruning is planner behavior, not a security boundary.
 - **Quarantine and body objects are keyed under per-tenant paths**
   (`oml-quarantine/<tenant>/<digest>`, `oml-bodies/<tenant>/<digest>`).
 
@@ -131,7 +138,7 @@ remains. Nothing in this table is built or measured; every control is a design c
 | Threat | Co-tenant attack | Controls | Residual |
 |---|---|---|---|
 | **S**poofing | Steal or phish another tenant's bearer key; present it as that tenant. | Keys are stored as hashes, shown once at issuance and journalled as issued-without-value ([roles-and-keys.md](roles-and-keys.md)); expiry on every key; revocation is a journalled act effective at the next permission-epoch check; tenant is derived from the key, so a stolen key spoofs *one tenant's one role*, never a chosen tenant. | A bearer key is full capability of that key until expiry or revocation. Key theft on the client side is outside OML's reach; short expiry and scoped grants bound the blast radius, they do not remove it. |
-| **T**ampering | Use leaked lake/storage credentials to rewrite another tenant's lake rows or objects; or corrupt Postgres rows. | Per-tenant lake prefixes and per-tenant storage credentials bound a leak to one tenant. The lake is derived, never authoritative, and serves no client read ([storage.md](storage.md)) — tampered lake rows mislead analytics, not serving. The reconciler's digest-mismatch finding class detects divergence keylessly ([reconciliation.md](reconciliation.md)). In Postgres: journal tables are append-only (REVOKE UPDATE/DELETE plus guard trigger); the per-tenant hash chain and signatures make any rewrite of history fail verification. | Tampering between reconciler runs is live until detected; detection latency is the reconciler's cadence. A Postgres superuser is outside the model — the deployment's DBA is trusted. |
+| **T**ampering | Use leaked lake/storage credentials to rewrite another tenant's lake rows or objects; or corrupt Postgres rows. | Per-tenant lake prefixes and per-tenant storage credentials bound a leak to one tenant. The lake is derived, never authoritative, and serves no client read ([storage.md](storage.md)) — tampered lake rows mislead analytics, not serving. The reconciler's digest-mismatch finding class detects divergence keylessly ([reconciliation.md](reconciliation.md)). In Postgres: journal tables are append-only (REVOKE UPDATE/DELETE plus guard trigger); the per-tenant hash chain and signatures make any rewrite by a party without the deployment signing key fail verification; a key-holding attacker's rewrite is detectable only against chain heads retained outside the deployment — evidence exports today, an anchoring mechanism if RS-9 adopts one ([roadmap](../product/roadmap.md)). | Tampering between reconciler runs is live until detected; detection latency is the reconciler's cadence. A Postgres superuser is outside the model — the deployment's DBA is trusted. |
 | **R**epudiation | A writer denies having written a claim; a reviewer denies a verdict; a tenant disputes what was served. | Every mutation is a signed, hash-chained, attributed journal event (key id, principal, timestamp). Verdicts are bound to a serve record of exactly what was reviewed (serve_id, below). Reads are logged with per-batch digests anchored into the journal ([retrieval.md](retrieval.md)). The evidence export replays the decision trail per memory ([audit-and-lineage.md](audit-and-lineage.md)). | Attribution says which *key* acted. Binding a key to a human or crew member is the tenant's key-hygiene problem; shared keys dilute repudiation evidence and the docs say so rather than pretending otherwise. |
 | **I**nformation disclosure | Read another tenant's memories across the shared database or the shared search machinery; or exfiltrate via the lake. | RLS keyed by `tenant_id` on every table, with no service role holding `BYPASSRLS`. Tenant never taken from the request. Embeddings and FTS are physically partitioned per tenant — there is no cross-tenant index to leak through, and ranking never sees foreign rows. Within a tenant, simulation rows are additionally excluded from the shared indexes and served only to the simulation's audience ([simulations.md](simulations.md)). Lake bodies are per-artifact-DEK ciphertext; lake access without KMS decrypt yields digests and attribution, not content. | Attribution metadata (writer, principal, timestamps, workarea path) is in the clear in the lake by design requirement — who wrote what, when, where is what the lake is for ([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)); its erasure is a tracked FR ([audit-and-lineage.md](audit-and-lineage.md)). Side channels (timing, resource contention on shared replicas) are not addressed in v1. |
 | **D**enial of service | Flood writes, uploads or queries to starve co-tenants on shared replicas, Postgres, or review capacity. | Quotas and rate limits are journalled grant attributes; exceeding one returns a typed 429 naming the rule ([errors.md](../api/errors.md)). Upload sessions are bounded and digest-checked. Admission fails closed rather than queueing unboundedly ([admission.md](admission.md)). Bans cut a hostile author or source off at admission (below). | **v1 enforcement is per-replica token buckets at limit/N — a documented approximation.** With N replicas and uneven load balancing, a tenant can transiently exceed or be unfairly denied its global limit; there is no shared counter in v1. Resolving the approximation — shared enforcement, or a recorded decision keeping it with a stated error bound — is [FR-8](../product/roadmap.md). Per-tenant chain locks mean one tenant cannot serialize another's writes, but shared CPU/IO contention on replicas remains. |
@@ -241,10 +248,18 @@ rounded up to a guarantee.
 3. **Rate limiting is a per-replica approximation.** Token buckets at limit/N per replica, no
    shared counter in v1; transient over- and under-admission is expected under skewed load
    balancing. Its resolution is [FR-8](../product/roadmap.md).
-4. **Replica compromise is signing-key compromise.** Stated in the custody map; repeated here
-   because it is the largest single trust assumption in the design. Detection (fork check, chain
-   verification against prior heads) and journalled rotation are the answer; prevention via
-   per-replica or HSM keys is not committed.
+4. **Replica compromise is signing-key compromise — and decrypt-everything compromise.**
+   `oml-server` holds the signing key *and* the KMS decrypt grant for the serving path, so a
+   compromised replica can both sign arbitrary events and unwrap any tenant's DEKs to read every
+   body it chooses to serve itself. This is the largest single trust statement in the design, and
+   it is two statements, not one. Detection (fork check, chain verification against prior heads —
+   which requires heads retained outside the deployment, RS-9) and journalled rotation are the
+   answer for the signing half; nothing detects quiet reads by a compromised key-holding process.
+   Prevention via per-replica keys, HSM-resident signing or threshold decryption is not committed.
+4b. **Indexer compromise exposes promoted plaintext.** `oml-indexer` necessarily handles promoted
+   plaintext to embed it; its compromise exposes every promoted body of the tenants it serves,
+   bounded by its per-tenant credentials. Until RS-1 decides where the embedding model runs, the
+   standing commitment is that no promoted plaintext leaves the deployment's trust boundary.
 5. **The platform operator is trusted.** A Postgres superuser, a KMS administrator, or whoever
    holds the Kubernetes Secrets can read attribution metadata, destroy or exfiltrate keys, and
    rewrite unprotected state. OML's evidence (signed chains held by tenants via exports) makes

@@ -90,9 +90,10 @@ derived path". Two consequences:
 Every effective-access computation is reproducible from journalled grants: the
 grant, its denies, and the global per-key deny objects are all journalled
 records, and a **permission epoch** counter invalidates any cached resolution
-when any of them changes. There is no cached answer that can outlive the grant
-state that produced it; the cost is a recomputation on every epoch bump, which
-is accepted.
+when any of them changes. No cached answer survives past the next epoch check;
+the window between a revocation's commit and that check is bounded by a stated
+deployment parameter ([security](security.md) names it as the EoP residual).
+The cost is a recomputation on every epoch bump, which is accepted.
 
 ## Effective access: union of attenuated grants, then deny-wins
 

@@ -688,6 +688,15 @@ A validated settings apply (`oml settings apply`), recording the effective confi
 an apply naming a retired key is refused before this event exists, so `refused_keys` is normally
 empty and present for the audit trail.
 
+## Reserved: the `import` family
+
+The `import.*` namespace (manifest_submitted, completed, superseded, erased) is reserved for
+dataset onboarding — one chain event per imported dataset, never per row, with per-row digests
+anchored by Merkle roots inside the signed manifest event. The family's definitions live in
+[ADR-0020](../adr/ADR-0020-dataset-onboarding.md) and enter this catalog when that post-v1 feature
+is scheduled. Until then, `provenance: connector` appears in the schema's CHECK constraint with no
+submission event that produces it — reserved, not an oversight.
+
 ## What is deliberately not an event
 
 Reads are not journal events: they go to the retention-bounded `read_events` log, whose batch

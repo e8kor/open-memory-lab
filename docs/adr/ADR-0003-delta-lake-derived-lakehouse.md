@@ -102,9 +102,13 @@ materialization for a tenant forever.
 - The lake is eventually consistent with the journal by design, and the lag has a name — the
   frontier — surfaced by `oml status`/`oml doctor` and checked by the reconciler (stale-frontier
   is a finding class, ADR-0017 d4). Nothing downstream may treat a lake row as current eligibility.
-- Recovery after any crash or failover is mechanical: read each table's last transaction version
-  from the Delta log, reconstruct the batch deterministically, replay; tables already committed
-  skip it (d4). No operator judgment is in the loop.
+- Recovery after any crash or failover is designed to be mechanical: read each table's last
+  transaction version from the Delta log, reconstruct the batch deterministically, replay; tables
+  already committed skip it (d4). No operator judgment is in the loop — a property that holds
+  only once FR-3's conformance test passes, including survival of the transaction identifier
+  across checkpointing, VACUUM and the Delta protocol's transaction-identifier retention
+  ([FR-16](../product/roadmap.md)); the protocol permits `SetTransaction` expiry, which would
+  silently reset recovery to "never applied".
 - Dead-lettering makes incompleteness a first-class, journalled, repairable state rather than a
   stuck queue (d6) — at the price that "the lake has everything" is never assumed, only verified
   (ADR-0017).

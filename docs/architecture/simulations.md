@@ -56,7 +56,10 @@ workareas; it still cannot write or review them.
 
 Every simulation write is an ordinary journalled, attributed event. It carries an indelible
 `provenance: simulation` marker and its `simulation_id` in three places — the journal event, the
-Postgres row, and the lake row — so no single store can lose the marking.
+Postgres row, and the lake row — so no single store can lose the marking. (A what-if *dataset*
+imported into a simulation under [ADR-0020](../adr/ADR-0020-dataset-onboarding.md) follows the
+same rule: its rows are fenced as simulation rows, and their external origin is the import
+manifest's record, not the provenance column's.)
 
 Simulation writes pass the **full admission pipeline** ([admission](admission.md), D11): capture,
 quarantine, deterministic scan, non-author review, ratification with a journalled policy snapshot,

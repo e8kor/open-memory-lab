@@ -55,9 +55,11 @@ Two further exclusions, each with its reason:
 
 - **Reads are not chain events.** Read events (key, role, workarea, memory ids or query digest,
   timestamp) live outside the hash chain in a retention-bounded log whose per-batch digests are
-  anchored into the journal — the chain proves the log's integrity without the chain growing at
-  read rate and without read records becoming unerasable. Retention is tenant policy; the
-  mechanics are [retrieval](retrieval.md)'s.
+  anchored into the journal. The anchoring keeps the chain from growing at read rate and keeps
+  read records erasable, and the chain proves the log's integrity from each batch's anchor
+  onward — the not-yet-anchored tail is protected only by ordinary table permissions until its
+  batch digest lands, and the anchoring cadence is a stated deployment parameter. Retention is
+  tenant policy; the mechanics are [retrieval](retrieval.md)'s.
 - **Identity metadata in the chain is minimized.** The chain carries writer identity and
   principal because attribution is a design requirement of this system — who wrote what, when, where.
   It carries no more than that, and the design is honest that what it does carry is not erased
@@ -177,7 +179,9 @@ here rather than restating it.
 | `bronze.events`, including all Delta versions and checkpoints | Digest-only mirror of journal events | Never needs touching |
 | `silver`/`gold` body columns | Per-artifact-DEK ciphertext | Unreadable the moment the DEK is destroyed; a retract MERGE updates row state. Parquet files of **earlier Delta versions and checkpoints** keep the ciphertext until `VACUUM` and checkpoint cleanup remove them — that retention bound is part of the erasure SLO, stated, not hidden |
 | Object-store versions (`oml-bodies`, quarantine) | Ciphertext of bodies and attachments, including prior object versions | Unreadable at DEK destruction; versions age out under bucket retention |
-| `pgvector` rows and `tsvector` entries | **Plaintext-derived** index content ([retrieval](retrieval.md)) | Removed from live tables at erase time; **persist in Postgres base backups and WAL until the named backup retention window expires** — that is the honest statement, and the window is a stated operational bound, not an apology |
+| `pgvector` rows and `tsvector` entries | **Plaintext-derived** index content ([retrieval](retrieval.md)) | Removed **in the same transaction as the erase event**; **persist in Postgres base backups and WAL until the named backup retention window expires** — that is the honest statement, and the window is a stated operational bound, not an apology |
+| Postgres temporary and spill files; standby replicas' own disks | Transient plaintext-derived content (sorts, hash spills over index rows) on the primary's and every standby's volume | Bounded by volume encryption at rest plus the operating system's temp-file lifetime; a standby's disk holds the same WAL and table copies as the primary and inherits every bound above. Named here because the inventory's rule is completeness, not comfort |
+| OS/block-level volume snapshots of the Postgres volume | Everything the volume held at snapshot time — plaintext-derived index content **and** wrapped DEKs — outside the base-backup/WAL accounting above | Whether the deployment takes volume snapshots is an operational choice; if it does, their retention window joins the erasure SLO composition exactly as base backups do, and the [deployment](../operations/deployment.md) backup table must list them |
 | `artifact_keys.wrapped_dek` in Postgres base backups and WAL | The **wrapped DEK itself** — a usable key copy, not content | The live row is nulled at erase; copies in base backups and WAL survive until the backup retention window expires, and **while the wrapping KEK lives, a restored backup plus KMS unwrap could recover the DEK and decrypt every surviving ciphertext copy**. The designed bound: scheduled KEK rotation re-wraps **live** DEKs only, and a retired KEK is destroyed once the backup horizon has passed — destroying it invalidates every wrapped-DEK copy in older backups. Erasure therefore completes against live stores immediately, and against backups no later than **backup retention window + KEK rotation period** ([security](security.md) owns key custody; the fenced-restore ceremony is [deployment](../operations/deployment.md)'s) |
 | `read_events` | Memory ids and query digests, not bodies | Retention-bounded by tenant policy ([retrieval](retrieval.md)); in this inventory because a query digest can correlate with erased content until its window closes |
 | Serving-path caches | Decrypted bodies in flight | Invalidated at erase; any cache added later enters this inventory as a named copy class before it ships |
