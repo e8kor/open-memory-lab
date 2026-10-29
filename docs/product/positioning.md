@@ -51,6 +51,13 @@ provider is the `/v1` ring, under a compatibility covenant and with the target w
 by the token itself; the lab is the `/v2` ring, where the steroids evolve without ever touching
 the foundation.
 
+The install story makes it operational ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)):
+one host, one compose file, or one chart — the same binaries, the same journal, the same
+conformance suite on all three (FR-22), lead-only by default and read-scaled by followers when
+needed. The market check of 2026-10-29 found the category's self-host stories deprecated
+(Zep CE), unmaintained (Letta's image), or license-gated Kubernetes-only (Redis Agent Memory
+Server) — OML installs like the category used to promise, and governs unlike it.
+
 ## Evidence
 
 Nothing here is built, so the honest inventory of evidence is short:

@@ -50,14 +50,14 @@ Four Rust binaries, one database, one object store, one lakehouse. The deciding 
 custody: **only oml-server loads the deployment signing key**; lake-writer, reconciler and indexer
 run under their own credentials and can neither sign journal events nor (for the reconciler)
 decrypt bodies. Custody and commit-point rules are owned by [storage.md](storage.md); the
-privileged-service threat model by [security.md](security.md); workload shapes and the two Helm
-profiles by [operations/deployment.md](../operations/deployment.md).
+privileged-service threat model by [security.md](security.md); workload shapes, the three install
+profiles and the two Helm value sets by [operations/deployment.md](../operations/deployment.md).
 
 ```mermaid
 flowchart TB
     CL["Agents / reviewer crews / CLI"]
     subgraph k8s ["Kubernetes boundary"]
-        S["oml-server<br/>axum, N stateless replicas<br/>loads the signing key<br/>holds DEKs on the serving path"]
+        S["oml-server<br/>axum — one lead (signs, admits) +<br/>N read followers, default 0<br/>only the lead loads the signing key"]
         LW["oml-lakewriter<br/>singleton, leader lease<br/>no signing key · keyless, moves ciphertext verbatim"]
         RE["oml-reconciler<br/>CronJob, read-only<br/>no signing key · no decrypt — keyless"]
         IX["oml-indexer<br/>embeddings per tenant<br/>no signing key"]
@@ -77,7 +77,7 @@ flowchart TB
 
 | Container | Role | Signing key | Owning page |
 |---|---|---|---|
-| oml-server | The only API surface; the single transactional commit point is the Postgres transaction it runs | **yes** — every replica, same deployment key | [storage.md](storage.md) |
+| oml-server | The only API surface; the single transactional commit point is the Postgres transaction it runs | **lead only** — followers never ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) | [storage.md](storage.md) |
 | oml-lakewriter | Sole outbox drain; lake writes and all lake maintenance | no | [storage.md](storage.md) |
 | oml-reconciler | Read-only journal-vs-lake comparison; repairs re-emitted via oml-server | no | [reconciliation.md](reconciliation.md) |
 | oml-indexer | Computes embeddings for the serving tier | no | [retrieval.md](retrieval.md) |
@@ -85,7 +85,7 @@ flowchart TB
 | Object store | Quarantine bucket and ciphertext bodies, content-addressed by plaintext digest | — | [storage.md](storage.md) |
 | Delta lake | Derived body lakehouse for reconciliation, lineage, analytics, future exports | — | [storage.md](storage.md), [data/delta-tables.md](../data/delta-tables.md) |
 
-A compromised replica is treated as key compromise; the signature attests the deployment, not a
+A compromised lead is treated as key compromise; the signature attests the deployment, not a
 unique process ([storage.md](storage.md)).
 
 ## 3. Module structure

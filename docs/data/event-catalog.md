@@ -697,6 +697,22 @@ A validated settings apply (`oml settings apply`), recording the effective confi
 an apply naming a retired key is refused before this event exists, so `refused_keys` is normally
 empty and present for the audit trail.
 
+### system.lead_acquired
+
+```json
+{
+  "node_id": "…", "address": "…",
+  "lease_epoch": 7,
+  "previous_lead_node_id": "…"
+}
+```
+
+A lead takeover ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d14): signed
+by the **new** lead as its first act after acquiring the lead lease and passing the startup fork
+check, so the journal always answers "which process was lead when." Journalled in the reserved
+provider tenant's chain. The lease itself is never load-bearing — the per-tenant chain lock is;
+a split-brain pair contends on the lock, it cannot fork a chain.
+
 ## Reserved: the `import` family
 
 The `import.*` namespace (manifest_submitted, completed, superseded, erased) is reserved for

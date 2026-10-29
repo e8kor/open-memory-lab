@@ -1,6 +1,9 @@
 # ADR-0016 — Kubernetes workloads, two Helm profiles, deployment identity replaces volume identity
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · **scope: this record governs the Kubernetes
+profile.** Standalone and docker are first-class profiles of their own under
+[ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md), which also supersedes the
+every-replica-signs portion of d4 with cluster-mode lead/follower roles (ADR-0023 d13).
 
 ## Context
 
@@ -119,3 +122,10 @@ is the decision and its reasons. Decided, not built — no chart exists.
   real deployment — including the probes, the bootstrap Job and the MinIO pin —
   and a defect in the chart is found on a laptop instead of at rollout. The
   cost (a local Kubernetes is heavier than Compose) is accepted for that.
+  This rejection stands as written: it argued against compose *as a rehearsal
+  of the Kubernetes deployment*. Compose as a first-class install target in
+  its own right is a different requirement, decided later in
+  [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md), where the drift
+  risk this rejection priced is answered by a conformance suite that must pass
+  on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
+  payload.

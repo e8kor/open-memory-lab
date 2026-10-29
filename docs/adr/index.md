@@ -31,6 +31,8 @@ rows the records open.
 | [ADR-0020](ADR-0020-dataset-onboarding.md) | Dataset onboarding: the import manifest | accepted design — post-v1 | the manifest as the reviewed claim at dataset grain, seeded sampling review, one chain event per import, the per-manifest wrapping-key tier, the resurrection fence |
 | [ADR-0021](ADR-0021-ai-human-ontologies.md) | AI+Human ontologies: vocabularies as governed claims | accepted design | terms as claims with permanent CURIEs, releases as journalled pins with a materialized closure, SSSOM mappings, the vocab scanner, policy-placed human verdicts over an issuance-time attestation |
 | [ADR-0022](ADR-0022-two-ring-api.md) | The two-ring API: v1 memory provider, v2 memory lab | accepted design | one keyed listener, two stability rings; the v1 compatibility covenant (FR-21); the target workarea from the token with `X-OML-Workarea` as the plain override; the token/header/body attribute-placement rule |
+| [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) | Three install profiles, one conformance bar — and cluster mode | accepted design | standalone / docker / kubernetes with one conformance suite (FR-22); the software keyring's honest custody collapse; lead/follower cluster mode, lead-only by default, the lease never load-bearing |
+| [ADR-0024](ADR-0024-performance-foundation.md) | The performance foundation | accepted design | the hot-path discipline (only hash+sign+one insert inside the chain lock), the DEK serving cache as a copy class, batch submit as the throughput lever, latency targets as FR-25 rows, the measured-not-assumed stack registry |
 
 ## Format
 

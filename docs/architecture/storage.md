@@ -70,14 +70,18 @@ Append-only is enforced mechanically, not by convention: `REVOKE UPDATE,
 DELETE` on `journal` plus a guard trigger. Row-level security scopes every
 table by tenant ([security.md](security.md)).
 
-**Signing, stated honestly (D17).** Every `oml-server` replica loads the same
-deployment signing key (Kubernetes Secret/KMS). What is single is chain-head
-assignment in Postgres, not the signer process. The signature therefore attests
-*the deployment*, not a unique process, and the threat model treats compromise
-of any replica as compromise of the signing key
-([security.md](security.md)). The honest reading: the chain proves that the
-deployment's key signed these events in this order; it does not prove which
-replica did, and it does not protect against an attacker who holds the key.
+**Signing, stated honestly (D17).** The **lead** loads the deployment signing
+key (Kubernetes Secret/KMS); followers never do
+([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)). What is
+single is chain-head assignment in Postgres — the lead lease keeps the common
+case quiet, but the chain lock is the load-bearing fence. The signature attests
+*the deployment*: one signer process at a time, each takeover journalled
+(`system.lead_acquired`), with the startup fork check run at lead startup
+**and at every failover promotion**. The threat model treats compromise of the
+lead as compromise of the signing key ([security.md](security.md)). The honest
+reading: the chain proves that the deployment's key signed these events in
+this order; it does not prove which process did beyond the journalled lead
+record, and it does not protect against an attacker who holds the key.
 
 **Fork check at startup.** Before accepting writes, `oml-server` verifies that
 the stored chain head verifies against the last signed head. This detects the
