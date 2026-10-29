@@ -56,11 +56,15 @@ include.
 - **Read-log integrity.** Reads already covered by an anchored batch digest are
   tamper-evident; the unanchored tail — reads not yet batch-anchored — can be dropped without
   detection. The exposure window is the anchoring cadence, and no cadence bound is committed
-  yet. [Audit and lineage](../architecture/audit-and-lineage.md).
+  yet. In cluster mode the window also covers follower-written rows awaiting the lead's anchor,
+  and a crashed follower loses its unflushed async batch ([RS-13](roadmap.md)).
+  [Audit and lineage](../architecture/audit-and-lineage.md).
 - **Revocation and grant latency.** A revoked key or withdrawn grant can act until the bounded
   cache epoch lapses; the window is stated in [security](../architecture/security.md), not zero.
-- **Rate limiting.** Each replica enforces a tenant's limit divided by replica count; a tenant
-  can briefly exceed its quota, and the error grows with replica churn. [FR-8](roadmap.md).
+- **Rate limiting.** In cluster mode the split follows the topology: write-path limits are
+  exact (one lead — nothing to divide); read-path limits are limit/N across followers, so a
+  tenant can briefly exceed its read quota and the error grows with follower churn.
+  Lead-only deployments are exact on both paths. [FR-8](roadmap.md).
 - **Vector-scan completeness.** Iterative vector scans are bounded by pgvector's
   `max_scan_tuples` and scan-memory caps — a configurable cutoff, not exhaustiveness. The
   recall consequences are [FR-4](roadmap.md)'s to measure.
@@ -100,11 +104,30 @@ produces the number or the decision.
   human-verdict load — FR-20.
 - The `/v1` provider-ring compatibility covenant: dormant until the v1-stable declaration —
   FR-21 ([ADR-0022](../adr/ADR-0022-two-ring-api.md)).
+- Profile conformance (one suite green on standalone, docker, kubernetes) — FR-22; the
+  migration rehearsal — FR-23; lead-failover semantics and the single-lead write ceiling —
+  FR-24; provider-ring latency against declared targets — FR-25
+  ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md),
+  [ADR-0024](../adr/ADR-0024-performance-foundation.md)).
 - Open questions, each a decision not yet taken: embedding model and boundary (RS-1), MCP
   OAuth (RS-2), federation (RS-3), the Merkle specification (RS-4), sampling-policy semantics
   (RS-5), the connector surface (RS-6), MWK rotation (RS-7), tenant-wide erased-digest
   matching (RS-8), external chain-head anchoring (RS-9), the `oml:` upper-vocabulary register
-  (RS-10), the external-ontology import profile (RS-11).
+  (RS-10), the external-ontology import profile (RS-11), the standalone keyring mechanism
+  (RS-12), the cluster read-log split (RS-13), the DEK serving-cache shape (RS-14).
+
+### Profile-dependent bounds
+
+Several §2 bounds depend on the install profile ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md));
+the per-profile detail lives with the [deployment](../operations/deployment.md) page's profile
+sections and [security](../architecture/security.md)'s "Custody by profile" table, and the
+rule here is the contract: **a profile never changes what the system refuses — it changes what
+backs the refusal.** Durability on standalone and default docker is one host's disk (quorum
+restores the claim only against a quorum-replicated Postgres); KEK custody in the `kms-file`
+profiles is a file on the host, so "never leaves KMS" is replaced, not weakened; the erasure SLO
+gains the keyring-file copy class; and tamper-evidence against the host administrator in
+standalone rests entirely on exported chain heads (RS-9). The constitution-tier rows of §1 are
+profile-independent — including C6's three RLS commitments, which bind in all three profiles.
 
 ## 4. Never claimed
 
@@ -123,10 +146,15 @@ register.
   prevented by it; principal identity is tenant-asserted data.
 - **Client plaintext custody.** Content the client held before submission is the client's;
   nothing OML erases reaches those copies.
-- **Replica-compromise containment.** A compromised `oml-server` replica holds KMS decrypt on
-  the serving path: it can unwrap any served tenant's DEKs and read every body, and serve
-  fabricated content under a valid signature. Compromise means decrypt-everything, not just
-  sign-everything. [Security](../architecture/security.md).
+- **Lead-compromise containment.** The compromised **lead** holds the signing key and KMS
+  decrypt: it can unwrap any served tenant's DEKs, read every body, and serve fabricated
+  content under a valid signature. Compromise means decrypt-everything and sign-everything.
+  A compromised **follower** is narrower by construction ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)):
+  serving-path decryption and misserving only — it cannot forge a chain event, promote or
+  erase, so tamper-evidence survives follower compromise. In the default lead-only topology
+  the lead admission stands alone. In the standalone profile the admission widens to the host:
+  one machine holds signing key, KEK, database, lake and backups.
+  [Security](../architecture/security.md).
 - **Indexer-compromise containment.** `oml-indexer` necessarily handles plaintext; its
   compromise exposes the promoted plaintext of every tenant it indexes. And until
   [RS-1](roadmap.md) closes, there is no commitment that plaintext never leaves the
@@ -135,8 +163,10 @@ register.
   bound as the admission it is: until [RS-9](roadmap.md) decides an anchoring mechanism,
   detection of a key-holding attacker rests on evidence someone outside the deployment chose
   to keep.
-- **Availability under integrity stress.** OML trades availability for integrity at three
-  named points — fail-closed review, quorum-synchronous commit, singleton lake-writer — a
-  stalled reviewer, standby, or lease each stops writes rather than weakening them.
+- **Availability under integrity stress.** OML trades availability for integrity at four
+  named points — fail-closed review, quorum-synchronous commit, singleton lake-writer, and
+  the single lead — a stalled reviewer, standby, lease, or lead takeover each stops writes
+  rather than weakening them. During a lead takeover, followers keep serving reads; writes
+  are refused for the lease-and-fork-check window ([FR-24](roadmap.md)).
   [Admission](../architecture/admission.md), [storage](../architecture/storage.md),
   [ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md).

@@ -9,8 +9,11 @@ shape, which are:
 
 - a multi-tenant HTTP service where per-tenant hash-chain assignment is serialized
   under a transaction-scoped lock on the hot write path
-  ([storage](../architecture/storage.md)) — the throughput of the service's own
-  code matters, because that code sits inside the serialization point;
+  ([storage](../architecture/storage.md)) — though the honest accounting is that
+  the only service code inside that lock is a hash and a signature, microseconds
+  of CPU against a quorum-synchronous commit round trip measured in milliseconds
+  ([ADR-0024](ADR-0024-performance-foundation.md)); the language case does not
+  rest on hot-path throughput;
 - a lake-writer that must drive Delta Lake commits, MERGE, OPTIMIZE, VACUUM and
   checkpointing with exactly-once semantics ([storage](../architecture/storage.md));
 - a trusted computing base whose compromise is signing-key compromise
@@ -19,17 +22,35 @@ shape, which are:
   process that holds the key.
 
 Each point argues the same direction: the system's risk lives in concurrency and
-storage-protocol correctness, its hot path is its own code, and its most trusted
-process should carry the smallest possible runtime.
+storage-protocol correctness, and its most trusted process should carry the
+smallest possible runtime. The hot-path rules the stack must obey are recorded in
+[ADR-0024](ADR-0024-performance-foundation.md), not here.
 
 ## Decision
 
-- **d1 — Every OML binary is Rust.** `oml-server`, `oml-lakewriter`,
+- **d1 — Every OML binary is Rust.** The server (its lead and follower
+  compositions, d6), `oml-lakewriter`,
   `oml-reconciler`, `oml-indexer` and the `oml` CLI are one language, one
   toolchain, one set of static binaries. The committed stack: **axum** for the
   HTTP service, **sqlx** for Postgres, **object_store** for S3/MinIO/filesystem,
   and the **deltalake crate (delta-rs)** for all lake writes and maintenance.
   Decided, not built — no code exists.
+
+    The sqlx choice is made with its limits on the table, not in ignorance of them:
+    sqlx has **no pipelining** (tokio-postgres is a pipelined client,
+    [docs.rs/tokio-postgres](https://docs.rs/tokio-postgres)); it **does** prepare
+    and cache statements automatically per connection
+    ([sqlx docs](https://docs.rs/crate/sqlx/%5E0.6.1)), which satisfies
+    [ADR-0024](ADR-0024-performance-foundation.md)'s prepared-statement rule out of
+    the box; and the measured gaps against tokio-postgres are anecdotal and
+    fetch-heavy ([sqlx issue #2007](https://github.com/launchbadge/sqlx/issues/2007)
+    reports a large `fetch_all` running ~50% faster on tokio-postgres) — a shape the
+    design avoids: the write path is one statement per round trip and the read path
+    is small-k hydration ([ADR-0024](ADR-0024-performance-foundation.md) d1, d4).
+    The revisit trigger is named: *if the load rig attributes more than a stated
+    fraction of the submit budget to driver overhead, `oml-pg` swaps to
+    tokio-postgres + deadpool behind the same port — an adapter change, invisible
+    above the port boundary* ([ADR-0019](ADR-0019-hexagonal-architecture-and-plugins.md)).
 
 - **d2 — The deltalake crate is the whole lake interface, and its capability list
   is a sourced claim, not an assumption.** The design relies on these operations
@@ -62,7 +83,8 @@ process should carry the smallest possible runtime.
   anywhere in the deployment.
 
 - **d5 — Key custody follows the language boundary nowhere and the process
-  boundary everywhere.** Only `oml-server` loads the deployment signing key;
+  boundary everywhere.** Only `oml-server-lead` loads the deployment signing key
+  ([ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md));
   lake-writer, reconciler and indexer run under their own credentials. This is
   declared in [security](../architecture/security.md) and restated here only
   because it is the reason d4's TCB line is enforceable: a job outside the key's
@@ -78,7 +100,7 @@ process should carry the smallest possible runtime.
     | Driven adapters | `oml-pg` (sqlx), `oml-lake` (delta-rs), `oml-objectstore` (object_store), `oml-kms` | one crate per infrastructure dependency, implementing its port, holding no policy |
     | Driving adapters | `oml-transport-http`, `oml-transport-mcp` | the HTTP surface (both rings, [ADR-0022](ADR-0022-two-ring-api.md)) and the MCP facade as adapters over `oml-app` |
     | Plugins | `oml-scan-*`, `oml-embed-*`, `oml-export-*` | compiled-in implementations behind the scanner/embedder/exporter ports, under ADR-0019's plugin law |
-    | Binaries | `oml-server`, `oml-lakewriter`, `oml-reconciler`, `oml-indexer` | thin compositions: each wires `oml-domain` + `oml-app` to the adapter set its job needs |
+    | Binaries | `oml-server-lead`, `oml-server-follower`, `oml-lakewriter`, `oml-reconciler`, `oml-indexer` | thin compositions: each wires `oml-domain` + `oml-app` to the adapter set its job needs. The server ships as two compositions for cluster mode ([ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md)): `oml-server-lead` composes the signer port and KMS; `oml-server-follower` composes KMS serving decrypt only and **no signer port** — "a follower cannot sign" is a dependency-graph fact plus a secret that is never mounted, the same pattern as C7's keyless lake-writer |
     | CLI | `oml-cli` | a thin `/v1` HTTP client ([ADR-0015](ADR-0015-cli-administration.md)); composes no port trait and no domain crate — it reaches the hexagon only through the HTTP transport |
 
     This layout is the enforcement home of "constitution in the core": only `oml-domain`
@@ -88,7 +110,7 @@ process should carry the smallest possible runtime.
 
 ## Consequences
 
-- One toolchain builds four static binaries and the CLI; container images carry
+- One toolchain builds the static binaries and the CLI; container images carry
   no interpreter and no package manager, which shrinks both image size and the
   attack surface of the process that holds the signing key. The cost is paid in
   iteration speed: Rust's compile-and-borrow-check loop is slower than an

@@ -15,9 +15,11 @@ code accumulates on top of them. In order:
 
 1. **delta-rs transaction-identifier conformance.** Verify that applied-version state survives
    a checkpoint written mid-sequence, `VACUUM`, restart, and the transaction-identifier
-   retention settings — and pin those settings. A failure here invalidates
-   [ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md) d4 (the Delta log as sole
-   recovery authority); the named fallback is a Postgres applied-ledger as the recovery
+   retention settings — and pin those settings; run the same cases on `file://`
+   (the standalone profile's backend, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)),
+   including the local-filesystem conditional-put self-test and the NFS refusal. A failure here
+   invalidates [ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md) d4 (the Delta log as
+   sole recovery authority); the named fallback is a Postgres applied-ledger as the recovery
    authority. Feeds [FR-3](roadmap.md)'s extended harness.
 2. **Conditional put under degraded quorum.** Test conditional PUT on MinIO with a degraded
    read quorum and verify lockless delta-rs commits on both MinIO and S3; pin the exact MinIO
@@ -42,11 +44,12 @@ with per-tenant chains, advisory-lock commit and the outbox
 ([storage](../architecture/storage.md)); a minimal `oml-server` — submit, review, promote,
 read-own — with keys, grants and the bootstrap ceremony
 ([roles and keys](../architecture/roles-and-keys.md)); the CLI minimum
-([ADR-0015](../adr/ADR-0015-cli-administration.md)); the local Helm profile
-([deployment](../operations/deployment.md)).
+([ADR-0015](../adr/ADR-0015-cli-administration.md)); the **standalone profile**
+([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) — the cheapest end-to-end
+rig and the dev profile the whole build runs on; nothing in M1's exit needs an orchestrator.
 
 **Exit.** Invariant tests over the pure core pass; one-commit-point and chain-order semantics
-demonstrated on the local profile. **Every later milestone depends on M1.**
+demonstrated on the standalone profile. **Every later milestone depends on M1.**
 
 ## M2 — Provider floor
 
@@ -58,8 +61,12 @@ against the surface this milestone finishes.
 **Items.** Retrieval (FTS plus pgvector, [retrieval](../architecture/retrieval.md));
 attachments ([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md)); the MCP facade with
 idempotency ([ADR-0014](../adr/ADR-0014-http-api-and-mcp-facade.md)); the read log
-([ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md)). Plus five gaps carried as
-first-class items, not polish:
+([ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md)); the **docker-compose profile**
+joins here ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) — the
+provider-floor milestone is when early users first want a trivial install; and the hot-path
+discipline of [ADR-0024](../adr/ADR-0024-performance-foundation.md) binds from the first
+provider-ring endpoint, with [FR-25](roadmap.md)'s harness built alongside. Plus five gaps
+carried as first-class items, not polish:
 
 - own-held recall (`include_own_held`) and `oml_get` on MCP — [FR-10](roadmap.md);
 - `oml_supersede` on MCP and the journalled author retire-proposal — [FR-10](roadmap.md);
@@ -79,10 +86,14 @@ M1.
 **Goal.** The derived side exists and its exactly-once claim is verified, not assumed.
 
 **Items.** Outbox → lake-writer → bronze/silver with the [FR-3](roadmap.md) extended
-conformance harness (kill, restart, checkpoint, `VACUUM`, retention); [FR-16](roadmap.md)
+conformance harness (kill, restart, checkpoint, `VACUUM`, retention — run per object-store
+backend: `file://`, pinned MinIO, S3); [FR-16](roadmap.md)
 throughput and commit-latency measurements; reconciler v1 with the closed finding vocabulary
 ([reconciliation](../architecture/reconciliation.md),
-[ADR-0017](../adr/ADR-0017-reconciliation.md)).
+[ADR-0017](../adr/ADR-0017-reconciliation.md)); the **Kubernetes local profile** (k3d +
+CloudNativePG + pinned MinIO) joins here — the first milestone that exercises the
+k8s-specific machinery (leases, CronJob) against the lake
+([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)).
 
 **Exit.** FR-3 closes; FR-16 has numbers. Depends on M1 (the outbox) and M0 spikes 1–2.
 
@@ -125,10 +136,14 @@ storage ceiling have no numbers would be measuring nothing against nothing. Depe
 
 **Goal.** The claims become numbers.
 
-**Items.** The scaled Helm profile; the measurement campaigns — [FR-2](roadmap.md) review
+**Items.** The scaled Helm profile with cluster mode (followers, lead failover —
+[FR-24](roadmap.md)); the measurement campaigns — [FR-2](roadmap.md) review
 drain rate, [FR-4](roadmap.md) search quality, [FR-7](roadmap.md) store ceiling,
 [FR-15](roadmap.md) scan latency, [FR-18](roadmap.md) reconciler runtime and quorum write
-latency; a security pass against [security](../architecture/security.md)'s threat model; and
+latency, [FR-25](roadmap.md) provider-ring latency against targets, [FR-20](roadmap.md)
+vocabulary measurements; [FR-22](roadmap.md) profile conformance (the three-profile matrix)
+and [FR-23](roadmap.md) migration rehearsal; a security pass against
+[security](../architecture/security.md)'s threat model; and
 [FR-9](roadmap.md) re-verified at any publication.
 
 **Exit.** The named rows close with dates and setups. Depends on everything above.

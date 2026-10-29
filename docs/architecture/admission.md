@@ -34,7 +34,7 @@ stateDiagram-v2
 
     state held {
         [*] --> captured
-        captured --> scanned : deterministic scan, same call
+        captured --> scanned : deterministic scan, same call, pre-transaction
         scanned --> under_review : enters the review queue
     }
 
@@ -61,8 +61,12 @@ Reading the diagram:
   own held claim; nobody else can see it at all. Bans are checked at capture, before quarantine
   or scan: a banned author's or source's submission is refused at the door with a typed error,
   and nothing from it is held, stored or queued ([roles and keys](roles-and-keys.md),
-  [security](security.md)).
-- **Scan** happens in the same call as capture and can veto — see
+  [security](security.md)). Everything networked and everything deterministic completes
+  **before that transaction opens**: DEK generation and the KMS wrap, body encryption, both
+  digests, and the quarantine PUT for a bucket-placed body all precede `BEGIN`
+  ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — the transaction holds nothing
+  but the chain-head read, the signature and one insert statement.
+- **Scan** happens in the same call as capture, before the transaction, and can veto — see
   [the deterministic scan](#the-deterministic-scan) below. A veto is a journalled rejection,
   not a dropped request: the caller gets a typed error naming the rule, and the event stays
   in the journal.
@@ -114,17 +118,29 @@ any lake zone, checkpoint, or Delta version. The cost of this placement is a cop
 a promoted body moves from quarantine to its ciphertext object and lake row, paid once per
 promotion rather than once per read.
 
+One consequence of the pre-transaction ordering above is named here rather than discovered
+later: the quarantine PUT for a bucket-placed body completes before the commit transaction
+opens, so a transaction that fails after the PUT **orphans a ciphertext object in
+quarantine** — bytes no journal event references. The mechanism that handles it is a
+**keyless GC sweep over unreferenced quarantine objects**: a scheduled pass that deletes
+quarantine objects whose digest no journalled event references, holding no decrypt grant and
+reading no plaintext — the orphan is ciphertext whose DEK was never journalled, so the sweep
+is harmless by construction. It is a named background mechanism, never an inline concern on
+the write path ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1; the quarantine
+store itself is [storage](storage.md)'s).
+
 Attachments upload into the same quarantine regime through resumable upload sessions, bound
 into the submission envelope by digest; their storage protocol is
 [storage](storage.md)'s.
 
 ## The deterministic scan
 
-The scan runs in the same call as capture and returns before the call does — the writer learns
-the scan outcome synchronously, and a veto means the submission is journalled as rejected and
-nothing waits in the queue. The scan is same-call by design: an asynchronous scan either
-delays the author's error to a moment they are no longer listening, or admits unscanned bytes
-into the queue.
+The scan runs in the same call as capture — before the commit transaction, never inside it
+([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — and returns before the call does:
+the writer learns the scan outcome synchronously, and a veto means the submission is journalled
+as rejected and nothing waits in the queue. The scan is same-call by design: an asynchronous
+scan either delays the author's error to a moment they are no longer listening, or admits
+unscanned bytes into the queue.
 
 *Deterministic* is a load-bearing word: the scan is rules, not a model. Same input, same
 verdict, reproducible from the journalled rule-set version — which is what lets a scan verdict

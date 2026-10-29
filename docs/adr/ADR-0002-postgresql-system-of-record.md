@@ -1,6 +1,6 @@
 # ADR-0002 — PostgreSQL is the system of record: one commit point, per-tenant signed chains, a synchronous journal domain
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) d13 supersedes d6's every-replica-loads-the-key statement — the signing key is the lead's alone; the attests-the-deployment boundary stands
 
 Everything this record decides is design — no code exists. Mechanics (schemas, the outbox
 protocol, the chain layout) are owned by [architecture/storage.md](../architecture/storage.md);

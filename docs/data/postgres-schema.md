@@ -357,6 +357,14 @@ CREATE TABLE outbox (
     created_at       timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE lead_lease (        -- cluster-mode lead election (ADR-0023 d14); NEVER load-bearing —
+    singleton        boolean PRIMARY KEY DEFAULT true CHECK (singleton),  -- one row
+    holder_node_id   text        NOT NULL,
+    address          text        NOT NULL,   -- followers discover the lead here
+    lease_epoch      bigint      NOT NULL,
+    expires_at       timestamptz NOT NULL    -- renewed on heartbeat; takeover journals
+);                                           -- system.lead_acquired; the chain lock is the fence
+
 CREATE TABLE lake_frontier (     -- CACHE of the per-table Delta txn version; never authority
     table_name       text   PRIMARY KEY,
     last_applied_seq bigint NOT NULL,
@@ -574,7 +582,9 @@ means re-issuing keys, not re-folding them.
 
 **Operational** — state the journal does not define; losing it costs availability or history, not
 truth: `outbox` (deliveries not yet applied are re-derivable from the journal fold, which is what a
-lake repair does), `lake_frontier` (cache), `dead_letter`, `idempotency` (replay protection; loss
+lake repair does), `lake_frontier` (cache), `lead_lease` (holder id, address, epoch, expiry — the
+cluster-mode lead election row, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md);
+never load-bearing, the chain lock is), `dead_letter`, `idempotency` (replay protection; loss
 re-opens a replay window bounded by key behaviour), `read_events` (retention-bounded by design),
 `artifact_keys` (key material — loss is unintended erasure, which is why its durability posture
 matters), `memories_fts` and `memory_embeddings` (rebuildable from promoted bodies while DEKs

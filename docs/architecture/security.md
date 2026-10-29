@@ -97,23 +97,29 @@ compromise is bounded and its actions leave journal evidence.**
 
 Who loads what. "Never" entries are the point of the table.
 
-| Material | oml-server | oml-lakewriter | oml-reconciler | oml-indexer | `oml` CLI |
-|---|---|---|---|---|---|
-| ed25519 deployment signing key | **loads it (every replica)** | never | never | never | never |
-| KMS: decrypt (unwrap DEKs) | serving path only | **never** | **never** | **never** — reads promoted plaintext on the serving side of decryption ([retrieval.md](retrieval.md)) | never |
-| KMS: generate-data-key / encrypt | yes (admission — the single encryption locus; lake copies are these same bytes) | **never** — moves admission-produced ciphertext verbatim | never | never | never |
-| Postgres role | RLS-scoped service role | per-tenant `SET`-tenant RLS role, no `BYPASSRLS` | read-only RLS role | per-tenant RLS role | none (talks HTTP) |
-| Object-store credentials | quarantine + bodies | per-tenant lake prefixes | read-only | read (promoted bodies) | none |
-| API keys | verifies hashes; never stores values | holds none | holds none | holds none | bearer of operator/admin/dreamer keys |
+| Material | oml-server **lead** | oml-server **follower** | oml-lakewriter | oml-reconciler | oml-indexer | `oml` CLI |
+|---|---|---|---|---|---|---|
+| ed25519 deployment signing key | **loads it — the only process in the deployment that does** ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) | **never** | never | never | never | never |
+| KMS: decrypt (unwrap DEKs) | serving + admission paths | **serving path only** | **never** | **never** | **never** — reads promoted plaintext on the serving side of decryption ([retrieval.md](retrieval.md)) | never |
+| KMS: generate-data-key / encrypt | yes (admission — the single encryption locus; lake copies are these same bytes) | **never** — followers admit nothing | **never** — moves admission-produced ciphertext verbatim | never | never | never |
+| Write verbs | executes | **forwards to the lead, executes none** | — | — | — | — |
+| Postgres role | RLS-scoped service role (write) | RLS-scoped **read** role + read-log append | per-tenant `SET`-tenant RLS role, no `BYPASSRLS` | read-only RLS role | per-tenant RLS role | none (talks HTTP) |
+| Object-store credentials | quarantine + bodies | read (promoted bodies) | per-tenant lake prefixes | read-only | read (promoted bodies) | none |
+| API keys | verifies hashes; never stores values | verifies hashes | holds none | holds none | holds none | bearer of operator/admin/dreamer keys |
 
 Two statements in this map deserve their own sentences.
 
-**The signing key lives only in oml-server — and in every oml-server replica.** Each replica loads
-the same deployment signing key from a Kubernetes Secret or KMS; what is unique is chain-head
-assignment in Postgres, not the process holding the key ([storage.md](storage.md)). The signature
-therefore attests *the deployment*, not an individual process, and the threat model says so without
-flinching: **compromise of any oml-server replica is compromise of the signing key.** An attacker
-on one replica can sign arbitrary events for as long as the compromise lasts. The mitigations are
+**The signing key lives only in the lead — at most one process, lease-guarded, takeover
+journalled.** The lead loads the deployment signing key from a Kubernetes Secret or KMS; followers
+never do ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) — enforced as a
+composition fact: the follower binary composes no signer port). The signature attests *the
+deployment* — one signer process at a time plus its journalled failovers — and the threat model
+says the rest without flinching: **compromise of the lead is compromise of the signing key**;
+compromise of a follower is serving-path decryption and misserving, never forgery — a follower
+cannot sign a journal event, promote, or erase. One more plaintext locus follows from the
+topology: a write forwarded by a follower transits that follower's memory in plaintext (TLS
+terminates there) — nothing new relative to decrypt-on-serve, listed for completeness. An attacker
+on the lead can sign arbitrary events for as long as the compromise lasts. The mitigations are
 recovery-shaped, not prevention-shaped: the per-tenant chain makes forged history detectable by any
 holder of a prior chain head, the startup fork check refuses to extend a chain that does not verify
 against the last signed head, and key rotation after a suspected compromise is a journalled act.
@@ -129,6 +135,22 @@ outlives the live row: wrapped-DEK copies in Postgres backups and WAL. The commi
 it: KEK rotation re-wraps **live** DEKs only; a retired KEK is destroyed once no retained backup
 predates its retirement, and that destruction is a journalled act. From then on the wrapped-DEK
 copies in older backups are noise — there is no KEK left that can unwrap them.
+
+## Custody by profile
+
+The "never" columns above are backed by different mechanisms per install profile
+([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)), and the backing is part of
+the claim:
+
+| Backing | kubernetes | docker (compose) | standalone |
+|---|---|---|---|
+| What enforces a "never" | Composition (no port) **+** external KMS IAM grants **+** pod/Secret separation | Composition **+** container mount boundaries (the keyring is simply not mounted); no external IAM | Composition **+** OS process boundary and file permissions; under one uid, "keyless" is code structure, not custody |
+| KEK custody | Never leaves KMS | A file in a compose secret on the host — **host admin ≡ KMS admin** | A file on the same disk as the data it protects; encrypt-only grants do not exist |
+| The host admin | Outside the pod trust domain, inside the platform trust (residual 5) | **Is a key-holding attacker by default** — reads every volume, secret and keyring | Strongest form: one host holds signing key, KEK, database, lake and backups — tamper-evidence against the host admin rests entirely on exported chain heads (RS-9) |
+
+The collapse is stated, not apologized for: standalone and docker trade custody separation for
+installability, every weakened row is named in [commitments](../product/commitments.md), and the
+keyring mechanism itself is RS-12.
 
 ## STRIDE, redone for hostile co-tenants
 
@@ -248,14 +270,18 @@ rounded up to a guarantee.
 3. **Rate limiting is a per-replica approximation.** Token buckets at limit/N per replica, no
    shared counter in v1; transient over- and under-admission is expected under skewed load
    balancing. Its resolution is [FR-8](../product/roadmap.md).
-4. **Replica compromise is signing-key compromise — and decrypt-everything compromise.**
-   `oml-server` holds the signing key *and* the KMS decrypt grant for the serving path, so a
-   compromised replica can both sign arbitrary events and unwrap any tenant's DEKs to read every
-   body it chooses to serve itself. This is the largest single trust statement in the design, and
-   it is two statements, not one. Detection (fork check, chain verification against prior heads —
-   which requires heads retained outside the deployment, RS-9) and journalled rotation are the
-   answer for the signing half; nothing detects quiet reads by a compromised key-holding process.
-   Prevention via per-replica keys, HSM-resident signing or threshold decryption is not committed.
+4. **Lead compromise is signing-key compromise — and decrypt-everything compromise.** The lead
+   holds the signing key *and* the KMS decrypt grant, so a compromised lead can both sign
+   arbitrary events and unwrap any tenant's DEKs. This is the largest single trust statement in
+   the design, and it is two statements, not one. Detection (fork check at startup and at
+   failover promotion, chain verification against prior heads — which requires heads retained
+   outside the deployment, RS-9) and journalled rotation are the answer for the signing half;
+   nothing detects quiet reads by a compromised key-holding process. Prevention via HSM-resident
+   signing or threshold decryption is not committed. **Follower compromise is narrower by
+   construction** ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)): serving-path
+   decryption and misserving, bounded by the follower's credentials — a follower cannot forge a
+   chain event, so tamper-evidence survives follower compromise. In the default lead-only
+   topology the narrowing is vacuous and the lead admission stands alone.
 4b. **Indexer compromise exposes promoted plaintext.** `oml-indexer` necessarily handles promoted
    plaintext to embed it; its compromise exposes every promoted body of the tenants it serves,
    bounded by its per-tenant credentials. Until RS-1 decides where the embedding model runs, the

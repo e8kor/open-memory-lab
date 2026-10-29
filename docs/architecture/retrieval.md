@@ -129,6 +129,15 @@ The contract is part of the API surface ([api/http-api.md](../api/http-api.md)
 and the MCP `recall` tool): clients may rely on segment order, and nothing a
 client sends re-ranks segment 1.
 
+How the result is assembled is a hot-path rule, not an implementation accident
+([ADR-0024](../adr/ADR-0024-performance-foundation.md) d4): steering rows, hits
+and bodies hydrate in **one or two prepared statements, fetched set-wise, never
+one query per hit**; fusion of the FTS and vector candidate lists is computed
+in one pass, never a third query round; and the server-side token-budget
+truncation of [FR-11](../product/roadmap.md) is a performance feature as well
+as an ergonomics one — rows the budget cuts are never decrypted and never
+cross the wire.
+
 ## Decrypt on serve
 
 Bodies are stored as per-artifact-DEK ciphertext everywhere at rest —
@@ -143,6 +152,43 @@ in [audit-and-lineage.md](audit-and-lineage.md)) has exactly one decryption
 locus to reason about. The cost is per-read decryption work on the server;
 caching decrypted bodies anywhere outside that path is refused by design, and
 any serving-path cache is itself a copy class in the erasure inventory.
+
+One serving-path cache is named rather than left generic: the **DEK serving
+cache** ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d3). Without
+it, a recall with k hits pays k per-artifact key unwraps against the KMS —
+a network call each — on every request; with it, the serving path holds
+**plaintext keys of erase-eligible artifacts**, which is why it is a declared
+design object and not an optimization detail. Its rules: it is a named copy
+class in the erasure inventory
+([audit-and-lineage.md](audit-and-lineage.md)); erase purges it
+**synchronously**; it is TTL-bounded, and that TTL composes into
+[FR-17](../product/roadmap.md)'s end-to-end erasure bound. Whether it caches
+per-artifact DEKs or an unwrapped per-tenant KEK — different KMS-call
+profiles, blast radii and erasure reasoning — is the open decision recorded
+as [RS-14](../product/roadmap.md).
+
+## Reads in cluster mode
+
+In cluster mode ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md))
+a follower's hot path is recall and get, only — writes forward to the lead —
+and its reads follow one routing policy
+([ADR-0024](../adr/ADR-0024-performance-foundation.md) d9):
+
+- **Own-held reads route to the lead and the primary.** A read of the caller's
+  own held rows, and any submit-then-get sequence, is served from the primary:
+  read-your-writes on an agent's own work is the one place staleness visibly
+  breaks an agent's loop, and held rows are author-only anyway, so one routing
+  rule buys the guarantee with no extra machinery.
+- **Promoted-row recall and get serve from the follower's local replica**, with
+  staleness stated honestly: the bound is **replication lag, exposed as a
+  follower metric** — never hidden, never assumed zero. One consequence said
+  plainly: a supersede acknowledged by the lead may briefly serve the old tip
+  from a lagging follower; the stated staleness bound covers exactly that
+  window.
+- **The escape hatch is named, not built:** an LSN fence — the submit response
+  carries the commit LSN, and a follower read can wait for replay to pass it —
+  exists in the design vocabulary if read-your-writes recall is ever demanded,
+  and is not part of v1.
 
 ## The read log
 
@@ -159,6 +205,16 @@ digest for searches), timestamp. Design commitments:
   not outside its protection. What anchoring does **not** give is
   per-read-event chain membership; that boundary is stated here, once, rather
   than implied away.
+- **Follower reads log asynchronously.** `read_events` lives on the primary, so
+  a follower serving recall writes its read events upstream as an
+  **asynchronous batched insert**, never a synchronous write inside its read
+  path ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d9). The honest
+  cost: follower buffering enlarges the unanchored tail — a crashed follower
+  loses its unflushed read-event buffer — which is stated where
+  [commitments](../product/commitments.md) states the read-log bound; who
+  batches and anchors the follower-written rows is the open decision
+  [RS-13](../product/roadmap.md)
+  ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)).
 - **Retention is tenant policy.** The retention window of `read_events` is a
   journalled per-tenant policy, not a constant. Evidence exports scope their
   read-log section to that window, and `read_events` appears in the
