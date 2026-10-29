@@ -1,0 +1,5 @@
+.claude/
+site/
+_site/
+.cache/
+__pycache__/

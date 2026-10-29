@@ -1,0 +1,506 @@
+# PostgreSQL schema
+
+**Status:** design draft for review · decided, not built
+
+PostgreSQL is the system of record: one transaction commits the signed journal event, the metadata
+rows it implies, and a durable outbox row. The rules that make that true — the per-tenant hash
+chain, the synchronous journal durability domain, the outbox protocol — are declared in
+[storage](../architecture/storage.md); tenancy and RLS posture in
+[security](../architecture/security.md). This page owns the table shapes. Every DDL block below is
+a design sketch, not a migration: column names and types are normative in shape, and the
+implementation may adjust spellings (e.g. enum types vs `CHECK` constraints) without a design
+change. Nothing here is built or benchmarked.
+
+Conventions used throughout:
+
+- Every table carries `tenant_id` and an RLS policy (sketched [below](#row-level-security)). The
+  journal's chain head gives each tenant an independent sequence; nothing orders events across
+  tenants.
+- Digest columns are `bytea` holding SHA-256 values. Journal and outbox payloads reference content
+  only as digests or ciphertext references — never body plaintext (D1, declared in
+  [storage](../architecture/storage.md)).
+- `uuid` identifiers are server-assigned. The journal is the source of truth; most other tables
+  are folds of it (classified in the [last section](#folds-of-the-journal-vs-operational-tables)).
+
+## journal and chain heads
+
+The append-only event log, one hash chain per tenant. Event types and payload shapes are catalogued
+in [event-catalog](event-catalog.md).
+
+```sql
+CREATE TABLE journal (
+    tenant_id    uuid        NOT NULL,
+    seq          bigint      NOT NULL,   -- per-tenant; assigned under the chain-head lock
+    event_id     uuid        NOT NULL,
+    event_type   text        NOT NULL,   -- see event-catalog.md
+    prev_hash    bytea       NOT NULL,
+    hash         bytea       NOT NULL,
+    sig          bytea       NOT NULL,   -- ed25519 over signed_bytes (deployment key)
+    signed_bytes bytea       NOT NULL,   -- the envelope; covers digests, never bodies
+    payload      jsonb       NOT NULL,   -- digest / ciphertext references only
+    principal    text        NOT NULL,
+    api_key_id   uuid,
+    at           timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, seq),
+    UNIQUE (event_id)
+);
+
+CREATE TABLE journal_chain_heads (
+    tenant_id uuid   PRIMARY KEY,
+    last_seq  bigint NOT NULL,
+    last_hash bytea  NOT NULL,
+    last_sig  bytea  NOT NULL    -- verified by the startup fork check
+);
+```
+
+Chain assignment serializes on `pg_advisory_xact_lock` over the tenant's chain-head row, held to
+commit, so commit visibility order equals `seq` order per tenant. The cost is stated plainly: a
+tenant's journal writes are single-file; per-tenant write throughput is bounded by that lock and is
+unmeasured (roadmap FR: Postgres scale ceiling).
+
+Append-only enforcement is layered — privileges first, a guard trigger second:
+
+```sql
+REVOKE UPDATE, DELETE, TRUNCATE ON journal FROM PUBLIC;
+REVOKE UPDATE, DELETE, TRUNCATE ON journal FROM oml_server, oml_lakewriter,
+    oml_reconciler, oml_indexer;
+
+CREATE FUNCTION journal_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'journal is append-only';
+END $$;
+
+CREATE TRIGGER journal_append_only
+    BEFORE UPDATE OR DELETE ON journal
+    FOR EACH ROW EXECUTE FUNCTION journal_guard();
+CREATE TRIGGER journal_no_truncate
+    BEFORE TRUNCATE ON journal
+    FOR EACH STATEMENT EXECUTE FUNCTION journal_guard();
+```
+
+A superuser can still bypass both; the design treats superuser access as deployment-key-equivalent
+compromise, stated in [security](../architecture/security.md).
+
+## memories
+
+The fold of submission, review and lifecycle events into the current state of every claim version.
+A memory asserts a claim; `claim_key` groups its versions
+([audit-and-lineage](../architecture/audit-and-lineage.md) owns the chain and tip semantics).
+
+```sql
+CREATE TABLE memories (
+    artifact_id       uuid        NOT NULL,
+    tenant_id         uuid        NOT NULL,
+    workarea_id       uuid        NOT NULL REFERENCES workareas (id),
+    claim_key         text        NOT NULL,
+    version           integer     NOT NULL,
+    state             text        NOT NULL
+        -- 'rejected' is the fold of review.reject; review.reopen returns the
+        -- row to 'held'. Rejected rows never reach the lake, so silver's
+        -- state list is unchanged.
+        CHECK (state IN ('held', 'promoted', 'demoted', 'rejected', 'erased')),
+    is_tip            boolean     NOT NULL DEFAULT false,
+    self_signed       boolean     NOT NULL DEFAULT false,  -- constitution development exception (ADR-0001) only
+    writer_identity   text        NOT NULL,
+    producer          text,
+    provenance        text        NOT NULL
+        CHECK (provenance IN ('agent', 'human', 'connector', 'simulation')),
+    simulation_id     uuid        REFERENCES simulations (id),
+    sim_derived_ids   uuid[]      NOT NULL DEFAULT '{}',   -- taint: simulations in lineage closure
+    plaintext_digest  bytea,
+    ciphertext_digest bytea,
+    body_ref          jsonb       NOT NULL,  -- {class: quarantine|object|lake, ref: …}
+    kind              text        NOT NULL,  -- memory | derived_fact | steering | …
+    created_at        timestamptz NOT NULL,
+    promoted_at       timestamptz,
+    PRIMARY KEY (tenant_id, artifact_id, version),
+    CHECK (provenance <> 'simulation' OR simulation_id IS NOT NULL)
+);
+
+-- claim_key scope: unique per (tenant, workarea) over non-erased rows;
+-- a version joins exactly one claim lineage in exactly one workarea.
+CREATE UNIQUE INDEX memories_claim_version
+    ON memories (tenant_id, workarea_id, claim_key, version)
+    WHERE state <> 'erased';
+
+-- the served tip: at most one version of a claim is what readers get.
+CREATE UNIQUE INDEX memories_served_tip
+    ON memories (tenant_id, workarea_id, claim_key)
+    WHERE is_tip AND state = 'promoted';
+
+CREATE INDEX memories_workarea ON memories (tenant_id, workarea_id, state);
+```
+
+The blueprint phrases the tip index per `(tenant, claim_key)`; because `claim_key` is namespaced by
+workarea and a reassignment that would collide on `claim_key` is refused unless the move event
+records a re-key, the workarea-qualified spelling above is the enforceable form of the same rule.
+Two invariants live in transaction logic, not DDL: a supersession promotion CAS-checks that its
+target is still the current tip before flipping `is_tip`, and a claim moved to a stricter-policy
+workarea re-enters `held`.
+
+## workareas and edges
+
+The governed tree (one per tenant, rooted at `universe`) plus the two edge tables. The algebra —
+node-id grants, deny semantics, status ladder — is declared in
+[workareas](../architecture/workareas.md); this page holds only the shapes.
+
+```sql
+CREATE EXTENSION IF NOT EXISTS ltree;
+
+CREATE TABLE workareas (
+    id         uuid        PRIMARY KEY,
+    tenant_id  uuid        NOT NULL,
+    parent_id  uuid        REFERENCES workareas (id),   -- NULL only for universe
+    path       ltree       NOT NULL,   -- DERIVED; rewritten in one transaction on re-parent
+    status     text        NOT NULL
+        CHECK (status IN ('development', 'committed', 'validated')),
+    crew       jsonb,                  -- {name, charter_uri, external_manager}
+    created_at timestamptz NOT NULL
+);
+
+-- exactly one universe root per tenant; it is permanently 'committed'.
+CREATE UNIQUE INDEX workareas_universe ON workareas (tenant_id)
+    WHERE parent_id IS NULL;
+CREATE INDEX workareas_path ON workareas USING gist (path);
+
+CREATE TABLE workarea_edges (
+    id              uuid PRIMARY KEY,
+    tenant_id       uuid NOT NULL,
+    src_id          uuid NOT NULL REFERENCES workareas (id),
+    dst_id          uuid NOT NULL REFERENCES workareas (id),
+    label           text NOT NULL
+        CHECK (label IN ('relates_to', 'continues', 'derived_from', 'mirrors')),
+    state           text NOT NULL CHECK (state IN ('pending', 'ratified')),
+    proposer_key_id uuid NOT NULL REFERENCES api_keys (id),
+    ratifier_key_id uuid REFERENCES api_keys (id),
+    CHECK (src_id <> dst_id),
+    CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id)
+);
+
+CREATE TABLE claim_edges (
+    id              uuid PRIMARY KEY,
+    tenant_id       uuid NOT NULL,
+    src_artifact_id uuid NOT NULL,
+    dst_artifact_id uuid NOT NULL,
+    label           text NOT NULL,     -- derives_from | relates_to | …
+    state           text NOT NULL CHECK (state IN ('pending', 'ratified')),
+    proposer_key_id uuid NOT NULL,
+    ratifier_key_id uuid
+);
+```
+
+The key-inequality `CHECK` is the cheap spelling of R2 on edges; the full rule — ratifier principal
+distinct from proposer principal, resolved at ratification time — is enforced in the ratification
+transaction, because a principal can hold several keys and a column constraint cannot see that.
+`path` is derived: grants bind to node ids, and every path is recomputable from `parent_id`, so a
+re-parent is a single-transaction descendant rewrite rather than a grant migration.
+
+## api_keys, grants, key_denials, bans
+
+Authorization state. Key values are never stored — only their hash; issuance is journalled as
+issued-without-value (D9, declared in [roles-and-keys](../architecture/roles-and-keys.md)).
+
+```sql
+CREATE TABLE api_keys (
+    id         uuid        PRIMARY KEY,
+    tenant_id  uuid,                    -- NULL for provider-level operator keys
+    hash       bytea       NOT NULL UNIQUE,
+    role       text        NOT NULL
+        CHECK (role IN ('reader', 'writer', 'dreamer', 'admin', 'operator')),
+    principal  text        NOT NULL,
+    issued_by  uuid        REFERENCES api_keys (id),  -- issuer ceiling checked at issuance
+    expiry     timestamptz,
+    revoked_at timestamptz
+);
+
+CREATE TABLE grants (
+    id               uuid   PRIMARY KEY,
+    tenant_id        uuid   NOT NULL,
+    key_id           uuid   NOT NULL REFERENCES api_keys (id),
+    role             text   NOT NULL,
+    workarea_node_id uuid   NOT NULL REFERENCES workareas (id),  -- node id, never a path
+    deny             jsonb  NOT NULL DEFAULT '[]',  -- subtree masks inside THIS grant only
+    epoch            bigint NOT NULL                -- permission epoch invalidates caches
+);
+
+CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all grants
+    id               uuid        PRIMARY KEY,
+    tenant_id        uuid        NOT NULL,
+    key_id           uuid        NOT NULL REFERENCES api_keys (id),
+    workarea_node_id uuid        NOT NULL REFERENCES workareas (id),
+    epoch            bigint      NOT NULL,
+    created_by       uuid        NOT NULL,
+    created_at       timestamptz NOT NULL
+);
+
+CREATE TABLE bans (
+    id           uuid        PRIMARY KEY,
+    tenant_id    uuid        NOT NULL,
+    subject_kind text        NOT NULL CHECK (subject_kind IN ('principal', 'source')),
+    subject      text        NOT NULL,
+    banned_by    uuid        NOT NULL,
+    banned_at    timestamptz NOT NULL,
+    lifted_by    uuid,
+    lifted_at    timestamptz
+);
+
+-- one active ban per subject; a lifted ban stays as history.
+CREATE UNIQUE INDEX bans_active ON bans (tenant_id, subject_kind, subject)
+    WHERE lifted_at IS NULL;
+```
+
+Effective access is computed, never stored: union of a key's grants, each attenuated by its own
+`deny` entries, then masked by any `key_denials` row. The `epoch` column is what makes cached
+computations invalidatable and every historical computation reproducible from journalled grants
+([workareas](../architecture/workareas.md) owns the permission-epoch semantics).
+Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before it is imposed.
+
+## simulations
+
+The fence's mechanical existence (D10, declared in
+[simulations](../architecture/simulations.md)).
+
+```sql
+CREATE TABLE simulations (
+    id        uuid        PRIMARY KEY,
+    tenant_id uuid        NOT NULL,
+    state     text        NOT NULL CHECK (state IN ('open', 'ended')),
+    audience  jsonb       NOT NULL,   -- journalled list of key ids / grant refs
+    opened_at timestamptz NOT NULL,
+    ended_at  timestamptz
+);
+```
+
+Every read path applies the predicate `provenance <> 'simulation' OR key ∈ audience`; the
+`memories.simulation_id` and `sim_derived_ids` columns above carry the taint this predicate and
+end-of-simulation demotion act on.
+
+## outbox, dead_letter, idempotency
+
+The delivery machinery between the commit point and the lake, plus request replay protection.
+
+```sql
+CREATE TABLE outbox (
+    seq              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- single drain stream
+    tenant_id        uuid   NOT NULL,
+    kind             text   NOT NULL
+        CHECK (kind IN ('bronze-event', 'materialize', 'retract', 'export')),
+    journal_event_id uuid   NOT NULL REFERENCES journal (event_id),
+    payload          jsonb  NOT NULL,   -- digest / ciphertext references only
+    created_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE lake_frontier (     -- CACHE of the per-table Delta txn version; never authority
+    table_name       text   PRIMARY KEY,
+    last_applied_seq bigint NOT NULL,
+    updated_at       timestamptz NOT NULL
+);
+
+CREATE TABLE dead_letter (
+    outbox_seq       bigint      PRIMARY KEY,
+    tenant_id        uuid        NOT NULL,
+    kind             text        NOT NULL,
+    payload          jsonb       NOT NULL,
+    attempts         integer     NOT NULL,
+    last_error       text        NOT NULL,
+    skipped_event_id uuid        NOT NULL,  -- the journalled materialize-skipped event
+    dead_lettered_at timestamptz NOT NULL
+);
+
+CREATE TABLE idempotency (
+    key_id         uuid        NOT NULL,
+    workarea_id    uuid        NOT NULL,  -- the nil UUID (00000000-0000-0000-0000-000000000000)
+                                          -- for endpoints that name no workarea
+    idem_key       text        NOT NULL,
+    request_digest bytea       NOT NULL,
+    state          text        NOT NULL CHECK (state IN ('in_progress', 'committed')),
+    response       jsonb,
+    created_at     timestamptz NOT NULL,
+    PRIMARY KEY (key_id, workarea_id, idem_key)
+);
+```
+
+Every outbox insert happens inside the same serialized transaction as its journal event, so outbox
+`seq` order is consistent with each tenant's chain order. The identity column may have gaps
+(aborted transactions); the lake-writer drains in `seq` order and the Delta transaction version —
+not `lake_frontier` — is the recovery authority, which is why the frontier table is labelled a
+cache (D2, declared in [storage](../architecture/storage.md)). An idempotency record is claimed in
+its own transaction before any side effect: same `idem_key` with a different `request_digest` is a
+typed error; replay with the same digest returns the stored `response`.
+
+## read_events
+
+The read log lives outside the hash chain, partitioned by time, retention-bounded, with per-batch
+digests anchored into the journal (D12, declared in
+[retrieval](../architecture/retrieval.md)).
+
+```sql
+CREATE TABLE read_events (
+    tenant_id    uuid        NOT NULL,
+    key_id       uuid        NOT NULL,
+    role         text        NOT NULL,
+    workarea_id  uuid,
+    memory_ids   uuid[],          -- what was served, OR:
+    query_digest bytea,           -- digest of the query for search reads
+    at           timestamptz NOT NULL
+) PARTITION BY RANGE (at);
+
+-- e.g. monthly partitions; the retention act is DROP PARTITION, which is why
+-- the table is partitioned at all. Partition granularity is an implementation choice.
+CREATE TABLE read_events_2026_11 PARTITION OF read_events
+    FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');
+CREATE INDEX ON read_events_2026_11 (tenant_id, key_id, at);
+```
+
+The retention window is tenant policy; evidence exports scope their read log to that window.
+Dropping a partition removes read events wholesale — the digest anchors in the journal remain, so
+an auditor can see that a batch existed and was intact even after its rows are gone, but not what
+it contained. That trade (bounded storage against bounded reconstructability) is deliberate and
+stated in [audit-and-lineage](../architecture/audit-and-lineage.md).
+
+## artifact_keys
+
+Per-artifact DEKs, wrapped by the KEK. Erasure is DEK destruction (D4, declared in
+[audit-and-lineage](../architecture/audit-and-lineage.md)).
+
+```sql
+CREATE TABLE artifact_keys (
+    tenant_id    uuid  NOT NULL,
+    artifact_id  uuid  NOT NULL,
+    wrapped_dek  bytea,            -- NULL after destruction
+    kek_id       text  NOT NULL,   -- which KEK wrapped it (rotation handle)
+    destroyed_at timestamptz,      -- set by the journalled erase event's fold
+    PRIMARY KEY (tenant_id, artifact_id),
+    CHECK (wrapped_dek IS NOT NULL OR destroyed_at IS NOT NULL)
+);
+```
+
+The erase transaction journals the erase event, sets `wrapped_dek` to NULL and `destroyed_at`, and
+removes plaintext-derived index rows (FTS, embeddings) in the same commit. Ciphertext copies
+elsewhere (lake parquet versions, object-store versions, Postgres backups) become unreadable, not
+absent; the full copy-class inventory and its honest boundary live in
+[audit-and-lineage](../architecture/audit-and-lineage.md).
+
+## Full-text search and embeddings
+
+The serving tier's two indexes over promoted rows. Both are plaintext-derived, so both are in the
+erasure inventory and are removed at erase time.
+
+```sql
+CREATE TABLE memories_fts (
+    tenant_id   uuid    NOT NULL,
+    artifact_id uuid    NOT NULL,
+    version     integer NOT NULL,
+    tsv         tsvector NOT NULL,
+    PRIMARY KEY (tenant_id, artifact_id, version)
+);
+CREATE INDEX memories_fts_gin ON memories_fts USING gin (tsv);
+
+CREATE TABLE memory_embeddings (
+    tenant_id     uuid    NOT NULL,
+    artifact_id   uuid    NOT NULL,
+    version       integer NOT NULL,
+    workarea_path ltree   NOT NULL,   -- filter column for subtree-scoped queries
+    embedding     vector  NOT NULL,   -- dimension bound to the embedding model: open RS
+    PRIMARY KEY (tenant_id, artifact_id, version)
+) PARTITION BY LIST (tenant_id);
+
+-- per tenant partition, created with the tenant:
+CREATE TABLE memory_embeddings_t_<tenant> PARTITION OF memory_embeddings
+    FOR VALUES IN ('<tenant_id>');
+CREATE INDEX ON memory_embeddings_t_<tenant>
+    USING hnsw (embedding vector_cosine_ops);
+```
+
+List-partitioning by tenant gives each tenant its own HNSW index (bounded build cost and blast
+radius) at the cost of a partition-per-tenant management obligation; RLS still applies on top.
+Iterative index scans are enabled so a post-filtered query keeps scanning rather than returning
+short. Recall quality, latency, and exact-vs-approximate behaviour are unmeasured — tracked as
+roadmap FR rows with exit criteria, and no number is asserted until that measurement runs. The
+embedding model (and therefore the `vector` dimension and distance operator) is an open RS in the
+[roadmap](../product/roadmap.md). Simulation rows never enter these shared indexes; they are
+indexed per simulation, which keeps the read-path predicate out of the hot index at the cost of
+duplicate index machinery per open simulation.
+
+## upload_sessions
+
+Resumable attachment uploads (D3, declared in [storage](../architecture/storage.md)).
+
+```sql
+CREATE TABLE upload_sessions (
+    id              uuid        PRIMARY KEY,
+    tenant_id       uuid        NOT NULL,
+    key_id          uuid        NOT NULL REFERENCES api_keys (id),
+    expected_digest bytea       NOT NULL,   -- SHA-256 of plaintext, declared up front
+    state           text        NOT NULL
+        CHECK (state IN ('open', 'complete', 'aborted', 'expired')),
+    parts           jsonb       NOT NULL DEFAULT '[]',  -- [{part_number, size_bytes, part_digest}]
+    created_at      timestamptz NOT NULL,
+    expires_at      timestamptz NOT NULL
+);
+```
+
+A retry resumes the session or restarts it; a session completes only when the assembled bytes match
+`expected_digest`, at which point the digest — not the session — is what the submission envelope
+binds.
+
+## Row-level security
+
+Every table above carries tenant RLS; the posture (session roles, no BYPASSRLS, privileged-service
+scoping) is declared in [security](../architecture/security.md). The sketch, repeated per table:
+
+```sql
+ALTER TABLE memories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memories FORCE ROW LEVEL SECURITY;   -- binds the table owner too
+
+CREATE POLICY tenant_isolation ON memories
+    USING (tenant_id = current_setting('oml.tenant_id')::uuid)
+    WITH CHECK (tenant_id = current_setting('oml.tenant_id')::uuid);
+```
+
+- `oml-server` sets `oml.tenant_id` from the API key at the start of every transaction — tenant is
+  derived server-side, never from the request.
+- `oml-lakewriter` iterates tenants one at a time under a SET-tenant session role; it never sees
+  two tenants in one statement.
+- `oml-reconciler` runs read-only under the same per-tenant discipline and emits repairs through
+  the outbox via `oml-server`, so it needs no write policy at all.
+- Provider-level rows (operator keys with `tenant_id IS NULL`) are reachable only by a separate
+  policy on `api_keys` for the operator path; no tenant session can see them.
+
+A `current_setting`-based policy is simple and index-friendly; its cost is that a service bug that
+sets the wrong tenant GUC becomes a cross-tenant read. That risk and its mitigations (one
+code path sets the GUC; the STRIDE model treats hostile co-tenants) are owned by
+[security](../architecture/security.md).
+
+## Folds of the journal vs operational tables
+
+Two kinds of table live in this schema, and the distinction decides what reconciliation
+([reconciliation](../architecture/reconciliation.md)) may repair by re-folding:
+
+**Source of truth** — `journal`, `journal_chain_heads`. Never rebuilt from anything.
+
+**Folds of the journal** — deterministically recomputable by replaying events from genesis (or
+incrementally from a cursor); a metadata repair is exactly such a journalled re-fold:
+
+| Table | Folded from |
+|---|---|
+| `memories` | submission, review, lifecycle, simulation events |
+| `workareas` | workarea create / re-parent / status / crew events |
+| `workarea_edges`, `claim_edges` | relate / ratify events |
+| `grants`, `key_denials`, `bans` | keys/grants family events |
+| `simulations` | simulation open / end events |
+| `api_keys` (state columns) | key issue / revoke events |
+
+One honest exception inside that last row: `api_keys.hash` is operational secret material. The
+journal records issuance **without the key value** (show-once ceremony), so a re-fold reconstructs
+every key's existence, role, issuer and revocation — but not its hash. Losing the `api_keys` table
+means re-issuing keys, not re-folding them.
+
+**Operational** — state the journal does not define; losing it costs availability or history, not
+truth: `outbox` (deliveries not yet applied are re-derivable from the journal fold, which is what a
+lake repair does), `lake_frontier` (cache), `dead_letter`, `idempotency` (replay protection; loss
+re-opens a replay window bounded by key behaviour), `read_events` (retention-bounded by design),
+`artifact_keys` (key material — loss is unintended erasure, which is why its durability posture
+matters), `memories_fts` and `memory_embeddings` (rebuildable from promoted bodies while DEKs
+exist), `upload_sessions` (in-flight uploads restart).
