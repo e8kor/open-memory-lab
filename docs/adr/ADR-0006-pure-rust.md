@@ -77,8 +77,9 @@ process should carry the smallest possible runtime.
     | Application | `oml-app` | the port traits and the use-cases that drive the domain through them |
     | Driven adapters | `oml-pg` (sqlx), `oml-lake` (delta-rs), `oml-objectstore` (object_store), `oml-kms` | one crate per infrastructure dependency, implementing its port, holding no policy |
     | Driving adapters | `oml-transport-http`, `oml-transport-mcp` | the `/v1` surface and the MCP facade as adapters over `oml-app` |
-    | Plugins | `oml-scan-*`, `oml-embed-*` | compiled-in implementations behind the scanner/embedder ports, under ADR-0019's plugin law |
-    | Binaries | `oml-server`, `oml-lakewriter`, `oml-reconciler`, `oml-indexer`, `oml-cli` | thin compositions: each wires `oml-domain` + `oml-app` to the adapter set its job needs |
+    | Plugins | `oml-scan-*`, `oml-embed-*`, `oml-export-*` | compiled-in implementations behind the scanner/embedder/exporter ports, under ADR-0019's plugin law |
+    | Binaries | `oml-server`, `oml-lakewriter`, `oml-reconciler`, `oml-indexer` | thin compositions: each wires `oml-domain` + `oml-app` to the adapter set its job needs |
+    | CLI | `oml-cli` | a thin `/v1` HTTP client ([ADR-0015](ADR-0015-cli-administration.md)); composes no port trait and no domain crate — it reaches the hexagon only through the HTTP transport |
 
     This layout is the enforcement home of "constitution in the core": only `oml-domain`
     encodes invariants, adapters hold no policy, and a binary that lacks a port in its

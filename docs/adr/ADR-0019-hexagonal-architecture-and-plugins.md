@@ -36,7 +36,7 @@ infrastructure — including the plugin points — behind an adapter boundary.
   transport or plugin can enforce a different constitution, because none of them contains one.
   The core is testable without a running database, which is where the invariant tests live.
 
-- **d2 — Ports are explicit Rust traits, owned by the core/application layer.** The application
+- **d2 — Ports are explicit Rust traits, owned by the application layer.** The application
   layer (`oml-app`) declares one trait per thing the domain needs from the world: the
   journal-and-metadata store port (the one-transaction commit point of
   [ADR-0002](ADR-0002-postgresql-system-of-record.md)), the lake materialization port
@@ -45,7 +45,9 @@ infrastructure — including the plugin points — behind an adapter boundary.
   and identifiers enter the core as inputs. Adapters implement the traits — Postgres via sqlx,
   Delta via delta-rs, S3/MinIO via object_store, KMS — with **one adapter crate per
   infrastructure dependency**, so a dependency's blast radius is one crate and its version bump
-  is one review.
+  is one review. These are the driven (secondary) ports. The driving (primary) port is the
+  application's use-case surface itself — the calls the transports make; OML does not wrap it in
+  a separate trait, which the pattern permits.
 
 - **d3 — The four binaries are thin compositions, and the client surfaces are adapters too.**
   Each binary wires the same domain core to exactly the adapter set its job needs, and nothing
@@ -53,10 +55,12 @@ infrastructure — including the plugin points — behind an adapter boundary.
   composes the outbox read side and the lake port — keyless, moving ciphertext verbatim, exactly
   as [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) requires; `oml-reconciler` composes
   read-only ports ([ADR-0017](ADR-0017-reconciliation.md)); `oml-indexer` composes the embedder
-  port and the serving-side read. On the driving side, the HTTP `/v1` transport, the MCP facade
-  ([ADR-0014](ADR-0014-http-api-and-mcp-facade.md)) and the `oml` CLI
-  ([ADR-0015](ADR-0015-cli-administration.md)) are themselves adapters: they translate requests
-  into application-layer calls and carry no policy. A binary that does not compose a port cannot
+  port and the serving-side read. On the driving side, the HTTP `/v1` transport and the MCP facade
+  ([ADR-0014](ADR-0014-http-api-and-mcp-facade.md)) are themselves adapters: they translate
+  requests into application-layer calls and carry no policy. The `oml` CLI is **not** an
+  in-process adapter: it drives the same use-cases from outside the process, over `/v1`
+  ([ADR-0015](ADR-0015-cli-administration.md)) — a client of the HTTP adapter, holding no verb
+  the API lacks and no copy of the constitution. A binary that does not compose a port cannot
   perform its operation — the lake-writer has no KMS port to misuse, which is how "keyless"
   stops being a discipline and becomes a type error.
 
@@ -82,7 +86,7 @@ infrastructure — including the plugin points — behind an adapter boundary.
 - The crate layout follows mechanically and is committed in
   [ADR-0006](ADR-0006-pure-rust.md) d6: `oml-domain` (pure), `oml-app` (ports and use-cases),
   one adapter crate per dependency, plugin crates behind the scanner/embedder/exporter ports,
-  and five thin composition crates for the binaries and the CLI.
+  four thin composition crates for the binaries, and `oml-cli` as a thin `/v1` client.
 - Adding an adapter or a plugin has a fixed recipe: implement the port trait in a new crate,
   register it in the composition of the binaries that need it, and let the journalled settings
   apply select it. No step touches `oml-domain`, and a change that wants to is a constitution
