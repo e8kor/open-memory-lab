@@ -1,3 +1,10 @@
+<!--
+id: architecture/ontologies
+tier: engineering
+status: design draft for review · decided, not built
+answers: how vocabularies, terms, pinned releases and deprecation work as governed claims on the one existing pipeline
+-->
+
 # Ontologies
 
 **Status:** design draft for review · decided, not built

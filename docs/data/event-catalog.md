@@ -1,3 +1,10 @@
+<!--
+id: data/event-catalog
+tier: engineering
+status: design draft for review · decided, not built
+answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events
+-->
+
 # Journal event catalog
 
 **Status:** design draft for review · decided, not built
@@ -47,6 +54,12 @@ writes on behalf of the reconciler or lake-writer, which authenticate with their
 and never sign anything themselves (key custody per
 [security](../architecture/security.md)). The payload shapes below show representative fields;
 `…digest` fields are SHA-256.
+
+The normative byte spec of this envelope is [chain-format.md](chain-format.md): which fields are
+signed (nine — `hash` and `sig` are derived, outside the signed bytes), their canonical encodings,
+`signed_bytes` as RFC 8785 canonical JSON, the hash, the signature, the chaining rule and the
+verification procedure, with computed test vectors. In the signed form `at` carries exactly six
+fractional digits; displays like the one above may trim.
 
 ## Submission family
 
@@ -431,7 +444,10 @@ tenant's first admin key and nothing else. Journalled in the **reserved provider
 The first event of every non-provider tenant chain: a predecessor-less anchor that roots the
 tenant's chain by **reference** to the provider-chain `tenant.created` event that created it — a
 reference, not a second numbering. Chain verification of a tenant starts here and checks the
-reference against the provider chain.
+reference against the provider chain. The reserved provider tenant's own chain opens the same way
+— `tenant.genesis` at seq 1 — with `created_event_id` and `provider_seq` null: the deployment root
+anchors to nothing because nothing precedes it ([chain-format.md](chain-format.md) owns the
+genesis byte rule).
 
 ### key.issued
 
@@ -447,9 +463,10 @@ reference against the provider chain.
 
 A key issued without its value (show-once ceremony; the journal never learns the secret), under the
 issuer ceiling: role no higher than the issuer's. `held_by` is the issuing admin's journalled
-attestation that the key is held by a human or an agent — the server verifies the attestation,
-never the humanness ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `human_required_classes`
-consumes it, and the evidence export shows it.
+attestation that the key is held by a human, an agent, or a service process — the server verifies
+the attestation, never the humanness ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md));
+`human_required_classes` consumes it, and the evidence export shows it. A key attested
+`held_by: service` can never satisfy `human_required_classes` and never counts as review capacity.
 
 ### key.revoked
 
@@ -712,6 +729,64 @@ by the **new** lead as its first act after acquiring the lead lease and passing 
 check, so the journal always answers "which process was lead when." Journalled in the reserved
 provider tenant's chain. The lease itself is never load-bearing — the per-tenant chain lock is;
 a split-brain pair contends on the lock, it cannot fork a chain.
+
+### system.signing_key_rotated
+
+```json
+{
+  "old_key_id": "d92de0b4…",
+  "new_key_id": "a41f09d2…",
+  "new_public_key": "ed25519:…",
+  "rotation": "planned",
+  "cross_sig": "ed25519:…",
+  "ceremony_ref": null
+}
+```
+
+Deployment signing-key rotation, journalled in the reserved provider tenant's chain as the
+**first event the new key signs**. Key ids are public-key fingerprints
+([chain-format.md](chain-format.md)). A `planned` rotation carries `cross_sig` — the old key's
+signature over the new key, byte rule in [chain-format.md](chain-format.md) — so a verifier's
+trust extends across the rotation without a new ceremony. An `unplanned` rotation (old key
+compromised or lost) has `cross_sig` null by definition and `ceremony_ref` **required**: a digest
+reference to the out-of-band ceremony record in which the new key's fingerprint was established,
+where trust re-roots.
+
+### system.kek_rotated
+
+```json
+{
+  "old_kek_id": "kek-2026-04",
+  "new_kek_id": "kek-2026-10",
+  "rewrap_job_id": "…"
+}
+```
+
+Scheduled KEK rotation ([security](../architecture/security.md)): emitted in the reserved
+provider tenant's chain when the new KEK becomes the wrapping key for newly minted DEKs and the
+re-wrap job for **live** DEKs is enqueued — `rewrap_job_id` is the journal-side handle for that
+job, which rides the outbox like other background work. Re-wrap covers live DEKs only; wrapped-DEK
+copies in retained backups decay on the retirement schedule below
+([audit-and-lineage](../architecture/audit-and-lineage.md) owns the bound).
+
+### system.kek_destroyed
+
+```json
+{
+  "kek_id": "kek-2026-04",
+  "retired_by_event_id": "…",
+  "backup_horizon": "2027-01-29T00:00:00Z",
+  "evidence_digest": "sha256:…"
+}
+```
+
+Retired-KEK destruction — the act that completes erasure against backups: once no KEK can unwrap
+them, wrapped-DEK copies in older backups are noise. Emitted only after the retirement window
+passes; the payload carries that evidence: `retired_by_event_id` names the `system.kek_rotated`
+event that retired this KEK, `backup_horizon` is the instant past which no retained backup holds
+DEKs wrapped by it, and `evidence_digest` is the digest of the operator's retention-evidence
+record. In the standalone and docker profiles the destruction is journalled file deletion of the
+keyring entry ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d4).
 
 ## Reserved: the `import` family
 

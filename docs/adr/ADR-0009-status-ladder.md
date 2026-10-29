@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0009-status-ladder
+tier: engineering
+status: accepted design
+answers: why a workarea's status is a forward-only ladder of development, committed, validated, and why medallion words stay in the lake
+-->
+
 # ADR-0009 — The status ladder: development, committed, validated; forward only; medallion words stay in the lake
 
 **Status:** accepted design · 2026-10-29

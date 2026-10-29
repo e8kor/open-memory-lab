@@ -30,7 +30,12 @@ info:
     admin verb. Reads fail closed as absence (404 access.not_found). Every state-creating POST
     requires an Idempotency-Key header; replays return the stored response with header
     Idempotency-Replay: true. Field spellings are design identifiers — normative in shape,
-    adjustable at implementation without a design change.
+    adjustable at implementation without a design change. Every response, success and error
+    alike, carries the X-Request-Id header (declared in components.headers and attached to
+    every 2xx; error bodies repeat it as request_id). An operation with a fixed request media type
+    (application/json everywhere except the octet-stream part upload) refuses any other request
+    media type with 415 request.unsupported_media. 429 limit.rate / limit.quota may be answered
+    by any operation; it is declared explicitly only on the v1 ring and high-traffic v2 surfaces.
 servers:
   - url: /
     description: Deployment-relative; OML is deployed per installation, there is no central host.
@@ -67,15 +72,38 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              verb: remember
+              claim_key: supplier-quote-am-7741
+              kind: memory
+              body: Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.
+              attachments:
+              - sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+              derives_from:
+              - art_01JB2WYT5H8K3N6Q9S2VX4ZC7B
             schema: { $ref: '#/components/schemas/SubmitRequest' }
       responses:
         '202':
           description: Held, visible to no one else until ratified (R3).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                claim_key: supplier-quote-am-7741
+                version: 1
+                state: held
+                plaintext_digest: sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310
+                scan:
+                  result: pass
+                  scanner_version: ruleset-2026.10
+                journal_seq: 4182
               schema: { $ref: '#/components/schemas/SubmitAccepted' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
     get:
       tags: [memories]
@@ -96,9 +124,36 @@ paths:
       responses:
         '200':
           description: One page of memory summaries.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  claim_key: supplier-quote-am-7741
+                  version: 1
+                  tip: true
+                  workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  workarea_path: universe.procurement.metals-crew
+                  kind: memory
+                  state: promoted
+                  principal: crew-procure/agent-7
+                  provenance: agent
+                  simulation_id: null
+                  self_signed: false
+                  plaintext_digest: sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310
+                  derives_from:
+                  - art_01JB2WYT5H8K3N6Q9S2VX4ZC7B
+                  attachments:
+                  - digest: sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+                    media_type: application/pdf
+                    size_bytes: 184233
+                  created_at: '2026-10-27T13:58:20Z'
+                  promoted_at: '2026-10-27T14:11:08Z'
+                next_cursor: null
               schema: { $ref: '#/components/schemas/MemoryPage' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v1/memories/recall:
@@ -112,13 +167,56 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              query: current aluminium quote Accra Metals validity
+              k: 8
             schema: { $ref: '#/components/schemas/RecallRequest' }
       responses:
         '200':
           description: Steering first and never ranked, then scored hits.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                steering:
+                - artifact_id: art_01JB2V8K3M6P9R2T5W8Z1CF4HQ
+                  claim_key: quote-validity-steering
+                  version: 1
+                  workarea_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
+                  workarea_path: universe.procurement
+                  kind: steering
+                  state: promoted
+                  body: Prefer quotes with an explicit validity date; treat undated quotes as expired.
+                hits:
+                - memory:
+                    artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                    claim_key: supplier-quote-am-7741
+                    version: 1
+                    tip: true
+                    workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                    workarea_path: universe.procurement.metals-crew
+                    kind: memory
+                    state: promoted
+                    principal: crew-procure/agent-7
+                    provenance: agent
+                    simulation_id: null
+                    self_signed: false
+                    plaintext_digest: sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310
+                    derives_from:
+                    - art_01JB2WYT5H8K3N6Q9S2VX4ZC7B
+                    attachments:
+                    - digest: sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+                      media_type: application/pdf
+                      size_bytes: 184233
+                    created_at: '2026-10-27T13:58:20Z'
+                    promoted_at: '2026-10-27T14:11:08Z'
+                    body: Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.
+                  score: 0.83
+                query_digest: sha256:c4a91e0b7d2f6358a1c0e94d72b85f31d6c2e8a90b4f7135c8d0e2a6951b4d7f
               schema: { $ref: '#/components/schemas/RecallResponse' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v1/memories/{artifact_id}:
@@ -131,11 +229,37 @@ paths:
       responses:
         '200':
           description: The memory.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                claim_key: supplier-quote-am-7741
+                version: 1
+                tip: true
+                workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                workarea_path: universe.procurement.metals-crew
+                kind: memory
+                state: promoted
+                principal: crew-procure/agent-7
+                provenance: agent
+                simulation_id: null
+                self_signed: false
+                plaintext_digest: sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310
+                derives_from:
+                - art_01JB2WYT5H8K3N6Q9S2VX4ZC7B
+                attachments:
+                - digest: sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+                  media_type: application/pdf
+                  size_bytes: 184233
+                created_at: '2026-10-27T13:58:20Z'
+                promoted_at: '2026-10-27T14:11:08Z'
+                body: Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.
               schema: { $ref: '#/components/schemas/Memory' }
         '404': { $ref: '#/components/responses/NotFound' }
         '410': { $ref: '#/components/responses/Gone' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/memories/{artifact_id}/lineage:
@@ -148,8 +272,30 @@ paths:
       responses:
         '200':
           description: The lineage closure.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                artifact_id: art_01JB2XJH8K1M3P5R7T9W2YA4CE
+                nodes:
+                - artifact_id: art_01JB2XJH8K1M3P5R7T9W2YA4CE
+                  claim_key: accra-metals-price-anchor
+                  version: 1
+                - artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  claim_key: supplier-quote-am-7741
+                  version: 1
+                - artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                  redacted: true
+                edges:
+                - from_artifact_id: art_01JB2XJH8K1M3P5R7T9W2YA4CE
+                  to_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  kind: derives_from
+                  state: ratified
+                - from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  to_artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                  kind: claim_edge
+                  state: pending
               schema: { $ref: '#/components/schemas/Lineage' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -167,14 +313,27 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              body: Supplier Accra Metals revised the quote to 408 USD/t for Q1-2027 delivery, valid until 2026-12-01. Quote ref AM-7741-r2.
+              reason: supplier issued a revised quote
             schema: { $ref: '#/components/schemas/SupersedeRequest' }
       responses:
         '202':
           description: The proposed replacement, held.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                artifact_id: art_01JB2YN4P6R8TA1CW3EY5G7J9L
+                claim_key: supplier-quote-am-7741
+                version: 2
+                state: held
+                plaintext_digest: sha256:8d2c5f70e1a94b36c7d21e85f03a6b94d5c8e217a0f4b63d92c1e5a78f0b3c64
+                journal_seq: 4293
               schema: { $ref: '#/components/schemas/SubmitAccepted' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/memories/{artifact_id}/reassign:
@@ -190,14 +349,24 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              workarea_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+              dry_run: false
             schema: { $ref: '#/components/schemas/ReassignRequest' }
       responses:
         '200':
           description: Moved (or the dry-run preview).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4305
+                event_id: evt_01JB2YR7S9UB2DX4FZ6H8KM1P3
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/memories/{artifact_id}/demote:
@@ -213,13 +382,23 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              version: 2
+              reason: quote withdrawn by supplier
             schema: { $ref: '#/components/schemas/DemoteRequest' }
       responses:
         '200':
           description: Demoted.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4311
+                event_id: evt_01JB2YS8TA1CW3EY5G7J9LN2Q4
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/memories/{artifact_id}/erase:
@@ -235,13 +414,31 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              dry_run: true
             schema: { $ref: '#/components/schemas/EraseRequest' }
       responses:
         '202':
           description: Erase journalled, DEK destroyed (or the dry-run inventory).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: null
+                event_id: null
+                dry_run: true
+                preview:
+                  copy_classes:
+                  - copy_class: postgres_body
+                    disposition: unreadable on DEK destruction
+                  - copy_class: attachment_objects
+                    count: 1
+                    disposition: unreadable on DEK destruction
+                  - copy_class: lake_derived
+                    disposition: unreadable on DEK destruction
               schema: { $ref: '#/components/schemas/ActResult' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/claims/tip-override:
@@ -255,13 +452,25 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+              claim_key: supplier-quote-am-7741
+              to_version: 1
+              reason: revised quote promoted in error; serve v1 while it is re-reviewed
             schema: { $ref: '#/components/schemas/TipOverrideRequest' }
       responses:
         '200':
           description: Tip overridden.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4330
+                event_id: evt_01JB2YT9UB2DX4FZ6H8KM1P3R5
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v1/attachments/uploads:
@@ -275,13 +484,29 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              expected_digest: sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+              size_bytes: 184233
+              media_type: application/pdf
             schema: { $ref: '#/components/schemas/UploadSessionCreate' }
       responses:
         '201':
           description: The session.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                session_id: ups_01JB2XD9W6E4T2Y8U1O3PA5SKF
+                expected_digest: sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+                size_bytes: 184233
+                media_type: application/pdf
+                state: open
+                parts: []
+                expires_at: '2026-10-29T18:40:00Z'
               schema: { $ref: '#/components/schemas/UploadSession' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v1/attachments/uploads/{session_id}/parts/{part_number}:
@@ -289,7 +514,7 @@ paths:
       tags: [attachments]
       operationId: putUploadPart
       summary: Upload one part; replaying a part is harmless (verified by digest at completion).
-      description: 'Requires: writer, session owner. No Idempotency-Key — a part is addressed by (session, part_number).'
+      description: 'Requires: writer, session owner. No Idempotency-Key — a part is addressed by (session, part_number). Parts are 5–64 MiB (http-api.md Limits); an oversized part answers 413 request.payload_too_large.'
       parameters:
         - { name: session_id, in: path, required: true, schema: { type: string } }
         - { name: part_number, in: path, required: true, schema: { type: integer, minimum: 1 } }
@@ -299,9 +524,14 @@ paths:
           application/octet-stream:
             schema: { type: string, format: binary }
       responses:
-        '204': { description: Part stored. }
+        '204':
+          description: Part stored.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v1/attachments/uploads/{session_id}/complete:
@@ -316,11 +546,18 @@ paths:
       responses:
         '200':
           description: Content-addressed attachment stored, inert until a submission binds it.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                digest: sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+                ciphertext_digest: sha256:52b8e04d7a1f3c96e2d50b84a7c91e36f40d82b5c6a1973e0f5d24c8a9b1e670
+                state: complete
               schema: { $ref: '#/components/schemas/UploadComplete' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v1/attachments/{digest}:
@@ -335,11 +572,14 @@ paths:
       responses:
         '200':
           description: The plaintext bytes.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/octet-stream:
               schema: { type: string, format: binary }
         '404': { $ref: '#/components/responses/NotFound' }
         '410': { $ref: '#/components/responses/Gone' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/claim-edges:
@@ -356,8 +596,20 @@ paths:
       responses:
         '200':
           description: One page of claim edges.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - edge_id: ce_01JB2YA1C3E5G7J9L2N4Q6S8UW
+                  from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  to_artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                  label: supports
+                  state: pending
+                  proposer_key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                  ratifier_key_id: null
+                next_cursor: null
               schema: { $ref: '#/components/schemas/ClaimEdgePage' }
         default: { $ref: '#/components/responses/Error' }
     post:
@@ -370,13 +622,28 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+              to_artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+              label: supports
             schema: { $ref: '#/components/schemas/ClaimEdgeProposal' }
       responses:
         '202':
           description: Pending edge.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                edge_id: ce_01JB2YA1C3E5G7J9L2N4Q6S8UW
+                from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                to_artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                label: supports
+                state: pending
+                proposer_key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                ratifier_key_id: null
               schema: { $ref: '#/components/schemas/ClaimEdge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/claim-edges/{edge_id}/ratify:
@@ -391,8 +658,18 @@ paths:
       responses:
         '200':
           description: Ratified edge.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                edge_id: ce_01JB2YA1C3E5G7J9L2N4Q6S8UW
+                from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                to_artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                label: supports
+                state: ratified
+                proposer_key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                ratifier_key_id: key_01JB2WV7C9E2G4J6L8N1QS3UWZ
               schema: { $ref: '#/components/schemas/ClaimEdge' }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
@@ -408,8 +685,20 @@ paths:
       responses:
         '200':
           description: The node.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
+                path: universe.procurement.metals-crew
+                status: committed
+                crew:
+                  name: metals-crew
+                  charter_uri: https://crews.example.com/metals/charter.md
+                  external_manager: crewd.example.com
+                created_at: '2026-09-02T09:14:33Z'
               schema: { $ref: '#/components/schemas/Workarea' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
@@ -423,14 +712,34 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              parent_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+              name: q1-2027
+              crew:
+                name: metals-crew
+                charter_uri: https://crews.example.com/metals/charter.md
+                external_manager: crewd.example.com
             schema: { $ref: '#/components/schemas/WorkareaCreate' }
       responses:
         '201':
           description: The new node.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                parent_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                path: universe.procurement.metals-crew.q1-2027
+                status: development
+                crew:
+                  name: metals-crew
+                  charter_uri: https://crews.example.com/metals/charter.md
+                  external_manager: crewd.example.com
+                created_at: '2026-10-29T15:40:12Z'
               schema: { $ref: '#/components/schemas/Workarea' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/workareas/{workarea_id}:
@@ -443,8 +752,20 @@ paths:
       responses:
         '200':
           description: The node.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
+                path: universe.procurement.metals-crew
+                status: committed
+                crew:
+                  name: metals-crew
+                  charter_uri: https://crews.example.com/metals/charter.md
+                  external_manager: crewd.example.com
+                created_at: '2026-09-02T09:14:33Z'
               schema: { $ref: '#/components/schemas/Workarea' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
@@ -462,8 +783,31 @@ paths:
       responses:
         '200':
           description: One page of nodes.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
+                  path: universe.procurement.metals-crew
+                  status: committed
+                  crew:
+                    name: metals-crew
+                    charter_uri: https://crews.example.com/metals/charter.md
+                    external_manager: crewd.example.com
+                  created_at: '2026-09-02T09:14:33Z'
+                - id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                  parent_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  path: universe.procurement.metals-crew.q1-2027
+                  status: development
+                  crew:
+                    name: metals-crew
+                    charter_uri: https://crews.example.com/metals/charter.md
+                    external_manager: crewd.example.com
+                  created_at: '2026-10-29T15:40:12Z'
+                next_cursor: null
               schema: { $ref: '#/components/schemas/WorkareaPage' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -480,8 +824,20 @@ paths:
       responses:
         '200':
           description: One page of edges.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - edge_id: we_01JB2Y6T8V1X3Z5B7D9FH2KM4P
+                  from_workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  to_workarea_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                  label: continues
+                  state: pending
+                  proposer_key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                  ratifier_key_id: null
+                next_cursor: null
               schema: { $ref: '#/components/schemas/WorkareaEdgePage' }
         default: { $ref: '#/components/responses/Error' }
     post:
@@ -496,13 +852,27 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              to_workarea_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+              label: continues
             schema: { $ref: '#/components/schemas/WorkareaEdgeProposal' }
       responses:
         '202':
           description: Pending edge.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                edge_id: we_01JB2Y6T8V1X3Z5B7D9FH2KM4P
+                from_workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                to_workarea_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                label: continues
+                state: pending
+                proposer_key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                ratifier_key_id: null
               schema: { $ref: '#/components/schemas/WorkareaEdge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/workarea-edges/{edge_id}/ratify:
@@ -517,8 +887,18 @@ paths:
       responses:
         '200':
           description: Ratified edge.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                edge_id: we_01JB2Y6T8V1X3Z5B7D9FH2KM4P
+                from_workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                to_workarea_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                label: continues
+                state: ratified
+                proposer_key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                ratifier_key_id: key_01JB2WV7C9E2G4J6L8N1QS3UWZ
               schema: { $ref: '#/components/schemas/WorkareaEdge' }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
@@ -533,8 +913,23 @@ paths:
       responses:
         '200':
           description: Status view.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                status: committed
+                policy:
+                  k: 1
+                  required_roles:
+                  - dreamer
+                  human_required_classes:
+                  - vocab.deprecation_replaced_by
+                  - vocab.mapping_exactMatch
+                  independence_axis: principal
+                  held_item_expiry: 168h
+                pending_transitions: []
               schema: { $ref: '#/components/schemas/WorkareaStatus' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -551,14 +946,27 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              new_parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
+              dry_run: true
             schema: { $ref: '#/components/schemas/ReparentRequest' }
       responses:
         '200':
           description: Re-parented (or the dry-run preview).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: null
+                event_id: null
+                dry_run: true
+                preview:
+                  paths_rewritten: 2
+                  grants_affected: []
               schema: { $ref: '#/components/schemas/ActResult' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/workareas/{workarea_id}/crew:
@@ -574,13 +982,30 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              name: metals-crew
+              charter_uri: https://crews.example.com/metals/charter-v2.md
+              external_manager: crewd.example.com
             schema: { $ref: '#/components/schemas/CrewRecord' }
       responses:
         '200':
           description: Updated node.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
+                path: universe.procurement.metals-crew
+                status: committed
+                crew:
+                  name: metals-crew
+                  charter_uri: https://crews.example.com/metals/charter.md
+                  external_manager: crewd.example.com
+                created_at: '2026-09-02T09:14:33Z'
               schema: { $ref: '#/components/schemas/Workarea' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/workareas/{workarea_id}/transitions:
@@ -596,14 +1021,26 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              to: committed
             schema: { $ref: '#/components/schemas/TransitionProposal' }
       responses:
         '202':
           description: Pending transition.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                transition_id: tr_01JB2YF7H9K2M4P6R8TA1CV3EY
+                workarea_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                to: committed
+                state: pending
+                proposed_by_key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                ratified_by_key_id: null
               schema: { $ref: '#/components/schemas/Transition' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/workareas/{workarea_id}/transitions/{transition_id}/ratify:
@@ -619,8 +1056,26 @@ paths:
       responses:
         '200':
           description: Ratified transition.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                transition_id: tr_01JB2YF7H9K2M4P6R8TA1CV3EY
+                workarea_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                to: committed
+                state: ratified
+                proposed_by_key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                ratified_by_key_id: key_01JB2WV7C9E2G4J6L8N1QS3UWZ
+                policy_snapshot:
+                  k: 1
+                  required_roles:
+                  - dreamer
+                  human_required_classes:
+                  - vocab.deprecation_replaced_by
+                  - vocab.mapping_exactMatch
+                  independence_axis: principal
+                  held_item_expiry: 168h
               schema: { $ref: '#/components/schemas/Transition' }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
@@ -632,14 +1087,36 @@ paths:
       summary: The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
       description: 'Requires: reader effective access. Paginates by after_seq; full-chain verification is served by the chain export.'
       parameters:
-        - { name: after_seq, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: after_seq, in: query, schema: { type: integer, minimum: 0, default: 0 },
+            description: "Resume point: events return in seq ascending order — the journal's order, not created_at descending." }
         - { $ref: '#/components/parameters/Limit' }
       responses:
         '200':
           description: Events after the given seq, plus the current head seq.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - seq: 4183
+                  event_id: evt_01JB2YK2M4P6R8TA1CW3EY5G7J
+                  event_type: lifecycle.promote
+                  prev_hash: 3f6c2a1e8b90d4757e1a2c0f5b68d3914ce7a20b85f1d6c43e9a0b7f2d851c6e
+                  hash: 9a4d1f70c3e82b65a0d94c17f52e8b36d1c40a97e6f32b85c0d71e4a9b625f38
+                  sig: kqXkzFI0E1q4m4c9T2Qy7Zx0VY5e3S1gW8uJbNvPzD6hR2tLaM0fXoCi9wEs5B7HnG4dK1mA8pUj3yQ2vTrZCg==
+                  principal: crew-review/agent-3
+                  api_key_id: key_01JB2WV7C9E2G4J6L8N1QS3UWZ
+                  at: '2026-10-27T14:11:08Z'
+                  payload:
+                    artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                    claim_key: supplier-quote-am-7741
+                    version: 1
+                    workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                    plaintext_digest: sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310
+                head_seq: 4207
               schema: { $ref: '#/components/schemas/EventsPage' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/vocab/suggest:
@@ -656,9 +1133,21 @@ paths:
       responses:
         '200':
           description: One page of suggestions.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - curie: proc:price-quote
+                  label: price quote
+                  term_status: active
+                - curie: proc:supplier-quote
+                  label: supplier quote
+                  term_status: deprecated
+                next_cursor: null
               schema: { $ref: '#/components/schemas/VocabSuggestPage' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/vocab/terms/{curie}:
@@ -671,8 +1160,21 @@ paths:
       responses:
         '200':
           description: The term.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                curie: proc:supplier-quote
+                workarea_id: wa_01JB2Z1C3E5G7J9L2N4Q6S8UWY
+                version: 4
+                term_status: deprecated
+                definition_state: present
+                successors:
+                - curie: proc:price-quote
+                  relation: replaced_by
+                releases:
+                - rel_01JB2Z2D4F6H8K1M3P5R7TVXZB
               schema: { $ref: '#/components/schemas/VocabTerm' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
@@ -692,8 +1194,17 @@ paths:
       responses:
         '200':
           description: One page of related terms, naming the release the closure was read from.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - curie: proc:quote
+                  label: quote
+                  term_status: active
+                release: rel_01JB2Z2D4F6H8K1M3P5R7TVXZB
+                next_cursor: null
               schema: { $ref: '#/components/schemas/VocabHierarchyPage' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
@@ -711,8 +1222,19 @@ paths:
       responses:
         '200':
           description: One page of mappings.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - subject: proc:price-quote
+                  object: fin:quotation
+                  predicate: closeMatch
+                  justification: human-curated
+                  note: fin:quotation covers bids; proc:price-quote is supplier-issued only
+                  ratified_at: '2026-10-20T11:02:44Z'
+                next_cursor: null
               schema: { $ref: '#/components/schemas/TermMappingPage' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -729,8 +1251,17 @@ paths:
       responses:
         '200':
           description: Queue depths.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  workarea_path: universe.procurement.metals-crew
+                  held: 3
+                  oldest_age_seconds: 5411
+                next_cursor: null
               schema: { $ref: '#/components/schemas/ReviewQueuePage' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -745,6 +1276,8 @@ paths:
         required: false
         content:
           application/json:
+            example:
+              workarea: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
             schema:
               type: object
               properties:
@@ -752,11 +1285,45 @@ paths:
       responses:
         '200':
           description: The serve.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                serve_id: srv_01JB2YB3D5F7H9K2M4P6R8TWYA
+                expires_at: '2026-10-29T17:10:00Z'
+                item:
+                  artifact_id: art_01JB2XJH8K1M3P5R7T9W2YA4CE
+                  claim_key: accra-metals-price-anchor
+                  version: 1
+                  tip: true
+                  workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  workarea_path: universe.procurement.metals-crew
+                  kind: derived_fact
+                  state: held
+                  principal: crew-procure/agent-7
+                  provenance: agent
+                  simulation_id: null
+                  self_signed: false
+                  plaintext_digest: sha256:1e5a7c3902d8b6f44a0c2e917d3f58b62c90e1a74f6d2b85031c7e9a4b5d6f28
+                  derives_from:
+                  - art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  - art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                  attachments: []
+                  created_at: '2026-10-29T16:02:51Z'
+                  promoted_at: null
+                  body: Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations.
+                served_digests:
+                  body: sha256:1e5a7c3902d8b6f44a0c2e917d3f58b62c90e1a74f6d2b85031c7e9a4b5d6f28
+                  attachments: []
               schema: { $ref: '#/components/schemas/Serve' }
-        '204': { description: Nothing in scope waits. }
+        '204':
+          description: Nothing in scope waits.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/review/verdicts:
@@ -770,15 +1337,28 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              serve_id: srv_01JB2YB3D5F7H9K2M4P6R8TWYA
+              verdict: approve
             schema: { $ref: '#/components/schemas/VerdictRequest' }
       responses:
         '200':
           description: Verdict recorded; resulting state stated.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                artifact_id: art_01JB2XJH8K1M3P5R7T9W2YA4CE
+                version: 1
+                verdict: approve
+                state: promoted
+                ratification_event_id: evt_01JB2YP5Q7S9UB2DX4FZ6H8KM1
               schema: { $ref: '#/components/schemas/VerdictResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/review/reopen:
@@ -792,14 +1372,25 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+              version: 1
+              reason: rejection cited a stale source; re-review against the revised quote
             schema: { $ref: '#/components/schemas/ReopenRequest' }
       responses:
         '200':
           description: Returned to the review queue.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4351
+                event_id: evt_01JB2YV1CW3EY5G7J9LN2Q4S6
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/keys:
@@ -815,8 +1406,27 @@ paths:
       responses:
         '200':
           description: One page of keys.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                  role: dreamer
+                  principal: crew-review/agent-3
+                  label: metals review agent
+                  expiry: null
+                  revoked_at: null
+                  rotated_from: null
+                  grants:
+                  - workarea_node_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                    role: dreamer
+                    grant_id: gr_01JB2YG8J1L3N5Q7S9UA2CW4FZ
+                    epoch: 41
+                  denials: []
+                  epoch: 41
+                next_cursor: null
               schema: { $ref: '#/components/schemas/KeyPage' }
         default: { $ref: '#/components/responses/Error' }
     post:
@@ -829,14 +1439,40 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              role: writer
+              grants:
+              - workarea_node_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                role: writer
+              label: procure agent 7
+              principal: crew-procure/agent-7
             schema: { $ref: '#/components/schemas/KeyIssueRequest' }
       responses:
         '201':
           description: The key, value shown once.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                key_id: key_01JB2WR4A6C8E1G3J5L7N9QSUW
+                role: writer
+                principal: crew-procure/agent-7
+                label: procure agent 7
+                expiry: null
+                revoked_at: null
+                rotated_from: null
+                grants:
+                - workarea_node_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  role: writer
+                  grant_id: gr_01JB2YQ6R8TA1CW3EY5G7J9LN2
+                  epoch: 7
+                denials: []
+                epoch: 7
+                value: oml_4fQ7xT9mK2pL8vR3nW6zA1cY5bD0eG7hJ4kM9sU2wXq
               schema: { $ref: '#/components/schemas/KeyIssued' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/keys/{key_id}:
@@ -849,8 +1485,25 @@ paths:
       responses:
         '200':
           description: The key.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                role: dreamer
+                principal: crew-review/agent-3
+                label: metals review agent
+                expiry: null
+                revoked_at: null
+                rotated_from: null
+                grants:
+                - workarea_node_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  role: dreamer
+                  grant_id: gr_01JB2YG8J1L3N5Q7S9UA2CW4FZ
+                  epoch: 41
+                denials: []
+                epoch: 41
               schema: { $ref: '#/components/schemas/Key' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
@@ -868,6 +1521,8 @@ paths:
         required: false
         content:
           application/json:
+            example:
+              reason: agent decommissioned
             schema:
               type: object
               properties:
@@ -875,9 +1530,16 @@ paths:
       responses:
         '200':
           description: Revoked.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4360
+                event_id: evt_01JB2YW2DX4FZ6H8KM1P3R5T7
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/keys/{key_id}/rotate:
@@ -893,6 +1555,8 @@ paths:
         required: false
         content:
           application/json:
+            example:
+              grace: 72h
             schema:
               type: object
               properties:
@@ -900,9 +1564,28 @@ paths:
       responses:
         '201':
           description: The successor key, value shown once, rotated_from naming the old key.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                key_id: key_01JB2WX8D1F3H5K7M9P2R4TVXZ
+                role: writer
+                principal: crew-procure/agent-7
+                label: procure agent 7
+                expiry: null
+                revoked_at: null
+                rotated_from: key_01JB2WR4A6C8E1G3J5L7N9QSUW
+                grants:
+                - workarea_node_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  role: writer
+                  grant_id: gr_01JB2YX3EY5G7J9LN2Q4S6U8W1
+                  epoch: 8
+                denials: []
+                epoch: 8
+                value: oml_9rT2wXq5bD0eG7hJ4kM8vN3pL6sU1yZaC4fQ7xT9mK2
               schema: { $ref: '#/components/schemas/KeyIssued' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/keys/{key_id}/grants:
@@ -918,13 +1601,24 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              workarea_node_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+              role: writer
             schema: { $ref: '#/components/schemas/GrantRequest' }
       responses:
         '201':
           description: The grant.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                workarea_node_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                role: writer
+                grant_id: gr_01JB2YQ6R8TA1CW3EY5G7J9LN2
+                epoch: 9
               schema: { $ref: '#/components/schemas/Grant' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/keys/{key_id}/grants/{grant_id}/revoke:
@@ -940,8 +1634,14 @@ paths:
       responses:
         '200':
           description: Revoked.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4364
+                event_id: evt_01JB2YY4FZ6H8KM1P3R5T7V9X2
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -958,13 +1658,24 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              workarea_node_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+              reason: quarantine the q1-2027 subtree during incident 44
             schema: { $ref: '#/components/schemas/DenialRequest' }
       responses:
         '201':
           description: The denial.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                denial_id: dn_01JB2YH9K2M4P6R8TA1CV3EX5G
+                workarea_node_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                epoch: 10
+                lifted: false
               schema: { $ref: '#/components/schemas/Denial' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/keys/{key_id}/denials/{denial_id}/lift:
@@ -980,8 +1691,14 @@ paths:
       responses:
         '200':
           description: Lifted.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4371
+                event_id: evt_01JB2YZ5G7J9LN2Q4S6U8W1Y3A
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -997,8 +1714,22 @@ paths:
       responses:
         '200':
           description: Effective access.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                key_id: key_01JB2WR4A6C8E1G3J5L7N9QSUW
+                epoch: 10
+                entries:
+                - workarea_node_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  path: universe.procurement.metals-crew
+                  role: writer
+                  masked_by: null
+                - workarea_node_id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
+                  path: universe.procurement.metals-crew.q1-2027
+                  role: writer
+                  masked_by: dn_01JB2YH9K2M4P6R8TA1CV3EX5G
               schema: { $ref: '#/components/schemas/EffectiveAccess' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -1014,8 +1745,21 @@ paths:
       responses:
         '200':
           description: One page of bans.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - ban_id: ban_01JB2YE6G8J1L3N5Q7S9UB2DXF
+                  subject_kind: principal
+                  subject: crew-procure/agent-4
+                  reason: repeated fabricated quote references
+                  imposed_by_key_id: key_01JB2WT6B8D1F3H5K7M9P2RTVX
+                  imposed_at: '2026-10-29T16:20:00Z'
+                  lifted_by_key_id: null
+                  lifted_at: null
+                next_cursor: null
               schema: { $ref: '#/components/schemas/BanPage' }
         default: { $ref: '#/components/responses/Error' }
     post:
@@ -1028,18 +1772,43 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              subject_kind: principal
+              subject: crew-procure/agent-4
+              reason: repeated fabricated quote references
+              dry_run: true
             schema: { $ref: '#/components/schemas/BanRequest' }
       responses:
         '200':
           description: Dry-run reach preview.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                keys_affected:
+                - key_01JB2X0A2C4E6G8J1L3N5Q7SUX
+                held_refusals: 2
+                workareas_touched:
+                - wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
               schema: { $ref: '#/components/schemas/BanPreview' }
         '201':
           description: Ban imposed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                ban_id: ban_01JB2YE6G8J1L3N5Q7S9UB2DXF
+                subject_kind: principal
+                subject: crew-procure/agent-4
+                reason: repeated fabricated quote references
+                imposed_by_key_id: key_01JB2WT6B8D1F3H5K7M9P2RTVX
+                imposed_at: '2026-10-29T16:20:00Z'
+                lifted_by_key_id: null
+                lifted_at: null
               schema: { $ref: '#/components/schemas/Ban' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/bans/{ban_id}/lift:
@@ -1054,8 +1823,19 @@ paths:
       responses:
         '200':
           description: Lifted.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                ban_id: ban_01JB2YE6G8J1L3N5Q7S9UB2DXF
+                subject_kind: principal
+                subject: crew-procure/agent-4
+                reason: repeated fabricated quote references
+                imposed_by_key_id: key_01JB2WT6B8D1F3H5K7M9P2RTVX
+                imposed_at: '2026-10-29T16:20:00Z'
+                lifted_by_key_id: key_01JB2WT6B8D1F3H5K7M9P2RTVX
+                lifted_at: '2026-10-30T09:00:00Z'
               schema: { $ref: '#/components/schemas/Ban' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -1072,8 +1852,22 @@ paths:
       responses:
         '200':
           description: One page of simulations.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - simulation_id: sim_01JB2YC4E6G8J1L3N5Q7S9VXZB
+                  state: open
+                  audience:
+                  - key_id: key_01JB2WR4A6C8E1G3J5L7N9QSUW
+                  - key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                  label: q1-2027 negotiation dry run
+                  opened_at: '2026-10-29T15:05:00Z'
+                  ended_at: null
+                  warnings: []
+                next_cursor: null
               schema: { $ref: '#/components/schemas/SimulationPage' }
         default: { $ref: '#/components/responses/Error' }
     post:
@@ -1086,13 +1880,31 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              audience:
+              - key_id: key_01JB2WR4A6C8E1G3J5L7N9QSUW
+              - key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+              label: q1-2027 negotiation dry run
             schema: { $ref: '#/components/schemas/SimulationCreate' }
       responses:
         '201':
           description: The simulation.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                simulation_id: sim_01JB2YC4E6G8J1L3N5Q7S9VXZB
+                state: open
+                audience:
+                - key_id: key_01JB2WR4A6C8E1G3J5L7N9QSUW
+                - key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                label: q1-2027 negotiation dry run
+                opened_at: '2026-10-29T15:05:00Z'
+                ended_at: null
+                warnings: []
               schema: { $ref: '#/components/schemas/Simulation' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/simulations/{simulation_id}:
@@ -1105,8 +1917,20 @@ paths:
       responses:
         '200':
           description: The simulation.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                simulation_id: sim_01JB2YC4E6G8J1L3N5Q7S9VXZB
+                state: open
+                audience:
+                - key_id: key_01JB2WR4A6C8E1G3J5L7N9QSUW
+                - key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                label: q1-2027 negotiation dry run
+                opened_at: '2026-10-29T15:05:00Z'
+                ended_at: null
+                warnings: []
               schema: { $ref: '#/components/schemas/Simulation' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
@@ -1122,6 +1946,8 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              enrollment_token: enr_01JB2W9Z8X7V6T5S4R3Q2P1N0M
             schema:
               type: object
               required: [enrollment_token]
@@ -1130,10 +1956,25 @@ paths:
       responses:
         '201':
           description: The root operator key, value shown once.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                key_id: key_01JB2WZ9E2G4J6L8N1Q3S5UWYA
+                role: operator
+                principal: platform-team/bootstrap
+                label: root operator key
+                expiry: null
+                revoked_at: null
+                rotated_from: null
+                grants: []
+                denials: []
+                epoch: 1
+                value: oml_7hJ4kM9sU2wXq5bD0eG3nW6zA1cY8vR2pL4fQ7xT9mK
               schema: { $ref: '#/components/schemas/KeyIssued' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/simulations/{simulation_id}/audience:
@@ -1149,6 +1990,11 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              add:
+              - key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+              remove: []
+              reason: no dreamer in the audience; nothing could promote
             schema:
               type: object
               description: At least one of add/remove must be non-empty (request.validation otherwise).
@@ -1163,11 +2009,24 @@ paths:
       responses:
         '200':
           description: The resulting audience; carries the same warnings field as creation when it still holds no dreamer key.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                simulation_id: sim_01JB2YC4E6G8J1L3N5Q7S9VXZB
+                state: open
+                audience:
+                - key_id: key_01JB2WR4A6C8E1G3J5L7N9QSUW
+                - key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
+                label: q1-2027 negotiation dry run
+                opened_at: '2026-10-29T15:05:00Z'
+                ended_at: null
+                warnings: []
               schema: { $ref: '#/components/schemas/Simulation' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/simulations/{simulation_id}/end:
@@ -1183,6 +2042,8 @@ paths:
         required: false
         content:
           application/json:
+            example:
+              dry_run: false
             schema:
               type: object
               properties:
@@ -1190,10 +2051,17 @@ paths:
       responses:
         '202':
           description: End journalled; demotion closure proceeding (or the dry-run listing).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4388
+                event_id: evt_01JB2Z3E5G7J9LN2Q4S6U8WY1A
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/exports:
@@ -1208,8 +2076,19 @@ paths:
       responses:
         '200':
           description: One page of jobs.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                items:
+                - export_id: exp_01JB2YD5F7H9K2M4P6R8TA1CWE
+                  kind: evidence
+                  state: done
+                  requested_at: '2026-10-29T16:30:00Z'
+                  finished_at: '2026-10-29T16:34:10Z'
+                  bundle_bytes: 7340032
+                next_cursor: null
               schema: { $ref: '#/components/schemas/ExportPage' }
         default: { $ref: '#/components/responses/Error' }
     post:
@@ -1222,13 +2101,26 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              kind: evidence
+              from_seq: 1
             schema: { $ref: '#/components/schemas/ExportRequest' }
       responses:
         '202':
           description: Job accepted.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                export_id: exp_01JB2YD5F7H9K2M4P6R8TA1CWE
+                kind: evidence
+                state: running
+                requested_at: '2026-10-29T16:30:00Z'
+                finished_at: null
+                bundle_bytes: null
               schema: { $ref: '#/components/schemas/ExportJob' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/exports/{export_id}:
@@ -1241,8 +2133,17 @@ paths:
       responses:
         '200':
           description: The job.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                export_id: exp_01JB2YD5F7H9K2M4P6R8TA1CWE
+                kind: evidence
+                state: done
+                requested_at: '2026-10-29T16:30:00Z'
+                finished_at: '2026-10-29T16:34:10Z'
+                bundle_bytes: 7340032
               schema: { $ref: '#/components/schemas/ExportJob' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
@@ -1257,6 +2158,8 @@ paths:
       responses:
         '200':
           description: The signed bundle.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/octet-stream:
               schema: { type: string, format: binary }
@@ -1274,8 +2177,19 @@ paths:
       responses:
         '200':
           description: Configured (and optionally effective) settings.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                configured:
+                  search:
+                    fts_config: simple
+                  idempotency:
+                    replay_window: 48h
+                applied_at: '2026-10-28T08:12:00Z'
+                applied_event_id: evt_01JB2Z4F6H8KM1P3R5T7V9X2ZB
+                divergences: []
               schema: { $ref: '#/components/schemas/SettingsView' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -1289,13 +2203,24 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              search:
+                fts_config: simple
+              idempotency:
+                replay_window: 48h
             schema: { $ref: '#/components/schemas/SettingsDocument' }
       responses:
         '200':
           description: Findings, including settings.retired_key findings.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                valid: true
+                findings: []
               schema: { $ref: '#/components/schemas/SettingsValidation' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/settings/apply:
@@ -1309,14 +2234,26 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              search:
+                fts_config: simple
+              idempotency:
+                replay_window: 48h
             schema: { $ref: '#/components/schemas/SettingsDocument' }
       responses:
         '200':
           description: Applied.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                journal_seq: 4401
+                event_id: evt_01JB2Z5G7J9LN2Q4S6U8W1Y3AC
+                dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/tenants:
@@ -1330,6 +2267,8 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              name: acme-industrial
             schema:
               type: object
               required: [name]
@@ -1338,13 +2277,19 @@ paths:
       responses:
         '201':
           description: The tenant.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                tenant_id: tn_01JB2YJ1L3N5Q7S9UB2DX4FZ6H
+                name: acme-industrial
               schema:
                 type: object
                 properties:
                   tenant_id: { type: string }
                   name: { type: string }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /healthz:
@@ -1356,8 +2301,12 @@ paths:
       responses:
         '200':
           description: The process runs.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                status: ok
               schema: { $ref: '#/components/schemas/Health' }
 
   /readyz:
@@ -1369,8 +2318,15 @@ paths:
       responses:
         '200':
           description: The replica can serve.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
           content:
             application/json:
+              example:
+                status: ok
+                checks:
+                  postgres: ok
+                  fork_check: ok
               schema: { $ref: '#/components/schemas/Ready' }
         '503':
           description: Not ready, with per-check detail.
@@ -1388,7 +2344,10 @@ components:
         One key, one role (reader | writer | dreamer | admin | operator), grants scoping it to
         workarea subtrees. Tenant derives from the key server-side. Each operation's description
         states its ceiling; refusals are typed (access.verb_ceiling, access.grant_refused,
-        access.not_found) per docs/api/errors.md.
+        access.not_found) per docs/api/errors.md. Key wire format: "oml_" followed by 43
+        base62 characters (256 bits of randomness). At rest the service stores only the plain
+        SHA-256 of the full key — defensible without salt or stretching because the key is
+        high-entropy random, and it enables the UNIQUE-index lookup at authentication.
 
   parameters:
     IdempotencyKey:
@@ -1401,7 +2360,10 @@ components:
         provider ring the workarea component is the RESOLVED target — the key's default_workarea
         or the X-OML-Workarea override (ADR-0022 d4). Replay of
         the same request returns the stored response with header Idempotency-Replay: true; the
-        same key with a different request digest is refused (idempotency.digest_mismatch).
+        same key with a different request digest is refused (idempotency.digest_mismatch). A
+        committed record is retained for at least 24 hours — the replay-window setting may only
+        raise that floor — and after it expires the same key is processed as a fresh request
+        (expiry-then-reprocess is documented behavior, not a defect).
     XOMLWorkarea:
       name: X-OML-Workarea
       in: header
@@ -1417,11 +2379,18 @@ components:
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      description: >-
+        Page size, at most 200. Unless an endpoint states otherwise, listings order by
+        created_at descending; the events tail is the deliberate exception (seq ascending).
     Cursor:
       name: cursor
       in: query
       schema: { type: string }
-      description: Opaque, from the previous page's next_cursor; scoped to the key and expiring.
+      description: >-
+        Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots —
+        rows written between pages can appear in later pages. A cursor is scoped to the key
+        that obtained it and expires (the TTL is a named deployment setting); a stale or
+        foreign cursor answers 400 request.validation.
     ArtifactId:
       name: artifact_id
       in: path
@@ -1443,44 +2412,87 @@ components:
       required: true
       schema: { $ref: '#/components/schemas/Curie' }
 
+  headers:
+    XRequestId:
+      description: >-
+        The request's correlation id. Every response carries it; error bodies repeat it as
+        request_id, and it is the handle for the read log and support.
+      schema: { type: string }
+    RetryAfter:
+      description: Seconds to wait before retrying; present on every retryable refusal.
+      schema: { type: integer, minimum: 0 }
+
   responses:
     Error:
       description: Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     Unauthorized:
       description: auth.missing or auth.invalid.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     Forbidden:
       description: A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     NotFound:
       description: access.not_found — absent or outside read scope, indistinguishable by design.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     Conflict:
       description: A 409-class conflict (idempotency.*, submission.tip_conflict, workarea.frozen, review.serve_invalid, …).
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     Gone:
       description: lifecycle.erased — a journalled crypto-shred, never a silent deletion.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     TooLarge:
       description: request.payload_too_large.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     Unprocessable:
       description: A 422-class refusal (submission.scan_veto, upload.digest_mismatch, settings.*, …).
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RateLimited:
+      description: 429 limit.rate or limit.quota — retryable; Retry-After says when.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    UnsupportedMedia:
+      description: >-
+        415 request.unsupported_media — the request body's media type is not the
+        application/json the operation declares; not retryable as sent.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1512,6 +2524,7 @@ components:
         - request.idempotency_key_required
         - request.payload_too_large
         - request.workarea_unresolved
+        - request.unsupported_media
         - idempotency.in_progress
         - idempotency.digest_mismatch
         - submission.scan_veto
@@ -1571,11 +2584,12 @@ components:
         verb: { type: string, enum: [remember, learn], description: learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. }
         claim_key: { type: string, description: "Groups versions of one claim; unique per (tenant, workarea) over non-erased rows." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
-        body: { type: string, description: Text body; binary content goes through attachments. }
+        body: { type: string, maxLength: 1048576, description: 'Text body — claim text, at most 1 MiB (http-api.md Limits); binary content goes through attachments.' }
         attachments:
           type: array
+          maxItems: 64
           items: { $ref: '#/components/schemas/Digest' }
-          description: Each digest must name a completed upload session owned by this key.
+          description: At most 64 attachments per memory (http-api.md Limits). Each digest must name a completed upload session owned by this key.
         derives_from:
           type: array
           items: { type: string }
@@ -1737,9 +2751,9 @@ components:
       type: object
       required: [body]
       properties:
-        body: { type: string }
+        body: { type: string, maxLength: 1048576, description: 'Claim text, at most 1 MiB (http-api.md Limits).' }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
-        attachments: { type: array, items: { $ref: '#/components/schemas/Digest' } }
+        attachments: { type: array, maxItems: 64, items: { $ref: '#/components/schemas/Digest' } }
         derives_from: { type: array, items: { type: string }, description: The superseded target is included implicitly. }
         reason: { type: string }
         terms: { type: array, items: { $ref: '#/components/schemas/Curie' }, description: 'CURIE annotations (ADR-0021 d8).' }
@@ -1797,7 +2811,7 @@ components:
       required: [expected_digest, size_bytes, media_type]
       properties:
         expected_digest: { $ref: '#/components/schemas/Digest' }
-        size_bytes: { type: integer, minimum: 1 }
+        size_bytes: { type: integer, minimum: 1, maximum: 67108864, description: 'Attachments are at most 64 MiB (http-api.md Limits).' }
         media_type: { type: string }
 
     UploadSession:

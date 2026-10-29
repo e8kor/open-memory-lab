@@ -1,3 +1,10 @@
+<!--
+id: architecture/workareas
+tier: engineering
+status: design draft for review · decided, not built
+answers: how the workarea algebra works — universe tree, node-id grants, deny-wins semantics, edges — and how the status ladder changes a workarea's behavior
+-->
+
 # Workareas: the algebra and the status ladder
 
 **Status:** design draft for review · decided, not built

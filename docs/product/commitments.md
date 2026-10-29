@@ -1,3 +1,10 @@
+<!--
+id: product/commitments
+tier: client
+status: design draft for review · decided, not built
+answers: every guarantee Open Memory Lab makes, sorted into four honesty tiers, each with its enforcement point and the assumption it rests on
+-->
+
 # Commitments
 
 **Status:** design draft for review · decided, not built

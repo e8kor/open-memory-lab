@@ -1,3 +1,10 @@
+<!--
+id: api/http-api
+tier: engineering
+status: design draft for review · decided, not built
+answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab routes, authentication, idempotency records, the pagination convention, and the verb ceiling per endpoint
+-->
+
 # HTTP API
 
 **Status:** design draft for review · decided, not built
@@ -50,12 +57,47 @@ the constitution.
 | Convention | Rule |
 |---|---|
 | Base path | Two rings on one listener ([Two rings](#two-rings)): `/v1` the provider ring (covenant-bound once FR-21 closes), `/v2` the lab ring (evolving; may re-version to `/v3` without touching `/v1`). Additive fields are not breaking, and clients must ignore unknown response fields. |
-| Content type | `application/json; charset=utf-8`, except attachment part upload (`application/octet-stream`) and the export bundle download. |
+| Content type | `application/json; charset=utf-8`, except attachment part upload (`application/octet-stream`) and the export bundle download. A request body in any other media type answers `415 request.unsupported_media` ([errors.md](errors.md)). Responses are `application/json`; `Accept` is not negotiated in v1. |
+| Rate and quota | `429 limit.rate` / `limit.quota` may be answered by any operation; it is declared explicitly only on the v1 ring and high-traffic v2 surfaces ([errors.md](errors.md)). |
 | Timestamps | RFC 3339, UTC, e.g. `2026-10-29T14:03:17Z`. |
 | Digests | `sha256:<64 hex>`. An attachment is named by the SHA-256 of its plaintext ([storage.md](../architecture/storage.md)). |
 | Identifiers | Opaque strings (`artifact_id`, `workarea_id`, `key_id`, `serve_id`, …). Clients never parse them. |
 | Request id | Every response carries `X-Request-Id`; error bodies repeat it as `request_id`. |
 | Deletion | No endpoint is `DELETE`. Every removal is a journalled `POST` act — demote keeps bytes, erase is crypto-shredding (constitution R4; [audit-and-lineage.md](../architecture/audit-and-lineage.md)). |
+
+## Versioning and deprecation
+
+The rings version independently ([Two rings](#two-rings)); this section fixes what *additive*
+means, because the v1 covenant is only as strong as that definition.
+
+**Additive** — permitted on a frozen ring without a version change:
+
+- a new endpoint;
+- a new **optional** request field (absent means the prior behavior, exactly);
+- a new response field — clients must ignore unknown response fields
+  ([Conventions](#conventions)), which is what makes this additive;
+- a new error code under an existing HTTP status (the taxonomy is closed per release, and a
+  client branches on codes it knows — an unknown code under a known status degrades to the
+  status's generic handling).
+
+**Not additive for v1, settled exactly this way: extending a response enum.** A client that
+matches exhaustively on `state`, `verdict` or any other enumerated response field breaks on a
+member it has never seen, so a new enum member is a breaking change on `/v1` — it ships as a
+new field, or as a `/v2` capability, never as a quiet widening. Request-side enums may gain
+members (a client that never sends the new value never sees a difference).
+
+**The `/v2` evolution process.** The lab ring prefers additive change under the same
+definition. Every surface change, additive or breaking, is announced in the release changelog
+(no release exists yet — the process binds from the first one). A breaking `/v2` change mints
+`/v3`; the retiring ring keeps being served alongside its successor for a stated minimum
+overlap window of **one minor release cycle**, and the overlap is announced with the change.
+Deprecated endpoints will carry `Deprecation` and `Sunset` headers once implemented — decided,
+not built, like everything on this page.
+
+**Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
+declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
+(currently `0.1.0-design`), from which moment the covenant — and this section's definition of
+additive — is in force.
 
 ## Authentication and authorization
 
@@ -126,22 +168,37 @@ sequenceDiagram
 | Replay while the record is `in_progress` | `409 idempotency.in_progress`, retryable, with `Retry-After`. The first attempt is still running — crashed attempts leave `in_progress` records that expire. |
 | Same key, different request digest | `409 idempotency.digest_mismatch`. The key names exactly one request; reusing it for another is refused, never silently honored. |
 
-How long a `committed` record is retained — and therefore how long a replay returns the stored
-response rather than being processed fresh — is an open implementation detail, surfaced as a
-setting (`oml settings`, [cli/reference.md](../cli/reference.md)), not fixed by this design.
+A `committed` record is retained for at least **24 hours** — a committed floor, not an
+estimate. The `idempotency.retention` setting
+([configuration](../operations/configuration.md)) may only **raise** that floor, never lower
+it. When retention expires the record is gone, and a later retry with the same key is
+processed as a fresh request — expiry-then-reprocess is documented behavior, not an anomaly.
+A client whose retry horizon can exceed the deployment's retention must treat a retry past it
+as possibly-second work; retry loops belong inside the window.
 
 ## Pagination
 
 List endpoints share one convention:
 
-- Request: `limit` (1–200, default 50) and `cursor` (opaque, from the previous page; absent for
-  the first page).
+- Request: `limit` (1–200, default 50 — the ceiling is the `api.page_limit_max` setting,
+  [Limits](#limits)) and `cursor` (opaque, from the previous page; absent for the first page).
 - Response: `{"items": [...], "next_cursor": "..."}` — `next_cursor` is `null` when the listing is
   exhausted. Cursors are scoped to the key that obtained them and expire; a stale cursor answers
   `request.validation`.
+- **Ordering** is `created_at` **descending** — newest first — on every list endpoint, so the
+  first page is the most recent work. The one exception is below.
+- **Cursors are positional, not snapshots.** A cursor marks a position in the live ordering;
+  it freezes nothing. An item promoted, demoted or reassigned between pages may appear on a
+  later page or vanish from one, and two walks of the same listing can disagree about rows that
+  changed in between. A consumer that needs a consistent, replayable view reads the
+  [events tail](#events-tail) instead — that is what the journal is for.
+- Cursor lifetime is the `api.cursor_ttl` setting
+  ([configuration](../operations/configuration.md)); an expired cursor answers
+  `request.validation`, never a silent restart from page one.
 
-One deliberate exception: the [events tail](#events-tail) paginates by `after_seq`, because the
-per-tenant journal sequence is meaningful to clients and is the resume point a consumer stores.
+One deliberate exception: the [events tail](#events-tail) paginates by `after_seq` and is
+ordered `seq` **ascending**, because the per-tenant journal sequence is meaningful to clients
+and is the resume point a consumer stores.
 
 ## The surface
 
@@ -348,6 +405,24 @@ Resumable upload sessions, then content-addressed fetch (D3;
 A completed upload is inert until a submission binds its digest into a signed envelope; the claim
 and its files are then one reviewed unit — a reviewer is served every attachment before a verdict
 counts (D3).
+
+### Fetch semantics
+
+`GET /v1/attachments/{digest}` serves the whole object, once per fetch:
+
+- `Content-Type` echoes the `media_type` recorded at session creation — the service stores it,
+  it does not sniff bytes at serve time.
+- `Content-Length` is the **plaintext** size: the served bytes are decrypted and digest-verified
+  plaintext, so the length a client sees is `size_bytes` as declared at the session, never the
+  ciphertext size.
+- **`Range` requests are not supported in v1.** A `Range` header is ignored and the full object
+  is served with `200`, never `206`. The cost is stated rather than hidden: an interrupted fetch
+  restarts from byte zero, which at the attachment bound ([Limits](#limits)) means re-moving up
+  to 64 MiB — tracked as [FR-29](../product/roadmap.md).
+
+The export bundle download (`GET /v2/exports/{export_id}/bundle`,
+[Evidence export](#evidence-export)) has the same fetch semantics: whole object, no
+`Range`/`206`, `Content-Length` is the bundle size.
 
 ## Workareas
 
@@ -575,7 +650,25 @@ Both are unauthenticated, carry no tenant data, and are the probe targets the He
 
 ## Limits
 
-Quotas and rate limits are journalled grant attributes (D6). Enforcement in v1 is per-replica
+Two kinds of bounds govern requests. **Size and count bounds** are deployment settings with
+shipped defaults — the named bounds below. **Rate and quota bounds** are journalled grant
+attributes per key and tenant (D6), a different mechanism with its own refusals.
+
+| Bound | Shipped default | Setting ([configuration](../operations/configuration.md)) | Refusal |
+|---|---|---|---|
+| Claim body (text) size | 1 MiB | `submission.max_body_size` | `413 request.payload_too_large` |
+| Attachment size, each (via [upload sessions](#attachments)) | 64 MiB | `uploads.max_attachment_size` | `413 request.payload_too_large` at session creation |
+| Upload part size | 5–64 MiB | `uploads.part_size_min` / `uploads.part_size_max` | `request.validation` at session creation; `413` on an oversize part |
+| Attachments per memory | 64 | `submission.max_attachments` | `request.validation` at submit |
+| List page `limit` | max 200 (default 50) | `api.page_limit_max` | `request.validation` above the max |
+
+Every value is a **shipped default, deployment-tunable** through the named setting
+(`oml settings apply`, journalled). None is tenant-tunable in v1: a tenant that needs a tighter
+budget gets one through quota grant attributes (`limit.quota`), not by moving these bounds. And
+none is a measured capacity — a default is a policy choice, and the performance consequence of
+raising one is unmeasured ([FR-25](../product/roadmap.md)).
+
+Quota and rate-limit enforcement in v1 is per-replica
 token buckets at limit/N — a documented approximation whose error grows with replica churn
 ([FR-8](../product/roadmap.md)) — and the refusal is typed: `429 limit.rate` or `429 limit.quota`
 with `Retry-After` ([errors.md](errors.md)). Nothing here is measured; no latency or

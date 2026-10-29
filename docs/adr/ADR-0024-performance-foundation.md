@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0024-performance-foundation
+tier: engineering
+status: accepted design
+answers: what the performance foundation commits before any measurement exists, and why every quantity resolves to FR-25's harness rather than a stated number
+-->
+
 # ADR-0024 — The performance foundation
 
 **Status:** accepted design · 2026-10-29

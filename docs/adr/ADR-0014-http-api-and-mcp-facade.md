@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0014-http-api-and-mcp-facade
+tier: engineering
+status: accepted design
+answers: why there is one versioned JSON HTTP API, and why MCP over streamable HTTP is a stateless facade over it rather than a second surface
+-->
+
 # ADR-0014 — One versioned JSON HTTP API; MCP streamable HTTP as a stateless facade
 
 **Status:** accepted design · 2026-10-29

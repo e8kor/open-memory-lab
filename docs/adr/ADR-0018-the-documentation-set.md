@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0018-the-documentation-set
+tier: engineering
+status: accepted design
+answers: what the documentation set commits — the two tiers, the honesty discipline, the fixed vocabulary, one declaration site per rule, and the llms.txt and frontmatter contract
+-->
+
 # ADR-0018 — The documentation set: tiers, honesty discipline, llms.txt, frontmatter
 
 **Status:** accepted design · 2026-10-29
@@ -73,6 +80,9 @@ bind every writer, and it is the page a reviewer holds any other page against.
     | dead-letter | where an item leaves a queue by a journalled act, never a silent drop: a poison outbox row after its retry budget (lake side), or a held item at review expiry (admission side) | — |
     | evidence export | the signed bundle `oml audit export` produces | "regulator export" |
     | roles | `reader`, `writer`, `dreamer`, `admin`, `operator` — exactly these words | synonyms, extra roles |
+    | steering | a claim of kind `steering`: a promoted standing instruction returned ahead of hits, unranked, in every recall of its scope | "pinned", "priority memory" |
+    | overlay tip | the audience-scoped served tip a promoted tainted supersession becomes; the default tip never moves | — |
+    | fold | the derivation of state from the journal by replaying events in sequence — the metadata tables and the reconciler's expected state are folds | "projection", "materialized view" as the concept's name |
 
 - **d5 — One declaration site per rule or identifier.** Each rule, table, state machine or
   identifier family is declared on exactly one page — the [decision register](index.md)

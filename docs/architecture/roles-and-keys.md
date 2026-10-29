@@ -1,3 +1,10 @@
+<!--
+id: architecture/roles-and-keys
+tier: engineering
+status: design draft for review · decided, not built
+answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion
+-->
+
 # Roles and keys
 
 **Status:** design draft for review · decided, not built
@@ -41,7 +48,11 @@ evidence exports. The honesty boundary is the same sentence: the server verifies
 attestation, never the humanness — a mis-attested key is an admin's journalled misstatement, not
 a server failure. `human_required_classes` consumes exactly this attribute: only verdicts from
 keys attested `held_by: human` satisfy it ([ontologies](ontologies.md),
-[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)).
+[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). The attestation has a third member,
+`held_by: service`, issued by operators for infrastructure processes — the reconciler's narrowed
+repair key, a forwarding follower's zero-grant hop key ([security](security.md)) — never for
+review. A service key can never satisfy `human_required_classes` and never counts as review
+capacity.
 
 ## Permission matrix
 
@@ -231,6 +242,43 @@ The ceiling is checked at issuance and journalled with the issuance event, so th
 can show, for every key, that its role was within its issuer's at the moment of issue. The ceiling
 does not prevent an admin from issuing another admin key — tenant administration is delegable by
 design — it prevents escalation above the issuer.
+
+## Key format
+
+This section is normative for the key value itself: what crosses the wire, what is stored, and
+where the value may never appear.
+
+**Wire format.** An API key is the fixed prefix `oml_` followed by 43 base62 characters
+(`[A-Za-z0-9]`) encoding 256 bits drawn from a cryptographically secure random generator —
+47 characters in total. The value encodes nothing: no role, no tenant, no key id. Everything
+about a key is a row looked up by the value's hash, so a leaked value discloses only that it is
+an OML key — which is the prefix's purpose: a fixed, greppable prefix lets secret scanners
+(including OML's own [deterministic scan](admission.md) rules) match key material in submitted
+content, logs and repositories with a low false-positive rate.
+
+**Hash at rest.** The system stores `SHA-256(full key string, prefix included)` in
+`api_keys.hash` ([postgres-schema.md](../data/postgres-schema.md)) and never the value. The hash
+is plain — unsalted, single-round — and that choice is defended rather than assumed: a password
+hash's salt and work factor exist to protect low-entropy, human-chosen secrets from dictionary
+and rainbow-table attacks, and a 256-bit uniformly random key has no dictionary to resist —
+brute force against the hash is brute force against the keyspace. What the plain deterministic
+hash buys is the request path: every authenticated call resolves the bearer value by one
+equality lookup on the `UNIQUE` hash index, with no per-request key-stretching cost and no
+secondary lookup identifier. The defense holds only while keys are generated as specified above;
+a deployment that minted guessable keys would forfeit it, which is why the generation rule is
+part of this normative section, not an implementation detail.
+
+**Presentation.** Every request carries the key as
+`Authorization: Bearer <key>` ([http-api.md](../api/http-api.md#authentication-and-authorization))
+— never in a query string, path segment or body field, so the value cannot land in URL-position
+logs or referrer headers.
+
+**Where the value never appears.** The value is shown exactly once, at issuance (the show-once
+rule below); after that moment no component holds or reproduces it. The journal records
+`key.issued` as issued-without-value; log lines name keys by `key_id` only, never by value or
+hash ([observability](../operations/observability.md) owns the logging rules); journal payloads
+carry key ids, never key material. A key value found anywhere but the issuance terminal and the
+caller's `Authorization` header is a defect.
 
 ## Key lifecycle
 

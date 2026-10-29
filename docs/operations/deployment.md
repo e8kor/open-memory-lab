@@ -1,3 +1,10 @@
+<!--
+id: operations/deployment
+tier: engineering
+status: design draft for review · decided, not built
+answers: what runs where and how many of each; what state and credentials each workload holds; how the three install profiles differ
+-->
+
 # Deployment
 
 **Status:** design draft for review · decided, not built
@@ -43,7 +50,7 @@ C6's three deployment commitments — `FORCE ROW LEVEL SECURITY`, the
 owner/migration role split, `SET LOCAL` — bind in **all three** profiles.
 
 A profile is a deployment payload, not a runtime flag: the binaries are
-profile-blind and read one configuration surface (file + env) naming their
+profile-blind and read [one configuration surface](configuration.md) (file + env) naming their
 adapters per [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md)
 — Postgres URL, object-store URI (`s3://…` | `file:///…`), KMS adapter
 (`aws` | `file`), scheduler mode, node role. The payloads are Helm values, the
@@ -72,10 +79,15 @@ by exactly one process, the lead.
 | `oml-indexer` | Deployment / compose service / supervised process | Per load | None in the process; embeddings and tsvector rows live in Postgres and are in the erasure inventory. | Its own per-tenant credentials, never the signing key; the exact KMS grant is declared in [security — key custody](../architecture/security.md). |
 | Postgres | CloudNativePG cluster (`local`) or managed service (`scaled`) / `pgvector/pgvector:pg17` container / host service, bring-your-own | Per profile | Everything: journal, fold tables, outbox, indexes, read-event log. | n/a (it *is* the store); application roles are granted per workload as above, in all three profiles. |
 | Object store | MinIO StatefulSet at the pinned tag (`local`) or S3 (`scaled`) / MinIO container at the **same pinned tag** / local data directory (`LocalFileSystem`) | Per profile | Quarantine objects, ciphertext bodies, Delta tables. | n/a; per-tenant storage credentials when externalized, per [security](../architecture/security.md). |
-| bootstrap | Helm hook Job / one-shot compose service (`restart: "no"`) / `oml standalone init` | Runs once on first install | None | A one-time Postgres credential (the owner role). It runs migrations, mints the keyring where the profile uses one, and mints the single-use, expiring **enrollment secret**; its logs carry progress only — no key or secret material. The root operator key is claimed from that secret with `oml bootstrap claim` ([CLI reference](../cli/reference.md)), shown once in the operator's terminal and journalled as issued-without-value ([roles and keys](../architecture/roles-and-keys.md)); the enrollment secret is consumed on first use. |
+| bootstrap | Helm hook Job / one-shot compose service (`restart: "no"`) / `oml standalone init` | Runs on first install and re-runs on every upgrade ([upgrades](upgrades.md)) | None | A one-time Postgres credential (the owner role). It runs migrations, mints the keyring where the profile uses one, and mints the single-use, expiring **enrollment secret**; its logs carry progress only — no key or secret material. The root operator key is claimed from that secret with `oml bootstrap claim` ([CLI reference](../cli/reference.md)), shown once in the operator's terminal and journalled as issued-without-value ([roles and keys](../architecture/roles-and-keys.md)); the enrollment secret is consumed on first use. |
 
 There is no web UI workload; administration is the [CLI](../cli/reference.md),
 which talks to the same `oml-server` endpoint from outside, in every profile.
+
+The bootstrap workload is not first-install-only: it re-runs on every version
+upgrade to apply forward-only migrations under the owner role, and the order
+in which the binaries then move — asynchronous workloads first, followers
+next, the lead last — is specified in [upgrades](upgrades.md).
 
 ## The Kubernetes profile
 
@@ -148,7 +160,7 @@ $ kubectl --namespace oml get secret oml-enrollment -o jsonpath='{.data.token}' 
     | oml bootstrap claim --url http://localhost:8080 --token-stdin
 enrollment secret accepted — consumed (single-use)
 root operator key (shown once, journalled as issued-without-value):
-  oml_op_************************
+  oml_3fJ9***************************************
 ```
 
 The enrollment secret the Helm job minted is exchanged, over the connection the operator opened,
@@ -216,7 +228,7 @@ $ oml standalone init --config oml-standalone.toml
   enrollment secret written to ./oml-enrollment.token (single-use)
 $ oml standalone up --config oml-standalone.toml &
 $ oml bootstrap claim --url http://localhost:8080 --token-stdin < oml-enrollment.token
-root operator key (shown once, journalled as issued-without-value): oml_op_************
+root operator key (shown once, journalled as issued-without-value): oml_8Wkd***************************************
 ```
 
 ## The docker profile
@@ -431,7 +443,9 @@ docker, and the supervisor in standalone — same endpoints, three consumers.
 
 Backups are a deployment concern with a correctness consequence: every backup
 is a copy class in the [erasure inventory](../architecture/audit-and-lineage.md),
-and the windows chosen here become terms in the erasure SLO.
+and the windows chosen here become terms in the erasure SLO. What the backups
+exist to recover, and what recovery can never get back, is
+[disaster recovery](disaster-recovery.md)'s to state.
 
 | Store | Mechanism | Retention window's role |
 |---|---|---|
@@ -457,21 +471,24 @@ erase event whose effect on each copy class is listed.
 
 Restores are the dual hazard: restoring a Postgres backup resurrects erased
 plaintext-derived rows and rewinds the chain head. A restore is therefore an
-operator ceremony, not a routine act — the restored deployment must re-run the
-fork check, re-apply erase events newer than the backup (replayable because
-erase is journalled), and let a full-genesis reconciliation pass confirm the
-lake and journal agree before readiness. The ceremony's transcript shape
-belongs to [cli/sessions.md](../cli/sessions.md); its existence is decided
-here, not built. The profile migration path
+operator ceremony, not a routine act, and the ceremony — per-profile store
+restore, keyring ordering, the fork check, erase replay, a full-genesis
+reconciliation pass before traffic — is specified in [restore](restore.md).
+What each profile can lose and what recovery costs, stated structurally and
+never as a number, is [disaster recovery](disaster-recovery.md)'s. The
+profile migration path
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d10,
-rehearsed as [FR-23](../product/roadmap.md)) inherits this ceremony wholesale.
+rehearsed as [FR-23](../product/roadmap.md)) inherits the restore ceremony
+wholesale.
 
 ## What this page does not decide
 
 Resource requests and limits (in compose files they appear only as comments),
 node counts, ingress and TLS termination, and the Prometheus stack that
 scrapes the metrics are deployment-site choices the payloads parameterize but
-this design does not fix. Postgres sizing beyond "the journal domain is
+this design does not fix. The configuration surface those payloads feed is
+specified in [configuration](configuration.md), and what can honestly be said
+about sizing before anything is measured is [capacity](capacity.md)'s. Postgres sizing beyond "the journal domain is
 synchronous" is open until [FR-7](../product/roadmap.md) has a measured
 ceiling; lease TTLs and takeover windows are open until
 [FR-24](../product/roadmap.md) has numbers; the keyring mechanism is

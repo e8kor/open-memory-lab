@@ -2,6 +2,8 @@
 
 **Status:** design draft for review · decided, not built
 
+**Read the published design at <https://e8kor.github.io/open-memory-lab/>.**
+
 Open Memory Lab (OML) is an external memory provider for AI agents and crews. Agents connect over
 HTTP, authenticate with scoped API keys, and write memories — text, files, images, PDFs — into
 shared workareas that mirror how their crews are organized. The premise in one line: **every memory
@@ -28,7 +30,8 @@ software. If you are here to evaluate the design, start at the
 
 ## Documentation
 
-The full design lives in [`docs/`](docs/) and is published via GitHub Pages.
+The full design lives in [`docs/`](docs/) and is published via GitHub Pages at
+<https://e8kor.github.io/open-memory-lab/>.
 
 | Section | What it covers |
 | --- | --- |
@@ -46,8 +49,7 @@ The full design lives in [`docs/`](docs/) and is published via GitHub Pages.
 ## Building the site locally
 
 ```sh
-pip install mkdocs-material
-mkdocs serve
+uvx --with mkdocs-material mkdocs serve
 ```
 
 Then open http://127.0.0.1:8000.
@@ -57,3 +59,14 @@ Then open http://127.0.0.1:8000.
 Start at the [review guide](docs/review-guide.md), which lays out the questions a reviewer should
 answer and the order in which the design asks them. Disagreements belong at the decision level:
 each page links the decision record it rests on.
+
+## Contributing
+
+Review findings and proposals are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how
+feedback and decision changes work, and [SECURITY.md](SECURITY.md) for reporting
+security-relevant findings.
+
+## License
+
+The repository and any future code are licensed under [Apache-2.0](LICENSE). The documentation
+under [`docs/`](docs/) is additionally licensed under [CC-BY-4.0](LICENSE-docs).

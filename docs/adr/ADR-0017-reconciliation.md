@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0017-reconciliation
+tier: engineering
+status: accepted design
+answers: why reconciliation is an incremental journalled fold from the journal alone, and why its findings form a closed vocabulary
+-->
+
 # ADR-0017 — Reconciliation is an incremental, journalled fold with a closed finding vocabulary
 
 **Status:** accepted design · 2026-10-29

@@ -1,0 +1,356 @@
+{
+  "_meta": {
+    "comment": "Status: design draft for review - decided, not built. This file is the normative machine shape of the MCP tool catalog declared in mcp-plugin.md: the exact tools/list result payload the plugin serves. The prose catalog and this file describe the same ten tools; a divergence between them is a documentation bug. Target MCP specification revision: 2025-06-18 (streamable HTTP transport, run stateless per mcp-plugin.md); the revision the implementation finally pins, and the transport behavior verified against it, are recorded with a fetch date at implementation time.",
+    "spec_revision_targeted": "2025-06-18",
+    "catalog_page": "mcp-plugin.md",
+    "design_spec_version": "0.1.0-design",
+    "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas."
+  },
+  "tools": [
+    {
+      "name": "oml_remember",
+      "description": "Submit a memory. Held on arrival: scanned same-call, then reviewed by an identity that did not write it, visible to others only after ratification. Success means accepted for review, never published. Rides POST /v1/memories.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workarea": {
+            "type": "string",
+            "description": "Optional target workarea node id. Omitted: the key's journalled default workarea. Present: an override honored only within the key's grants. A path given here is resolved to its node first. A key with neither a default nor a value here is refused (request.workarea_unresolved)."
+          },
+          "claim_key": {
+            "type": "string",
+            "description": "Groups the versions of one claim; caller-supplied, unique per workarea over non-erased claims (submission.claim_key_conflict on collision)."
+          },
+          "text": {
+            "type": "string",
+            "description": "The claim body."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["memory", "derived_fact", "steering", "term", "term_mapping", "vocab_release"],
+            "default": "memory",
+            "description": "kind: derived_fact is the path for a derived conclusion whose lineage cannot or will not be named (oml_learn requires non-empty derives_from). The vocabulary kinds are ordinary submissions into a vocabulary workarea; ratifying a vocab_release is a human-required verdict under the shipped review policy."
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "upload_session": {
+                  "type": "string",
+                  "description": "A completed upload session opened via oml_attach; its recorded digest is bound into the signed submission envelope (D3)."
+                }
+              },
+              "required": ["upload_session"],
+              "additionalProperties": false
+            },
+            "description": "Upload sessions previously completed via oml_attach."
+          },
+          "derives_from": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Artifact ids this memory derives from. Lineage is declared, and the honesty rule applies in full: an omitted derivation is undetectable by the service. Every named ancestor expands the row's reviewer-exclusion set (R2 over the lineage closure)."
+          },
+          "simulation_id": {
+            "type": "string",
+            "description": "Optional simulation channel id, passed through to POST /v1/memories. Required when derives_from touches a simulation row (submission.simulation_id_required otherwise); writing with it requires the calling key to be in that simulation's journalled audience (simulation.audience_refused)."
+          },
+          "simulated_time": {
+            "type": "string",
+            "description": "Optional RFC 3339 timestamp, passed through with simulation_id. Declared data, never backdating - the journal keeps the real timestamp."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Scoped to (key, resolved workarea). A retry with the same key and an identical request returns the stored response; the same key with a different request is a typed error, never a second write (D13)."
+          }
+        },
+        "required": ["claim_key", "text", "idempotency_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_recall",
+      "description": "Search promoted memories within a workarea subtree; steering rows precede hits and are never ranked. Hits are promoted rows only - the caller's own held rows do not appear (use oml_my_work). Every recall is logged to the read log. Rides POST /v1/memories/recall.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search text; hybrid FTS + vector is the only search mode."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional workarea node id. Omitted: the key's default workarea's subtree. Present: one node as an override within the key's grants. Either way the search covers that node's subtree intersected with the key's effective read access."
+          },
+          "k": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many hits to return."
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_learn",
+      "description": "Submit a derived fact with declared lineage - held on arrival, same admission pipeline as oml_remember. derives_from is the point of the verb: it must be non-empty (submission.lineage_required otherwise); a conclusion without nameable lineage goes through oml_remember with kind derived_fact. Rides POST /v1/memories with verb learn.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workarea": {
+            "type": "string",
+            "description": "Optional target workarea node id, exactly as on oml_remember: omitted, the key's default workarea is the target."
+          },
+          "claim_key": {
+            "type": "string",
+            "description": "Groups the versions of one claim; unique per workarea over non-erased claims."
+          },
+          "text": {
+            "type": "string",
+            "description": "The derived conclusion."
+          },
+          "derives_from": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Artifact ids the conclusion derives from; required and non-empty. A target the key cannot read is refused as unknown (fail closed); a target inside a simulation forces the simulation fence."
+          },
+          "simulation_id": {
+            "type": "string",
+            "description": "Optional simulation channel id, exactly as on oml_remember: required when derives_from touches a simulation row, honored only for keys in that simulation's audience."
+          },
+          "simulated_time": {
+            "type": "string",
+            "description": "Optional RFC 3339 timestamp, as on oml_remember: declared data, never backdating."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Scoped to (key, resolved workarea), as on oml_remember."
+          }
+        },
+        "required": ["claim_key", "text", "derives_from", "idempotency_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_attach",
+      "description": "Open or inspect a resumable upload session for a file, image or PDF. Chunk bytes do not travel over MCP: parts are PUT to the versioned HTTP API under the same bearer key; this tool opens and inspects sessions, nothing more. Rides /v1/attachments/*.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["open", "status"],
+            "description": "open starts a session (requires media_type, size_bytes, expected_digest); status inspects one after a crash or retry (requires upload_session)."
+          },
+          "media_type": {
+            "type": "string",
+            "description": "With action open: the attachment's media type, recorded and echoed at fetch."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "With action open: the plaintext size in bytes."
+          },
+          "expected_digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "With action open: the expected plaintext SHA-256, recorded up front; bytes that do not hash to it at completion never bind (upload.digest_mismatch, session terminal)."
+          },
+          "upload_session": {
+            "type": "string",
+            "description": "With action status: the session id to inspect; returns state (open | complete | aborted | expired), parts received, and the next part to send."
+          }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_relate_propose",
+      "description": "Propose a labelled edge - claim-to-claim or workarea-to-workarea. The proposal is journalled and pending; it confers nothing and changes no access until a different dreamer ratifies it (R2 extends to edges). Ratification is not on this surface. Rides POST /v2/claim-edges or POST /v2/workareas/{id}/edges.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["workarea", "claim"],
+            "description": "Which graph the edge lives in; endpoints are workarea node ids or artifact ids accordingly."
+          },
+          "label": {
+            "type": "string",
+            "description": "For workarea edges, the closed set: relates_to | continues | derived_from | mirrors. The claim-edge label vocabulary is not fixed by the design - an open detail tracked in the roadmap."
+          },
+          "from": {
+            "type": "string",
+            "description": "The from endpoint (workarea node id or artifact id, per kind)."
+          },
+          "to": {
+            "type": "string",
+            "description": "The to endpoint (workarea node id or artifact id, per kind)."
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional proposer note, journalled with the proposal."
+          }
+        },
+        "required": ["kind", "label", "from", "to"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_my_work",
+      "description": "The caller's own submissions and where each stands: held, promoted, demoted, rejected, erased. The only view a writer has of its held rows (R3), scoped to the calling key's own submissions by construction. Rides GET /v1/memories?own=true.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workarea": {
+            "type": "string",
+            "description": "Optional workarea filter."
+          },
+          "state": {
+            "type": "string",
+            "enum": ["held", "promoted", "demoted", "rejected", "erased"],
+            "description": "Optional state filter. Omit both filters for everything the key wrote, newest first."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Page size."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque cursor from the previous page; the client holds it (stateless)."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_workarea_info",
+      "description": "One workarea as the calling key is allowed to see it: identity, derived path, status, crew record, immediate structure, and the verbs this key's effective access carries there. Rides GET /v2/workareas/{id} and its sibling reads.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workarea": {
+            "type": "string",
+            "description": "Optional workarea node id. Omitted: the tool describes the key's default workarea."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_graph",
+      "description": "A scoped read of claims and their edges: declared lineage (derives_from), claim-to-claim connection edges with their pending/ratified state, and supersession chains within a subtree. Serialize, don't compute: closure computation, path finding and ranking are the client's problem. Rides GET /v2/claim-edges and GET /v2/memories/{id}/lineage.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Optional workarea node id. Omitted: the key's default workarea."
+          },
+          "roots": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Artifact ids to walk from."
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many hops from the roots; a value above the served ceiling is a typed limit error, never a truncated answer pretending to be whole."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Page size."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque cursor from the previous page."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_events_tail",
+      "description": "Poll the journalled event stream for the key's scope, from the last journal sequence the client processed. The stateless substitute for push: the server remembers nothing between calls. Gaps in a filtered tail are normal - they are the events this key may not see. Rides GET /v2/events.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Optional workarea node id. Omitted: the key's default workarea. The tail is filtered to events whose subject the key could read."
+          },
+          "after_seq": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The last per-tenant journal sequence the client processed; events after it are returned, seq ascending. Omit to start from the newest events (the response says where you are). A malformed or foreign value is a typed request.validation refusal, never a silent restart from zero."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Page size."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_vocab",
+      "description": "Read the tenant's vocabularies: term lookup, deterministic typeahead, hierarchy over the per-release closure, and SSSOM-shaped mappings. One tool, four actions, each one GET /v2/vocab/* call. Strictly read-only at the reader ceiling: proposing a term or mapping is oml_remember with the matching kind, and nothing here deprecates, ratifies or cuts a release.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["suggest", "get", "hierarchy", "mappings"],
+            "description": "suggest takes q (and optionally workarea_id); get and hierarchy take curie; mappings takes term."
+          },
+          "q": {
+            "type": "string",
+            "description": "With action suggest: the prefix+label typeahead text, deterministic matching only - no model runs here."
+          },
+          "workarea_id": {
+            "type": "string",
+            "description": "With action suggest: optionally restrict to one granted vocabulary workarea."
+          },
+          "curie": {
+            "type": "string",
+            "description": "With action get or hierarchy: the term's CURIE. Unknown and out-of-scope are indistinguishable (fail closed)."
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["parents", "children", "ancestors", "descendants"],
+            "description": "With action hierarchy: which way to look over ratified is_a, served from the per-release closure (a lookup, never a traversal)."
+          },
+          "release": {
+            "type": "string",
+            "description": "With action hierarchy: optional release id; defaults to the owning vocabulary's latest ratified release."
+          },
+          "term": {
+            "type": "string",
+            "description": "With action mappings: the CURIE whose ratified mappings to return."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Page size, where the action paginates (suggest, hierarchy, mappings)."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque cursor from the previous page."
+          }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

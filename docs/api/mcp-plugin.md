@@ -1,3 +1,10 @@
+<!--
+id: api/mcp-plugin
+tier: engineering
+status: design draft for review · decided, not built
+answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API
+-->
+
 # The agent plugin: MCP over streamable HTTP
 
 **Status:** design draft for review · decided, not built
@@ -14,6 +21,14 @@ property. Nothing exists here that the HTTP API does not
 also offer, and much exists there that this surface deliberately does not
 (D13). The tool catalog is the **agent-safe subset**: the verbs a writing or
 recalling agent needs, and none of the verbs that change what others may see.
+
+The machine-readable form of this catalog is
+[mcp-tools.json](mcp-tools.json) — the exact `tools/list` result payload:
+every tool's name, description and input schema. It is normative for the
+wire shape in the same relationship [http-api.md](http-api.md) has to
+[openapi.yaml](openapi.yaml): this page and that file describe the same ten
+tools, and a divergence between them is a documentation bug, not an
+ambiguity to interpret.
 
 ## Transport: streamable HTTP, stateless
 
@@ -107,6 +122,8 @@ Concretely:
   [review guide](../review-guide.md)). They are deliberately not MCP tools:
   the catalog stays writer/reader/propose-safe, so handing an agent this
   plugin config hands it no path to a verdict, whatever role its key carries.
+  The crew-side verdict flow is worked end to end in
+  [reviewer-crews](reviewer-crews.md).
 - Demote, erase, key issuance, workarea creation, reassignment, bans and
   simulations are admin or operator verbs on the HTTP API and
   [CLI](../cli/reference.md).
@@ -236,6 +253,11 @@ review*, never *published*. (Rides `POST /v1/memories` — the provider ring.)
   `derives_from` is not detectable by the service, so lineage-based review
   exclusion is exactly as good as the declared graph (R2 scope,
   [audit and lineage](../architecture/audit-and-lineage.md)).
+- `simulation_id` / `simulated_time` — **optional** pass-through of the HTTP
+  submit body's simulation fields ([http-api.md](http-api.md)), for audience
+  keys writing inside a simulation — and required whenever `derives_from`
+  touches a simulation row; `simulated_time` is declared data, never
+  backdating.
 - `idempotency_key` — scoped to (key, workarea), where the workarea component
   is the resolved target — the key's default or the explicit override
   (ADR-0022 d4). A retry with the same key
@@ -419,7 +441,9 @@ closed, no existence leak), and a target inside a simulation forces the
 simulation fence — a submission deriving from a simulation row must carry
 that row's `simulation_id`, server-enforced, which this key can only do if it
 is in the simulation's audience (D10,
-[simulations](../architecture/simulations.md#no-nesting)). Example:
+[simulations](../architecture/simulations.md#no-nesting)). An audience key
+supplies that id through the same optional `simulation_id` / `simulated_time`
+pass-through fields as on [`oml_remember`](#oml_remember). Example:
 
 ```json
 {

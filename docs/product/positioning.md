@@ -1,3 +1,10 @@
+<!--
+id: product/positioning
+tier: client
+status: design draft for review · decided, not built
+answers: who the product is for, the problem it answers, how it differs from a plain memory store, and the scoped market claim
+-->
+
 # Positioning
 
 **Status:** design draft for review · decided, not built

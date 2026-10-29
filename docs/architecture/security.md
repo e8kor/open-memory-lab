@@ -1,3 +1,10 @@
+<!--
+id: architecture/security
+tier: engineering
+status: design draft for review · decided, not built
+answers: what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included
+-->
+
 # Security and tenancy
 
 **Status:** design draft for review · decided, not built
@@ -122,7 +129,8 @@ terminates there) — nothing new relative to decrypt-on-serve, listed for compl
 on the lead can sign arbitrary events for as long as the compromise lasts. The mitigations are
 recovery-shaped, not prevention-shaped: the per-tenant chain makes forged history detectable by any
 holder of a prior chain head, the startup fork check refuses to extend a chain that does not verify
-against the last signed head, and key rotation after a suspected compromise is a journalled act.
+against the last signed head, and key rotation after a suspected compromise is a journalled act
+(the ceremony is [Signing-key rotation](#signing-key-rotation) below).
 What the design does *not* claim: per-replica keys, HSM-resident signing, or threshold signatures.
 Those are possible hardenings with real operational cost, and none is committed — if one becomes a
 requirement it enters the roadmap as its own row.
@@ -151,6 +159,114 @@ the claim:
 The collapse is stated, not apologized for: standalone and docker trade custody separation for
 installability, every weakened row is named in [commitments](../product/commitments.md), and the
 keyring mechanism itself is RS-12.
+
+## Signing-key rotation
+
+The custody map gives the signing key to exactly one process; this section says how the
+deployment changes that key. There are two paths — scheduled and under suspicion — and the
+difference between them is the whole point.
+
+**Planned rotation is one journalled act with cross-signing.** The rotation event,
+`system.signing_key_rotated` ([event catalog](../data/event-catalog.md)), is the **first event
+the new key signs**; the outgoing key's endorsement rides inside it as the payload's
+`cross_sig` — pure Ed25519 by the **old** key over the ASCII bytes
+`oml-signing-key-rotation:<new_key_id>:<new_public_key_hex>`
+([chain-format](../data/chain-format.md) owns the byte rule). The succession is therefore
+provable from the journal alone: a verifier whose trust rests on the old key reads the new
+public key out of the rotation payload, checks `cross_sig` under the old key, and continues
+verifying under the new — old attests new, so trust extends across the pivot with no
+out-of-band key distribution, and the evidence export carries the succession record. Rotation
+never re-signs history: events signed by a retired key verify against that key forever, which
+is why the pivot must live in the chain rather than in configuration.
+
+**Unplanned rotation — suspected lead compromise — is a ceremony, not a verb**, because a
+compromised lead can sign anything until the key changes, including a plausible "rotation" of
+its own. The committed sequence, stepped through operationally in the
+[signing-key-compromise runbook](../operations/runbooks.md#signing-key-compromise):
+
+1. **Stop writes.** Revoke the lead lease (or scale the lead to zero). Followers keep serving
+   reads; the write path refuses — the same availability-for-integrity trade the design makes
+   everywhere else.
+2. **Rotate.** Mint a new signing key outside the compromised process's reach and journal
+   `system.signing_key_rotated` with `rotation: unplanned` — `cross_sig` null by definition (a
+   suspect key must not vouch for its successor), `ceremony_ref` **required**. The honesty
+   limit is stated with the step: the rotation event is signed by the new key, so the journal
+   alone cannot prove which pivot is the legitimate one — an attacker holding the lead could
+   journal a plausible pivot of its own. What distinguishes the legitimate pivot is the
+   out-of-band ceremony `ceremony_ref` names — the record in which the new key's fingerprint
+   was established — plus evidence retained outside the deployment, not cryptography.
+3. **Fork-check.** Verify every tenant chain against the last chain heads retained outside the
+   deployment — the evidence exports tenants kept; a standing anchoring mechanism is
+   [RS-9](../product/roadmap.md). Events signed inside the suspected window are flagged for
+   audit, never silently trusted.
+4. **Re-attest.** The new lead starts under the startup fork check
+   ([storage.md](storage.md)), its first act is journalled, and a fresh evidence export of the
+   post-rotation chain heads is produced for tenants to retain — the new baseline the next
+   ceremony would verify against.
+
+What rotation does not do: it bounds the future, never the past. Everything the old key signed
+during the compromise window verifies and will verify forever; separating legitimate events from
+attacker events in that window is an audit over outside-retained heads, not a cryptographic
+operation — the same limit residual risk 4 states below.
+
+## Transport and internal authentication
+
+Who terminates TLS, what the floor is, and what the non-client workloads present to whom.
+
+**Client-facing TLS, per profile.** The termination point follows the profile's supervisor, and
+each row names its shipped default rather than leaving it to discovery:
+
+| Profile | Termination point | Shipped default |
+|---|---|---|
+| standalone | `oml-server` terminates TLS itself (certificate and key paths in `oml-standalone.toml`), or sits behind a local reverse proxy the operator brings | **Direct termination by `oml-server`.** A plaintext listener is permitted only on a loopback bind — which is what the quickstart transcripts show ([deployment](../operations/deployment.md)) |
+| docker | A compose-level reverse proxy service in front of `oml-server` | The proxy terminates TLS; `oml-server` listens in plaintext on the compose-internal network only |
+| kubernetes | Ingress — the cluster's TLS stack | Deferred to the cluster stack: [deployment](../operations/deployment.md) names ingress and TLS termination as deployment-site choices the chart parameterizes but does not fix |
+
+The floor in every profile: TLS 1.2 minimum, 1.3 preferred. Plaintext HTTP across any boundary
+that is not a loopback bind or a compose-internal network is a misconfiguration, not an option —
+the bearer key is the whole capability, and it transits in the clear wherever TLS is absent.
+
+**Postgres transport.** The requirement follows where Postgres sits, not the profile name:
+a Unix socket or loopback connection (standalone's bring-your-own host service, docker's
+in-compose container) may run without TLS; the moment Postgres is on another host —
+standalone pointing at a remote database, the kubernetes `scaled` value set's managed service —
+`sslmode=verify-full` is required, certificate verification included, because a bearer of the
+service role's credential plus an unverified channel is a tenant-data read path. The kubernetes
+`local` value set's in-cluster CloudNativePG speaks TLS under the operator's own issued
+certificates. These are deployment requirements the profile payloads carry, in the same class as
+C6's three RLS commitments ([deployment](../operations/deployment.md)).
+
+**The service-credential class.** The privileged workloads authenticate with two kinds of
+credentials, and the distinction is deliberate:
+
+- **To Postgres**: each workload's own database role, per the custody map above and the workload
+  table in [deployment](../operations/deployment.md). Database roles are deployment
+  configuration — minted by the profile payloads, recorded by the journalled settings digest
+  (`system.settings_applied`) — not individually journalled keys.
+- **To `oml-server`**: a **service key** — an ordinary API key, operator-issued at deployment
+  setup, journalled `key.issued` with `held_by: service`, hashed at rest, expiring, and rotated
+  by the same `key.rotated` act as every other key ([roles-and-keys.md](roles-and-keys.md)).
+  There is no new role: the role vocabulary is fixed, so a service key carries the narrowest
+  existing role its one job needs, and `held_by: service` is what the evidence export shows.
+    - **oml-reconciler** holds a dreamer-role service key whose grants are narrowed to the
+      journalled repair re-enqueue — the lowest role holding that verb in the permission matrix
+      ([roles-and-keys.md](roles-and-keys.md)). Every repair it causes is therefore a journal
+      event attributed to the reconciler's own key, which is the property the privileged-services
+      section above leans on.
+    - **A forwarding follower** holds a reader-role service key with no grants: it authenticates
+      the forwarding hop to the lead and authorizes nothing. The client's own bearer key travels
+      with the forwarded request, the lead resolves authorization against the *client's* key, and
+      the journalled act is attributed to the client — the follower never becomes the actor. The
+      lead accepts forwarded write traffic only over hops authenticated by an enrolled
+      follower's service key, so a process that merely reaches the lead's port cannot inject
+      forwarded writes.
+    - **oml-lakewriter** presents nothing to `oml-server` — it never calls it. Its credentials
+      are the `SET`-tenant Postgres session role and the per-tenant object-store credentials in
+      the custody map, and that absence is part of the design: the lake-writer has no API-side
+      identity to steal.
+
+Service keys obey every rule of the [key format section](roles-and-keys.md#key-format): show-once
+issuance, hash at rest, key ids — never values — in logs and journal payloads.
 
 ## STRIDE, redone for hostile co-tenants
 
@@ -203,6 +319,48 @@ and the CLI previews a ban's reach with `--dry-run` before it lands
 ([cli/reference.md](../cli/reference.md)). A ban names an author or source; it is not a tenant-wide
 switch, and it does not touch rows already promoted — demotion and erasure remain the journalled
 verbs for those.
+
+## Hostile content after the gate
+
+The gate changes visibility, not truth or safety. Ratification means a non-author looked at the
+content under a journalled policy — it never means the content is true
+([commitments](../product/commitments.md), never-claimed tier) and it never means the content is
+safe to obey. A promoted body can still carry a prompt injection, a malicious URL, or an
+instruction aimed at whatever agent recalls it; what review adds is an attributable decision
+trail, not neutralization. This section states what that implies for every consumer of recalled
+content, because a security reader must not infer a sanitization step that does not exist.
+
+**Recalled content is data, never instructions.** An approved memory — and equally an approved
+steering row — recalled into an agent's context is tenant-authored content that passed a
+process gate. The recommended consuming-agent posture: delimit recalled bodies as untrusted data
+in the prompt, carry the served provenance (artifact ids, author, workarea) alongside them so
+the agent and its operator can attribute what influenced it, apply the same injection defenses
+the agent applies to any external input, and never auto-execute instructions found in a recalled
+body. OML serves provenance with every hit precisely so consumers can do this; it cannot do it
+for them, and no page claims otherwise.
+
+**Steering rows: the shipped default, stated honestly.** A steering row is the highest-leverage
+injection surface the design has — it precedes every hit, unranked, in every recall scoped to
+its workarea ([retrieval.md](retrieval.md)) — and v1 nonetheless ships **no stricter default
+review policy for `kind: steering`**: a steering row is held and reviewed under the same
+per-workarea policy as any claim ([admission.md](admission.md)). The hook for more exists and is
+the recommended posture for `committed` workareas: `human_required_classes` names classes by
+kind, so a tenant can require at least one human verdict on every steering row by policy. The
+default stays uniform because review policy is per-workarea by design and a global human-verdict
+default would impose review capacity many tenants' machine-written steering does not warrant —
+a deliberate choice, recorded here rather than implied.
+
+**Hostile attachments are served to reviewers by design.** The reviewer is the first audience
+for unreviewed bytes; serving them is the ceremony's purpose and also its exposure. The design
+commitments: attachment bytes served for review carry `Content-Disposition: attachment` with a
+server-chosen, sanitized filename, `X-Content-Type-Options: nosniff`, and the declared media
+type of the submission — never content sniffed, never rendered inline from the API origin. The
+CLI review ceremony (`oml review next`, [cli/reference.md](../cli/reference.md)) downloads
+attachments to a working directory and verifies them against the served digests; it never opens,
+renders or executes them. Past that point the reviewer's workstation is the tenant's attack
+surface: the stated guidance is to inspect attachments in a sandboxed viewer, and nothing here
+is a malware-scanning claim — the deterministic scan catches what its rules name, and for opaque
+binaries the reviewed claim is provenance + digest + scan result ([admission.md](admission.md)).
 
 ## Trust boundaries
 
@@ -275,7 +433,8 @@ rounded up to a guarantee.
    arbitrary events and unwrap any tenant's DEKs. This is the largest single trust statement in
    the design, and it is two statements, not one. Detection (fork check at startup and at
    failover promotion, chain verification against prior heads — which requires heads retained
-   outside the deployment, RS-9) and journalled rotation are the answer for the signing half;
+   outside the deployment, RS-9) and journalled rotation
+   ([Signing-key rotation](#signing-key-rotation)) are the answer for the signing half;
    nothing detects quiet reads by a compromised key-holding process. Prevention via HSM-resident
    signing or threshold decryption is not committed. **Follower compromise is narrower by
    construction** ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)): serving-path

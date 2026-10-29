@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0022-two-ring-api
+tier: engineering
+status: accepted design
+answers: why the one API surface gains two stability rings — /v1 memory provider, /v2 memory lab — and what each ring promises its callers
+-->
+
 # ADR-0022 — The two-ring API: v1 memory provider, v2 memory lab
 
 **Status:** accepted design · 2026-10-29

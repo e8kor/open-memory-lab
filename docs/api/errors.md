@@ -1,3 +1,10 @@
+<!--
+id: api/errors
+tier: engineering
+status: design draft for review · decided, not built
+answers: which typed error codes exist, their family, HTTP status and retryability, and why the taxonomy is closed
+-->
+
 # Error taxonomy
 
 **Status:** design draft for review · decided, not built
@@ -71,7 +78,11 @@ one taxonomy ([ADR-0022](../adr/ADR-0022-two-ring-api.md)):
 | `request.validation` | 400 | Malformed JSON, missing or ill-typed fields, unknown enum values, a stale or foreign pagination cursor. | The contract is [openapi.yaml](openapi.yaml); what it does not admit is refused, not coerced. |
 | `request.idempotency_key_required` | 400 | A state-creating `POST` arrives without `Idempotency-Key`. | Every side-effecting request is replayable exactly once by construction (D13); the service refuses to guess whether a retry is a duplicate. |
 | `request.payload_too_large` | 413 | Body or part exceeds the admitted size. | Size bounds are admission policy, enforced before bytes are stored. |
+| `request.unsupported_media` | 415 | The request `Content-Type` is not supported by this operation (`details.supported` names what is). | Each operation's request media type is fixed by the contract — `application/json` everywhere except attachment part upload (`application/octet-stream`); a body in any other type is refused before parsing, never sniffed into shape. |
 | `request.workarea_unresolved` | 422 | A provider-ring (`/v1`) request arrives from a key with no journalled `default_workarea` and no `X-OML-Workarea` header. | The target workarea comes from the token ([ADR-0022](../adr/ADR-0022-two-ring-api.md) d4): a `/v1` request names no workarea — the key's `default_workarea` is the target, and `X-OML-Workarea` (a node id, honored only within the key's grants) is the explicit override. A key with neither is refused, never guessed for. |
+
+Response media types are not negotiated in v1: servers emit `application/json` (the binary
+downloads excepted, [http-api.md](http-api.md)), and the `Accept` header never varies a response.
 
 ## `idempotency` — the replay contract
 
@@ -200,7 +211,19 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 | 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.claim_key_conflict`, `submission.universe_refused`, `workarea.frozen`, `workarea.transition_refused`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
+| 415 | `request.unsupported_media` |
 | 422 | `request.workarea_unresolved`, `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |
+
+## Implementation mapping
+
+In the planned workspace ([workspace-plan](../engineering/workspace-plan.md)), each domain refusal
+is a typed variant in `oml-domain` — the pure core refuses in types, not in strings. The
+`code`/`rule`/HTTP-status/`retryable` attachment happens once, at the `oml-server` edge, where the
+HTTP transport maps domain variants into this envelope. The tables on this page are the source
+both the OpenAPI `ErrorCode` enum and that Rust mapping are checked against:
+`scripts/check_contract_sync.py` enforces the OpenAPI side today, and a Rust-side exhaustiveness
+check joins it once code exists. A variant with no code here, or a code here with no variant, is
+the same documentation bug the opening paragraph names.

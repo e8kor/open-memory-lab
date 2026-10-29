@@ -1,0 +1,54 @@
+name: Docs checks
+
+# PR gate for the documentation set: the site must build clean under --strict,
+# the three API contract surfaces (errors.md, openapi.yaml, http-api.md) must
+# agree, and openapi.yaml must be a valid OpenAPI document. Deploy stays in
+# pages.yml; this workflow never publishes anything.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-strict:
+    name: mkdocs build --strict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: mkdocs build --strict
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+
+  contract-sync:
+    name: contract surfaces agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - run: python scripts/check_contract_sync.py
+
+  openapi-valid:
+    name: openapi.yaml validates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install openapi-spec-validator
+      - run: openapi-spec-validator docs/api/openapi.yaml

@@ -1,0 +1,4 @@
+# Docs build dependencies — installed by .github/workflows/pages.yml and
+# .github/workflows/docs-checks.yml. Pinned exactly so the Pages deploy and the
+# PR checks build with the same theme version (verified available 2026-10-29).
+mkdocs-material==9.8.0

@@ -1,3 +1,10 @@
+<!--
+id: architecture/audit-and-lineage
+tier: engineering
+status: design draft for review · decided, not built
+answers: what the journal records and never records; what an evidence export contains; how lineage is queried; what erasure does to every copy class
+-->
+
 # Audit and lineage
 
 **Status:** design draft for review · decided, not built
@@ -87,6 +94,8 @@ The bundle is itself signed, so a recipient can verify it was produced by the de
 claims. What the bundle is **not**: it is not a compliance certificate, it is not legal advice,
 and no sentence in it or about it reads "audit-ready". It is the evidence; the verdict is the
 auditor's.
+
+How the deployment public key reaches a recipient and is authenticated — one fingerprint confirmed over a channel independent of the bundle, cross-signatures extending it across planned rotations, re-rooting after an unplanned one — is stated in [chain-format](../data/chain-format.md#how-the-public-key-reaches-an-export-recipient).
 
 ## Lineage
 

@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0019-hexagonal-architecture-and-plugins
+tier: engineering
+status: accepted design
+answers: why the code is a hexagon with compile-time plugin modularity, and why dynamic plugin loading is rejected
+-->
+
 # ADR-0019 — Hexagonal architecture and plugin modularity
 
 **Status:** accepted design · 2026-10-29
@@ -41,17 +48,22 @@ infrastructure — including the plugin points — behind an adapter boundary.
   journal-and-metadata store port (the one-transaction commit point of
   [ADR-0002](ADR-0002-postgresql-system-of-record.md)), the lake materialization port
   ([ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md)), the object store port, the KMS port,
-  the scanner port, the embedder port, the exporter port, and a clock/id port so that even time
-  and identifiers enter the core as inputs. Adapters implement the traits — Postgres via sqlx,
+  the scanner port, the embedder port, the exporter port, the signer port (ninth, added with
+  [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md)/[ADR-0024](ADR-0024-performance-foundation.md)'s
+  lead-only signing; registered here so the enumeration stays authoritative), and a clock/id
+  port so that even time and identifiers enter the core as inputs. Adapters implement the traits — Postgres via sqlx,
   Delta via delta-rs, S3/MinIO via object_store, KMS — with **one adapter crate per
   infrastructure dependency**, so a dependency's blast radius is one crate and its version bump
   is one review. These are the driven (secondary) ports. The driving (primary) port is the
   application's use-case surface itself — the calls the transports make; OML does not wrap it in
   a separate trait, which the pattern permits.
 
-- **d3 — The four binaries are thin compositions, and the client surfaces are adapters too.**
+- **d3 — The five binaries are thin compositions, and the client surfaces are adapters too.**
   Each binary wires the same domain core to exactly the adapter set its job needs, and nothing
-  else: `oml-server` composes all write-path ports plus the driving transports; `oml-lakewriter`
+  else: `oml-server` — two of the five, shipped as the lead and follower compositions
+  ([ADR-0006](ADR-0006-pure-rust.md) d6,
+  [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md)) — composes all write-path ports
+  plus the driving transports; `oml-lakewriter`
   composes the outbox read side and the lake port — keyless, moving ciphertext verbatim, exactly
   as [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) requires; `oml-reconciler` composes
   read-only ports ([ADR-0017](ADR-0017-reconciliation.md)); `oml-indexer` composes the embedder

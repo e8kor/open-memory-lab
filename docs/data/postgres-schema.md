@@ -1,3 +1,10 @@
+<!--
+id: data/postgres-schema
+tier: engineering
+status: design draft for review · decided, not built
+answers: the shape of every Postgres table in the system of record — columns, constraints, indexes — as a design sketch, not a migration
+-->
+
 # PostgreSQL schema
 
 **Status:** design draft for review · decided, not built
@@ -56,7 +63,7 @@ CREATE TABLE journal_chain_heads (
 Chain assignment serializes on `pg_advisory_xact_lock` over the tenant's chain-head row, held to
 commit, so commit visibility order equals `seq` order per tenant. The cost is stated plainly: a
 tenant's journal writes are single-file; per-tenant write throughput is bounded by that lock and is
-unmeasured (roadmap FR: Postgres scale ceiling).
+unmeasured ([FR-7](../product/roadmap.md), the Postgres scale ceiling).
 
 Append-only enforcement is layered — privileges first, a guard trigger second:
 
@@ -234,9 +241,11 @@ CREATE TABLE api_keys (
     issued_by  uuid        REFERENCES api_keys (id),  -- issuer ceiling checked at issuance
     rotated_from uuid      REFERENCES api_keys (id),  -- successor link; predecessor revoked at grace end
     held_by    text        NOT NULL DEFAULT 'agent'
-        CHECK (held_by IN ('agent', 'human')),  -- issuance-time attestation by the issuing admin
+        CHECK (held_by IN ('agent', 'human', 'service')),
+                                          -- issuance-time attestation by the issuing admin
                                           -- (ADR-0021): verified as an attestation, never as fact;
-                                          -- human_required_classes consumes it
+                                          -- human_required_classes consumes it — only 'human'
+                                          -- satisfies it; 'service' never counts as review capacity
     default_workarea_id uuid REFERENCES workareas (id),
                                           -- provider-ring target (ADR-0022 d4): a /v1 request
                                           -- names no workarea — this, or X-OML-Workarea, resolves it
@@ -589,3 +598,30 @@ re-opens a replay window bounded by key behaviour), `read_events` (retention-bou
 `artifact_keys` (key material — loss is unintended erasure, which is why its durability posture
 matters), `memories_fts` and `memory_embeddings` (rebuildable from promoted bodies while DEKs
 exist), `upload_sessions` (in-flight uploads restart).
+
+## Migrations
+
+The schema reaches a database only as **sqlx migrations**: plain-SQL files under `migrations/`,
+numbered `NNNN_name` (`0001_journal`, `0002_memories`, …), applied in order by `sqlx migrate`.
+The rules:
+
+- **Forward-only.** No down migrations exist. A mistake is corrected by the next numbered
+  migration, never by rolling one back — the journal it sits next to is append-only, and a schema
+  history that can silently rewind would be the one part of the system allowed to lie about its
+  past. Restoring an older database state is a restore ceremony
+  ([upgrades](../operations/upgrades.md)), not a migration direction.
+- **Run by the bootstrap workload, under the owner role, on first install and on every
+  upgrade.** The same bootstrap job that performs first-install setup applies pending migrations
+  at every version change, connecting as the schema **owner** role — the owner/migration-role
+  split that M0 spike 3 verifies ([critical path](../product/critical-path.md)) and
+  [security](../architecture/security.md) requires: application roles cannot alter schema, and
+  the owner role is used by nothing else. The upgrade ordering (migrate, then roll workloads) is
+  owned by the [upgrades](../operations/upgrades.md) page.
+- **The sync rule.** This page is **normative in shape**; the migrations are **normative in
+  bytes**. A schema change is one PR that lands both: the migration that makes it true and the
+  edit here that keeps this page a faithful sketch of the result. Neither surface may drift
+  ahead of the other — once code exists, CI greps the two for drift (no such check exists today;
+  until then the rule is held by review, stated per
+  [ADR-0018](../adr/ADR-0018-the-documentation-set.md) d6's convention of naming that gap). The
+  sqlx offline query check ([CI and toolchain](../engineering/ci-and-toolchain.md)) covers the
+  third surface, queries-versus-migrations, by construction.

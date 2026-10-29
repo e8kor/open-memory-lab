@@ -1,3 +1,10 @@
+<!--
+id: adr/ADR-0003-delta-lake-derived-lakehouse
+tier: engineering
+status: accepted design
+answers: why the Delta lakehouse is derived and never the authority; why one outbox-fed single writer feeds it
+-->
+
 # ADR-0003 — Delta Lake is the derived body lakehouse: outbox-fed, single-writer, never the authority
 
 **Status:** accepted design · 2026-10-29

@@ -1,0 +1,79 @@
+# Open Memory Lab
+
+> Design specification, revision 0.1.0-design, of an agentic external memory provider: every
+> memory an agent writes is a claim, held until an identity that did not write it has reviewed
+> it, and only then visible to others. PostgreSQL is the system of record with per-tenant
+> Ed25519-signed hash chains; a Delta Lake lakehouse is derived and never authoritative; erasure
+> is crypto-shredding; the surface is one JSON HTTP API with two stability rings (/v1 provider,
+> /v2 lab), an MCP facade and a CLI. Nothing is built: every page describes a decided design,
+> marks unmeasured quantities as roadmap rows, and says so. Each page opens with an HTML-comment
+> frontmatter block (id, tier, status, answers) stating what it answers.
+
+## Start here
+
+- [Open Memory Lab](https://e8kor.github.io/open-memory-lab/): what the product is, the problem it solves, and what it guarantees in plain words
+- [Concepts](https://e8kor.github.io/open-memory-lab/concepts/): the design vocabulary in reading order, each term linked to the page that decides it
+- [Architecture overview](https://e8kor.github.io/open-memory-lab/architecture/overview/): the system end to end — context, containers, modules, runtime scenarios, and where each constitutional rule is enforced
+- [Review guide](https://e8kor.github.io/open-memory-lab/review-guide/): the decisions a reviewer should examine, in the order an error would be most expensive
+
+## Architecture
+
+- [Storage](https://e8kor.github.io/open-memory-lab/architecture/storage/): the commit point, the per-tenant signed hash chain, the outbox protocol and the derived lake
+- [Admission](https://e8kor.github.io/open-memory-lab/architecture/admission/): the pipeline every write crosses — capture, quarantine, scan, non-author review, ratification, release
+- [Retrieval](https://e8kor.github.io/open-memory-lab/architecture/retrieval/): reads served from Postgres, result order, decryption, the journalled read log
+- [Workareas](https://e8kor.github.io/open-memory-lab/architecture/workareas/): the universe tree, node-id grants, deny-wins semantics, edges, and the status ladder
+- [Roles and keys](https://e8kor.github.io/open-memory-lab/architecture/roles-and-keys/): the five roles, their verb ceilings, key issuance and lifecycle, the independence axis
+- [Security and tenancy](https://e8kor.github.io/open-memory-lab/architecture/security/): the tenancy model, the key custody map, and the threat model against hostile co-tenants
+- [Audit and lineage](https://e8kor.github.io/open-memory-lab/architecture/audit-and-lineage/): what the journal records, what an evidence export contains, and what erasure does to every copy class
+- [Simulations](https://e8kor.github.io/open-memory-lab/architecture/simulations/): the fenced provenance channel and taint propagation
+- [Reconciliation](https://e8kor.github.io/open-memory-lab/architecture/reconciliation/): proving the derived stores still agree with the journal, with a closed finding vocabulary
+- [Ontologies](https://e8kor.github.io/open-memory-lab/architecture/ontologies/): shared vocabularies hosted as governed claims
+
+## Data formats
+
+- [PostgreSQL schema](https://e8kor.github.io/open-memory-lab/data/postgres-schema/): every table of the system of record, as a design sketch
+- [Delta tables](https://e8kor.github.io/open-memory-lab/data/delta-tables/): every lake table column by column, with its commit protocol and maintenance
+- [Journal event catalog](https://e8kor.github.io/open-memory-lab/data/event-catalog/): every event type and payload shape, digest-only by rule
+- [Journal chain format](https://e8kor.github.io/open-memory-lab/data/chain-format/): the byte-level spec — JCS signed_bytes, SHA-256 hash, Ed25519 signature, genesis rule, verification procedure
+
+## API
+
+- [HTTP API](https://e8kor.github.io/open-memory-lab/api/http-api/): the two-ring JSON surface — /v1 provider and /v2 lab — authentication, idempotency, pagination, verb ceilings
+- [Error taxonomy](https://e8kor.github.io/open-memory-lab/api/errors/): the closed set of typed error codes with HTTP status and retryability
+- [OpenAPI document](https://e8kor.github.io/open-memory-lab/api/openapi.yaml): the machine-readable contract, identical to the HTTP API page by construction
+- [MCP plugin](https://e8kor.github.io/open-memory-lab/api/mcp-plugin/): the agent-facing MCP tools over streamable HTTP, each a facade over one HTTP call
+- [Reviewer crews](https://e8kor.github.io/open-memory-lab/api/reviewer-crews/): how an external review crew integrates over plain HTTP — queue, serve, verdict
+- [CLI reference](https://e8kor.github.io/open-memory-lab/cli/reference/): every administrative verb; the CLI is the whole administration surface
+- [CLI sessions](https://e8kor.github.io/open-memory-lab/cli/sessions/): mockup transcripts of the ceremonies — nothing on that page has run
+
+## Operations
+
+- [Deployment](https://e8kor.github.io/open-memory-lab/operations/deployment/): what runs where in each of the three install profiles, and what each workload holds
+- [Configuration](https://e8kor.github.io/open-memory-lab/operations/configuration/): the one-file-plus-environment surface and the reference table of settings
+- [Observability](https://e8kor.github.io/open-memory-lab/operations/observability/): the metrics, structured-log rules and doctor fields each workload commits to
+- [Failure modes](https://e8kor.github.io/open-memory-lab/operations/failure-modes/): the dependency-failure matrix — what each outage does to each client-facing operation
+- [Runbooks](https://e8kor.github.io/open-memory-lab/operations/runbooks/): one anchored section per operational condition — diagnosis, decision tree, evidence
+- [Disaster recovery](https://e8kor.github.io/open-memory-lab/operations/disaster-recovery/): recovery point and time per profile, as named mechanisms rather than numbers
+- [Restore](https://e8kor.github.io/open-memory-lab/operations/restore/): the restore ceremony and its two hazards — erased-content resurrection and chain rewind
+- [Upgrades](https://e8kor.github.io/open-memory-lab/operations/upgrades/): forward-only migrations, binary move order, version skew, what rollback means
+- [Capacity](https://e8kor.github.io/open-memory-lab/operations/capacity/): the growth drivers and sizing formulas over symbols, pending measurement
+
+## Engineering
+
+- [Workspace plan](https://e8kor.github.io/open-memory-lab/engineering/workspace-plan/): the Cargo workspace, crate dependency direction, port shapes, M1 build order
+- [Test strategy](https://e8kor.github.io/open-memory-lab/engineering/test-strategy/): which tier proves which claim; citable property and conformance ids
+- [CI and toolchain](https://e8kor.github.io/open-memory-lab/engineering/ci-and-toolchain/): toolchain pins, merge gates, release machinery, the supply-chain claim
+- [Benchmark harness](https://e8kor.github.io/open-memory-lab/engineering/benchmark-harness/): the three harness tiers that will produce every performance number (FR-25)
+
+## Product
+
+- [Positioning](https://e8kor.github.io/open-memory-lab/product/positioning/): who the product is for and the scoped market claim
+- [Commitments](https://e8kor.github.io/open-memory-lab/product/commitments/): every guarantee, sorted into four honesty tiers with enforcement points and assumptions
+- [Compliance evidence](https://e8kor.github.io/open-memory-lab/product/compliance/): the evidence OML produces for the questions compliance frameworks ask
+- [Roadmap](https://e8kor.github.io/open-memory-lab/product/roadmap/): the honesty ledger — every open FR/RS row with its exit criterion
+- [Critical path](https://e8kor.github.io/open-memory-lab/product/critical-path/): milestone order M0–M6, dependency without dates
+- [Spec changelog](https://e8kor.github.io/open-memory-lab/changelog/): how the design spec is versioned and what each revision changed
+
+## Decisions
+
+- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0024, what each decides, and which page owns which decision
