@@ -154,7 +154,7 @@ sequenceDiagram
     S->>S: deterministic scan — same call, can veto
     S->>P: ONE transaction: signed journal event (held),<br/>metadata rows, outbox row
     P-->>S: commit
-    S-->>A: ack — durable iff this commit; state = held,<br/>invisible to everyone but the author
+    S-->>A: ack — durable iff this commit#59; state = held,<br/>invisible to everyone but the author
 ```
 
 The ack means exactly one thing: the journal event, the metadata and the outbox row committed
@@ -176,7 +176,7 @@ sequenceDiagram
     R->>S: review next
     S-->>R: one held item + ALL attachments,<br/>under an expiring serve_id
     R->>S: verdict under serve_id
-    S->>S: promotion checks: reviewer absent from<br/>author AND lineage closure (R2); policy snapshot
+    S->>S: promotion checks: reviewer absent from<br/>author AND lineage closure (R2)#59; policy snapshot
     S->>P: ONE transaction: ratification event,<br/>state → promoted, outbox row
     S-->>R: verdict recorded against served digests
     LW->>P: drain outbox in strict seq order
@@ -195,7 +195,7 @@ sequenceDiagram
     A->>S: recall (query, workarea scope)
     S->>P: FTS + vector over promoted rows —<br/>RLS, grant scope, simulation predicate
     S->>P: read event appended (retention-bounded log,<br/>batch digests anchored into the journal)
-    S-->>A: steering rows first (never ranked), then hits;<br/>bodies decrypt on the serving path only
+    S-->>A: steering rows first (never ranked), then hits#59;<br/>bodies decrypt on the serving path only
 ```
 
 ### 4.4 A freeze — validating a workarea needs a second ratifier
@@ -213,7 +213,7 @@ sequenceDiagram
     S->>PG: journal the proposal
     P2->>S: ratify the transition
     S->>PG: journal transition + policy snapshot
-    Note over S,PG: the workarea now refuses new writes,<br/>promotions into it and reassignment into it;<br/>demote, erasure and crew-metadata update remain
+    Note over S,PG: the workarea now refuses new writes,<br/>promotions into it and reassignment into it#59;<br/>demote, erasure and crew-metadata update remain
 ```
 
 Transitions are forward-only; there is no unfreeze ([workareas.md](workareas.md)).
@@ -230,8 +230,8 @@ sequenceDiagram
     participant S as oml-server
     AD->>S: create simulation (audience = journalled list of keys)
     W->>S: remember — carries indelible provenance: simulation<br/>+ simulation_id in event, row and lake row
-    D->>S: verdict — only dreamers in the audience may review;<br/>no dreamer in the audience ⇒ nothing promotes
-    Note over S: served only to audience keys, on every read path;<br/>never enters a validated workarea;<br/>taint propagates through the lineage closure
+    D->>S: verdict — only dreamers in the audience may review#59;<br/>no dreamer in the audience ⇒ nothing promotes
+    Note over S: served only to audience keys, on every read path#59;<br/>never enters a validated workarea#59;<br/>taint propagates through the lineage closure
     AD->>S: end simulation — journalled act demotes its rows,<br/>tainted claims are demoted or re-reviewed
 ```
 

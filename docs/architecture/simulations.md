@@ -240,8 +240,8 @@ flowchart TB
 
     A --> E["end simulation — journalled act"]
     E --> D1["direct sim rows demoted<br/>(bytes kept, R4)"]
-    E --> D2["tainted closure demoted<br/>or re-reviewed; stays sim-derived"]
-    E --> L["outbox retract → lake-writer MERGE<br/>in seq order; reconciler checks"]
+    E --> D2["tainted closure demoted<br/>or re-reviewed#59; stays sim-derived"]
+    E --> L["outbox retract → lake-writer MERGE<br/>in seq order#59; reconciler checks"]
     E --> X["evidence export lists the simulation<br/>and its closure by simulation_id"]
 ```
 

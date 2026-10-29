@@ -217,7 +217,7 @@ sequenceDiagram
     participant B as Delta: bronze.events
     participant S as Delta: silver.claims
 
-    LW->>PG: read frontier F; cut batch (F, E] by seq
+    LW->>PG: read frontier F#59; cut batch (F, E] by seq
     Note over PG: E is capped at the snapshot horizon —<br/>no insert below E is still in flight
     PG-->>LW: outbox rows F+1..E
     LW->>LW: group rows by target table
@@ -227,8 +227,8 @@ sequenceDiagram
     alt E ≤ v_b
         LW->>LW: skip bronze (already applied)
     else
-        LW->>B: apply rows in seq order; commit txn(appId, version=E, bounds F..E)
-        Note over B: conditional put; version conflict fences a second writer
+        LW->>B: apply rows in seq order#59; commit txn(appId, version=E, bounds F..E)
+        Note over B: conditional put#59; version conflict fences a second writer
     end
 
     LW->>S: read last txn version
@@ -236,7 +236,7 @@ sequenceDiagram
     alt E ≤ v_s
         LW->>LW: skip silver
     else
-        LW->>S: apply in seq order (MERGE for retracts); commit txn(version=E)
+        LW->>S: apply in seq order (MERGE for retracts)#59; commit txn(version=E)
     end
 
     alt every touched table committed E
