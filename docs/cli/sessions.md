@@ -95,13 +95,16 @@ journal seq 812: workarea.create
 
 $ oml keys issue --role writer \
     --grant wa_00004e:writer --grant wa_00004e:reader \
+    --default-workarea wa_00004e \
     --expires 90d --label corrosion-agent-1
 key issued — SHOWN ONCE
 
     key id : key_9c44b7
     key    : oml_sk_EXAMPLEVALUE_aurora_Wn2gLx8cQe5rTv0zYhDk
+    default workarea : wa_00004e (universe/research/corrosion) — provider-ring (/v1)
+                       requests from this key target it when they name none
 
-journal seq 813: key.issued {id: key_9c44b7, role: writer, value_disclosed: false}
+journal seq 813: key.issued {id: key_9c44b7, role: writer, value_disclosed: false, default_workarea_id: wa_00004e}
 journal seq 814: grant.issued {key: key_9c44b7, wa_00004e: writer}
 journal seq 815: grant.issued {key: key_9c44b7, wa_00004e: reader}
 
@@ -129,6 +132,9 @@ key_51d0ac  dreamer  corrosion-reviewer-1   2027-01-27  wa_00004e:dreamer
 ```
 
 A writer that must also recall holds explicit reader scope — roles never imply one another. The
+writer key's `--default-workarea` is a journalled issuance attribute like its grants: a
+provider-ring (`/v1`) request from key_9c44b7 that names no workarea targets wa_00004e
+([ADR-0022](../adr/ADR-0022-two-ring-api.md)). The
 key values above appeared exactly once; `oml keys list` and the journal know only ids and hashes.
 
 ## 3. A review session

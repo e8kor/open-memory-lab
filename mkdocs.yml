@@ -97,3 +97,4 @@ nav:
       - ADR-0019: adr/ADR-0019-hexagonal-architecture-and-plugins.md
       - ADR-0020: adr/ADR-0020-dataset-onboarding.md
       - ADR-0021: adr/ADR-0021-ai-human-ontologies.md
+      - ADR-0022: adr/ADR-0022-two-ring-api.md

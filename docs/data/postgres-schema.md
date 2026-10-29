@@ -237,6 +237,9 @@ CREATE TABLE api_keys (
         CHECK (held_by IN ('agent', 'human')),  -- issuance-time attestation by the issuing admin
                                           -- (ADR-0021): verified as an attestation, never as fact;
                                           -- human_required_classes consumes it
+    default_workarea_id uuid REFERENCES workareas (id),
+                                          -- provider-ring target (ADR-0022 d4): a /v1 request
+                                          -- names no workarea — this, or X-OML-Workarea, resolves it
     expiry     timestamptz,
     revoked_at timestamptz
 );

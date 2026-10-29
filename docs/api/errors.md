@@ -20,7 +20,8 @@ Three properties hold for every error:
 
 ## The envelope
 
-Every non-2xx response under `/v1`:
+Every non-2xx response on either ring — the provider ring (`/v1`) and the lab ring (`/v2`) share
+one taxonomy ([ADR-0022](../adr/ADR-0022-two-ring-api.md)):
 
 ```json
 {
@@ -28,7 +29,7 @@ Every non-2xx response under `/v1`:
     "code": "access.verb_ceiling",
     "message": "a writer key cannot transition a workarea",
     "rule": "R1: the surface an agent can call never promotes, signs, demotes or deletes.",
-    "details": {"verb": "POST /v1/workareas/{id}/transitions", "role": "writer"},
+    "details": {"verb": "POST /v2/workareas/{id}/transitions", "role": "writer"},
     "retryable": false
   },
   "request_id": "req_01J…"
@@ -48,7 +49,7 @@ Every non-2xx response under `/v1`:
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `auth.missing` | 401 | No `Authorization: Bearer` header. | Every `/v1` request authenticates; only `/healthz` and `/readyz` do not. |
+| `auth.missing` | 401 | No `Authorization: Bearer` header. | Every request on either ring authenticates; only `/healthz` and `/readyz` do not. |
 | `auth.invalid` | 401 | The key is unknown, malformed, expired or revoked (`details.reason` says which). | Tenant and identity derive from the key, server-side, or not at all — an unverifiable caller gets nothing (D6). |
 
 ## `access` — what this key may do
@@ -70,12 +71,14 @@ Every non-2xx response under `/v1`:
 | `request.validation` | 400 | Malformed JSON, missing or ill-typed fields, unknown enum values, a stale or foreign pagination cursor. | The contract is [openapi.yaml](openapi.yaml); what it does not admit is refused, not coerced. |
 | `request.idempotency_key_required` | 400 | A state-creating `POST` arrives without `Idempotency-Key`. | Every side-effecting request is replayable exactly once by construction (D13); the service refuses to guess whether a retry is a duplicate. |
 | `request.payload_too_large` | 413 | Body or part exceeds the admitted size. | Size bounds are admission policy, enforced before bytes are stored. |
+| `request.workarea_unresolved` | 422 | A provider-ring (`/v1`) request arrives from a key with no journalled `default_workarea` and no `X-OML-Workarea` header. | The target workarea comes from the token ([ADR-0022](../adr/ADR-0022-two-ring-api.md) d4): a `/v1` request names no workarea — the key's `default_workarea` is the target, and `X-OML-Workarea` (a node id, honored only within the key's grants) is the explicit override. A key with neither is refused, never guessed for. |
 
 ## `idempotency` — the replay contract
 
 Semantics in full on the [HTTP API page](http-api.md#idempotency); the record is
 `(key_id, workarea, idem_key) → request digest + state + stored response`, claimed before any side
-effect (D13).
+effect (D13). On the provider ring the workarea component is the **resolved** target — the key's
+`default_workarea` or the `X-OML-Workarea` override (ADR-0022 d4).
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
@@ -197,7 +200,7 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 | 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.claim_key_conflict`, `submission.universe_refused`, `workarea.frozen`, `workarea.transition_refused`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
-| 422 | `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `request.workarea_unresolved`, `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |

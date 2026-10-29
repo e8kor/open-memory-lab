@@ -96,7 +96,8 @@ Inside each of the four service binaries the code has one shape, decided in
 the status ladder and the taint predicate — every constitution invariant, and no I/O. Around it,
 the application layer (`oml-app`) declares ports as Rust traits. On the driven side, everything
 that touches the world — store, lake, object store, KMS, plugins — is an adapter implementing one
-of those traits; on the driving side, the HTTP `/v1` transport and the MCP facade are adapters
+of those traits; on the driving side, the HTTP transport (both rings,
+[ADR-0022](../adr/ADR-0022-two-ring-api.md)) and the MCP facade are adapters
 the other way around: they depend on `oml-app` and call its use-cases, the application's inbound
 port. The four binaries are thin compositions of the same core with the adapter set each job
 needs; the `oml` CLI reaches the same hexagon only through the HTTP transport
@@ -105,9 +106,9 @@ needs; the `oml` CLI reaches the same hexagon only through the HTTP transport
 
 ```mermaid
 flowchart LR
-    C["oml CLI<br/>an HTTP client — drives the system<br/>only through /v1 (ADR-0015)"]
+    C["oml CLI<br/>an HTTP client — drives the system<br/>only through /v2, the lab ring (ADR-0015)"]
     subgraph driving ["Driving adapters — depend on oml-app, call its use-cases"]
-        H["HTTP /v1 transport"]
+        H["HTTP transport<br/>/v1 provider · /v2 lab"]
         M["MCP facade"]
     end
     subgraph hex ["The hexagon — knows no adapter"]
@@ -122,7 +123,7 @@ flowchart LR
         KMA["KMS"]
         PL["Plugins:<br/>scanners · embedders · exporters"]
     end
-    C -. "HTTP /v1" .-> H
+    C -. "HTTP /v2" .-> H
     H -- "calls use-cases" --> APP
     M -- "calls use-cases" --> APP
     APP -- "store port" --> PGA

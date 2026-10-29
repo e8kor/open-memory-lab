@@ -185,10 +185,10 @@ does; the scanner can hold or veto, never promote (plugin law,
 
 ## The agent loop, end to end
 
-The read surface is thin and reader-ceiling, failing closed as absence: `GET /v1/vocab/suggest`
-(deterministic prefix+label typeahead), `GET /v1/vocab/terms/{curie}`,
-`GET /v1/vocab/terms/{curie}/hierarchy?direction=parents|children|ancestors|descendants` (closure
-lookups), `GET /v1/vocab/mappings?term=` ([http-api](../api/http-api.md)); over MCP, one tool,
+The read surface is thin and reader-ceiling, failing closed as absence: `GET /v2/vocab/suggest`
+(deterministic prefix+label typeahead), `GET /v2/vocab/terms/{curie}`,
+`GET /v2/vocab/terms/{curie}/hierarchy?direction=parents|children|ancestors|descendants` (closure
+lookups), `GET /v2/vocab/mappings?term=` ([http-api](../api/http-api.md)); over MCP, one tool,
 `oml_vocab`, with an action field. Recall gains a `terms` filter and
 `expand_terms: none | descendants` — expansion resolves against the release pinned by the
 vocabulary that owns the prefix and **widens a filter before retrieval**; steering order, `k` and

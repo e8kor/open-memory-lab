@@ -440,7 +440,8 @@ reference against the provider chain.
   "key_id": "…", "role": "writer", "principal": "crew-redline/agent-3",
   "issued_by_key_id": "…", "expiry": "2027-10-29T00:00:00Z",
   "value_disclosed": false,
-  "held_by": "agent"
+  "held_by": "agent",
+  "default_workarea_id": "…"
 }
 ```
 
@@ -564,7 +565,7 @@ promote nothing (fail closed).
 }
 ```
 
-An admin corrects a live simulation's audience (`POST /v1/simulations/{id}/audience` — the only
+An admin corrects a live simulation's audience (`POST /v2/simulations/{id}/audience` — the only
 recovery from the fail-closed no-dreamer state short of ending it); at least one of
 `added`/`removed` is non-empty, and the audience at any seq is the fold of `simulation.opened`
 plus every `audience_changed` since — that fold is what makes audience membership reconstructible

@@ -4,8 +4,10 @@
 
 `oml` is the administration surface of Open Memory Lab. There is no web UI: every administrative
 ceremony — key issuance, review, mass operations, settings — is a CLI verb, a decision recorded in
-ADR-0015. The CLI is a thin client: it speaks the same [versioned HTTP API](../api/http-api.md) as every
-agent, authenticated by operator, admin or dreamer keys, and holds no authority of its own. Every
+ADR-0015. The CLI is a lab client: it speaks the same [HTTP API](../api/http-api.md) as every
+agent — every ceremony rides the lab ring (`/v2`,
+[ADR-0022](../adr/ADR-0022-two-ring-api.md)); the CLI holds no verb the API lacks — authenticated
+by operator, admin or dreamer keys, and holds no authority of its own. Every
 act it performs is a journalled act performed by the server; every refusal is a
 [typed error](../api/errors.md) naming its rule. The role model the verbs below assume is declared
 in [roles and keys](../architecture/roles-and-keys.md); nothing on this page widens it.
@@ -64,7 +66,7 @@ context or key exists, so there is nothing for a context to resolve.
 
 | Verb | Does |
 |---|---|
-| `oml bootstrap claim --url <https://…> [--token-stdin]` | Exchange the enrollment secret for the root operator key. With `--token-stdin` the secret is read once from stdin, never from argv. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). |
+| `oml bootstrap claim --url <https://…> [--token-stdin]` | Exchange the enrollment secret for the root operator key (fronts `POST /v2/bootstrap/claim` — bootstrap is a lab ceremony, [ADR-0022](../adr/ADR-0022-two-ring-api.md)). With `--token-stdin` the secret is read once from stdin, never from argv. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). |
 
 ## `oml tenants` — the operator's verbs
 
@@ -91,9 +93,9 @@ revoke-and-reissue.
 
 | Verb | Does |
 |---|---|
-| `oml keys issue --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--expires <duration>] [--label <text>]` | Issue a key. Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). Prints the value once, then only the key id ever again. |
+| `oml keys issue --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <node>] [--expires <duration>] [--label <text>]` | Issue a key. Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4). Prints the value once, then only the key id ever again. |
 | `oml keys revoke <key-id>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the next permission-epoch check. `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
-| `oml keys rotate <key-id> [--grace <duration>]` | Mint a successor key — new key id, linked by `rotated_from`, grants reproduced from the journalled grant records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key in v1; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
+| `oml keys rotate <key-id> [--grace <duration>]` | Mint a successor key — new key id, linked by `rotated_from`, grants reproduced from the journalled grant records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `oml keys list [--role …] [--expiring <duration>]` | Key ids, roles, labels, expiries. Never values. |
 | `oml keys show <key-id>` | One key: grants, denials, epoch, issuance and revocation events. |
 

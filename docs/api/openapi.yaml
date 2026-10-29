@@ -2,11 +2,25 @@ openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
   version: 0.1.0-design
-  summary: The /v1 JSON API of OML, an agentic external memory provider.
+  summary: >-
+    The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
+    /v2 the memory lab.
   description: >-
     Status: design draft for review — decided, not built. This spec is the machine-readable form
     of docs/api/http-api.md and declares the same contract; the typed error taxonomy is declared
-    in docs/api/errors.md and mirrored here as the ErrorCode enum. Authorization model: bearer API
+    in docs/api/errors.md and mirrored here as the ErrorCode enum. One keyed listener carries two
+    stability rings (ADR-0022): /v1 is the memory provider foundation — submit (plus the reserved
+    POST /v1/memories:batch of FR-12), read own and promoted, recall, supersede, and the
+    attachment upload/fetch flow — under the v1 compatibility covenant: once FR-21 declares v1
+    stable, v1 changes are additive only (no field removed, no semantic changed, no status code
+    repurposed); anything that would break a v1 client is, by definition, a v2 capability. /v2 is
+    the memory lab — review and ratification ceremonies, claim edges, workarea, key and claim
+    administration, simulations, exports, settings, tenants, bootstrap, the events tail,
+    vocabularies — and evolves; it may re-version without ever touching /v1. On the provider ring
+    the target workarea is never named in the request: it resolves from the key's journalled
+    default_workarea, overridden by the X-OML-Workarea header within the key's grants
+    (request.workarea_unresolved when neither is present); /v2 keeps explicit workarea ids in
+    paths and bodies. Authorization model: bearer API
     keys carrying one role (reader, writer, dreamer, admin, operator); tenant is derived
     server-side from the key, never from the request. Roles do not nest. Read verbs require
     reader effective access on the named workarea; write verbs writer; propose/review verbs
@@ -45,8 +59,10 @@ paths:
       tags: [memories]
       operationId: submitMemory
       summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
-      description: 'Requires: writer effective access, whatever derives_from names — lineage is attribution, not a verb of its own. Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
-      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      description: 'Requires: writer effective access, whatever derives_from names — lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/XOMLWorkarea' }
       requestBody:
         required: true
         content:
@@ -65,8 +81,9 @@ paths:
       tags: [memories]
       operationId: searchMemories
       summary: Structured, paginated listing of memory summaries.
-      description: 'Requires: reader effective access; own=true admits any tenant role for its own rows only. Others'' held rows are never returned (R3).'
+      description: 'Requires: reader effective access; own=true admits any tenant role for its own rows only. Others'' held rows are never returned (R3). Default scope is the token workarea''s subtree (ADR-0022 d4).'
       parameters:
+        - { $ref: '#/components/parameters/XOMLWorkarea' }
         - { name: workarea_id, in: query, schema: { type: string } }
         - { name: claim_key, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
@@ -89,7 +106,8 @@ paths:
       tags: [memories]
       operationId: recallMemories
       summary: Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
-      description: 'Requires: reader effective access on the subtree. Read-shaped POST: no Idempotency-Key. Logged by query digest (D12). Recall quality unmeasured — FR-4.'
+      description: 'Requires: reader effective access on the subtree. Default scope is the token workarea''s subtree — the key''s default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Read-shaped POST: no Idempotency-Key. Logged by query digest (D12). Recall quality unmeasured — FR-4.'
+      parameters: [{ $ref: '#/components/parameters/XOMLWorkarea' }]
       requestBody:
         required: true
         content:
@@ -120,7 +138,7 @@ paths:
         '410': { $ref: '#/components/responses/Gone' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/memories/{artifact_id}/lineage:
+  /v2/memories/{artifact_id}/lineage:
     get:
       tags: [memories]
       operationId: getLineage
@@ -144,6 +162,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/ArtifactId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/XOMLWorkarea' }
       requestBody:
         required: true
         content:
@@ -158,7 +177,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/memories/{artifact_id}/reassign:
+  /v2/memories/{artifact_id}/reassign:
     post:
       tags: [claim-administration]
       operationId: reassignClaim
@@ -181,7 +200,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/memories/{artifact_id}/demote:
+  /v2/memories/{artifact_id}/demote:
     post:
       tags: [claim-administration]
       operationId: demoteClaim
@@ -203,7 +222,7 @@ paths:
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/memories/{artifact_id}/erase:
+  /v2/memories/{artifact_id}/erase:
     post:
       tags: [claim-administration]
       operationId: eraseClaim
@@ -225,7 +244,7 @@ paths:
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/claims/tip-override:
+  /v2/claims/tip-override:
     post:
       tags: [claim-administration]
       operationId: tipOverride
@@ -323,7 +342,7 @@ paths:
         '410': { $ref: '#/components/responses/Gone' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/claim-edges:
+  /v2/claim-edges:
     get:
       tags: [claim-edges]
       operationId: listClaimEdges
@@ -360,7 +379,7 @@ paths:
               schema: { $ref: '#/components/schemas/ClaimEdge' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/claim-edges/{edge_id}/ratify:
+  /v2/claim-edges/{edge_id}/ratify:
     post:
       tags: [claim-edges]
       operationId: ratifyClaimEdge
@@ -378,7 +397,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas:
+  /v2/workareas:
     get:
       tags: [workareas]
       operationId: resolveWorkarea
@@ -414,7 +433,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas/{workarea_id}:
+  /v2/workareas/{workarea_id}:
     get:
       tags: [workareas]
       operationId: getWorkarea
@@ -430,7 +449,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas/{workarea_id}/tree:
+  /v2/workareas/{workarea_id}/tree:
     get:
       tags: [workareas]
       operationId: getWorkareaTree
@@ -448,7 +467,7 @@ paths:
               schema: { $ref: '#/components/schemas/WorkareaPage' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas/{workarea_id}/edges:
+  /v2/workareas/{workarea_id}/edges:
     get:
       tags: [workareas]
       operationId: listWorkareaEdges
@@ -486,7 +505,7 @@ paths:
               schema: { $ref: '#/components/schemas/WorkareaEdge' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workarea-edges/{edge_id}/ratify:
+  /v2/workarea-edges/{edge_id}/ratify:
     post:
       tags: [workareas]
       operationId: ratifyWorkareaEdge
@@ -504,7 +523,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas/{workarea_id}/status:
+  /v2/workareas/{workarea_id}/status:
     get:
       tags: [workareas]
       operationId: getWorkareaStatus
@@ -519,7 +538,7 @@ paths:
               schema: { $ref: '#/components/schemas/WorkareaStatus' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas/{workarea_id}/reparent:
+  /v2/workareas/{workarea_id}/reparent:
     post:
       tags: [workareas]
       operationId: reparentWorkarea
@@ -542,7 +561,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas/{workarea_id}/crew:
+  /v2/workareas/{workarea_id}/crew:
     post:
       tags: [workareas]
       operationId: updateCrewMetadata
@@ -564,7 +583,7 @@ paths:
               schema: { $ref: '#/components/schemas/Workarea' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas/{workarea_id}/transitions:
+  /v2/workareas/{workarea_id}/transitions:
     post:
       tags: [workareas]
       operationId: proposeTransition
@@ -587,7 +606,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/workareas/{workarea_id}/transitions/{transition_id}/ratify:
+  /v2/workareas/{workarea_id}/transitions/{transition_id}/ratify:
     post:
       tags: [workareas]
       operationId: ratifyTransition
@@ -606,7 +625,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/events:
+  /v2/events:
     get:
       tags: [events]
       operationId: tailEvents
@@ -623,7 +642,7 @@ paths:
               schema: { $ref: '#/components/schemas/EventsPage' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/vocab/suggest:
+  /v2/vocab/suggest:
     get:
       tags: [vocab]
       operationId: suggestTerms
@@ -642,7 +661,7 @@ paths:
               schema: { $ref: '#/components/schemas/VocabSuggestPage' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/vocab/terms/{curie}:
+  /v2/vocab/terms/{curie}:
     get:
       tags: [vocab]
       operationId: getTerm
@@ -658,7 +677,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/vocab/terms/{curie}/hierarchy:
+  /v2/vocab/terms/{curie}/hierarchy:
     get:
       tags: [vocab]
       operationId: getTermHierarchy
@@ -679,7 +698,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/vocab/mappings:
+  /v2/vocab/mappings:
     get:
       tags: [vocab]
       operationId: listTermMappings
@@ -697,7 +716,7 @@ paths:
               schema: { $ref: '#/components/schemas/TermMappingPage' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/review/queue:
+  /v2/review/queue:
     get:
       tags: [review]
       operationId: reviewQueue
@@ -715,7 +734,7 @@ paths:
               schema: { $ref: '#/components/schemas/ReviewQueuePage' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/review/next:
+  /v2/review/next:
     post:
       tags: [review]
       operationId: reviewNext
@@ -740,7 +759,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/review/verdicts:
+  /v2/review/verdicts:
     post:
       tags: [review]
       operationId: postVerdict
@@ -762,7 +781,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/review/reopen:
+  /v2/review/reopen:
     post:
       tags: [review]
       operationId: reopenRejection
@@ -783,7 +802,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys:
+  /v2/keys:
     get:
       tags: [keys]
       operationId: listKeys
@@ -820,7 +839,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys/{key_id}:
+  /v2/keys/{key_id}:
     get:
       tags: [keys]
       operationId: getKey
@@ -836,7 +855,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys/{key_id}/revoke:
+  /v2/keys/{key_id}/revoke:
     post:
       tags: [keys]
       operationId: revokeKey
@@ -861,7 +880,7 @@ paths:
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys/{key_id}/rotate:
+  /v2/keys/{key_id}/rotate:
     post:
       tags: [keys]
       operationId: rotateKey
@@ -886,7 +905,7 @@ paths:
               schema: { $ref: '#/components/schemas/KeyIssued' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys/{key_id}/grants:
+  /v2/keys/{key_id}/grants:
     post:
       tags: [keys]
       operationId: addGrant
@@ -908,7 +927,7 @@ paths:
               schema: { $ref: '#/components/schemas/Grant' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys/{key_id}/grants/{grant_id}/revoke:
+  /v2/keys/{key_id}/grants/{grant_id}/revoke:
     post:
       tags: [keys]
       operationId: revokeGrant
@@ -926,7 +945,7 @@ paths:
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys/{key_id}/denials:
+  /v2/keys/{key_id}/denials:
     post:
       tags: [keys]
       operationId: addDenial
@@ -948,7 +967,7 @@ paths:
               schema: { $ref: '#/components/schemas/Denial' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys/{key_id}/denials/{denial_id}/lift:
+  /v2/keys/{key_id}/denials/{denial_id}/lift:
     post:
       tags: [keys]
       operationId: liftDenial
@@ -966,7 +985,7 @@ paths:
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/keys/{key_id}/effective-access:
+  /v2/keys/{key_id}/effective-access:
     get:
       tags: [keys]
       operationId: getEffectiveAccess
@@ -983,7 +1002,7 @@ paths:
               schema: { $ref: '#/components/schemas/EffectiveAccess' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/bans:
+  /v2/bans:
     get:
       tags: [bans]
       operationId: listBans
@@ -1023,7 +1042,7 @@ paths:
               schema: { $ref: '#/components/schemas/Ban' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/bans/{ban_id}/lift:
+  /v2/bans/{ban_id}/lift:
     post:
       tags: [bans]
       operationId: liftBan
@@ -1040,7 +1059,7 @@ paths:
               schema: { $ref: '#/components/schemas/Ban' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/simulations:
+  /v2/simulations:
     get:
       tags: [simulations]
       operationId: listSimulations
@@ -1076,7 +1095,7 @@ paths:
               schema: { $ref: '#/components/schemas/Simulation' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/simulations/{simulation_id}:
+  /v2/simulations/{simulation_id}:
     get:
       tags: [simulations]
       operationId: getSimulation
@@ -1092,7 +1111,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/bootstrap/claim:
+  /v2/bootstrap/claim:
     post:
       tags: [keys]
       operationId: bootstrapClaim
@@ -1117,7 +1136,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/simulations/{simulation_id}/audience:
+  /v2/simulations/{simulation_id}/audience:
     post:
       tags: [simulations]
       operationId: changeSimulationAudience
@@ -1151,7 +1170,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/simulations/{simulation_id}/end:
+  /v2/simulations/{simulation_id}/end:
     post:
       tags: [simulations]
       operationId: endSimulation
@@ -1177,7 +1196,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/exports:
+  /v2/exports:
     get:
       tags: [exports]
       operationId: listExports
@@ -1212,7 +1231,7 @@ paths:
               schema: { $ref: '#/components/schemas/ExportJob' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/exports/{export_id}:
+  /v2/exports/{export_id}:
     get:
       tags: [exports]
       operationId: getExport
@@ -1228,7 +1247,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/exports/{export_id}/bundle:
+  /v2/exports/{export_id}/bundle:
     get:
       tags: [exports]
       operationId: downloadExportBundle
@@ -1244,7 +1263,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/settings:
+  /v2/settings:
     get:
       tags: [settings]
       operationId: getSettings
@@ -1260,7 +1279,7 @@ paths:
               schema: { $ref: '#/components/schemas/SettingsView' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/settings/validate:
+  /v2/settings/validate:
     post:
       tags: [settings]
       operationId: validateSettings
@@ -1279,7 +1298,7 @@ paths:
               schema: { $ref: '#/components/schemas/SettingsValidation' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/settings/apply:
+  /v2/settings/apply:
     post:
       tags: [settings]
       operationId: applySettings
@@ -1300,7 +1319,7 @@ paths:
         '422': { $ref: '#/components/responses/Unprocessable' }
         default: { $ref: '#/components/responses/Error' }
 
-  /v1/tenants:
+  /v2/tenants:
     post:
       tags: [tenants]
       operationId: createTenant
@@ -1378,9 +1397,22 @@ components:
       required: true
       schema: { type: string, maxLength: 256 }
       description: >-
-        Claims an idempotency record (key_id, workarea, idem_key) before side effects. Replay of
+        Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the
+        provider ring the workarea component is the RESOLVED target — the key's default_workarea
+        or the X-OML-Workarea override (ADR-0022 d4). Replay of
         the same request returns the stored response with header Idempotency-Replay: true; the
         same key with a different request digest is refused (idempotency.digest_mismatch).
+    XOMLWorkarea:
+      name: X-OML-Workarea
+      in: header
+      required: false
+      schema: { type: string }
+      description: >-
+        Workarea node-id override for the provider ring (ADR-0022 d4). Omitted, the target (and
+        recall's default scope) is the key's journalled default_workarea; present, it is honored
+        only within the key's grants — plain-passable because it is authorization-checked data,
+        never a secret. A provider-ring request from a key with neither a default nor this header
+        is refused with 422 request.workarea_unresolved.
     Limit:
       name: limit
       in: query
@@ -1479,6 +1511,7 @@ components:
         - request.validation
         - request.idempotency_key_required
         - request.payload_too_large
+        - request.workarea_unresolved
         - idempotency.in_progress
         - idempotency.digest_mismatch
         - submission.scan_veto
@@ -1529,10 +1562,13 @@ components:
 
     SubmitRequest:
       type: object
-      required: [verb, workarea_id, claim_key, kind, body]
+      description: >-
+        Names no workarea: the target resolves from the key's default_workarea or the
+        X-OML-Workarea header (ADR-0022 d4); neither present is refused with
+        request.workarea_unresolved.
+      required: [verb, claim_key, kind, body]
       properties:
         verb: { type: string, enum: [remember, learn], description: learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. }
-        workarea_id: { type: string }
         claim_key: { type: string, description: "Groups versions of one claim; unique per (tenant, workarea) over non-erased rows." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
         body: { type: string, description: Text body; binary content goes through attachments. }
@@ -1632,9 +1668,11 @@ components:
 
     RecallRequest:
       type: object
-      required: [workarea_id, query]
+      description: >-
+        Names no workarea: the default scope is the token workarea's subtree — the key's
+        default_workarea, or the X-OML-Workarea override (ADR-0022 d4).
+      required: [query]
       properties:
-        workarea_id: { type: string, description: Subtree root the key reads. }
         query: { type: string }
         k: { type: integer, minimum: 1, maximum: 100, default: 8 }
         kinds: { type: array, items: { type: string, enum: [memory, derived_fact] }, description: 'Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021).' }

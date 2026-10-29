@@ -168,11 +168,11 @@ Two stances bind every decision below:
   `terms` field under no `vocabulary_policy`).
 
 - **d9 — A thin read surface, on top of the provider floor.** Four read-only endpoint groups —
-  `GET /v1/vocab/suggest?q&workarea_id` (deterministic prefix+label typeahead over granted
-  vocabulary workareas); `GET /v1/vocab/terms/{curie}`, returning `term_status` and successor
+  `GET /v2/vocab/suggest?q&workarea_id` (deterministic prefix+label typeahead over granted
+  vocabulary workareas); `GET /v2/vocab/terms/{curie}`, returning `term_status` and successor
   pointers so a client holding a deprecated CURIE self-heals without a second lookup;
-  `GET /v1/vocab/terms/{curie}/hierarchy?direction=parents|children|ancestors|descendants`
-  (lookups over d4's per-release closure table); `GET /v1/vocab/mappings?term=` — all
+  `GET /v2/vocab/terms/{curie}/hierarchy?direction=parents|children|ancestors|descendants`
+  (lookups over d4's per-release closure table); `GET /v2/vocab/mappings?term=` — all
   reader-ceiling, cursor-paginated per the convention, failing closed as absence
   ([http-api](../api/http-api.md)). MCP: **one** new tool, `oml_vocab`, with an action field
   (`suggest | get | hierarchy | mappings`), keeping the catalog at ten tools — owned as a count
