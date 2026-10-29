@@ -206,6 +206,10 @@ review*, never *published*.
 - `attachments` — upload sessions previously completed via
   [`oml_attach`](#oml_attach). The session's recorded digest is bound into
   the signed submission envelope (D3).
+- `kind` — `memory` (the default) | `derived_fact` | `steering`, as on the
+  HTTP submit ([http-api.md](http-api.md)). `kind: derived_fact` here is the
+  path for a derived conclusion whose lineage cannot or will not be named —
+  [`oml_learn`](#oml_learn) requires non-empty `derives_from`.
 - `derives_from` — artifact ids this memory derives from. Lineage is
   **declared**, and the honesty rule applies in full: a writer that omits
   `derives_from` is not detectable by the service, so lineage-based review
@@ -333,14 +337,18 @@ nonexistent node, fail closed). Example:
 ## `oml_learn`
 
 Submit a **derived fact**: a conclusion distilled from memories the agent has
-already read, carrying the lineage that produced it. Mechanically it is
-`oml_remember` with `kind: derived_fact` — the same admission pipeline, held
-on arrival, same non-author review — but the contract differs: `derives_from`
-is the point of the verb. A derived fact submitted with empty lineage is
-accepted (the service cannot know what the writer really read — the honesty
-rule again) and is worth less under review for exactly that reason; the
-[review guide](../review-guide.md) tells reviewers to weigh the declared
-lineage.
+already read, carrying the lineage that produced it. Mechanically it is one
+`POST /v1/memories` with `verb: "learn"` and `kind: derived_fact` — the same
+admission pipeline as [`oml_remember`](#oml_remember), held on arrival, same
+non-author review, journalled as `submission.learn` — but `derives_from` is
+the point of the verb: it must be non-empty, and a call with empty or omitted
+lineage is refused with `submission.lineage_required`
+([http-api.md](http-api.md), [errors.md](errors.md)). A derived conclusion
+whose author cannot or will not name its lineage is submitted through
+[`oml_remember`](#oml_remember) with `kind: derived_fact` instead (journalled
+`submission.remember`), where the undeclared-derivation caveat applies: the
+service cannot know what the writer really read, so the lineage closure is
+only as good as what writers declare.
 
 **Who may call:** keys with writer effective access on the target workarea.
 
@@ -375,7 +383,9 @@ lineage.
 ```
 
 **Refusals** — everything `oml_remember` refuses, plus the lineage checks:
-a `derives_from` target the key cannot read is refused as unknown (fail
+an empty or omitted `derives_from` is refused (`submission.lineage_required`
+— use `oml_remember` with `kind: derived_fact` for a conclusion without
+nameable lineage); a `derives_from` target the key cannot read is refused as unknown (fail
 closed, no existence leak), and a target inside a simulation forces the
 simulation fence — a submission deriving from a simulation row must carry
 that row's `simulation_id`, server-enforced, which this key can only do if it

@@ -202,6 +202,15 @@ When review is unavailable, nothing promotes. Concretely:
   scope, or none outside the author's lineage closure) accumulates held items until a key
   exists or the items expire into the dead letter. The server does not relax `k`, does not
   widen the role set, and does not auto-promote on timeout.
+- The lineage case deserves naming, because any writer can produce it: every artifact a
+  submission's `derives_from` names expands the row's reviewer-exclusion set — R2 runs over the
+  whole lineage closure — so a submission whose declared ancestry excludes every eligible
+  reviewer in the workarea is unreviewable and therefore unpromotable. It is not refused at
+  capture (reviewer unavailability is deliberately not an API error,
+  [errors.md](../api/errors.md)); it lands held, surfaces in `oml status` / `oml doctor` as
+  review unavailability, and dead-letters on expiry. Declaring ancestors can only shrink who may
+  judge a row, never select a friendlier judge — and a false or padded lineage is itself grounds
+  for rejection at review ([ADR-0012](../adr/ADR-0012-admission-and-review.md)).
 - A simulation whose audience contains no dreamer can promote nothing
   ([simulations](simulations.md)).
 - A verdict whose serve has expired or whose served digests no longer match the artifact is

@@ -141,9 +141,13 @@ Notes that only make sense at this level:
   batch touches.
 - The commit's transaction action also records the batch bounds
   `(frontier, batch_end)`; recovery reconstructs the identical batch from the
-  outbox by seq range, never by time or size. The Postgres frontier column is
-  a cache; **the Delta log's transaction version is the sole recovery
-  authority.**
+  outbox by seq range, never by time or size. Reconstruction is exact because
+  every `batch_end` is cut inside the outbox's **stable prefix** — bounded by
+  the Postgres snapshot horizon, so no row with seq ≤ `batch_end` was still
+  in flight at cut time and none can appear inside recorded bounds later
+  ([architecture/storage.md](../architecture/storage.md) declares the cut
+  rule). The Postgres frontier column is a cache; **the Delta log's
+  transaction version is the sole recovery authority.**
 - A `gold.curated_<id>` table is **created by the batch that carries the
   area's validation event**: table creation and the initial population commit
   carry that batch's `batch_end` as their transaction version, so a crash
@@ -197,8 +201,10 @@ avoided.
 One row per **promoted claim version**. The row exists because a promotion
 event was drained from the outbox — held bodies never reach the lake, and
 `self_signed` development rows never enter silver at all (the constitution's development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md)).
-This table is the commissioning requirement made physical: pure memory data,
-who and when wrote it, what space — with bodies encrypted at rest.
+This table is the lake's purpose made physical: pure memory data with full
+attribution — who and when wrote it, what space — with bodies encrypted at
+rest, exactly as [ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)
+commits.
 
 | Column | Delta | Arrow | Null | Meaning |
 |---|---|---|---|---|
@@ -216,8 +222,8 @@ who and when wrote it, what space — with bodies encrypted at rest.
 | `provenance` | STRING | utf8 | no | `agent` \| `human` \| `connector` \| `simulation` — indelible |
 | `simulation_id` | STRING | utf8 | yes | Set on every simulation row (D10) |
 | `sim_derived_ids` | ARRAY&lt;STRING&gt; | list&lt;utf8&gt; | yes | Simulation ids in the row's lineage closure — the taint record |
-| `plaintext_digest` | STRING | utf8 | no | SHA-256 of plaintext, lowercase hex — survives erasure; proves what the erased row was about |
-| `ciphertext_digest` | STRING | utf8 | no | SHA-256 of ciphertext — what the key-less reconciler verifies |
+| `plaintext_digest` | STRING | utf8 | no | SHA-256 of plaintext, lowercase hex, folded from the submission event — survives erasure; proves what the erased row was about |
+| `ciphertext_digest` | STRING | utf8 | no | SHA-256 of ciphertext, folded from the submission event's `ciphertext_digest` ([event-catalog.md](event-catalog.md)) — what the key-less reconciler verifies against the journal fold |
 | `body_ciphertext` | BINARY | binary | yes | Per-artifact-DEK ciphertext of the claim body; NULL when `body_ref = object`, and **nulled by the erase MERGE**; no column statistics collected |
 | `body_ref` | STRING | utf8 | no | `lake` \| `object` — where the ciphertext body lives; attachments are always `object` ([architecture/storage.md](../architecture/storage.md)) |
 | `attachments` | ARRAY&lt;STRUCT&gt; | list&lt;struct&gt; | yes | Per attachment: `plaintext_digest` STRING, `ciphertext_digest` STRING, `media_type` STRING, `size_bytes` LONG |

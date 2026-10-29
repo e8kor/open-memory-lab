@@ -35,7 +35,7 @@ shared signing key attests the deployment
 | `oml-indexer` | Deployment | None in the pod; embeddings and tsvector rows live in Postgres and are in the erasure inventory. | Its own per-tenant credentials, never the signing key; the exact KMS grant is declared in [security — key custody](../architecture/security.md). |
 | Postgres | CloudNativePG cluster (local) / managed service (scaled) | Everything: journal, fold tables, outbox, indexes, read-event log. | n/a (it *is* the store); application roles are granted per workload as above. |
 | MinIO / S3 | StatefulSet via pinned MinIO chart (local) / external S3 (scaled) | Quarantine objects, ciphertext bodies, Delta tables. | n/a; per-tenant storage credentials when externalized, per [security](../architecture/security.md). |
-| bootstrap Job | Helm hook, runs once on first install | None | A one-time Postgres credential. It mints the show-once root operator key, journalled as issued-without-value ([roles and keys](../architecture/roles-and-keys.md)). |
+| bootstrap Job | Helm hook, runs once on first install | None | A one-time Postgres credential. It mints a single-use, expiring **enrollment secret**, stored as a Kubernetes Secret; its logs carry progress only — no key or secret material. The root operator key is claimed from that secret with `oml bootstrap claim` ([CLI reference](../cli/reference.md)), shown once in the operator's terminal and journalled as issued-without-value ([roles and keys](../architecture/roles-and-keys.md)); the enrollment secret is consumed on first use, and the job's completion reveals nothing. |
 
 There is no web UI workload; administration is the [CLI](../cli/reference.md),
 which talks to the same `oml-server` Service from outside the cluster.
@@ -95,10 +95,18 @@ $ helm install oml oml/oml --namespace oml --create-namespace \
     --values values-local.yaml
 $ kubectl --namespace oml wait --for=condition=Ready pod --all --timeout=300s
 $ kubectl --namespace oml port-forward svc/oml-server 8080:8080 &
-$ oml bootstrap --endpoint http://localhost:8080
+$ kubectl --namespace oml get secret oml-enrollment -o jsonpath='{.data.token}' \
+    | base64 -d \
+    | oml bootstrap claim --url http://localhost:8080 --token-stdin
+enrollment secret accepted — consumed (single-use)
 root operator key (shown once, journalled as issued-without-value):
   oml_op_************************
 ```
+
+The enrollment secret the Helm job minted is exchanged, over the connection the operator opened,
+for the root operator key — the key value appears only in the operator's terminal, never in a pod
+log, and the consumed secret cannot be claimed twice
+([CLI reference](../cli/reference.md#oml-bootstrap-claiming-the-root-operator-key)).
 
 From here the ceremony continues in [cli/sessions.md](../cli/sessions.md):
 create a tenant, issue its first admin key, create workareas, issue crew keys.
@@ -196,10 +204,13 @@ and the windows chosen here become terms in the erasure SLO.
 | Delta tables | Table history until `VACUUM` + checkpoint cleanup, run inside the lake-writer | Old parquet versions and checkpoints hold **ciphertext** of erased bodies until vacuumed. The DEK is already destroyed, so the bytes are unreadable, but the inventory still names them, and the vacuum cadence is the stated bound on their lifetime. |
 | Object store | Versioning (if enabled) on quarantine and bodies prefixes | Same shape: ciphertext versions survive until lifecycle rules expire them; the lifecycle window is the stated bound. Quarantine objects of refused submissions get a short, named expiry of their own. |
 | Read-event log | Partition drops on the retention window set by tenant policy ([retrieval](../architecture/retrieval.md)) | Not a backup, but the same discipline: the window is declared, and exports scope to it. |
+| Postgres `artifact_keys` wrapped DEKs | Base backups + WAL (same facility as the row above) | **Usable key copies survive the retention window**: a restored backup plus a live KMS unwrap could recover a destroyed DEK. Bounded by scheduled KEK rotation — rotation re-wraps live DEKs only, and a retired KEK is destroyed once no retained backup predates its retirement — so the erasure SLO term for this class is backup retention + KEK rotation period ([audit and lineage](../architecture/audit-and-lineage.md)). |
 
 The composition rule: **the erasure SLO for a copy class is the longest window
 that can still contain it.** For plaintext-derived data that is the Postgres
-backup retention window; for ciphertext copies it is vacuum cadence and
+backup retention window; for wrapped-DEK copies it is backup retention plus
+the KEK rotation period, since only a retired KEK's destruction invalidates
+the key copies in older backups; for ciphertext copies it is vacuum cadence and
 lifecycle rules — and for those, key destruction already provides the
 security property, so the windows bound tidiness, not exposure. The profiles
 ship defaults for every window; none of the defaults is a measured or

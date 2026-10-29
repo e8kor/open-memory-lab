@@ -56,7 +56,7 @@ the verb is refused with a typed error naming this rule ([errors.md](../api/erro
 | re-enqueue a dead-lettered held item (journalled; [admission.md](admission.md)) | — | — | ✓ | ✓ | — |
 | propose workarea status transition | — | — | ✓ | ✓ | — |
 | ratify status transition (non-proposer) | — | — | ✓ | ✓ | — |
-| issue / revoke keys (issuer ceiling) | — | — | — | ✓ | ✓ ⁴ |
+| issue / revoke / rotate keys (issuer ceiling) | — | — | — | ✓ | ✓ ⁴ |
 | create / re-parent workareas | — | — | — | ✓ | — |
 | reassign claims between workareas | — | — | — | ✓ | — |
 | ban / lift-ban an author or source | — | — | — | ✓ | — |
@@ -136,15 +136,20 @@ The admin governs; it does not judge content. Admin verdicts are refused server-
 integrity rests on the reviewer never being the author *or* the authority that issued the author's
 key acting as reviewer by fiat.
 
-**Keys.** Issue and revoke, under the [issuer ceiling](#issuer-ceiling) and the
-[lifecycle](#key-lifecycle) below. Issuance and revocation are journalled; grants history is part
-of the evidence export.
+**Keys.** Issue, revoke and rotate, under the [issuer ceiling](#issuer-ceiling) and the
+[lifecycle](#key-lifecycle) below. Issuance, revocation and rotation are journalled; grants
+history is part of the evidence export. One combination the service refuses to mint or amend:
+a key holding the admin role never carries dreamer-class grants
+(`access.role_exclusive`, [errors.md](../api/errors.md)) — the two-key rule. A person who both
+administers and does dreamer work holds two keys, so the journal shows which capacity acted
+([ADR-0010](../adr/ADR-0010-roles-and-keys.md)).
 
 **Workareas.** Create, re-parent, and propose/ratify status transitions; workarea edges are not
 an admin fiat — they go through the dreamer propose/ratify ceremony declared in
-[workareas.md](workareas.md) (an admin key participates only by holding dreamer-class grants,
-which its role ceiling permits). Semantics, including the universe root and the forward-only
-ladder, are declared in [workareas.md](workareas.md).
+[workareas.md](workareas.md), and an admin key never participates in it: a person who must both
+administer and propose or ratify edges holds two keys, because a key never combines the admin
+role with dreamer-class grants (the two-key rule above). Semantics, including the universe root
+and the forward-only ladder, are declared in [workareas.md](workareas.md).
 
 **Reassignment.** Moving a claim between workareas is a journalled act whose event records both
 workareas' policy snapshots; a claim moved to a stricter-policy destination re-enters `held`, and
@@ -186,9 +191,11 @@ first admin key. It holds no grant inside any tenant: it never writes, reads or 
 and the matrix above gives it no content verb to misuse. Tenant isolation mechanics are declared
 in [security.md](security.md).
 
-**Bootstrap.** On first start, a Helm job mints the root operator key. The key value is shown
-exactly once — printed by the job, never stored in plaintext — and the journal records the
-issuance as **issued-without-value**: the event carries the key id and hash, never the secret. A
+**Bootstrap.** On first start, a Helm job mints a **single-use, expiring enrollment secret**
+(stored as a Kubernetes Secret; the job's logs carry progress only, never key material). The
+operator exchanges it over TLS — `oml bootstrap claim` — for the root operator key, shown exactly
+once in the operator's terminal and journalled as **issued-without-value**: the event carries the
+key id and hash, never the secret. The enrollment secret is consumed on first use. A
 lost root operator key is therefore not recoverable from the system; it is replaced by the
 rotation path below, or, if no operator key survives, by re-running the bootstrap ceremony — a
 deliberate ceremony, not an everyday verb. The mockup transcript lives in
@@ -232,11 +239,16 @@ issued-without-value. There is no "show me the key again" verb anywhere in the s
 **Expiry.** Every key carries an expiry set at issuance. An expired key fails closed with a typed
 error; nothing is deleted — the key row and its journalled history remain for the evidence export.
 
-**Rotation = issue-new-then-revoke.** There is no in-place re-key. Rotation issues a new key
-(new id, new grants copied or re-scoped by the admin), the holder switches credentials, and the
-old key is revoked. The overlap window is the admin's choice and both events are journalled, so
-the export shows exactly when each credential could act. Bulk rotation ergonomics for whole crews
-(re-issue many keys in one ceremony) is unbuilt and tracked as a roadmap FR
+**Rotation.** There is no in-place re-key. Rotation is one journalled act (`key.rotated`,
+[event catalog](../data/event-catalog.md)) that mints a successor key — a **new** `key_id`,
+linked to the old one by `rotated_from`, its grants reproduced from the journalled grant records
+— and starts a bounded grace window on the old key, its length the admin's choice
+(`oml keys rotate --grace`, [cli/reference.md](../cli/reference.md)). The event carries both key
+ids and the grace deadline; the holder switches credentials inside the window, and at the
+deadline the old key is revoked — a journalled `key.revoked` citing the rotation as cause — so
+the export shows exactly when each credential could act. An admin who wants different grants on
+the successor amends them afterward, as ordinary journalled grant acts. Bulk rotation ergonomics
+for whole crews (re-issue many keys in one ceremony) is unbuilt and tracked as a roadmap FR
 ([roadmap](../product/roadmap.md): key rotation ergonomics for crews).
 
 **Revocation and the permission epoch.** Revocation is a journalled act that takes effect through

@@ -44,7 +44,7 @@ paths:
       tags: [memories]
       operationId: submitMemory
       summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
-      description: 'Requires: writer effective access; dreamer(propose) when derives_from names another author''s claim. Journals submission.remember or submission.learn.'
+      description: 'Requires: writer effective access, whatever derives_from names — lineage is attribution, not a verb of its own. Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -139,7 +139,7 @@ paths:
       tags: [memories]
       operationId: proposeSupersession
       summary: Propose a replacement version; a new attributed submission, held like any write.
-      description: 'Requires: writer (own claims only — access.author_only otherwise) or dreamer(propose). Target must be the current tip: submission.tip_conflict, re-checked at promotion.'
+      description: 'Requires: writer (own claims only — access.author_only otherwise) or dreamer(propose). Target must be the current tip: submission.tip_conflict, re-checked at promotion. A tainted replacement can never take the default tip (simulation.tip_refused at promotion): it shadows the tip for its simulation audience only.'
       parameters:
         - { $ref: '#/components/parameters/ArtifactId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -229,7 +229,7 @@ paths:
       tags: [claim-administration]
       operationId: tipOverride
       summary: Designate an earlier promoted version as the served tip — explicit and journalled, never a silent re-rank.
-      description: 'Requires: admin key role. Journals lifecycle.tip_override.'
+      description: 'Requires: admin key role. Journals lifecycle.tip_override. Refused with simulation.tip_refused when the designated version is tainted — taint never captures the default tip.'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -729,7 +729,7 @@ paths:
       tags: [keys]
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
-      description: 'Requires: admin key role; operator only with tenant_id, for a tenant''s first admin key. Journalled as issued-without-value (show-once ceremony).'
+      description: 'Requires: admin key role; operator only with tenant_id, for a tenant''s first admin key. Journalled as issued-without-value (show-once ceremony). A key combining the admin role with dreamer-class grants is refused (access.role_exclusive — the two-key rule).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -790,8 +790,8 @@ paths:
     post:
       tags: [keys]
       operationId: rotateKey
-      summary: Issue a successor with grants reproduced from the journalled records; one journalled act links old and new.
-      description: 'Requires: admin key role. Per key in v1; bulk crew rotation is open — FR-6.'
+      summary: Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled records); the old key enters a bounded grace window, then is revoked.
+      description: 'Requires: admin key role. One journalled act (key.rotated) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Per key in v1; bulk crew rotation is open — FR-6.'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -802,10 +802,10 @@ paths:
             schema:
               type: object
               properties:
-                overlap: { type: string, description: 'Overlap window before the old key expires, e.g. "72h".' }
+                grace: { type: string, description: 'Bounded grace window before the old key is revoked, e.g. "72h".' }
       responses:
         '201':
-          description: The successor key, value shown once.
+          description: The successor key, value shown once, rotated_from naming the old key.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/KeyIssued' }
@@ -816,7 +816,7 @@ paths:
       tags: [keys]
       operationId: addGrant
       summary: Bind the key to a workarea node id (never a path) with optional per-grant deny masks; epoch bump.
-      description: 'Requires: admin key role. A grant''s role never exceeds the key''s role ceiling (access.issuer_ceiling).'
+      description: 'Requires: admin key role. A grant''s role never exceeds the key''s role ceiling (access.issuer_ceiling); a dreamer-class grant on an admin key is refused (access.role_exclusive — the two-key rule).'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1015,6 +1015,65 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Simulation' }
         '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/bootstrap/claim:
+    post:
+      tags: [keys]
+      operationId: bootstrapClaim
+      summary: Exchange the deployment's single-use enrollment token for the root operator key — the bootstrap ceremony's one API call.
+      description: 'Authenticated by the enrollment token itself (no API key exists yet). The token is minted by the Helm bootstrap job, consumed on first use; a consumed, expired or unknown token answers auth.invalid with details.reason naming which. Journalled as issued-without-value in the provider chain.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollment_token]
+              properties:
+                enrollment_token: { type: string }
+      responses:
+        '201':
+          description: The root operator key, value shown once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KeyIssued' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/simulations/{simulation_id}/audience:
+    post:
+      tags: [simulations]
+      operationId: changeSimulationAudience
+      summary: Correct a live simulation's audience — the only recovery from the fail-closed no-dreamer state short of ending it.
+      description: 'Requires: admin key role. Journals simulation.audience_changed; the audience at any seq is the fold of simulation.opened plus every audience_changed since. Removal takes effect on the next read; past reads stand in the read log.'
+      parameters:
+        - { name: simulation_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: At least one of add/remove must be non-empty (request.validation otherwise).
+              properties:
+                add:
+                  type: array
+                  items: { $ref: '#/components/schemas/AudienceEntry' }
+                remove:
+                  type: array
+                  items: { $ref: '#/components/schemas/AudienceEntry' }
+                reason: { type: string }
+      responses:
+        '200':
+          description: The resulting audience; carries the same warnings field as creation when it still holds no dreamer key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Simulation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
   /v1/simulations/{simulation_id}/end:
@@ -1335,6 +1394,7 @@ components:
         - access.not_found
         - access.author_only
         - access.issuer_ceiling
+        - access.role_exclusive
         - access.banned
         - request.validation
         - request.idempotency_key_required
@@ -1344,6 +1404,7 @@ components:
         - submission.scan_veto
         - submission.attachment_missing
         - submission.simulation_id_required
+        - submission.lineage_required
         - submission.tip_conflict
         - submission.claim_key_conflict
         - submission.universe_refused
@@ -1355,6 +1416,7 @@ components:
         - simulation.audience_refused
         - simulation.ended
         - simulation.taint_refused
+        - simulation.tip_refused
         - upload.session_invalid
         - upload.digest_mismatch
         - lifecycle.erased
@@ -1385,7 +1447,7 @@ components:
       type: object
       required: [verb, workarea_id, claim_key, kind, body]
       properties:
-        verb: { type: string, enum: [remember, learn], description: learn requires non-empty derives_from. }
+        verb: { type: string, enum: [remember, learn], description: learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. }
         workarea_id: { type: string }
         claim_key: { type: string, description: "Groups versions of one claim; unique per (tenant, workarea) over non-erased rows." }
         kind: { type: string, enum: [memory, derived_fact, steering] }
@@ -1866,6 +1928,7 @@ components:
         label: { type: string }
         expiry: { type: [string, 'null'], format: date-time }
         revoked_at: { type: [string, 'null'], format: date-time }
+        rotated_from: { type: [string, 'null'], description: The key_id this key succeeded by rotation, if any (key.rotated links the two). }
         grants: { type: array, items: { $ref: '#/components/schemas/Grant' } }
         denials: { type: array, items: { $ref: '#/components/schemas/Denial' } }
         epoch: { type: integer }
@@ -1950,6 +2013,13 @@ components:
               key_id: { type: string }
               grant_ref: { type: string }
         label: { type: string }
+
+    AudienceEntry:
+      type: object
+      description: Exactly one of key_id / grant_ref names the audience member.
+      properties:
+        key_id: { type: string }
+        grant_ref: { type: string }
 
     Simulation:
       type: object

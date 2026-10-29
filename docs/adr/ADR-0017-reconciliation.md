@@ -48,7 +48,9 @@ guards grows.
 - **d3 — Comparisons are cardinality- and state-aware.** The unit of comparison is
   (artifact_id, version, state, row count) — not event counts, which miss duplicates, and not
   presence alone, which misses a row in the wrong state. Digest comparison runs over **ciphertext
-  digests**, which is what lets the reconciler verify bytes keylessly (d6).
+  digests** — journalled per body and attachment in the submission events (ADR-0002 d5), so the
+  fold, not the store under audit, supplies the expected digest — which is what lets the
+  reconciler verify bytes keylessly (d6).
 
 - **d4 — The finding vocabulary is closed:** `missing`, `orphan`, `duplicate`, `state-mismatch`,
   `digest-mismatch`, `stale-frontier`, `dead-lettered`. Every divergence the reconciler can report

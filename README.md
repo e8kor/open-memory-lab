@@ -12,7 +12,10 @@ say-so.
 That gate is structural, not advisory. The verbs an agent can call cannot approve, delete, or
 rewrite history; review is performed by a different identity; erasure is an explicit, recorded act
 with a stated boundary rather than a silent delete; and every decision leaves a signed, verifiable
-trail that can be exported as evidence. The cost of this design is equally plain: writes are not
+trail that can be exported as evidence. The internals commit to one shape too: a single pure core
+holds every one of these rules, and everything that touches the world — storage, transport,
+plugins — sits behind an explicit boundary around it
+([ADR-0019](docs/adr/ADR-0019-hexagonal-architecture-and-plugins.md)). The cost of this design is equally plain: writes are not
 instantly visible, review capacity is a real operational constraint, and the documentation marks
 every unmeasured or unbuilt property as exactly that.
 
@@ -30,6 +33,7 @@ The full design lives in [`docs/`](docs/) and is published via GitHub Pages.
 | Section | What it covers |
 | --- | --- |
 | [Overview](docs/index.md) | What OML is: the problem, what you get, the evidence it produces |
+| [Concepts](docs/concepts.md) | The design's vocabulary: tenants, claims, workareas, roles, admission, simulations, the journal |
 | [Review guide](docs/review-guide.md) | What a reviewer of this design decides, in order |
 | [Product](docs/product/positioning.md) | Who it is for, and the [roadmap](docs/product/roadmap.md) of open questions with exit criteria |
 | [Architecture](docs/architecture/overview.md) | System structure: admission, workareas, roles, storage, retrieval, security |

@@ -43,8 +43,10 @@ OML sits between your crews and their memory and makes the write path accountabl
   you can hand to someone who asks "who approved this and on what basis."
 - **No silent deletion.** Removing a memory is itself a recorded act. Content can be made
   permanently unreadable by destroying its encryption key, and the record of *that the removal
-  happened* survives. The design documents exactly which traces are destroyed and which (such as
-  who-wrote-what metadata) are not yet — honestly, as open work.
+  happened* survives. The boundary is stated honestly: destruction takes effect immediately on
+  the live system and, for copies held in backups, no later than a named retention-and-rotation
+  window; and some traces (such as who-wrote-what metadata) are not destroyed yet — open work,
+  tracked.
 
 Agents connect over a standard HTTP plugin interface; humans administer the system entirely from
 a command-line tool. There is no web console — that is a deliberate choice, examined in the
@@ -68,7 +70,11 @@ on a particular machine. (Design commitment, not yet exercised.)
 
 ## Where to go next
 
+- **New to the design?** Start with [Concepts](concepts.md) — the vocabulary, one concept at a
+  time, each linked to the page that decides it.
 - **Reviewing this design?** Start with the [review guide](review-guide.md) — the decisions that
   matter most, in the order to examine them.
 - **Engineering?** Start with the [architecture overview](architecture/overview.md) — system
-  context, containers, and the main runtime scenarios.
+  context, containers, the module structure (one pure core holds every rule, and everything
+  that touches the world sits behind an explicit boundary around it), and the main runtime
+  scenarios.

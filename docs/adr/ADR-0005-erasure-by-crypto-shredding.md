@@ -18,8 +18,8 @@ identifying metadata is not non-personal just because adjacent content is hashed
 discovery is incomplete; and the copy inventory spans every controlled deployment and projection,
 not a one-store boundary. The honest repair for all of them is the same: an inventory.
 
-So the inventory is built into the design from day one — every copy class a body or its
-derivatives can land in is enumerated below with its disposition — and the guarantee is stated
+So the inventory is built into the design from day one — every copy class a body, its
+derivatives or its usable key copies can land in is enumerated below with its disposition — and the guarantee is stated
 with its boundary in the same sentence. Everything here is decided, not built; the inventory is a
 commitment about the design, enforced by nothing until the conformance work the
 [roadmap](../product/roadmap.md) tracks exists.
@@ -60,13 +60,15 @@ commitment about the design, enforced by nothing until the conformance work the
   | `silver`/`gold` body columns | per-artifact-DEK ciphertext | unreadable at DEK destruction; superseded parquet versions and checkpoints keep the ciphertext until VACUUM and checkpoint cleanup run — that retention bound is part of the erasure SLO, not an afterthought |
   | object-store versions (`oml-bodies`, quarantine) | ciphertext | unreadable at DEK destruction; versioned copies stay ciphertext |
   | pgvector rows, tsvector entries | **plaintext-derived** (embeddings, token lists) | removed from live tables at erase time; persist in Postgres base backups and WAL until the named backup retention window expires — that is the honest statement, and the window is part of the erasure SLO |
+  | `artifact_keys.wrapped_dek` in Postgres base backups and WAL | **a usable copy of the wrapped DEK** — key material, not content | live row nulled at erase; copies in base backups and WAL survive the backup retention window, and while the wrapping KEK lives a restored backup plus KMS unwrap could recover the DEK and decrypt every surviving ciphertext copy. The designed answer: scheduled KEK rotation re-wraps **live** DEKs only, and a retired KEK is destroyed once the backup horizon has passed, invalidating every wrapped-DEK copy in older backups — erasure completes against live stores immediately and against backups no later than **backup retention window + KEK rotation period** |
   | `read_events` | query digests, memory ids | retention-bounded by tenant policy (owned by the [retrieval](../architecture/retrieval.md) and [audit](../architecture/audit-and-lineage.md) pages); in this inventory because it outlives the body |
   | caches (serving-path decrypts, CLI output, client-side copies inside OML's control) | plaintext | bounded TTLs inside the deployment; anything outside the deployment's control is outside the claim, and the documentation says so |
 
   Two consequences of the table are worth stating plainly. First, erasure is not instantaneous
   across every class: the design's erasure claim is "unreadable now on every serving path;
-  physically gone from derived and backup copies within the named retention bounds", and the
-  bounds (VACUUM/checkpoint cadence, backup retention window) are part of the erasure SLO — both
+  physically gone from derived and backup copies, and unlockable by no surviving key copy, within
+  the named retention bounds", and the bounds (VACUUM/checkpoint cadence, backup retention
+  window, KEK rotation period) are part of the erasure SLO — all
   unmeasured until built, tracked on the [roadmap](../product/roadmap.md). Second, the claim
   spans exactly the copies OML controls; a client that read a body before erasure holds what it
   holds.
@@ -93,16 +95,23 @@ commitment about the design, enforced by nothing until the conformance work the
   never held plaintext, so destroying a DEK breaks nothing it attests. The price was paid
   upstream, in [ADR-0004](ADR-0004-bodies-and-attachments.md) d1 — the journal alone can never
   answer what a memory said.
-- The design owes an erasure SLO with two named bounds (lake VACUUM/checkpoint cadence, Postgres
-  backup retention) before the erasure story is complete; both are roadmap rows with exit
-  criteria, and until they are measured the honest sentence is "unreadable immediately,
-  physically gone within bounds we have not yet measured".
+- The design owes an erasure SLO with three named bounds (lake VACUUM/checkpoint cadence,
+  Postgres backup retention, KEK rotation period) before the erasure story is complete; all are
+  roadmap rows with exit criteria, and until they are measured the honest sentence is "unreadable
+  immediately, physically gone — and unlockable from any surviving key copy — within bounds we
+  have not yet measured".
 - A genuine loss of audit power is accepted: after an erase, the journal proves a decision was
   made over a commitment that can no longer be opened — not what the content was.
 - Key management becomes load-bearing infrastructure: provable DEK destruction, a KEK whose
   compromise is a tenant-wide event, and a backup posture in which a restored database never
-  resurrects a destroyed wrapped key. Each is design work the
-  [security page](../architecture/security.md) owns; none is built.
+  serves from a resurrected wrapped key. The posture is now designed in two halves: the
+  fenced-restore ceremony ([deployment](../operations/deployment.md)) re-applies erase events
+  newer than the backup before readiness, and the KEK rotation/retirement schedule (d4) bounds
+  how long the backup bytes themselves hold a usable key copy. Each is design work the
+  [security page](../architecture/security.md) owns; none is built, and the end-to-end
+  demonstration rides the [roadmap](../product/roadmap.md)'s FR-1 erasure row, whose exit
+  criterion already demands unrecoverability from every copy class in this inventory — the
+  inventory d4 just widened to include the key-copy class.
 - Multi-subject content erases wholly: the key is per artifact, so an artifact mentioning two
   people erases for both when either asks. Over-erasure is accepted and recorded, because the
   alternative — subject-level keying of free text — promises a precision the admission path

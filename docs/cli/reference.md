@@ -25,7 +25,10 @@ Every verb below is designed, not built; no transcript or flag on this page has 
   `--dry-run` that predicts refusals still exits `0`: the preview succeeded.
 - **Mass operations default to `--dry-run`** and require `--apply` to act — the
   preview-every-mass-act rule: an act whose reach the operator has not seen is an act the
-  operator has not decided. On this page that covers `bans`, `keys revoke --matching`, re-parent, and `simulations end`.
+  operator has not decided. On this page that covers `bans add`, `keys revoke --matching`,
+  `workareas re-parent`, and `simulations end`; each such synopsis lists `[--apply]`.
+  Single-target verbs whose synopsis lists `[--dry-run]` (`claims reassign`, `erase`) act by
+  default; there `--dry-run` is an explicit opt-in preview, not the default.
 - **Names resolve to ids.** Workareas may be named by path for convenience, but every grant, act
   and journal event binds to the workarea **node id** ([workareas](../architecture/workareas.md));
   the CLI prints both and the JSON output always carries the id.
@@ -49,12 +52,25 @@ server-side from the key on every call, never from the context
 | `oml context show` | Active context: endpoint, key id (never the value), role, tenant, key expiry — resolved by one authenticated call. |
 | `oml context remove <name>` | Forget a context locally. Removing a context revokes nothing; revocation is `oml keys revoke`. |
 
+## `oml bootstrap` — claiming the root operator key
+
+The first-start Helm job never prints key material: it mints a single-use, expiring **enrollment
+secret**, stored as a Kubernetes Secret, and its logs carry progress only
+([deployment](../operations/deployment.md)). `oml bootstrap claim` exchanges that secret over TLS
+for the root operator key. This is the one verb that takes `--url` directly: it runs before any
+context or key exists, so there is nothing for a context to resolve.
+
+| Verb | Does |
+|---|---|
+| `oml bootstrap claim --url <https://…> [--token-stdin]` | Exchange the enrollment secret for the root operator key. With `--token-stdin` the secret is read once from stdin, never from argv. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). |
+
 ## `oml tenants` — the operator's verbs
 
 The operator role exists to bootstrap tenants and nothing else: it never writes, reads or reviews
-content ([roles and keys](../architecture/roles-and-keys.md)). The operator key itself is minted
-show-once by the first-start Helm job and journalled as issued-without-value
-([deployment](../operations/deployment.md)); the [bootstrap transcript](sessions.md#1-bootstrap-the-operator-key-and-the-first-tenant)
+content ([roles and keys](../architecture/roles-and-keys.md)). The root operator key is claimed
+show-once through `oml bootstrap claim` above, against the enrollment secret the first-start Helm
+job mints ([deployment](../operations/deployment.md)); the
+[bootstrap transcript](sessions.md#1-bootstrap-the-operator-key-and-the-first-tenant)
 shows the whole ceremony.
 
 | Verb | Does |
@@ -73,9 +89,9 @@ revoke-and-reissue.
 
 | Verb | Does |
 |---|---|
-| `oml keys issue --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--expires <duration>] [--label <text>]` | Issue a key. Refused when any requested role exceeds the issuer's (issuer ceiling). Prints the value once, then only the key id ever again. |
-| `oml keys revoke <key-id> [--reason <text>]` | Journalled revocation, effective at the next permission-epoch check. `--matching <selector>` revokes a set and therefore defaults to `--dry-run`. |
-| `oml keys rotate <key-id> [--overlap <duration>]` | Issue a successor key with the same grants (reproduced from the journalled grant records), schedule the old key's expiry after the overlap window, print the new value once. One journalled act linking old and new key ids. Rotation is per key in v1; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
+| `oml keys issue --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--expires <duration>] [--label <text>]` | Issue a key. Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). Prints the value once, then only the key id ever again. |
+| `oml keys revoke <key-id>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the next permission-epoch check. `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
+| `oml keys rotate <key-id> [--grace <duration>]` | Mint a successor key — new key id, linked by `rotated_from`, grants reproduced from the journalled grant records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key in v1; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `oml keys list [--role …] [--expiring <duration>]` | Key ids, roles, labels, expiries. Never values. |
 | `oml keys show <key-id>` | One key: grants, denials, epoch, issuance and revocation events. |
 
@@ -91,13 +107,13 @@ a ban would refuse — without journalling anything.
 
 | Verb | Does |
 |---|---|
-| `oml grants add <key-id> <workarea>:<role> [--deny <subtree> …]` | Add a grant, optionally carrying deny entries that mask subtrees within this grant only. Journalled; bumps the key's permission epoch. |
+| `oml grants add <key-id> <workarea>:<role> [--deny <subtree> …]` | Add a grant, optionally carrying deny entries that mask subtrees within this grant only. A dreamer-class grant on an admin key is refused (`access.role_exclusive` — the two-key rule). Journalled; bumps the key's permission epoch. |
 | `oml grants remove <key-id> <grant-id>` | Remove one grant. Journalled; epoch bump. |
 | `oml grants list [--key <key-id>] [--workarea <path>]` | Grants as journalled, with the derived effective access per key. |
 | `oml grants effective <key-id> [--at <workarea>]` | The resolved answer: what this key can do, where, and which deny produced each hole — reproducible from the journal by construction. |
 | `oml deny set <key-id> <subtree> [--reason <text>]` | Create or extend the key's **global** deny object (deny-wins across all grants). Distinct from a per-grant `--deny`. |
 | `oml deny lift <key-id> <deny-id>` | Journalled lift. |
-| `oml bans add --principal <id>\|--source <selector> [--reason <text>] [--dry-run]` | Ban an author or source. Default `--dry-run` prints the reach preview: keys affected, held submissions that would be refused, workareas touched. `--apply` journals it. |
+| `oml bans add --principal <id>\|--source <selector> [--reason <text>] [--apply]` | Ban an author or source. Default `--dry-run` prints the reach preview: keys affected, held submissions that would be refused, workareas touched. `--apply` journals it (`ban.imposed`). |
 | `oml bans lift <ban-id>` | Journalled lift; admission resumes at the next check. |
 | `oml bans list` | Active and lifted bans with who imposed and who lifted each. |
 
@@ -117,8 +133,8 @@ them into `propose` and `ratify` run under different keys.
 | `oml workareas crew set <workarea> --crew-name … [--charter-uri …]` | Journalled crew-metadata update. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
 | `oml workareas relate propose <a> <b> --label <relates_to\|continues\|derived_from\|mirrors>` | Propose an edge. Requires dreamer(propose) on ≥1 endpoint and reader on both. |
 | `oml workareas relate ratify <edge-id>` | Ratify under a different key with dreamer(review) on **both** endpoints; ratifier ≠ proposer, refused otherwise. |
-| `oml workareas re-parent <workarea> --new-parent <target> [--dry-run]` | Journalled admin act; the server performs the single-transaction descendant path rewrite. Mass-reach act: defaults to `--dry-run` showing the paths that would be rewritten and the grants whose derived paths change. |
-| `oml workareas status propose <workarea> --to <committed\|validated>` | Propose a forward transition. Proposing `validated` is refused while any child is not `validated`. Backward transitions do not exist; there is no flag for them. |
+| `oml workareas re-parent <workarea> --new-parent <target> [--apply]` | Journalled admin act; the server performs the single-transaction descendant path rewrite. Mass-reach act: defaults to `--dry-run` showing the paths that would be rewritten and the grants whose derived paths change; `--apply` performs the rewrite. |
+| `oml workareas status propose <workarea> --to <committed\|validated>` | Propose the next forward rung; the proposal is itself journalled (`workarea.status_proposed`). The ladder has no skips: `--to validated` is proposable only from `committed`, and a rung-skipping or out-of-ladder proposal is refused as `workarea.transition_refused` — the same code that refuses proposing `validated` while any child is not `validated`. Backward transitions do not exist; there is no flag for them. |
 | `oml workareas status ratify <transition-id>` | Second, non-proposing dreamer or admin ratifies; the journal records the transition with its policy snapshot. The [freeze transcript](sessions.md#4-freezing-a-workarea) shows the full ceremony. |
 | `oml workareas status pending` | Transitions awaiting a ratifier. |
 
@@ -157,7 +173,7 @@ operates the fence; it cannot weaken it.
 | `oml simulations open --audience <key-id>[,…] [--label <text>]` | Journalled act creating the simulation and its audience list. A simulation whose audience contains no dreamer key can promote nothing — the CLI warns, the server fails closed. |
 | `oml simulations list [--ended]` | Simulations with state, audience size, row and taint counts. |
 | `oml simulations show <sim-id>` | One simulation: audience, rows written, sim-derived (tainted) claims outside it. |
-| `oml simulations end <sim-id> [--dry-run]` | Journalled end: demotes the simulation's rows and triggers re-review of tainted claims. Mass-reach act: defaults to `--dry-run` listing every row and taint the end would touch. |
+| `oml simulations end <sim-id> [--apply]` | Journalled end: demotes the simulation's rows and triggers re-review of tainted claims. Mass-reach act: defaults to `--dry-run` listing every row and taint the end would touch; `--apply` journals `simulation.ended` and the per-row demotions. |
 
 ## `oml claims` and `oml erase` — claim administration
 

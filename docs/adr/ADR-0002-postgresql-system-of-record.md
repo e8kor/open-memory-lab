@@ -52,7 +52,10 @@ volume.
   `pg_advisory_xact_lock` on the tenant's chain head, held to commit, so commit visibility order
   equals `seq` order per tenant. The outbox insert happens inside that same serialized
   transaction, which is what lets the lake writer (ADR-0003) and the reconciler (ADR-0017) treat
-  outbox order as journal order. The cost: one tenant's writes serialize on its chain head; writes
+  outbox order as journal order **per tenant**. Across tenants nothing is serialized: the global
+  outbox `seq` is assigned at insert and becomes visible only at commit, so the global stream has
+  no visibility order of its own — the lake writer's stable-prefix cut (ADR-0003 d4) is what makes
+  draining it safe. The cost: one tenant's writes serialize on its chain head; writes
   of different tenants do not contend.
 
 - **d4 — The journal table is append-only by mechanism, not convention.** `REVOKE UPDATE/DELETE`
@@ -60,9 +63,12 @@ volume.
   destroys a key, never a row (the erasure boundary is ADR-0005 of this register).
 
 - **d5 — Journal and outbox payloads never carry body plaintext.** An event references content
-  only as a digest or as per-artifact-DEK ciphertext references, and the ed25519 signature covers
-  that digest/ciphertext envelope. So chain verification survives crypto-shredding: destroying a
-  DEK invalidates no signature and breaks no link. Identity metadata in the chain (writer
+  only by digest — the plaintext digest (content identity) and the ciphertext digest of the stored
+  per-artifact-DEK encrypted object, both computed at admission, where the body is encrypted — and
+  the ed25519 signature covers that digest envelope. So chain verification survives
+  crypto-shredding: destroying a DEK invalidates no signature and breaks no link. The journalled
+  ciphertext digest is also what gives the key-less reconciler (ADR-0017) a journal-side comparand
+  for store bytes. Identity metadata in the chain (writer
   identity, principal) is minimized but present — attribution is what reconciliation and evidence
   exports need — and its erasure or pseudonymization is an open FR on the
   [roadmap](../product/roadmap.md), stated there rather than implied here.

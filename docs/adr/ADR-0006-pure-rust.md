@@ -68,6 +68,23 @@ process should carry the smallest possible runtime.
   because it is the reason d4's TCB line is enforceable: a job outside the key's
   process can be any language without entering the signing trust discussion.
 
+- **d6 — One Cargo workspace, shaped by the hexagon
+  ([ADR-0019](ADR-0019-hexagonal-architecture-and-plugins.md)).** The crates:
+
+    | Layer | Crates | Holds |
+    |---|---|---|
+    | Domain | `oml-domain` | the pure core — admission state machine, workarea algebra, role/verb ceilings, status ladder, taint predicate; **every constitution invariant, and nothing with I/O** |
+    | Application | `oml-app` | the port traits and the use-cases that drive the domain through them |
+    | Driven adapters | `oml-pg` (sqlx), `oml-lake` (delta-rs), `oml-objectstore` (object_store), `oml-kms` | one crate per infrastructure dependency, implementing its port, holding no policy |
+    | Driving adapters | `oml-transport-http`, `oml-transport-mcp` | the `/v1` surface and the MCP facade as adapters over `oml-app` |
+    | Plugins | `oml-scan-*`, `oml-embed-*` | compiled-in implementations behind the scanner/embedder ports, under ADR-0019's plugin law |
+    | Binaries | `oml-server`, `oml-lakewriter`, `oml-reconciler`, `oml-indexer`, `oml-cli` | thin compositions: each wires `oml-domain` + `oml-app` to the adapter set its job needs |
+
+    This layout is the enforcement home of "constitution in the core": only `oml-domain`
+    encodes invariants, adapters hold no policy, and a binary that lacks a port in its
+    composition cannot perform that port's operation — d5's custody boundary, restated as a
+    dependency graph.
+
 ## Consequences
 
 - One toolchain builds four static binaries and the CLI; container images carry

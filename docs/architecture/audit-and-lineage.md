@@ -27,8 +27,8 @@ durability domain, the append-only enforcement and the fork check). Every act th
 the system holds or who may see it is a journal event: capture, scan verdict, review verdict,
 ratification (with the review-policy snapshot it was decided under), demote, erase, reassign,
 supersession, key issuance and revocation, grant and deny changes, workarea creation, re-parent
-and status transitions, bans and lifted bans, simulation start and end, dead-letter and
-re-enqueue, materialize-skipped. Each event carries the acting principal and `api_key_id`, a
+and status transitions, bans and lifted bans, simulation start, audience change and end,
+dead-letter and re-enqueue, materialize-skipped. Each event carries the acting principal and `api_key_id`, a
 real chain timestamp, and — where it concerns content — references to that content.
 
 Two deliberate attestation limits travel with every claim this page makes about the journal:
@@ -59,7 +59,7 @@ Two further exclusions, each with its reason:
   read rate and without read records becoming unerasable. Retention is tenant policy; the
   mechanics are [retrieval](retrieval.md)'s.
 - **Identity metadata in the chain is minimized.** The chain carries writer identity and
-  principal because attribution is a commissioning requirement — who wrote what, when, where.
+  principal because attribution is a design requirement of this system — who wrote what, when, where.
   It carries no more than that, and the design is honest that what it does carry is not erased
   by crypto-shredding: see [the boundary](#the-honest-boundary), and the attribution-metadata
   erasure FR in the [roadmap](../product/roadmap.md).
@@ -119,9 +119,8 @@ that chain is the **tip**.
 The rules, enforced as constraints in the [Postgres schema](../data/postgres-schema.md):
 
 - One served tip per `(tenant, workarea_id, claim_key)` — a partial unique index over served
-  rows; the [Postgres schema](../data/postgres-schema.md) records why the blueprint's
-  `(tenant, claim_key)` shorthand is spelled with the workarea: `claim_key` is namespaced per
-  workarea.
+  rows; the [Postgres schema](../data/postgres-schema.md) records why the index is spelled with
+  the workarea: `claim_key` is namespaced per workarea.
 - `claim_key` is unique per `(tenant, workarea_id)` over non-erased rows.
 - **Promotion of a supersession CAS-checks its target is still the current tip.** Two
   supersessions racing for the same tip cannot both win; the loser is refused with a typed
@@ -130,6 +129,12 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
 - **Reassignment that would collide on `claim_key` in the destination is refused**, unless the
   journalled move event records a re-key. A silent re-key would break the chain's identity;
   a recorded one is lineage.
+- **The default tip is never a simulation-tainted version.** Tip resolution is audience-scoped
+  ([simulations](simulations.md)): taint never captures the default tip. Tip computation for keys
+  outside a simulation's audience ignores `provenance: simulation` rows and sim-derived claims,
+  a promoted tainted supersession is served only as that audience's overlay tip, and any act that
+  would make a tainted version the default served tip is refused (`simulation.tip_refused`). The
+  default tip of a real claim is therefore bit-for-bit indifferent to every simulation.
 
 A superseded version is not deleted — it remains readable as history behind the tip, carrying
 its own decision trail, until demoted or erased by its own journalled act.
@@ -144,7 +149,7 @@ acts in one journalled operation:
 ```mermaid
 flowchart LR
     A["erase request<br/><i>admin key, journalled</i>"] --> B["erase event appended<br/><i>signed, in the tenant chain</i>"]
-    B --> C["DEK destroyed<br/><i>artifact_keys.destroyed_at set,<br/>wrapped key unrecoverable</i>"]
+    B --> C["DEK destroyed<br/><i>artifact_keys.destroyed_at set,<br/>live wrapped key destroyed;<br/>backup copies decay with KEK retirement</i>"]
     C --> D["live derived copies removed<br/><i>tsvector, pgvector, caches</i>"]
     D --> E["every ciphertext copy<br/>everywhere is now noise"]
     B -.-> F["chain still verifies:<br/>signatures cover digests,<br/>never bodies"]
@@ -161,8 +166,9 @@ promise, and the inventory below is the promise spelled out per copy.
 
 ### The erasure inventory
 
-Every copy class a memory's content can reach, and its disposition at erase. This table is the
-normative statement; any page that mentions erasure links here rather than restating it.
+Every copy class a memory's content — or the key material that can unlock it — can reach, and its
+disposition at erase. This table is the normative statement; any page that mentions erasure links
+here rather than restating it.
 
 | Copy class | What it holds | Disposition at erase |
 |---|---|---|
@@ -172,6 +178,7 @@ normative statement; any page that mentions erasure links here rather than resta
 | `silver`/`gold` body columns | Per-artifact-DEK ciphertext | Unreadable the moment the DEK is destroyed; a retract MERGE updates row state. Parquet files of **earlier Delta versions and checkpoints** keep the ciphertext until `VACUUM` and checkpoint cleanup remove them — that retention bound is part of the erasure SLO, stated, not hidden |
 | Object-store versions (`oml-bodies`, quarantine) | Ciphertext of bodies and attachments, including prior object versions | Unreadable at DEK destruction; versions age out under bucket retention |
 | `pgvector` rows and `tsvector` entries | **Plaintext-derived** index content ([retrieval](retrieval.md)) | Removed from live tables at erase time; **persist in Postgres base backups and WAL until the named backup retention window expires** — that is the honest statement, and the window is a stated operational bound, not an apology |
+| `artifact_keys.wrapped_dek` in Postgres base backups and WAL | The **wrapped DEK itself** — a usable key copy, not content | The live row is nulled at erase; copies in base backups and WAL survive until the backup retention window expires, and **while the wrapping KEK lives, a restored backup plus KMS unwrap could recover the DEK and decrypt every surviving ciphertext copy**. The designed bound: scheduled KEK rotation re-wraps **live** DEKs only, and a retired KEK is destroyed once the backup horizon has passed — destroying it invalidates every wrapped-DEK copy in older backups. Erasure therefore completes against live stores immediately, and against backups no later than **backup retention window + KEK rotation period** ([security](security.md) owns key custody; the fenced-restore ceremony is [deployment](../operations/deployment.md)'s) |
 | `read_events` | Memory ids and query digests, not bodies | Retention-bounded by tenant policy ([retrieval](retrieval.md)); in this inventory because a query digest can correlate with erased content until its window closes |
 | Serving-path caches | Decrypted bodies in flight | Invalidated at erase; any cache added later enters this inventory as a named copy class before it ships |
 | Attribution metadata (writer identity, principal, timestamps, workarea path) | Plaintext, in journal, metadata rows and lake rows | **Not erased by crypto-shredding.** Its erasure or pseudonymization is a tracked FR with an exit criterion in the [roadmap](../product/roadmap.md) — open, not solved |
@@ -179,11 +186,13 @@ normative statement; any page that mentions erasure links here rather than resta
 ### The honest boundary
 
 What an erase promises: after the journalled erase event, no component of the system can decrypt
-the body or attachments, every live plaintext-derived copy is removed, and every remaining
-ciphertext copy decays to noise on its stated retention schedule (Delta `VACUUM`, object
-versioning, backup expiry). What it does not promise: instantaneous disappearance of
-plaintext-derived index entries from backups taken before the erase, and erasure of attribution
-metadata. Both limits are stated here, bounded by named windows or tracked FRs, and repeated
+the body or attachments from any live store, every live plaintext-derived copy is removed, and
+every remaining ciphertext copy decays to noise on its stated retention schedule (Delta `VACUUM`,
+object versioning, backup expiry). What it does not promise: instantaneous disappearance of
+plaintext-derived index entries from backups taken before the erase; instantaneous invalidation of
+the wrapped-DEK copies in those same backups — they remain usable key copies until the retired KEK
+that wrapped them is destroyed, no later than backup retention window + KEK rotation period; and
+erasure of attribution metadata. All three limits are stated here, bounded by named windows or tracked FRs, and repeated
 wherever erasure is mentioned — because the alternative, a one-word "erased" that a reader takes
 as absolute, is an overclaim waiting for a retraction. The sanctioned formulation, everywhere:
 **a journalled erase event whose effect on each copy class is listed here.**
@@ -205,7 +214,8 @@ not pretend otherwise. The resolution rests on one foundational move and one del
   erasure. Deleting the live key alone is insufficient; erasure requires an inventory of every
   usable key copy and every plaintext or derived copy, plus fenced restore. That scoping is why
   [the inventory above](#the-erasure-inventory) exists as a table rather than a sentence, why
-  backups and Delta version history appear in it with named windows, and why attribution
+  backups and Delta version history appear in it with named windows, why the wrapped-DEK copies in
+  Postgres backups appear in it as a usable-key-copy class bounded by KEK retirement, and why attribution
   metadata is listed as not-erased rather than assumed non-personal because adjacent content is
   hashed — signed identifying metadata must be minimized or individually erasable, and OML's
   answer is minimization now and an erasure FR for the rest.
@@ -213,6 +223,7 @@ not pretend otherwise. The resolution rests on one foundational move and one del
 The design's answer to Article 17, then: bodies and attachments are erasable by crypto-shredding
 with a journalled, auditable erase event; the journal holds no plaintext, so the record survives;
 plaintext-derived copies are removed live and bounded in backups by a named retention window;
+wrapped-DEK copies in backups are bounded by scheduled KEK rotation and retired-KEK destruction;
 attribution metadata is the open edge, tracked as an FR with an exit criterion. The open edges
 are stated because a second-line risk function is paid to find them, and finding them stated is
 the difference between a design review and a retraction. None of this is legal advice, and no

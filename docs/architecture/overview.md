@@ -5,8 +5,8 @@
 Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory
 asserts a claim; every claim is held on arrival, scanned, reviewed by an identity that did not
 write it, and only then visible to others. This page is the map: the system in its context, the
-containers inside the Kubernetes boundary, the five runtime scenarios that exercise them, and
-where each constitutional rule is enforced. Contracts live on the pages that own them — this page
+containers inside the Kubernetes boundary, the module structure inside every container, the five
+runtime scenarios that exercise them, and where each constitutional rule is enforced. Contracts live on the pages that own them — this page
 links, it does not restate. The constitution itself (rules R1–R4 and their one bounded exception)
 is declared in [ADR-0001](../adr/ADR-0001-the-constitution.md).
 
@@ -39,7 +39,7 @@ flowchart LR
   over HTTP. Who may review what: [roles-and-keys.md](roles-and-keys.md); how a verdict is bound
   to what was served: [cli/reference.md](../cli/reference.md) and [admission.md](admission.md).
 - **Admins and the operator** use the `oml` CLI, which speaks the same HTTP API with
-  admin/operator keys. There is no web UI (§5). CLI verbs: [cli/reference.md](../cli/reference.md).
+  admin/operator keys. There is no web UI (§6). CLI verbs: [cli/reference.md](../cli/reference.md).
 
 Tenancy is derived server-side from the API key, never from the request; everything below is
 per-tenant ([security.md](security.md)).
@@ -58,7 +58,7 @@ flowchart TB
     CL["Agents / reviewer crews / CLI"]
     subgraph k8s ["Kubernetes boundary"]
         S["oml-server<br/>axum, N stateless replicas<br/>loads the signing key<br/>holds DEKs on the serving path"]
-        LW["oml-lakewriter<br/>singleton, leader lease<br/>no signing key · encrypt-only KMS grant"]
+        LW["oml-lakewriter<br/>singleton, leader lease<br/>no signing key · keyless, moves ciphertext verbatim"]
         RE["oml-reconciler<br/>CronJob, read-only<br/>no signing key · no decrypt — keyless"]
         IX["oml-indexer<br/>embeddings per tenant<br/>no signing key"]
         PG[("PostgreSQL<br/>signed per-tenant journal chains,<br/>metadata, outbox, serving indexes<br/>— the system of record")]
@@ -88,12 +88,58 @@ flowchart TB
 A compromised replica is treated as key compromise; the signature attests the deployment, not a
 unique process ([storage.md](storage.md)).
 
-## 3. Runtime scenarios
+## 3. Module structure
+
+Inside every binary the code has one shape, decided in
+[ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md): a hexagon. A pure domain core
+(`oml-domain`) holds the admission state machine, the workarea algebra, the role/verb ceilings,
+the status ladder and the taint predicate — every constitution invariant, and no I/O. Around it,
+the application layer (`oml-app`) declares ports as Rust traits; everything that touches the
+world is an adapter implementing one. The four binaries and the CLI are thin compositions of the
+same core with the adapter set each job needs; the crate list is committed in
+[ADR-0006](../adr/ADR-0006-pure-rust.md).
+
+```mermaid
+flowchart LR
+    subgraph driving ["Driving adapters"]
+        H["HTTP /v1 transport"]
+        M["MCP facade"]
+        C["oml CLI"]
+    end
+    subgraph hex ["The hexagon"]
+        APP["oml-app<br/>ports (traits) + use-cases"]
+        DOM["oml-domain<br/>pure core — every<br/>constitution invariant,<br/>no I/O"]
+        APP --> DOM
+    end
+    subgraph driven ["Driven adapters"]
+        PGA["Postgres<br/>(sqlx)"]
+        LKA["Delta lake<br/>(delta-rs)"]
+        OSA["Object store<br/>(object_store)"]
+        KMA["KMS"]
+        PL["Plugin ports:<br/>scanners · embedders ·<br/>exporters"]
+    end
+    H --> APP
+    M --> APP
+    C --> APP
+    APP --> PGA
+    APP --> LKA
+    APP --> OSA
+    APP --> KMA
+    APP --> PL
+```
+
+Plugins exist only at the scanner, embedder and exporter ports; in v1 they are compiled-in Rust
+implementations selected by journalled configuration. A plugin can narrow, never widen — it
+cannot mint verbs, can move admission only toward holding, never sits on the signing or erasure
+path, and its identity and version ride the journal events its work informs
+([ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md)).
+
+## 4. Runtime scenarios
 
 Five sequences cover the moving parts. Each diagram names the page that owns its contract; the
 diagrams are illustrations, not specifications.
 
-### 3.1 A write — remember → held → scan → ack on Postgres commit
+### 4.1 A write — remember → held → scan → ack on Postgres commit
 
 Owned by [admission.md](admission.md) (pipeline) and [storage.md](storage.md) (commit point).
 
@@ -114,7 +160,7 @@ sequenceDiagram
 The ack means exactly one thing: the journal event, the metadata and the outbox row committed
 together. A held body never reaches the lake.
 
-### 3.2 A review — serve → verdict → ratify → outbox → lake
+### 4.2 A review — serve → verdict → ratify → outbox → lake
 
 Owned by [admission.md](admission.md) (review policy, promotion checks) and
 [storage.md](storage.md) (outbox protocol). The serve binding and CLI ceremony:
@@ -137,9 +183,9 @@ sequenceDiagram
     LW->>L: materialize promoted claim into silver,<br/>exactly-once per Delta txn id
 ```
 
-### 3.3 A read — served from Postgres, logged
+### 4.3 A read — served from Postgres, logged
 
-Owned by [retrieval.md](retrieval.md). Reads never touch the lake (§5).
+Owned by [retrieval.md](retrieval.md). Reads never touch the lake (§6).
 
 ```mermaid
 sequenceDiagram
@@ -152,7 +198,7 @@ sequenceDiagram
     S-->>A: steering rows first (never ranked), then hits;<br/>bodies decrypt on the serving path only
 ```
 
-### 3.4 A freeze — validating a workarea needs a second ratifier
+### 4.4 A freeze — validating a workarea needs a second ratifier
 
 Owned by [workareas.md](workareas.md) (status ladder, transition matrix).
 
@@ -172,7 +218,7 @@ sequenceDiagram
 
 Transitions are forward-only; there is no unfreeze ([workareas.md](workareas.md)).
 
-### 3.5 A simulation — a fenced provenance channel
+### 4.5 A simulation — a fenced provenance channel
 
 Owned by [simulations.md](simulations.md).
 
@@ -189,7 +235,7 @@ sequenceDiagram
     AD->>S: end simulation — journalled act demotes its rows,<br/>tainted claims are demoted or re-reviewed
 ```
 
-## 4. The invariant map
+## 5. The invariant map
 
 Where each constitutional rule is mechanically enforced. The rules are declared in
 [ADR-0001](../adr/ADR-0001-the-constitution.md); each enforcement point is specified on its owning page.
@@ -208,7 +254,7 @@ One bounded exception exists and is named in the constitution, not discovered la
 invariants: undeclared derivation — a writer omitting `derives_from` — is not detectable by the
 service; lineage exclusion is exactly as good as the declared graph.
 
-## 5. What is deliberately not here
+## 6. What is deliberately not here
 
 - **No web UI.** Administration is the `oml` CLI against the same HTTP API; a web console was
   considered and declined ([cli/reference.md](../cli/reference.md),

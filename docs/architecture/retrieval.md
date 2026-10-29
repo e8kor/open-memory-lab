@@ -118,8 +118,9 @@ Bodies are stored as per-artifact-DEK ciphertext everywhere at rest —
 Postgres, lake, object store ([storage.md](storage.md)). **Plaintext exists
 only on the serving path**: `oml-server` unwraps the artifact's DEK and
 decrypts per request, after access and the simulation predicate have passed.
-No other workload decrypts — the lake-writer's KMS grant is encrypt-only and
-the reconciler verifies ciphertext digests keylessly
+No other workload decrypts — the lake-writer is keyless, moving
+admission-produced ciphertext verbatim, and the reconciler verifies
+ciphertext digests keylessly
 ([reconciliation.md](reconciliation.md)) — so crypto-shredding (D4, declared
 in [audit-and-lineage.md](audit-and-lineage.md)) has exactly one decryption
 locus to reason about. The cost is per-read decryption work on the server;
@@ -166,6 +167,19 @@ audience — the predicate on the shared path is a second fence, not the only
 one. The cost is an index per live simulation and a split query plan for
 audience members; the design accepts it because containment by construction
 beats containment by filter discipline.
+
+Tip resolution follows the same fence: **taint never captures the default
+tip.** Tip computation for a key outside a simulation's audience ignores
+simulation-tainted versions — `provenance: simulation` rows and sim-derived
+claims alike — so the default tip of every claim is bit-for-bit what it would
+be if the simulation did not exist. A promoted tainted supersession of a real
+claim is served to audience keys as an **audience-scoped overlay tip** that
+shadows the default tip inside the fence; the shared tip index
+([audit-and-lineage.md](audit-and-lineage.md) owns tip semantics) never
+records it, and any act that would make a tainted version the default served
+tip is refused (`simulation.tip_refused`, [errors](../api/errors.md)). When a
+simulation ends, its overlay tips demote with its closure; the default tip
+never moved.
 
 ## Out of scope: grounded Q&A
 

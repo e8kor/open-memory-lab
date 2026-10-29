@@ -27,6 +27,7 @@ rows the records open.
 | [ADR-0016](ADR-0016-kubernetes-workloads.md) | Kubernetes workloads, two Helm profiles, deployment identity replaces volume identity | accepted design | the workload set, the local and production profiles, nothing naming a machine |
 | [ADR-0017](ADR-0017-reconciliation.md) | Reconciliation is an incremental, journalled fold with a closed finding vocabulary | accepted design | the journal as fold source, the finding classes, journalled repair |
 | [ADR-0018](ADR-0018-the-documentation-set.md) | The documentation set: tiers, honesty discipline, llms.txt, frontmatter | accepted design | the tier boundary, the writing rules, the fixed vocabulary |
+| [ADR-0019](ADR-0019-hexagonal-architecture-and-plugins.md) | Hexagonal architecture and plugin modularity | accepted design | the pure domain core, ports as traits, thin binary compositions, the plugin points and their law |
 
 ## Format
 

@@ -58,6 +58,14 @@ that each tenant's writes serialize through one lock — per-tenant write
 throughput is bounded by that serialization — accepted because chains are
 per tenant, so tenants do not contend with each other.
 
+Provider-level acts have a chain of their own: a **reserved provider tenant**,
+created at deployment genesis, whose chain carries the events that precede any
+customer tenant — the root operator `key.issued`, each `tenant.created`. Every
+new tenant's chain opens with a genesis event that **references** the
+provider-chain `tenant.created` event that created it (a reference, not a
+second numbering), so the whole deployment folds out of per-tenant chains with
+no global sequence anywhere.
+
 Append-only is enforced mechanically, not by convention: `REVOKE UPDATE,
 DELETE` on `journal` plus a guard trigger. Row-level security scopes every
 table by tenant ([security.md](security.md)).
@@ -80,9 +88,16 @@ write onto a forked head.
 ### Digest-only journal payloads
 
 **Journal payloads never carry body plaintext.** A journal or outbox event
-references content only as a plaintext digest or as a reference to
-per-artifact-DEK ciphertext. The ed25519 signature covers this
-digest/ciphertext envelope (`signed_bytes`), not the bodies.
+references content only by digest — the **plaintext digest** (the content's
+identity) and the **ciphertext digest** of the stored per-artifact-DEK
+encrypted object. The body is encrypted under the artifact's DEK at admission,
+inside `oml-server`, so both digests exist when the submission event is
+signed; every downstream copy — quarantine, object store, lake — is those
+same ciphertext bytes. The ed25519 signature covers this digest envelope
+(`signed_bytes`), not the bodies. Journalling the ciphertext digest is what
+gives the key-less reconciler a journal-side comparand: store bytes are
+verified against what the signed event says, never store against store
+([reconciliation.md](reconciliation.md)).
 
 This is why chain verification survives crypto-shredding: erasure destroys the
 artifact's DEK ([audit-and-lineage.md](audit-and-lineage.md)), which makes the
@@ -108,8 +123,9 @@ and lake disagree, the journal wins and the lake is repaired
 ([reconciliation.md](reconciliation.md)). The benefit of a lake that nothing
 reads online is that its write path can be asynchronous, batchy, and
 repairable without a serving outage; the cost is running a second storage
-system whose only consumers are batch jobs, accepted because the commissioning
-requirement — pure memory data, who and when wrote them, what space — wants a
+system whose only consumers are batch jobs, accepted because the data the lake
+exists to hold — pure memory data, who and when wrote them, what space
+([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)) — wants a
 columnar, versioned substrate the journal's digest-only rows cannot be.
 
 Containment rules, restated from their owning pages because the lake writer
@@ -120,7 +136,9 @@ provenance is indelible in lake rows ([simulations.md](simulations.md)).
 Lake bodies are per-artifact-DEK ciphertext; lake rows carry `artifact_id`,
 `workarea_id` (the stable key; path-at-write kept as history), writer identity,
 principal, timestamps, provenance class, plaintext digest **and** ciphertext
-digest, and state — everything reconciliation needs without holding plaintext.
+digest (both folded from the submission event, which carries them under the
+signature — see above), and state — everything reconciliation needs without
+holding plaintext.
 Column-level detail: [data/delta-tables.md](../data/delta-tables.md).
 
 Exactly one lake-writer deployment (`oml-lakewriter`, singleton with a leader
@@ -143,11 +161,25 @@ Exactly-once delivery rests on Delta application transaction ids: appId
 > verified by conformance test T-n"). Until that test passes, every
 > "exactly-once" in this section reads as a design commitment, not a property.
 
-1. **Cut a micro-batch.** The lake writer reads outbox rows in the half-open
-   seq range `(frontier, batch_end]`, where `frontier` is the global frontier
-   (a Postgres column) and `batch_end` is chosen by size/time limits. This is
-   the only point where size and time participate; they never participate in a
-   retry.
+1. **Cut a micro-batch — from the stable prefix only.** Outbox `seq` is
+   assigned by the identity sequence at **insert** time, but a row becomes
+   visible only when its inserting transaction **commits**, and transactions
+   of different tenants are deliberately unserialized — so a smaller seq can
+   become visible after a larger one has already been read. The cut therefore
+   never trusts "the rows I can see": the lake writer reads outbox rows in
+   the half-open seq range `(frontier, batch_end]`, where `frontier` is the
+   global frontier (a Postgres column) and `batch_end` is bounded by the
+   **snapshot horizon** — only rows whose inserting transaction is older than
+   every transaction still active at scan time (in PostgreSQL terms, below
+   the oldest active txid of the scan's snapshot) are in the stable prefix,
+   and `batch_end` never exceeds it. Within that stable prefix, `batch_end`
+   is chosen by size/time limits. This is the only point where size and time
+   participate; they never participate in a retry. Because the frontier
+   advances only within the stable prefix (step 5), a late-committing row can
+   never land at or below the frontier: it is simply cut into a later batch.
+   A long-running transaction holds the horizon back; that surfaces as
+   frontier lag (`stale-frontier`,
+   [reconciliation.md](reconciliation.md)), never as loss.
 2. **Group by target table.** Rows in the batch are partitioned by the Delta
    table each operation touches (`bronze.events`, `silver.claims`, gold
    tables).
@@ -172,7 +204,10 @@ Exactly-once delivery rests on Delta application transaction ids: appId
    bounds, and reconstructs **the same batch** from the outbox by seq range —
    never re-cut by time or size. Tables that already committed skip it in
    step 3; tables that did not, apply it; then the frontier advances. A batch
-   is therefore a stable identity, not an artifact of timing.
+   is therefore a stable identity, not an artifact of timing — and because
+   `batch_end` was cut inside the stable prefix (step 1), no row with
+   seq ≤ `batch_end` can commit after the cut, so the reconstructed row set
+   is identical to the first attempt's.
 
 ```mermaid
 sequenceDiagram
@@ -183,6 +218,7 @@ sequenceDiagram
     participant S as Delta: silver.claims
 
     LW->>PG: read frontier F; cut batch (F, E] by seq
+    Note over PG: E is capped at the snapshot horizon —<br/>no insert below E is still in flight
     PG-->>LW: outbox rows F+1..E
     LW->>LW: group rows by target table
 
@@ -263,9 +299,12 @@ before a verdict counts ([admission.md](admission.md); the serve binding
 ceremony is in the CLI reference).
 
 **Storage and the two digests.** Objects live in an S3-compatible store,
-encrypted under the artifact's DEK: `oml-bodies/<tenant>/<digest>`. Stored
-object integrity metadata records the **ciphertext** digest alongside the
-plaintext digest kept in Postgres and the lake. Who can verify which is a
+encrypted under the artifact's DEK: `oml-bodies/<tenant>/<digest>`. The
+binding event (`submission.attach`,
+[data/event-catalog.md](../data/event-catalog.md)) journals **both** digests
+under the signature — the same rule as body submissions — and stored object
+integrity metadata and the lake carry copies of them; when copies disagree,
+the journalled digest is the authority. Who can verify which is a
 key-custody fact ([security.md](security.md)):
 
 - the **ciphertext digest** is verifiable by anything that can read the bytes

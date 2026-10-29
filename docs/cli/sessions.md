@@ -7,36 +7,61 @@ ceremonies in the [CLI reference](reference.md) are intended to feel like, so re
 the ceremonies before any code exists. Key values, ids, hashes, timestamps and exact output layout
 are illustrative; the *rules* each transcript exercises — show-once issuance, serve binding,
 two-party ratification, dry-run previews — are the decided design, and each transcript names the
-page that owns its rules. The human layout shown here is not a contract; `--json` output is
+page that owns its rules. Every refusal code shown is a typed error from the
+[error taxonomy](../api/errors.md) and every `journal seq` line names an event from the
+[event catalog](../data/event-catalog.md) — those identifiers are the contract, not illustration.
+The human layout shown here is not a contract; `--json` output is
 ([conventions](reference.md#conventions)).
 
 The tenant in every transcript is `aurora`; its crews and key values are invented.
 
 ## 1. Bootstrap: the operator key and the first tenant
 
-At first start, a Helm job mints a show-once root **operator** key and journals the issuance
-*without the value* ([roles and keys](../architecture/roles-and-keys.md)). The operator creates
-tenants and issues each tenant's first admin key — and can do nothing else: no reads, no writes,
-no verdicts.
+At first start, a Helm job mints a single-use, expiring **enrollment secret**, stored as a
+Kubernetes Secret; the job's logs carry progress only — no key or secret material ever transits a
+pod log ([deployment](../operations/deployment.md)). The operator exchanges that secret over TLS
+for the root **operator** key with `oml bootstrap claim`
+([reference](reference.md#oml-bootstrap-claiming-the-root-operator-key)): the key value is shown
+once in the operator's terminal and journalled as issued-without-value
+([roles and keys](../architecture/roles-and-keys.md)). The operator creates tenants and issues
+each tenant's first admin key — and can do nothing else: no reads, no writes, no verdicts.
+
+Provider-level acts — operator key issuance, tenant creation — are journalled in the reserved
+**provider tenant's** chain, created at deployment genesis; every other chain is per tenant
+([storage](../architecture/storage.md)). A new tenant's chain opens with a `tenant.genesis` event
+rooting it by reference to the provider-chain `tenant.created` event that created it — a
+reference, not a second numbering ([event catalog](../data/event-catalog.md)). The transcripts
+label the chain only in this section: from section 2 on, every `journal seq` is tenant aurora's
+chain.
 
 ```console
 $ kubectl logs job/oml-bootstrap -n oml
-oml-server: journal genesis written (deployment key dk_5a21, chain algorithm ed25519)
-oml-server: operator key minted — SHOWN ONCE, NOT RECOVERABLE, NOT JOURNALLED AS VALUE
+oml-bootstrap: provider tenant chain created (deployment signing key dk_5a21, ed25519)
+oml-bootstrap: enrollment secret minted — stored as Kubernetes Secret oml/oml-enrollment
+oml-bootstrap: single-use; expires 2026-10-30T09:00:00Z; consumed on first claim
+oml-bootstrap: this log carries progress only — no key or secret material appears in it
+oml-bootstrap: next step: oml bootstrap claim
+
+$ kubectl -n oml get secret oml-enrollment -o jsonpath='{.data.token}' | base64 -d \
+    | oml bootstrap claim --url https://oml.internal.example --token-stdin
+enrollment secret accepted — consumed (single-use; a second claim is refused)
+root operator key — SHOWN ONCE, NOT RECOVERABLE, NOT JOURNALLED AS VALUE
 
     operator key id : key_op_000001
     operator key    : oml_op_EXAMPLEVALUE_zj4Qm9tW8xKpN2rLcVbH
 
-oml-server: journal seq 1: key.issued {id: key_op_000001, role: operator, value: not recorded}
-oml-server: store this value now; the server keeps only its hash.
+journal (provider) seq 1: key.issued {id: key_op_000001, role: operator, value_disclosed: false}
+store this value now; the server keeps only its hash.
 
 $ oml context add root --url https://oml.internal.example --key-stdin
 reading key from stdin… ok
 context "root" added (key id key_op_000001, role operator)
 
 $ oml tenants create aurora
-journal seq 2: tenant.created {tenant: aurora}
-tenant aurora created — universe workarea wa_000001 (status: committed, permanent)
+journal (provider) seq 2: tenant.created {tenant_id: t_9d41, name: aurora, created_by_key_id: key_op_000001}
+journal (aurora) seq 1: tenant.genesis {tenant_id: t_9d41, name: aurora, provider_seq: 2, created_event_id: e_30aa}
+tenant aurora created — chain opened, rooted at provider seq 2;
+universe workarea wa_000001 (status: committed, permanent)
 
 $ oml tenants issue-admin aurora --label "aurora founding admin"
 issuing first admin key for tenant aurora — SHOWN ONCE
@@ -44,11 +69,12 @@ issuing first admin key for tenant aurora — SHOWN ONCE
     key id : key_a1f3e2
     key    : oml_sk_EXAMPLEVALUE_aurora_Hq7dPw3nXsYvK0mBtRj5
 
-journal seq 3 (tenant aurora, seq 1): key.issued {id: key_a1f3e2, role: admin, value: not recorded}
+journal (aurora) seq 2: key.issued {id: key_a1f3e2, role: admin, value_disclosed: false}
 
 $ oml tenants issue-admin aurora --label "second attempt"
-refused: tenant.admin_exists — aurora already has an admin key; further keys are
-issued by that admin (issuer ceiling), not by the operator.
+refused: access.issuer_ceiling — aurora already has its first admin key; an operator
+key issues nothing beyond a tenant's first admin key. Further keys come from that
+admin under the issuer ceiling.
 ```
 
 The last refusal is the shape of the operator role: a bootstrap channel, not a standing back door.
@@ -57,14 +83,15 @@ The last refusal is the shape of the operator role: a bootstrap channel, not a s
 
 The aurora admin provisions the `corrosion` crew: a workarea, writer keys for its working agents,
 and dreamer keys for the crew that reviews it. Grants bind to node ids; paths are a convenience
-([workareas](../architecture/workareas.md)).
+([workareas](../architecture/workareas.md)). An issuance journals `key.issued` without the value,
+then one `grant.issued` per grant.
 
 ```console
 $ oml context use aurora-admin
 $ oml workareas create universe/research corrosion \
     --crew-name "Corrosion Crew" --external-manager "crewd.example/corrosion"
 created wa_00004e universe/research/corrosion (status: development)
-journal seq 812: workarea.created
+journal seq 812: workarea.create
 
 $ oml keys issue --role writer \
     --grant wa_00004e:writer --grant wa_00004e:reader \
@@ -74,7 +101,9 @@ key issued — SHOWN ONCE
     key id : key_9c44b7
     key    : oml_sk_EXAMPLEVALUE_aurora_Wn2gLx8cQe5rTv0zYhDk
 
-journal seq 813: key.issued {role: writer, grants: 2, value: not recorded}
+journal seq 813: key.issued {id: key_9c44b7, role: writer, value_disclosed: false}
+journal seq 814: grant.issued {key: key_9c44b7, wa_00004e: writer}
+journal seq 815: grant.issued {key: key_9c44b7, wa_00004e: reader}
 
 $ oml keys issue --role dreamer \
     --grant wa_00004e:dreamer --expires 90d --label corrosion-reviewer-1
@@ -83,13 +112,14 @@ key issued — SHOWN ONCE
     key id : key_51d0ac
     key    : oml_sk_EXAMPLEVALUE_aurora_Fb6mZq1jUs4xNc9pKtRv
 
-journal seq 814: key.issued {role: dreamer, grants: 1, value: not recorded}
+journal seq 816: key.issued {id: key_51d0ac, role: dreamer, value_disclosed: false}
+journal seq 817: grant.issued {key: key_51d0ac, wa_00004e: dreamer}
 
 $ oml context use corrosion-reviewer-1
 $ oml keys issue --role writer --grant wa_00004e:writer --label corrosion-agent-2
-refused: keys.issuer_ceiling — key_51d0ac (dreamer) may not issue keys;
-a key is issued with a role no higher than the issuer's, and issuance itself
-is an admin/operator verb.
+refused: access.verb_ceiling — key_51d0ac (dreamer) is an agent key calling an
+admin verb (keys issue); issuance belongs to admin and operator keys (R1), and a
+key is in any case issued with a role no higher than the issuer's.
 
 $ oml context use aurora-admin
 $ oml keys list --expiring 120d
@@ -105,7 +135,10 @@ key values above appeared exactly once; `oml keys list` and the journal know onl
 
 A human dreamer drains the corrosion queue. The serve binds (reviewer key, artifact version,
 attachment digest set); the verdict consumes it
-([serve mechanics](reference.md#oml-review-the-review-ceremony)). The second item shows the
+([serve mechanics](reference.md#oml-review-the-review-ceremony)). Promotion is a three-event
+ceremony in the journal: the verdict (`review.approve`), the act that finds the policy satisfied
+(`review.ratify`), and the visibility change (`lifecycle.promote`) — the
+[event catalog](../data/event-catalog.md) owns each shape. The second item shows the
 lineage-closure refusal: the reviewer proposed an edit in this row's ancestry, so the server will
 not serve it to them.
 
@@ -131,6 +164,9 @@ serving 1 of 3 held items
 $ oml review approve srv_f3a91c --note "dataset supports onset claim; contradicts art_019aa4, flagged"
 verdict recorded — journal seq 901: review.approve
   {artifact: art_02b8e1@v1, serve: srv_f3a91c, served_digests: [9f27…c4a1, 77b0…e9d3]}
+journal seq 902: review.ratify {subject: art_02b8e1@v1, verdicts: [seq 901],
+  policy_snapshot: {k: 1, required_roles: [dreamer]}, lineage_closure_digest: 41cc…09f7}
+journal seq 903: lifecycle.promote {artifact: art_02b8e1@v1, previous_tip_version: none}
 art_02b8e1@v1 promoted; serve srv_f3a91c consumed.
 
 $ oml review next --workarea universe/research/corrosion
@@ -148,40 +184,46 @@ the bar ([admission](../architecture/admission.md)).
 
 ## 4. Freezing a workarea
 
-Status transitions are forward-only and two-party: proposed by one admin or dreamer, ratified by a
-second, non-proposing one, journalled with the policy snapshot
-([workareas](../architecture/workareas.md)). The first attempt here is refused because a child is
-not yet validated; the self-ratification attempt is refused by R2.
+Status transitions are forward-only — development → committed → validated, one rung at a time —
+and two-party: proposed by one admin or dreamer (journalled `workarea.status_proposed`), ratified
+by a second, non-proposing one (journalled `workarea.status_transition` with the policy snapshot)
+([workareas](../architecture/workareas.md)). The self-ratification attempt here is refused by R2;
+the `validated` proposal is refused while a child is not yet validated.
 
 ```console
 $ oml context use aurora-admin
-$ oml workareas status propose universe/research/corrosion --to validated
-refused: workareas.children_not_validated
-  universe/research/corrosion/scratch (wa_000061) is development
-an area may only become validated when all its children are validated.
+$ oml workareas status propose universe/research/corrosion --to committed
+transition trn_0a40 proposed (development -> committed); awaiting a second ratifier.
+journal seq 1198: workarea.status_proposed {wa_00004e: development -> committed, proposer: key_a1f3e2}
 
-$ oml workareas status propose universe/research/corrosion/scratch --to committed
-transition trn_0a44 proposed (development -> committed); awaiting a second ratifier.
-$ oml workareas status ratify trn_0a44
-refused: workareas.ratifier_is_proposer — a transition is ratified by a second,
+$ oml workareas status ratify trn_0a40
+refused: review.ratifier_is_proposer — a transition is ratified by a second,
 non-proposing dreamer or admin (R2 extends to transitions).
 
 $ oml context use corrosion-reviewer-1
-$ oml workareas status ratify trn_0a44
-journal seq 1203: workarea.status_changed {wa_000061: development -> committed,
+$ oml workareas status ratify trn_0a40
+journal seq 1203: workarea.status_transition {wa_00004e: development -> committed,
   proposer: key_a1f3e2, ratifier: key_51d0ac, policy_snapshot: pol_77e2}
 
-$ # …scratch later ratified to validated the same way (trn_0a51), then:
 $ oml context use aurora-admin
 $ oml workareas status propose universe/research/corrosion --to validated
+refused: workarea.transition_refused
+  universe/research/corrosion/scratch (wa_000061) is development
+an area may only become validated when all its children are validated.
+
+$ # …scratch walks the same two rungs under distinct principals
+$ #   (trn_0a44: development -> committed; trn_0a51: committed -> validated), then:
+$ oml workareas status propose universe/research/corrosion --to validated
 transition trn_0a58 proposed (committed -> validated); awaiting a second ratifier.
+journal seq 1236: workarea.status_proposed {wa_00004e: committed -> validated, proposer: key_a1f3e2}
+
 $ oml context use corrosion-reviewer-1
 $ oml workareas status ratify trn_0a58
-journal seq 1240: workarea.status_changed {wa_00004e: committed -> validated, …}
+journal seq 1240: workarea.status_transition {wa_00004e: committed -> validated, …}
 
 $ oml context use aurora-admin
 $ oml workareas create universe/research/corrosion post-mortem
-refused: workareas.parent_validated — a validated area accepts no new children.
+refused: workarea.frozen — a validated area accepts no new children.
 remaining mutations on wa_00004e: demote, erase, crew-metadata update.
 ```
 
@@ -217,7 +259,10 @@ dry-run (default) — ending sim_0007 would:
 nothing journalled. re-run with --apply to act.
 
 $ oml simulations end sim_0007 --apply
-journal seq 1388: simulation.ended {sim_0007, demoted: 38, re_review: 2}
+journal seq 1346: simulation.ended {simulation_id: sim_0007, disposition: demote}
+demoting 38 promoted rows — journal seqs 1347..1384: lifecycle.demote
+  {reason: simulation_ended, cause_event_id: seq 1346} per row
+3 held rows discarded at admission; 2 sim-derived claims re-enter held for re-review.
 sim_0007 ended. tainted claims re-enter held; their reviewers see the taint.
 ```
 
@@ -225,25 +270,29 @@ sim_0007 ended. tainted claims re-enter held; their reviewers see the taint.
 
 The export produces the evidence an auditor asks for; the chain verification proves the journal
 was not rewritten — and, because journal payloads are digest-only, it still verifies after
-crypto-shredding ([audit and lineage](../architecture/audit-and-lineage.md)).
+crypto-shredding ([audit and lineage](../architecture/audit-and-lineage.md)). The export is an
+async, journalled job: `export.requested` is written when the job is requested, and the bundle
+exists only once its chain verification finishes — fetched earlier it is `export.not_ready`.
 
 ```console
 $ oml audit export --out ./evidence-2026-10-29
-exporting tenant aurora…
+journal seq 1390: export.requested {export_id: exp_0003, kind: evidence, from_seq: 0,
+  include_simulations: false, requested_by_key_id: key_a1f3e2}
+export exp_0003 queued (async; the bundle exists when chain verification finishes)…
   decision trails    1,482 memories (per-memory: submission, scan, serves, verdicts, policy snapshots)
-  chain verification seq 1..1389 — recomputed, signatures valid, head hash 7c19…40be
+  chain verification seq 1..1390 — recomputed, signatures valid, head hash 7c19…40be
   grants history     61 grant/deny/epoch events
   read log           retention window 90d (tenant policy): 12,044 events, batch digests anchored at journal seqs
   reciprocal approvals  per key pair; top pair (key_51d0ac, key_60b311): 9 mutual — surfaced, not judged
   simulations        excluded by default; 1 ended simulation listed by id only (sim_0007)
 bundle written: ./evidence-2026-10-29/aurora.oml-evidence.tar (signed, 18.3 MiB)
-journal seq 1390: audit.exported {scope: aurora, from_seq: 1}
 
 $ oml audit verify-chain --genesis
 verifying tenant aurora from genesis…
-  seq 1..1389: prev_hash links ok, ed25519 signatures ok (deployment key dk_5a21)
+  seq 1: tenant.genesis — references provider chain seq 2 (tenant.created): ok
+  seq 1..1390: prev_hash links ok, ed25519 signatures ok (deployment key dk_5a21)
   erased artifacts encountered: 4 — digest envelopes verify; bodies unrecoverable (as designed)
-chain verified. head: seq 1389, hash 7c19…40be
+chain verified. head: seq 1390, hash 7c19…40be
 ```
 
 ## 7. Banning a source
@@ -266,7 +315,8 @@ nothing journalled. re-run with --apply to act.
 
 $ oml bans add --source "connector:rss/feedpulse.example" \
     --reason "feed republishing fabricated abstracts" --apply
-journal seq 1401: ban.added {source: connector:rss/feedpulse.example, by: key_a1f3e2}
+journal seq 1401: ban.imposed {ban_id: ban_0012, subject_kind: source,
+  subject: connector:rss/feedpulse.example, banned_by: key_a1f3e2}
 ban ban_0012 active; admission now refuses this source.
 
 $ oml bans list

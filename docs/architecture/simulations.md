@@ -34,9 +34,12 @@ pays the full admission pipeline and the fence adds a predicate to every read pa
 A `simulations` row (id, tenant, state, audience) gives each simulation its identity; the
 column-level definition lives in the [Postgres schema](../data/postgres-schema.md). The **audience**
 is a journalled list of API key ids and grant references: the closed set of keys that can see into
-the simulation. Because the list is a journalled object, its membership at any moment is
-reconstructible from the journal, like every other grant-shaped fact in the system
-([workareas](workareas.md), D7).
+the simulation. The audience is set when the simulation is created and changed afterwards only by a
+journalled admin act: `POST /v1/simulations/{id}/audience` ([HTTP API](../api/http-api.md)) adds and
+removes entries and lands in the chain as a `simulation.audience_changed` event ([event
+catalog](../data/event-catalog.md)). Because every change is a journalled event, the membership at
+any moment is the fold of the opening event and the audience changes since — reconstructible from
+the journal, like every other grant-shaped fact in the system ([workareas](workareas.md), D7).
 
 The audience does two jobs at once:
 
@@ -68,7 +71,8 @@ expiry policy ([admission](admission.md)) — until the audience is corrected or
 ends. This is deliberate. A simulation with no reviewer is a channel where an admin could inject
 unreviewed content; rather than carve an exception, the design lets such a simulation exist and be
 useless. The cost is operator friction (a misconfigured simulation looks stuck); the stuck state is
-visible in `oml status` queue depths and the fix — a journalled audience correction — is auditable.
+visible in `oml status` queue depths and the fix — an audience correction through
+`POST /v1/simulations/{id}/audience`, journalled as `simulation.audience_changed` — is auditable.
 
 The deeper reason to run the full pipeline is evidence parity: a simulated memory that influenced a
 crew's behaviour has the same decision trail as a real one — who wrote it, who scanned it, who
@@ -78,7 +82,7 @@ cost is that simulation traffic consumes real review capacity from the audience'
 
 ## Containment
 
-Containment is three independent mechanisms. Any one of them failing still leaves the other two.
+Containment is four independent mechanisms. Any one of them failing still leaves the other three.
 
 ### Never into validated
 
@@ -113,7 +117,22 @@ maintenance, and audience queries that should span simulated and real memories m
 indexes. The design pays it, because "the fence does not leak through ranking" is the property
 under test.
 
-## Taint propagation
+### Never the default tip
+
+**Taint never captures the default tip.** Tip resolution is audience-scoped: for a key outside a
+simulation's audience, tip computation ignores simulation-tainted versions — `provenance:
+simulation` rows and sim-derived claims alike — so the default tip of every claim is bit-for-bit
+what it would be if the simulation did not exist. A promoted tainted supersession of a real claim
+becomes an **audience-scoped overlay tip**: keys in the audience see it shadow the default tip
+inside the fence; the shared tip index ([audit-and-lineage](audit-and-lineage.md) owns tip
+semantics) never records it. Any act that would make a tainted version the default served tip is
+refused with `simulation.tip_refused` ([errors](../api/errors.md)).
+
+This is also how the opening sentence's "alter" is expressed: altering a real memory inside a
+simulation is a tainted supersession served as the audience's overlay tip, never a rewrite of what
+everyone else is served. And it closes the ending story cleanly: when the simulation ends, its
+overlay tips demote with the rest of its closure, and because the default tip never moved, nothing
+needs restoring.
 
 Injected memories exist to be consumed, so their influence escapes the audience by design: an
 audience crew reads a simulated memory and writes something derived from it. That derivative is the
@@ -126,6 +145,8 @@ claim↔claim connection edges, pending and ratified alike
 simulation row is **tainted**: it carries that `simulation_id` as sim-derived. A tainted claim
 
 - is refused promotion into any `validated` workarea, exactly as a direct simulation row is;
+- never becomes the default served tip of a claim lineage: a promoted tainted supersession is
+  served as an audience-scoped overlay tip only ([never the default tip](#never-the-default-tip));
 - is demoted or re-reviewed when its simulation ends (see below);
 - is listed in the simulations section of **every** evidence export, even exports that otherwise
   exclude simulation content.
@@ -185,7 +206,10 @@ Ending a simulation is a journalled act. Its effects:
    where the workarea's policy and the ending act direct it: a tainted claim judged to have
    standalone value (a real lesson learned from a fake world) can survive, but only through a fresh
    non-author verdict taken in full knowledge that its inputs are now demoted fiction. It keeps its
-   sim-derived marker either way; survival un-demotes, it never un-taints.
+   sim-derived marker either way; survival un-demotes, it never un-taints. Audience-scoped overlay
+   tips disappear with these demotions; the default tip of every affected claim was never moved
+   ([never the default tip](#never-the-default-tip)), so ending restores nothing — there is
+   nothing to restore.
 3. **The lake follows.** Demotions flow through the outbox as retract operations and are applied
    in strict sequence order by the lake-writer ([storage](storage.md), D2); the lake converges to
    the same post-simulation state the journal fold defines, and the
@@ -210,6 +234,7 @@ flowchart TB
         W --> P["full admission pipeline<br/>quarantine → scan → review"]
         P -- "dreamer ∈ audience ratifies<br/>(reviewer ∉ lineage closure, R2)" --> S["promoted inside the fence:<br/>served only to audience keys,<br/>per-simulation index,<br/>never into validated"]
         P -- "no dreamer in audience" --> H["held — fail closed,<br/>promotes nothing"]
+        H -- "audience corrected<br/>(journalled simulation.audience_changed)" --> P
         S --> T["audience crew derives a claim:<br/>declared derives_from touches sim row<br/>⇒ inherits simulation_id (server-enforced),<br/>tainted: refused into validated,<br/>listed in every export"]
     end
 
