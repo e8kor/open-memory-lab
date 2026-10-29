@@ -97,6 +97,18 @@ flowchart TD
     K -. "grant on research-crew" .-> A
 ```
 
+## Vocabulary
+
+A vocabulary is a dedicated workarea that holds shared words as claims. Each **term** is a claim
+whose key is a **CURIE** (`PREFIX:localname`, the prefix registered per tenant when the workarea
+is created); it is held, reviewed and promoted like any memory, and once first promoted its CURIE
+is permanent — a term is later *deprecated* with a pointer to its successor, never deleted or
+re-minted with a different meaning. A **release** pins the vocabulary at a moment so citations
+can be checked against something stable; whether a workarea's writes must cite valid terms is a
+per-workarea policy that defaults off. The whole capability is additive: a tenant that never
+registers a vocabulary runs a plain memory provider
+([ontologies](architecture/ontologies.md) owns the mechanism end to end).
+
 ## Roles and keys
 
 Every caller holds an API key issued with exactly one of five roles:
@@ -205,6 +217,7 @@ it at all.
 | Claim versions, the tip, lineage closure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) (erasure), [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md) (the record) |
 | Workarea tree, grants, denies, edges | [architecture/workareas.md](architecture/workareas.md) | [ADR-0008](adr/ADR-0008-workarea-algebra.md) |
 | The status ladder | [architecture/workareas.md](architecture/workareas.md) | [ADR-0009](adr/ADR-0009-status-ladder.md) |
+| Vocabularies, terms, releases | [architecture/ontologies.md](architecture/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |
 | Roles, the dreamer split, key lifecycle | [architecture/roles-and-keys.md](architecture/roles-and-keys.md) | [ADR-0010](adr/ADR-0010-roles-and-keys.md) |
 | The admission pipeline and review policies | [architecture/admission.md](architecture/admission.md) | [ADR-0012](adr/ADR-0012-admission-and-review.md) |
 | Attachments | [architecture/storage.md](architecture/storage.md) | [ADR-0004](adr/ADR-0004-bodies-and-attachments.md) |

@@ -92,11 +92,18 @@ end.
 **Items.** The full workarea ladder ([workareas](../architecture/workareas.md)); simulations
 ([ADR-0011](../adr/ADR-0011-simulations.md)); crypto-shredding with the copy-class inventory
 and KEK rotation ([ADR-0005](../adr/ADR-0005-erasure-by-crypto-shredding.md)); evidence
-export ([audit and lineage](../architecture/audit-and-lineage.md)); bans.
+export ([audit and lineage](../architecture/audit-and-lineage.md)); bans; and the vocabulary
+slice ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md), [FR-19](roadmap.md)) — prefixes,
+the term lifecycle with atomic deprecation, releases with the materialized closure, the vocab
+scanner and read surface. Vocabularies depend on M1 (pipeline, claim edges, domain invariants)
+and M2 (MCP facade, the recall `terms` filter) but not on M3's lake; they sit here because the
+`held_by` attestation and the human-gated ceremonies are governance machinery.
 
 **Exit.** [FR-1](roadmap.md)'s erasure path demonstrated end to end; [FR-17](roadmap.md)'s
-erasure-SLO bounds measured. Depends on M1–M3 — the evidence export reads the journal, and the
-inventory is only checkable once the reconciler runs.
+erasure-SLO bounds measured; [FR-19](roadmap.md)'s vocabulary slice demonstrated end to end.
+Depends on M1–M3 — the evidence export reads the journal, and the
+inventory is only checkable once the reconciler runs. [FR-20](roadmap.md)'s vocabulary
+measurements join M6's campaigns.
 
 ## M5 — Dataset onboarding (post-v1)
 

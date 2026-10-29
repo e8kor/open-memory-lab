@@ -54,6 +54,7 @@ nav:
       - Workareas: architecture/workareas.md
       - Roles and keys: architecture/roles-and-keys.md
       - Simulations: architecture/simulations.md
+      - Ontologies: architecture/ontologies.md
       - Storage: architecture/storage.md
       - Retrieval: architecture/retrieval.md
       - Reconciliation: architecture/reconciliation.md
@@ -95,3 +96,4 @@ nav:
       - ADR-0018: adr/ADR-0018-the-documentation-set.md
       - ADR-0019: adr/ADR-0019-hexagonal-architecture-and-plugins.md
       - ADR-0020: adr/ADR-0020-dataset-onboarding.md
+      - ADR-0021: adr/ADR-0021-ai-human-ontologies.md

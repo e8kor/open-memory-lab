@@ -44,6 +44,21 @@ Two indexes over promoted rows, both in Postgres, both under tenant RLS:
   text.
 - **Vector search**: `memory_embeddings`, embeddings over promoted claim text.
 
+Two kinds are excluded from both shared indexes by default: vocabulary rows
+(`term`, `term_mapping`, `vocab_release` — a 50k-term vocabulary must not
+drown a tenant's organic memories in every hybrid recall; a vocabulary
+workarea's policy may opt in, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md))
+and, when ADR-0020 lands, imported rows under its `index_policy` default. The
+exclusions mirror each other deliberately: reference data is fetch- and
+filter-served unless a journalled policy prices it into the shared indexes.
+
+Recall accepts a `terms` filter (CURIE annotations, ADR-0021) and
+`expand_terms: descendants`, which widens that filter through the
+**materialized per-release `is_a` closure** before retrieval — a lookup, never
+a graph walk at query time. Expansion resolves per CURIE against the release
+pinned by the vocabulary that owns the expanded prefix; steering order, `k`
+and the token-budget row (FR-11) are untouched by expansion.
+
 ### pgvector layout
 
 `memory_embeddings` is **list-partitioned by `tenant_id`**, with a

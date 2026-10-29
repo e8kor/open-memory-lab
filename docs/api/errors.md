@@ -127,6 +127,22 @@ not advertise. The codes below fire where the caller has already named the simul
 | `simulation.taint_refused` | 409 | A promotion or reassignment would place a simulation row, or a claim whose lineage closure touches one (sim-derived), into a `validated` workarea. | Taint propagates and simulation rows never enter validated workareas (D10). |
 | `simulation.tip_refused` | 409 | A promotion, supersession ratification or tip-override would make a `provenance: simulation` row or sim-derived claim the default served tip of a claim lineage. | Taint never captures the default tip: tainted versions shadow the tip only for the simulation's audience as an overlay tip; the default tip of a real claim is bit-for-bit indifferent to every simulation (D10). |
 
+## `vocab` — vocabulary structure refusals
+
+The vocabulary surface ([http-api.md](http-api.md#vocabularies);
+[ontologies](../architecture/ontologies.md), [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) adds four refusals. The scanner **finding
+classes** (`vocab.term_pending`, `vocab.deprecation_replaced_by`, `vocab.mapping_exactMatch`,
+`vocab.deprecated_successor`) are *not* in this taxonomy: they are review-policy vocabulary —
+deterministic scan findings a workarea's `human_required_classes` may name — and live with the
+admission policy docs ([admission](../architecture/admission.md)), never as API refusals.
+
+| Code | HTTP | Fires when | The rule it names |
+|---|---|---|---|
+| `vocab.cycle_refused` | 409 | Ratifying an `is_a` or `replaced_by` claim edge would close a cycle over the ratified edges plus the candidate. | Term hierarchy and supersession chains are acyclic by **domain invariant** — a deterministic transaction-time check at ratification, like the supersession tip-CAS; it narrows, so it is constitution-compatible (ADR-0021). |
+| `vocab.prefix_conflict` | 409 | `workarea.create` carries a `prefix` already registered in this tenant's prefix registry. | A prefix is registered once, tenant-unique, and is permanent — a minted CURIE is never re-mintable with a different meaning (ADR-0021). |
+| `vocab.unknown_curie` | 422 | A cited CURIE (a `terms` annotation under `enforcement: require`) names no term readable by this key. Vocab reads never answer this code — a read answers `access.not_found` or an empty match, by the fail-closed-as-absence rule. | CURIE citations fail closed as absence within the writer's effective read scope, exactly as `derives_from` targets do (D7); unknown and out-of-scope are indistinguishable. |
+| `vocab.inactive_curie` | 422 | A cited term's served tip is deprecated, under `enforcement: require` (under `annotate`, the citation records a finding and never blocks). `details.successors` lists successor CURIEs and `details.relation` names the ratified pointer edge — `replaced_by` (safe for automated rewiring) or `consider` (requires judgment) — so a client self-heals in one hop. | Deprecation is supersession, never deletion: the successor pointer is a ratified claim edge, and the refusal hands it over rather than dead-ending the citer (ADR-0021). |
+
 ## `upload` — attachment sessions
 
 | Code | HTTP | Fires when | The rule it names |
@@ -178,10 +194,10 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.claim_key_conflict`, `submission.universe_refused`, `workarea.frozen`, `workarea.transition_refused`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `upload.session_invalid`, `export.not_ready` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.claim_key_conflict`, `submission.universe_refused`, `workarea.frozen`, `workarea.transition_refused`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
-| 422 | `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |

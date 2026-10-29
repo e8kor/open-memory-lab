@@ -139,6 +139,15 @@ the reviewed claim is provenance + digest + scan result, stated honestly per typ
 ([storage](storage.md) owns the attachment rules). Scan latency is unmeasured; a rule pass is
 expected to scale with body bytes, and no figure is asserted until one is measured.
 
+One scanner lives outside the default set: the **vocab scanner**, selected only where a
+workarea's `vocabulary_policy` (below) names a vocabulary. It checks cited CURIEs against the
+policy's pinned release — the scan verdict records that release id alongside the scanner version
+— and emits the deterministic finding classes `vocab.term_pending`,
+`vocab.deprecation_replaced_by`, `vocab.mapping_exactMatch` and `vocab.deprecated_successor`
+([ontologies](ontologies.md)). Because `human_required_classes` can name scanner finding classes,
+a deterministic finding doubles as a routing mechanism: the shipped vocabulary defaults place the
+human verdict on exactly those findings, and no parallel human-gate machinery exists.
+
 ## Review policy objects
 
 Each workarea carries a review policy object: a journalled record, versioned by the journal
@@ -152,6 +161,7 @@ promotion against the exact policy it satisfied. Its fields:
 | `human_required_classes` | claim classes (by kind, scan finding class, or provenance) whose ratification requires at least one human verdict via the CLI |
 | `independence_axis` | how far apart reviewer and author must be: reviewer principal ≠ author principal always (constitution R2, enforced at promotion against the row's lineage closure — [roles and keys](roles-and-keys.md)); optionally, for `committed` workareas by policy, reviewer crew / external manager ≠ author crew, resolved from journalled key→crew→manager metadata at promotion time ([roles and keys](roles-and-keys.md)) |
 | `held_item_expiry` | how long an item may wait in the queue before it is dead-lettered |
+| `vocabulary_policy` | optional `{vocabulary, release, enforcement: require \| annotate \| off}` — **default off**: which vocabulary and pinned release the vocab scanner checks cited CURIEs against, and whether a failing citation blocks (`require`), records a finding (`annotate`), or is not checked at all ([ontologies](ontologies.md), [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) |
 
 Policy objects are per workarea because workareas mirror crews with different stakes: a
 `development` area's policy may be permissive to the marked limit the constitution allows; a

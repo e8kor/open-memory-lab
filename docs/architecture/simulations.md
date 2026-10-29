@@ -185,6 +185,12 @@ problem with edge cases; a flat namespace makes it a predicate. The cost is expr
 scenario that wants layered counterfactuals ("world A, and within it, hypothesis B") must model the
 layers inside one simulation's content rather than as nested channels.
 
+One refusal the fence makes outside its own walls: **simulations cannot mint vocabulary.**
+Vocabulary workareas refuse `provenance: simulation` submissions of the kinds `term`,
+`term_mapping` and `vocab_release` — a deterministic scan-class veto — because a simulation's
+rows demote rather than erase at its end, and a demoted row must never squat a permanent CURIE
+([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)).
+
 ## No backdating
 
 A simulated event gets a **real** chain timestamp — its actual position and time in the per-tenant

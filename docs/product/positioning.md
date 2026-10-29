@@ -27,13 +27,25 @@ memory — text, files, images, PDFs — arrives held: scanned, then reviewed by
 did not write it, and only then visible to anyone else. Every write, verdict, approval,
 removal and key issuance is a signed entry in a tamper-evident record, and an export produces
 the per-memory decision trail on demand. Memory is organized into workareas that mirror your
-crews and mature from open development to a frozen, validated state. The
+crews and mature from open development to a frozen, validated state. Teams that need shared
+vocabulary host it the same way: governed vocabularies whose terms are claims under the same
+gate ([ontologies](../architecture/ontologies.md)). The
 [front page](../index.md) describes each of these in full.
 
 The cost is stated in the same breath: review is a real gate, so a memory is not visible to
 others until a reviewer has acted, and your organization must supply that review capacity —
 normally a reviewing crew of its own, with human review as the exception path. A team that
 wants writes visible instantly is asking for the thing this design exists to refuse.
+
+### AI-first, human in the loop
+
+The design's stance has a name worth stating once. **AI-first, human in the loop**: every role
+in the system is designed to be held by an agent, humans enter through the same roles and the
+same pipeline, and the human verdict is placed by policy exactly where a mistake is expensive —
+never through a parallel mechanism. The complement holds too: every extension is **on top of,
+never instead of** — with every extension off, OML is a full memory provider (the FR-10..12
+floor, [roadmap](roadmap.md); [critical path](critical-path.md) M2), and features like
+vocabularies only ever extend that base, at no cost beyond one extra MCP tool listing until a workarea's policy opts in.
 
 ## Evidence
 

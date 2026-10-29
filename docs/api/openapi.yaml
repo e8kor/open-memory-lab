@@ -28,6 +28,7 @@ tags:
   - name: claim-edges
   - name: workareas
   - name: events
+  - name: vocab
   - name: review
   - name: keys
   - name: bans
@@ -69,7 +70,7 @@ paths:
         - { name: workarea_id, in: query, schema: { type: string } }
         - { name: claim_key, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
-        - { name: kind, in: query, schema: { type: string, enum: [memory, derived_fact, steering] } }
+        - { name: kind, in: query, schema: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] } }
         - { name: own, in: query, schema: { type: boolean, default: false } }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { name: until, in: query, schema: { type: string, format: date-time } }
@@ -620,6 +621,80 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EventsPage' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/vocab/suggest:
+    get:
+      tags: [vocab]
+      operationId: suggestTerms
+      summary: Deterministic prefix+label typeahead over granted vocabulary workareas — matching, never interpretation.
+      description: 'Requires: reader effective access on the vocabulary workarea(s) searched; vocabularies outside scope are absent (fail closed).'
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: workarea_id, in: query, schema: { type: string }, description: Restrict to one vocabulary workarea. }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of suggestions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VocabSuggestPage' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/vocab/terms/{curie}:
+    get:
+      tags: [vocab]
+      operationId: getTerm
+      summary: One term record — status, successors, the releases its tip appears in.
+      description: 'Requires: reader effective access on the owning vocabulary workarea. Unknown and out-of-scope CURIEs answer 404 access.not_found, indistinguishable (fail closed).'
+      parameters: [{ $ref: '#/components/parameters/Curie' }]
+      responses:
+        '200':
+          description: The term.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VocabTerm' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/vocab/terms/{curie}/hierarchy:
+    get:
+      tags: [vocab]
+      operationId: getTermHierarchy
+      summary: Parents, children, ancestors or descendants over ratified is_a — a lookup over the per-release closure, never a traversal.
+      description: 'Requires: reader effective access on the owning vocabulary workarea. Closure rows are materialized at release ratification (serialize, don''t compute — ADR-0021); release defaults to the owning vocabulary''s latest ratified release.'
+      parameters:
+        - { $ref: '#/components/parameters/Curie' }
+        - { name: direction, in: query, required: true, schema: { type: string, enum: [parents, children, ancestors, descendants] } }
+        - { name: release, in: query, schema: { type: string }, description: A vocab_release id; defaults to the owning vocabulary's latest ratified release. }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of related terms, naming the release the closure was read from.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VocabHierarchyPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/vocab/mappings:
+    get:
+      tags: [vocab]
+      operationId: listTermMappings
+      summary: Ratified SSSOM-shaped mappings touching a term; both endpoints persist — a mapping never merges.
+      description: 'Requires: reader effective access on the queried term''s vocabulary; mapping rows outside the key''s read scope are absent (fail closed).'
+      parameters:
+        - { name: term, in: query, required: true, schema: { $ref: '#/components/schemas/Curie' } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of mappings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TermMappingPage' }
         default: { $ref: '#/components/responses/Error' }
 
   /v1/review/queue:
@@ -1330,6 +1405,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    Curie:
+      name: curie
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Curie' }
 
   responses:
     Error:
@@ -1417,6 +1497,10 @@ components:
         - simulation.ended
         - simulation.taint_refused
         - simulation.tip_refused
+        - vocab.cycle_refused
+        - vocab.prefix_conflict
+        - vocab.unknown_curie
+        - vocab.inactive_curie
         - upload.session_invalid
         - upload.digest_mismatch
         - lifecycle.erased
@@ -1450,7 +1534,7 @@ components:
         verb: { type: string, enum: [remember, learn], description: learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. }
         workarea_id: { type: string }
         claim_key: { type: string, description: "Groups versions of one claim; unique per (tenant, workarea) over non-erased rows." }
-        kind: { type: string, enum: [memory, derived_fact, steering] }
+        kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
         body: { type: string, description: Text body; binary content goes through attachments. }
         attachments:
           type: array
@@ -1462,6 +1546,30 @@ components:
           description: Artifact ids; the declared lineage (omission is undetectable — honesty rule).
         simulation_id: { type: [string, 'null'], description: Required when derives_from touches a simulation row; key must be in the audience. }
         simulated_time: { type: [string, 'null'], format: date-time, description: "Declared data, never backdating — the journal keeps the real timestamp." }
+        terms:
+          type: array
+          items: { $ref: '#/components/schemas/Curie' }
+          description: 'CURIE annotations (ADR-0021 d8): clear, non-erasable metadata entering the signed bytes; checked by the vocab scanner under the workarea''s vocabulary_policy.'
+        term_status: { type: string, enum: [active, deprecated], description: 'kind=term only. Structural payload field, never body text (ADR-0021 d1).' }
+        successors:
+          type: array
+          items:
+            type: object
+            required: [curie, relation]
+            properties:
+              curie: { $ref: '#/components/schemas/Curie' }
+              relation: { type: string, enum: [replaced_by, consider] }
+          description: 'kind=term with term_status deprecated only — required then: exactly one replaced_by, or one-or-more consider. The ratified oml:replaced_by / oml:consider claim edges fold from this declaration, atomically with the submission (ADR-0021 d3).'
+        mapping:
+          type: object
+          required: [subject, object, predicate, justification]
+          properties:
+            subject: { $ref: '#/components/schemas/Curie' }
+            object: { $ref: '#/components/schemas/Curie' }
+            predicate: { type: string, enum: [exactMatch, closeMatch, broadMatch, narrowMatch, relatedMatch] }
+            justification: { type: string, enum: [human-curated, lexical, logical] }
+            note: { type: string }
+          description: 'kind=term_mapping only — required then. Structural payload fields (ADR-0021 d6): the scanner''s vocab.mapping_exactMatch routing and the mappings read surface depend on them, so they never ride erasable body bytes.'
 
     SubmitAccepted:
       type: object
@@ -1496,7 +1604,7 @@ components:
         tip: { type: boolean, description: Whether this version is the served tip of its claim. }
         workarea_id: { type: string }
         workarea_path: { type: string, description: Derived at read time; grants bind to node ids. }
-        kind: { type: string, enum: [memory, derived_fact, steering] }
+        kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
         state: { type: string, enum: [held, promoted, demoted, rejected, erased] }
         principal: { type: string }
         provenance: { type: string, enum: [agent, human, connector, simulation] }
@@ -1529,8 +1637,21 @@ components:
         workarea_id: { type: string, description: Subtree root the key reads. }
         query: { type: string }
         k: { type: integer, minimum: 1, maximum: 100, default: 8 }
-        kinds: { type: array, items: { type: string, enum: [memory, derived_fact] } }
+        kinds: { type: array, items: { type: string, enum: [memory, derived_fact] }, description: 'Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021).' }
         include_bodies: { type: boolean, default: true }
+        terms:
+          type: array
+          items: { $ref: '#/components/schemas/Curie' }
+          description: Filter to rows whose terms annotation cites any of these CURIEs; an unreadable CURIE matches nothing (fail closed).
+        expand_terms:
+          type: string
+          enum: [none, descendants]
+          default: none
+          description: >-
+            descendants widens the terms filter before retrieval — per CURIE, resolved against
+            the release pinned by the vocabulary that owns the expanded prefix (per-release
+            closure lookup). Steering order and k are untouched; expansion changes the filter,
+            never the ranking.
 
     RecallResponse:
       type: object
@@ -1579,10 +1700,21 @@ components:
       required: [body]
       properties:
         body: { type: string }
-        kind: { type: string, enum: [memory, derived_fact, steering] }
+        kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
         attachments: { type: array, items: { $ref: '#/components/schemas/Digest' } }
         derives_from: { type: array, items: { type: string }, description: The superseded target is included implicitly. }
         reason: { type: string }
+        terms: { type: array, items: { $ref: '#/components/schemas/Curie' }, description: 'CURIE annotations (ADR-0021 d8).' }
+        term_status: { type: string, enum: [active, deprecated], description: 'kind=term only — a deprecation IS a supersession with term_status deprecated (ADR-0021 d3).' }
+        successors:
+          type: array
+          items:
+            type: object
+            required: [curie, relation]
+            properties:
+              curie: { $ref: '#/components/schemas/Curie' }
+              relation: { type: string, enum: [replaced_by, consider] }
+          description: 'Required when term_status is deprecated: exactly one replaced_by, or one-or-more consider — the successor rides the deprecating submission atomically; one serve and one verdict cover both (ADR-0021 d3).'
 
     ReassignRequest:
       type: object
@@ -1709,6 +1841,7 @@ components:
         parent_id: { type: string }
         name: { type: string }
         crew: { $ref: '#/components/schemas/CrewRecord' }
+        prefix: { type: string, description: 'Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew.' }
 
     WorkareaPage:
       type: object
@@ -1809,6 +1942,73 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/JournalEvent' } }
         head_seq: { type: integer, description: "Current per-tenant chain head, for measuring lag." }
+
+    Curie:
+      type: string
+      pattern: '^[A-Za-z][A-Za-z0-9_-]*:[^\s:]+$'
+      description: 'PREFIX:localname over the tenant''s journalled prefix registry; permanent once minted (first promotion).'
+
+    VocabSuggestion:
+      type: object
+      required: [curie, label, term_status]
+      properties:
+        curie: { $ref: '#/components/schemas/Curie' }
+        label: { type: string }
+        term_status: { type: string, enum: [active, deprecated] }
+
+    VocabSuggestPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/VocabSuggestion' } }
+        next_cursor: { type: [string, 'null'] }
+
+    VocabTerm:
+      type: object
+      required: [curie, workarea_id, version, term_status]
+      properties:
+        curie: { $ref: '#/components/schemas/Curie' }
+        workarea_id: { type: string, description: The owning vocabulary workarea. }
+        version: { type: integer, description: The served tip version of the term claim. }
+        term_status: { type: string, enum: [active, deprecated], description: Structural payload field — survives shredding, deterministically readable. }
+        definition_state: { type: string, enum: [present, erased], description: The CURIE is permanent; the definition body is erasable (410 lifecycle.erased on fetch). }
+        successors:
+          type: array
+          description: Ratified successor edges declared with the deprecation version; empty for an active term.
+          items:
+            type: object
+            required: [curie, relation]
+            properties:
+              curie: { $ref: '#/components/schemas/Curie' }
+              relation: { type: string, enum: [replaced_by, consider], description: replaced_by is safe for automated rewiring; consider requires judgment. }
+        releases: { type: array, items: { type: string }, description: vocab_release ids whose pinned term set includes this term. }
+
+    VocabHierarchyPage:
+      type: object
+      required: [items, release, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/VocabSuggestion' } }
+        release: { type: string, description: The vocab_release the closure was read from. }
+        next_cursor: { type: [string, 'null'] }
+
+    TermMapping:
+      type: object
+      description: SSSOM-shaped ratified claim; revocable by supersession, never a merge.
+      required: [subject, object, predicate, justification, ratified_at]
+      properties:
+        subject: { $ref: '#/components/schemas/Curie' }
+        object: { $ref: '#/components/schemas/Curie' }
+        predicate: { type: string, enum: [exactMatch, closeMatch, broadMatch, narrowMatch, relatedMatch] }
+        justification: { type: string, enum: [human-curated, lexical, logical] }
+        note: { type: string }
+        ratified_at: { type: string, format: date-time }
+
+    TermMappingPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/TermMapping' } }
+        next_cursor: { type: [string, 'null'] }
 
     ReviewQueuePage:
       type: object

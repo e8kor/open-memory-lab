@@ -110,10 +110,15 @@ CREATE TABLE memories (
     sim_derived_ids   uuid[]      NOT NULL DEFAULT '{}',   -- taint: simulations in lineage closure
     manifest_id       uuid,       -- reserved: dataset imports (ADR-0020, post-v1); NULL for organic claims
     review_scope      text,       -- reserved: 'sampled(<manifest>)' | 'individual' (ADR-0020); NULL = individual
+    terms             text[]      NOT NULL DEFAULT '{}',  -- CURIE annotations (ADR-0021); clear,
+                                          -- non-erasable metadata, listed in the erasure inventory
+    term_status       text        CHECK (term_status IN ('active', 'deprecated')),
+                                          -- kind=term only: the structural deprecation marker (ADR-0021)
     plaintext_digest  bytea,   -- journalled in the submission event: content identity
     ciphertext_digest bytea,   -- journalled in the same event: the key-less reconciler's comparand
     body_ref          jsonb       NOT NULL,  -- {class: quarantine|object|lake, ref: …}
-    kind              text        NOT NULL,  -- memory | derived_fact | steering | …
+    kind              text        NOT NULL,  -- memory | derived_fact | steering | term |
+                                             -- term_mapping | vocab_release (+ dataset_manifest, ADR-0020)
     created_at        timestamptz NOT NULL,
     promoted_at       timestamptz,
     PRIMARY KEY (tenant_id, artifact_id, version),
@@ -228,6 +233,10 @@ CREATE TABLE api_keys (
     principal  text        NOT NULL,
     issued_by  uuid        REFERENCES api_keys (id),  -- issuer ceiling checked at issuance
     rotated_from uuid      REFERENCES api_keys (id),  -- successor link; predecessor revoked at grace end
+    held_by    text        NOT NULL DEFAULT 'agent'
+        CHECK (held_by IN ('agent', 'human')),  -- issuance-time attestation by the issuing admin
+                                          -- (ADR-0021): verified as an attestation, never as fact;
+                                          -- human_required_classes consumes it
     expiry     timestamptz,
     revoked_at timestamptz
 );
@@ -273,6 +282,40 @@ Effective access is computed, never stored: union of a key's grants, each attenu
 computations invalidatable and every historical computation reproducible from journalled grants
 ([workareas](../architecture/workareas.md) owns the permission-epoch semantics).
 Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before it is imposed.
+
+## vocabularies (ADR-0021)
+
+Vocabulary state is claims plus two folds of the journal and one per-release materialization:
+
+```sql
+-- the prefix registry: tenant-scoped, RLS like every table; a prefix is permanent —
+-- registered in the vocabulary workarea's create act, never reused or reassigned.
+CREATE TABLE vocab_prefixes (
+    tenant_id           uuid NOT NULL,
+    prefix              text NOT NULL,
+    workarea_id         uuid NOT NULL REFERENCES workareas (id),
+    registered_event_id uuid NOT NULL REFERENCES journal (event_id),
+    PRIMARY KEY (tenant_id, prefix)        -- tenant-scoped uniqueness: a global unique
+);                                         -- would leak existence across tenants
+
+-- per-release materialized is_a closure (built at vocab_release ratification; the
+-- serialize-don't-compute contract holds because traversal reads this, never walks):
+CREATE TABLE vocab_closure (
+    tenant_id   uuid NOT NULL,
+    release_id  uuid NOT NULL,              -- the vocab_release claim's artifact_id
+    ancestor    text NOT NULL,              -- CURIE
+    descendant  text NOT NULL,              -- CURIE
+    depth       integer NOT NULL,
+    PRIMARY KEY (tenant_id, release_id, ancestor, descendant)
+);  -- O(terms × depth) rows per release; cost priced in FR-20
+```
+
+Terms, mappings and releases themselves are `memories` rows (kinds `term`, `term_mapping`,
+`vocab_release`); deprecation successors are ratified `claim_edges` labelled `oml:replaced_by` /
+`oml:consider`, declared in the deprecation submission and ratified with it. A term lineage is
+never fully erased: the definition body is shreddable, the lineage row and `claim_key` persist —
+a CURIE, once a term is promoted, resolves forever (the minted-at-first-promotion rule,
+ADR-0021).
 
 ## simulations
 
@@ -515,6 +558,8 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `memories` | submission, review, lifecycle, simulation events |
 | `workareas` | workarea create / re-parent / status / crew events |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
+| `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |
+| `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |
 | `simulations` | simulation open / end events |
 | `api_keys` (state columns) | key issue / revoke events |
