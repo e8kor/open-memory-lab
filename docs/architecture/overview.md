@@ -90,43 +90,51 @@ unique process ([storage.md](storage.md)).
 
 ## 3. Module structure
 
-Inside every binary the code has one shape, decided in
+Inside each of the four service binaries the code has one shape, decided in
 [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md): a hexagon. A pure domain core
 (`oml-domain`) holds the admission state machine, the workarea algebra, the role/verb ceilings,
 the status ladder and the taint predicate — every constitution invariant, and no I/O. Around it,
-the application layer (`oml-app`) declares ports as Rust traits; everything that touches the
-world is an adapter implementing one. The four binaries and the CLI are thin compositions of the
-same core with the adapter set each job needs; the crate list is committed in
+the application layer (`oml-app`) declares ports as Rust traits. On the driven side, everything
+that touches the world — store, lake, object store, KMS, plugins — is an adapter implementing one
+of those traits; on the driving side, the HTTP `/v1` transport and the MCP facade are adapters
+the other way around: they depend on `oml-app` and call its use-cases, the application's inbound
+port. The four binaries are thin compositions of the same core with the adapter set each job
+needs; the `oml` CLI reaches the same hexagon only through the HTTP transport
+([ADR-0015](../adr/ADR-0015-cli-administration.md)). The crate list is committed in
 [ADR-0006](../adr/ADR-0006-pure-rust.md).
 
 ```mermaid
 flowchart LR
-    subgraph driving ["Driving adapters"]
+    C["oml CLI<br/>an HTTP client — drives the system<br/>only through /v1 (ADR-0015)"]
+    subgraph driving ["Driving adapters — depend on oml-app, call its use-cases"]
         H["HTTP /v1 transport"]
         M["MCP facade"]
-        C["oml CLI"]
     end
-    subgraph hex ["The hexagon"]
-        APP["oml-app<br/>ports (traits) + use-cases"]
+    subgraph hex ["The hexagon — knows no adapter"]
+        APP["oml-app<br/>use-cases (the driving port) +<br/>driven ports as Rust traits:<br/>store · lake · object store · KMS ·<br/>scanner · embedder · exporter · clock/id"]
         DOM["oml-domain<br/>pure core — every<br/>constitution invariant,<br/>no I/O"]
-        APP --> DOM
+        APP -- "depends on" --> DOM
     end
-    subgraph driven ["Driven adapters"]
+    subgraph driven ["Driven adapters — depend on oml-app, implement its port traits"]
         PGA["Postgres<br/>(sqlx)"]
         LKA["Delta lake<br/>(delta-rs)"]
         OSA["Object store<br/>(object_store)"]
         KMA["KMS"]
-        PL["Plugin ports:<br/>scanners · embedders ·<br/>exporters"]
+        PL["Plugins:<br/>scanners · embedders · exporters"]
     end
-    H --> APP
-    M --> APP
-    C --> APP
-    APP --> PGA
-    APP --> LKA
-    APP --> OSA
-    APP --> KMA
-    APP --> PL
+    C -. "HTTP /v1" .-> H
+    H -- "calls use-cases" --> APP
+    M -- "calls use-cases" --> APP
+    APP -- "store port" --> PGA
+    APP -- "lake port" --> LKA
+    APP -- "object-store port" --> OSA
+    APP -- "KMS port" --> KMA
+    APP -- "scanner · embedder ·<br/>exporter ports" --> PL
 ```
+
+Arrows out of the hexagon are runtime calls crossing a named port; the compile-time dependency
+runs the other way — each driven adapter implements a trait declared in `oml-app`, so every
+dependency in this picture points at the hexagon, and the hexagon knows no adapter.
 
 Plugins exist only at the scanner, embedder and exporter ports; in v1 they are compiled-in Rust
 implementations selected by journalled configuration. A plugin can narrow, never widen — it
