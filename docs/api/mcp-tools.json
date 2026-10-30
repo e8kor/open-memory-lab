@@ -167,8 +167,7 @@
           },
           "text": {
             "type": "string",
-            "maxLength": 1048576,
-            "description": "The new claim text, or, with retirement true, why the claim is retired."
+            "description": "The new claim text, or, with retirement true, why the claim is retired. At most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized text; larger is refused with request.payload_too_large."
           },
           "retirement": {
             "type": "boolean",
@@ -189,9 +188,17 @@
             "type": "string",
             "description": "Optional reason for the change, passed through to the supersede body."
           },
+          "simulation_id": {
+            "type": "string",
+            "description": "Optional simulation channel id, exactly as on oml_learn: required when the target or derives_from touches a simulation row (submission.simulation_id_required otherwise), honored only for keys in that simulation's audience."
+          },
+          "simulated_time": {
+            "type": "string",
+            "description": "Optional RFC 3339 timestamp, as on oml_learn: declared data, never backdating."
+          },
           "idempotency_key": {
             "type": "string",
-            "description": "Scoped to (key, target workarea). A retry with the same key and an identical request returns the stored response; the same key with a different request is a typed error, never a second write (D13)."
+            "description": "Scoped to the calling key alone, whatever the target's workarea. A retry with the same key and an identical request returns the stored response, even once the target is no longer readable; the same key with a different request, another target included, is a typed error, never a second write (D13)."
           }
         },
         "required": ["artifact_id", "text", "idempotency_key"],
@@ -272,7 +279,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea node id, a subtree filter; omitted, every workarea the key wrote to."
+            "description": "Optional workarea node id, a subtree filter; omitted, every workarea the key wrote to. It must name a node the key holds some role on, else access.not_found, indistinguishable from a nonexistent node."
           },
           "claim_key": {
             "type": "string",

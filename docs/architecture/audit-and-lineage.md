@@ -141,8 +141,11 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   the claim's history. The ordinal is read before the capture transaction opens, like every
   deterministic input of a capture ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1);
   the per-tenant chain lock serializes commits, the `memories_claim_version` index refuses a
-  capture whose ordinal a concurrent capture took first, and the server retries that capture
-  with a fresh ordinal. A superseded version reads state `promoted`, tip `false`. The ordinal is
+  capture whose ordinal a concurrent capture took first, and the server retries that capture.
+  The retry re-runs every pre-`BEGIN` read of the capture, the `claim_key` collision test
+  included, so a version-1 capture that lost the race answers `submission.claim_key_conflict`
+  and is never renumbered; only a successor takes a fresh ordinal. A superseded version reads
+  state `promoted`, tip `false`. The ordinal is
   a stated residual: a successor's version ordinal, returned to its proposer and shown on every
   version, counts every earlier version of the `claim_key` in any state, so a key learns how many
   versions it cannot read (held, rejected or demoted, by any author) precede it — a count, never
@@ -180,6 +183,17 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   successor stays held until a reviewer rejects it; its author may propose afresh against the new
   tip, and the fresh proposal leaves the stale one held. The tip never changes except by a
   ratified promotion, so readers never see a version nobody reviewed ahead of a reviewed one.
+  The compare-and-set runs inside the commit's data-modifying statement, never before `BEGIN`
+  ([postgres-schema](../data/postgres-schema.md#memories)). For a tainted successor (provenance
+  `simulation` or sim-derived) the ratification compare-and-sets the same target and journals
+  `lifecycle.supersede`, but it sets the audience overlay tip (`memories_overlay_tip`) and never
+  the default tip: a target that is the default tip is compared without being flipped, so it
+  stays the default tip for every key, and only an overlay target is flipped. Tainted and untainted successors of one tip do not compete under the
+  default-tip compare-and-set, and an overlay whose target stops being the default tip stops
+  shadowing it. A version's `tip`, on every read that serves it, is computed for the calling key,
+  audience-scoped: a key in the simulation's audience sees the overlay as the tip and the default
+  tip it shadows with `tip: false`; every other key sees the default tip and never an overlay
+  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
 - **A successor's kind changes only within its class.** A successor of a `memory`,
   `derived_fact` or `steering` target may take any of those three kinds, so a revision can turn a
   memory into a derived fact or a standing instruction under review; a successor of a `term`,
@@ -191,8 +205,9 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   claim's first version or from a `self_signed` tip. A supersession or retirement whose target
   was promoted by non-author review needs full non-author ratification even there — the review
   policy does not admit self-sign for that row. `self_signed` rows are served only to reads
-  scoped inside their workarea ([retrieval](retrieval.md)), so a self-signed replacement would
-  take reviewed content away from every read scoped above the workarea with no second identity
+  whose scope node is their own workarea ([retrieval](retrieval.md)), so a self-signed
+  replacement would take reviewed content away from every recall and listing scoped above the
+  workarea with no second identity
   ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5;
   [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
 - **A retirement version as tip makes a retired claim.** A ratified supersession carrying

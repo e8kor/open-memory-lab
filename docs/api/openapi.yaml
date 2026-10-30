@@ -112,10 +112,10 @@ paths:
       tags: [memories]
       operationId: searchMemories
       summary: Structured, paginated listing of memory summaries.
-      description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true the listing resolves no workarea: workarea_id is its subtree filter, and an X-OML-Workarea header is refused (request.validation). Without own, the listing returns promoted served tips within reader effective access, defaulting to the token workarea''s subtree (ADR-0022 d4) — a retired claim''s tip, its retirement version, among them, flagged retirement true; others'' held rows are never returned (R3). workarea_id is a subtree filter. Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
+      description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true the listing resolves no workarea, and an X-OML-Workarea header is refused (request.validation). Without own, the listing returns promoted served tips within reader effective access, defaulting to the token workarea''s subtree (ADR-0022 d4) — a self_signed version only when the scope node is its own workarea; a retired claim''s tip, its retirement version, among them, flagged retirement true; others'' held rows are never returned (R3). workarea_id is a subtree filter (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
       parameters:
         - { $ref: '#/components/parameters/XOMLWorkarea' }
-        - { name: workarea_id, in: query, schema: { type: string }, description: A subtree filter. }
+        - { name: workarea_id, in: query, schema: { type: string }, description: "A subtree filter that must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it. Without own, a node where reader is effective; the listing is the intersection of its subtree with the scope's, and the scope still resolves from the token (request.workarea_unresolved for a key with neither a default nor X-OML-Workarea)." }
         - { name: claim_key, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
         - { name: kind, in: query, schema: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] } }
@@ -242,7 +242,7 @@ paths:
       tags: [memories]
       operationId: getMemory
       summary: One memory with body (decrypted on the serving path) and attachment descriptors.
-      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased. Resolves no workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the caller can read, and workarea_id is null on an own row whose node the key holds no role on.'
+      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row''s own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author''s key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.'
       parameters: [{ $ref: '#/components/parameters/ArtifactId' }]
       responses:
         '200':
@@ -326,7 +326,7 @@ paths:
       tags: [memories]
       operationId: proposeSupersession
       summary: Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the target''s workarea (request.validation otherwise); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to (key, target workarea), and the record is claimed only after steps 1 and 2 of that rule pass. Omitted attachments and terms leave the successor with none; only kind is inherited. A tainted replacement can never take the default tip (simulation.tip_refused at promotion): it shadows the tip for its simulation audience only.'
+      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the target''s workarea (request.validation otherwise); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target''s state or the key''s access now, and it is claimed only after step 2 passes. Omitted attachments and terms leave the successor with none; only kind is inherited. A tainted replacement can never take the default tip (simulation.tip_refused at promotion): it shadows the tip for its simulation audience only.'
       parameters:
         - { $ref: '#/components/parameters/ArtifactId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -684,7 +684,7 @@ paths:
       tags: [claim-edges]
       operationId: ratifyClaimEdge
       summary: Ratify a proposed claim edge.
-      description: 'Requires: dreamer(review); never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage) — R2.'
+      description: 'Requires: dreamer(review); never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage) — R2. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
       parameters:
         - { name: edge_id, in: path, required: true, schema: { type: string } }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -925,7 +925,7 @@ paths:
       tags: [workareas]
       operationId: ratifyWorkareaEdge
       summary: Ratify a proposed workarea edge.
-      description: 'Requires: dreamer(review) effective access on BOTH endpoints; never the proposer (review.ratifier_is_proposer — R2 extends to edges).'
+      description: 'Requires: dreamer(review) effective access on BOTH endpoints; never the proposer (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
       parameters:
         - { name: edge_id, in: path, required: true, schema: { type: string } }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1093,7 +1093,7 @@ paths:
       tags: [workareas]
       operationId: ratifyTransition
       summary: Ratify a pending transition; journalled with the policy snapshot.
-      description: 'Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions).'
+      description: 'Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
       parameters:
         - { $ref: '#/components/parameters/WorkareaId' }
         - { name: transition_id, in: path, required: true, schema: { type: string } }
@@ -1291,7 +1291,7 @@ paths:
       tags: [review]
       operationId: reviewQueue
       summary: Held-item counts and oldest ages per workarea in the reviewer's scope.
-      description: 'Requires: dreamer(review) effective access.'
+      description: 'Requires: dreamer(review) effective access. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
       parameters:
         - { name: workarea, in: query, schema: { type: string }, description: Subtree filter. }
         - { $ref: '#/components/parameters/Limit' }
@@ -1311,6 +1311,7 @@ paths:
                   oldest_age_seconds: 5411
                 next_cursor: null
               schema: { $ref: '#/components/schemas/ReviewQueuePage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/review/next:
@@ -1318,7 +1319,7 @@ paths:
       tags: [review]
       operationId: reviewNext
       summary: Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under an expiring serve_id.
-      description: 'Requires: dreamer(review). Serves only rows within the key''s dreamer effective access on the row''s workarea; 204 when nothing in scope waits, and always to a held_by: service key (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).'
+      description: 'Requires: dreamer(review). Serves only rows within the key''s dreamer effective access on the row''s workarea; 204 when nothing in scope waits. A held_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: false
@@ -1383,7 +1384,7 @@ paths:
       tags: [review]
       operationId: postVerdict
       summary: Verdict against a valid serve; the journalled verdict records the served digests.
-      description: 'Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row''s workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1). An approve that would ratify a supersession whose target is no longer the tip is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.'
+      description: 'Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row''s workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1418,7 +1419,7 @@ paths:
       tags: [review]
       operationId: reopenRejection
       summary: Non-author reopen of a rejection — a journalled verb, not a resubmission.
-      description: 'Requires: dreamer(review); the original author is refused (review.author_in_lineage).'
+      description: 'Requires: dreamer(review); the original author is refused (review.author_in_lineage). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -2419,8 +2420,9 @@ components:
         Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the
         provider ring the workarea component is the RESOLVED target — the key's default_workarea
         or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the
-        target's workarea (ADR-0025 d10), claimed only after steps 1 and 2 of the supersede rule
-        pass. The request digest is SHA-256 over the RFC 8785 JSON of {method, route,
+        fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede
+        rule and before step 2, so a committed supersession always replays, and claimed only after
+        step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route,
         path_params, body} (docs/api/http-api.md, Idempotency). Replay of
         the same request returns the stored response with header Idempotency-Replay: true; the
         same key with a different request digest is refused (idempotency.digest_mismatch). A
@@ -2651,7 +2653,7 @@ components:
         verb: { type: string, enum: [remember, learn], description: learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. }
         claim_key: { type: string, description: "Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md)." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
-        body: { type: string, maxLength: 1048576, description: 'Text body — claim text, at most 1 MiB (http-api.md Limits); binary content goes through attachments.' }
+        body: { type: string, description: 'Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through attachments.' }
         attachments:
           type: array
           maxItems: 64
@@ -2726,7 +2728,7 @@ components:
         artifact_id: { type: string }
         claim_key: { type: string }
         version: { type: integer }
-        tip: { type: boolean, description: "Whether this version is the served tip of its claim. A superseded version is state promoted, tip false." }
+        tip: { type: boolean, description: "Whether this version is the served tip of its claim for the calling key, audience-scoped: for a key in a simulation's audience an overlay tip that shadows the default tip, which then reads tip false; for every other key the default tip (docs/architecture/audit-and-lineage.md). A superseded version is state promoted, tip false." }
         workarea_id: { type: [string, 'null'], description: "Null when the calling key holds no role on the node (naming a node, docs/architecture/roles-and-keys.md, Own) — possible only on an own row an admin moved there (ADR-0025 d3)." }
         workarea_path: { type: [string, 'null'], description: "Derived at read time; grants bind to node ids. Null wherever workarea_id is." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
@@ -2742,7 +2744,11 @@ components:
         retirement: { type: boolean, default: false, description: 'True on a retirement version; a claim whose served tip is one is a retired claim, which recall does not serve.' }
         replaces:
           type: [object, 'null']
-          description: For a supersession, the version it replaces; null for a version 1.
+          description: >-
+            For a supersession, the version it replaces; null for a version 1. It obeys the same
+            readability test as derives_from on every read, so it is also null when the caller
+            cannot read the replaced version — after an admin moved that version into another
+            workarea or back into held, say (ADR-0025 d3).
           properties:
             artifact_id: { type: string }
             version: { type: integer }
@@ -2782,8 +2788,9 @@ components:
           default: false
           description: >-
             When true, the calling key's own held rows (kind memory or derived_fact, never steering
-            or retirement versions) inside subtree(scope) ∩ reader effective access join the hits,
-            ranked in the same order, with memory.state held; they count against k and max_tokens.
+            or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by
+            the kinds filter when one is sent as promoted hits are, join the hits, ranked in the
+            same order, with memory.state held; they count against k and max_tokens.
             Rules: docs/architecture/retrieval.md.
         max_tokens:
           type: integer
@@ -2887,7 +2894,7 @@ components:
         it refuses nothing a supersession must carry (ADR-0025 d16).
       required: [body]
       properties:
-        body: { type: string, maxLength: 1048576, description: 'Claim text, at most 1 MiB (http-api.md Limits); with retirement true, why the claim is retired.' }
+        body: { type: string, description: 'Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.' }
         retirement: { type: boolean, default: false, description: 'true proposes retiring the claim, and body states why. Refused with request.validation when the target''s kind is term (terms deprecate), or when a kind is sent that differs from the target''s.' }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release], description: 'Omitted, the successor takes the target''s kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target''s kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).' }
         attachments: { type: array, maxItems: 64, items: { $ref: '#/components/schemas/Digest' }, description: 'Omitted, the successor has no attachments; nothing is inherited from the target.' }
