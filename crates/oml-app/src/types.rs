@@ -534,6 +534,10 @@ pub struct SupersedeRequest {
     pub reason: Option<String>,
     /// `X-OML-Workarea`: when sent, it must be the target's workarea.
     pub workarea_id: Option<Uuid>,
+    /// Set by `oml_supersede`, which carries no vocabulary fields: a target
+    /// of a vocabulary kind is refused, and superseded on the HTTP API
+    /// instead (mcp-plugin.md `oml_supersede`; ADR-0025 d12).
+    pub refuse_vocabulary_target: bool,
 }
 
 /// The stored idempotent response of a supersession: a replay returns this
@@ -669,6 +673,10 @@ pub enum AppError {
         "a term is never retired: terms deprecate (ADR-0021 d3; ADR-0025 d11, request.validation)"
     )]
     TermRetirement,
+    #[error(
+        "oml_supersede carries no vocabulary fields, so a {0:?} target is superseded on the HTTP API (mcp-plugin.md oml_supersede; ADR-0025 d12, request.validation)"
+    )]
+    VocabularyTarget(MemoryKind),
     #[error(
         "a held, promoted or demoted version holds this claim_key in the workarea (audit-and-lineage.md, submission.claim_key_conflict)"
     )]

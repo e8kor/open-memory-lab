@@ -1819,14 +1819,15 @@ where
     /// readable (step 2); a writer's own target and writer on its workarea
     /// (step 3), or a dreamer's dreamer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
-    /// `X-OML-Workarea`, the served tip, the kind and retirement checks
-    /// (step 5); then the checks every submit runs. The successor takes the
-    /// next ordinal of the claim_key and journals `submission.remember`
-    /// (`submission.learn` for a `derived_fact`) naming what it replaces,
-    /// with the idempotency record in the same transaction; a commit that
-    /// finds the record already written by a concurrent attempt under the
-    /// same key writes nothing and answers that attempt's receipt as a
-    /// replay ([`IdempotencyPut`] says what the slice does not claim).
+    /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
+    /// and from `oml_supersede` the vocabulary-kind check (step 5); then the
+    /// checks every submit runs. The successor takes the next ordinal of the
+    /// claim_key and journals `submission.remember` (`submission.learn` for
+    /// a `derived_fact`) naming what it replaces, with the idempotency record
+    /// in the same transaction; a commit that finds the record already
+    /// written by a concurrent attempt under the same key writes nothing and
+    /// answers that attempt's receipt as a replay ([`IdempotencyPut`] says
+    /// what the slice does not claim).
     pub async fn supersede(
         &self,
         api_key: &str,
@@ -1890,7 +1891,8 @@ where
 
         // Step 5, in its order: the scope is the target's workarea, the
         // target is the served tip, the kind stays in its class and a
-        // retirement keeps the target's kind and never retires a term.
+        // retirement keeps the target's kind and never retires a term, and
+        // on oml_supersede the target is of no vocabulary kind (ADR-0025 d12).
         if let Some(workarea_id) = req.workarea_id
             && workarea_id != target.workarea_id
         {
@@ -1904,6 +1906,14 @@ where
             });
         }
         let kind = successor_kind(target.kind, req.kind, req.retirement)?;
+        if req.refuse_vocabulary_target
+            && matches!(
+                target.kind,
+                MemoryKind::Term | MemoryKind::TermMapping | MemoryKind::VocabRelease
+            )
+        {
+            return Err(AppError::VocabularyTarget(target.kind));
+        }
 
         // The checks every submit runs: NFC first, then the scan, whose veto
         // journals nothing, then every declared ancestor readable
