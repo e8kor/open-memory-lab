@@ -8,8 +8,11 @@ answers: what Open Memory Lab is, the problem it solves, what it guarantees in p
 # Open Memory Lab
 
 Design revision **0.1.0-design** — see the [changelog](changelog.md).
+**See it move:** the [Live Atlas](atlas/index.html) is an interactive 3D tour of how crews work
+memory through OML — recall, remember, review, supersede, integrate — over mocked data.
 
-**Status:** design draft for review · decided, not built
+**Status:** design draft for review · decided — and since 2026-10-30 the critical path's M1
+slice runs as a PoC in this repository (see the README's *Running the PoC*)
 
 Open Memory Lab (OML) is an external memory provider for AI agents and crews, built on one
 premise: **what an agent learns is a claim, not a fact.** A memory written by an agent is held
