@@ -1,0 +1,12 @@
+{
+  "name": "oml",
+  "version": "0.1.0",
+  "description": "Remember and recall through an Open Memory Lab server over MCP. Writes are held until a different identity ratifies them.",
+  "author": {
+    "name": "e8kor"
+  },
+  "homepage": "https://e8kor.github.io/open-memory-lab/",
+  "repository": "https://github.com/e8kor/open-memory-lab",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp", "review", "agents"]
+}

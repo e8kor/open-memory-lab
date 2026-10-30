@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "oml": {
+      "type": "http",
+      "url": "${OML_URL:-http://127.0.0.1:8080}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${OML_API_KEY}"
+      }
+    },
+    "oml-recall": {
+      "type": "http",
+      "url": "${OML_URL:-http://127.0.0.1:8080}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${OML_RECALL_KEY}"
+      }
+    }
+  }
+}
