@@ -355,7 +355,6 @@ fn set<I: IntoIterator<Item = S>, S: Into<String>>(ids: I) -> BTreeSet<String> {
 }
 
 #[tokio::test]
-#[ignore = "the agent-only-memory scenario turns green at plan step S14 (ADR-0025)"]
 async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and_proposes_retiring_its_memory()
  {
     let (router, db) = fresh_router().await;
