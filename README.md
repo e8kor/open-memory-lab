@@ -154,5 +154,9 @@ recall, the signed per-tenant hash chain with an independent CLI verifier, and f
 agent plugin's twelve tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_events_tail`). **Not
 implemented yet:** the other eight plugin tools, one key that both writes and recalls (grants of
 several roles on one key), attachments and the object lake, erasure ceremonies, follower servers and read scaling, simulations,
-embedding-based retrieval, and the operator tier — see the
-[critical path](docs/product/critical-path.md) for the order in which they land.
+embedding-based retrieval, and the operator tier; and two working pieces still differ from the
+design: the slice's supersede replaces the version readers see as soon as the replacement is
+proposed, before anyone reviews it, and its event feed shows every reader the held writes of
+other writers. The design corrects both, and the supersede correction lands before the agent
+plugin's supersede tool ships — see the [critical path](docs/product/critical-path.md) for the
+order in which they land.

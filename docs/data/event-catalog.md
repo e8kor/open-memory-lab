@@ -318,6 +318,8 @@ names, so the mark reaches the journal, the `memories.self_signed` fold and the
 coexist; the first ratified takes the tip, and a lost compare-and-set refuses the verdict and
 journals nothing. With `retirement: true` the successor is a retirement version and the claim
 becomes a retired claim ([audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
+For a tainted successor (a simulation row or sim-derived) the same event sets that simulation's
+audience overlay tip instead, and the default tip does not move (same section).
 
 ### lifecycle.tip_override
 

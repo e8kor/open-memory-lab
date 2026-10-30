@@ -33,9 +33,9 @@ implementation milestone where it changes what the repository holds.
 
 [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) (proposed) decides the surface
 FR-10 and FR-11 need and the access model it rests on. It proposes amending ADR-0001 (d5),
-ADR-0008 (d4, d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2) and
-ADR-0018 (d4); each of those records' Status lines gains the back-pointer when ADR-0025 is
-accepted.
+ADR-0008 (d4, d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2),
+ADR-0018 (d4) and ADR-0022 (d4); each of those records' Status lines gains the back-pointer
+when ADR-0025 is accepted.
 
 - **Decided:** grant admissibility per key role and one four-step refusal order, so one
   writer-role key with writer and reader grants remembers and recalls; issuance that carries
@@ -53,10 +53,12 @@ accepted.
   effective verbs and permission epoch; per-family visibility on the events tail with a bounded
   scan and `next_after_seq`, where a `lifecycle.*` event reaches readers only while the version's
   latest move between held and promoted is a promotion, reaches its author in any case, and names
-  no reviewer, admin or node the key holds nothing on; a request digest over method, route, path
-  parameters and body, with supersede's idempotency record claimed only once its target is known
-  readable and every target-dependent refusal ordered after that; `derives_from` served only as
-  far as the caller can read; a successor's kind changing only within its class, and nothing but
+  no reviewer, admin or claim workarea the key holds nothing on; a request digest over method,
+  route, path parameters and body, with supersede's idempotency record scoped to the key alone,
+  looked up before the target's readability so a committed supersession always replays, and
+  claimed only once the target is known readable, every target-dependent refusal ordered after
+  that; a `held_by: service` key refused every review-class verb; `derives_from` and `replaces`
+  served only as far as the caller can read; a successor's kind changing only within its class, and nothing but
   its kind inherited from the target; a row-count check on every `held_fts` removal; effective
   access computed on every request with no cache, so a revocation applies to the key's next
   request served by the lead, and on follower-served reads after replication lag (proposing to
@@ -65,8 +67,8 @@ accepted.
   change. No operation, error code, event type or claim state is added: the taxonomy and the
   operation set are unchanged. The MCP catalog goes from ten tools to twelve.
 - **Roadmap:** FR-30 (the budget-token count against model tokenizers, unmeasured), FR-31 (the
-  `claim_key` collision, the version ordinal and the tenant-wide journal positions as residual
-  existence and count signals) and RS-17 (revising one's own claim
+  `claim_key` collision, the version ordinal, the tenant-wide journal positions and the lineage
+  read's redacted ids as residual existence and count signals) and RS-17 (revising one's own claim
   before its review) are opened. FR-10 and FR-11 stay open until the
   agent-only-memory scenario passes in CI.
 - **The release image** is decided as one index for `linux/amd64` and `linux/arm64`, signed on the

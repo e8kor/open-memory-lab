@@ -149,7 +149,9 @@ CREATE TABLE memories (
 -- ordinal is 1 + the greatest version of the claim_key in any state, so
 -- competing held successors of one tip carry distinct ordinals and coexist;
 -- this index refuses only a capture that lost the ordinal race, which the
--- server retries with a fresh ordinal (audit-and-lineage owns the rule).
+-- server retries, re-running the claim_key collision test: a lost version 1
+-- answers submission.claim_key_conflict, and only a successor takes a fresh
+-- ordinal (audit-and-lineage owns the rule).
 CREATE UNIQUE INDEX memories_claim_version
     ON memories (tenant_id, workarea_id, claim_key, version)
     WHERE state IN ('held', 'promoted', 'demoted');
@@ -183,13 +185,28 @@ The workarea-qualified index above is the enforceable spelling of the one-served
 refused unless the move event records a re-key, so `(tenant, workarea_id, claim_key)` is the
 identity a tip is unique under — a `(tenant, claim_key)` shorthand would be either too strict
 (one tip across workareas) or unenforceable.
-Three invariants live in transaction logic, not DDL: a supersession's ratification
-compare-and-sets that its target is still the current tip before flipping `is_tip` and journalling
-`lifecycle.supersede`; a successor's version ordinal is read before `BEGIN`, and a capture that
-`memories_claim_version` refuses because a concurrent capture took that ordinal is retried by the
-server with a fresh one, never answered as a constraint error; and a claim moved to a
-stricter-policy workarea re-enters `held`. A
-superseded version keeps `state = 'promoted'` with `is_tip = false`
+Three invariants live in transaction logic, not DDL:
+
+- A supersession's ratification compare-and-sets that its target is still the current tip before
+  flipping `is_tip` and journalling `lifecycle.supersede`. The compare-and-set runs inside round
+  trip two's data-modifying-CTE statement ([ADR-0024](../adr/ADR-0024-performance-foundation.md)
+  d1), never before `BEGIN`: it is the conditional
+  `UPDATE memories SET is_tip = false WHERE artifact_id = $target AND is_tip AND state = 'promoted'`,
+  and every other write of that statement — the journal insert, the fold that promotes the
+  successor and makes it the tip, the `held_fts` DELETE, the outbox rows and the serve's
+  consumption — is conditioned on the row it returns. A zero row count writes nothing: the
+  transaction rolls back and the verdict answers `submission.tip_conflict`. The `held_fts`
+  DELETE's affected-row count is asserted in that statement ([row-level security](#row-level-security)).
+  A tainted successor's ratification leaves a default-tip target's `is_tip` as it is and sets the
+  overlay tip instead ([audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
+- A version ordinal is read before `BEGIN`, and a capture that `memories_claim_version` refuses
+  because a concurrent capture took that ordinal is retried by the server, never answered as a
+  constraint error; the retry re-runs the capture's pre-`BEGIN` reads, the `claim_key` collision
+  test included, so a lost version 1 answers `submission.claim_key_conflict` and only a successor
+  takes a fresh ordinal.
+- A claim moved to a stricter-policy workarea re-enters `held`.
+
+A superseded version keeps `state = 'promoted'` with `is_tip = false`
 ([audit-and-lineage](../architecture/audit-and-lineage.md) owns the tip semantics).
 
 ## workareas and edges

@@ -42,8 +42,15 @@ is R3 made operational: the gate changed visibility, and the read path is where
 that visibility is enforced.
 
 `self_signed` rows — the constitution's bounded development exception
-([workareas.md](workareas.md)) — are served only to reads scoped within their
-own workarea; no query scoped outside it returns them.
+([workareas.md](workareas.md)) — are served only to reads whose scope node is
+their own workarea: a recall, its steering segment or a listing scoped
+anywhere else, at an ancestor or at a descendant, never returns them, and an
+events tail shows their events only when its `workarea_id` is that workarea
+([events tail](../api/http-api.md#events-tail)). Get resolves no workarea and
+takes a row's own workarea as its implicit scope, so a non-own `self_signed`
+version is readable by id by a key with reader effective access on its own
+workarea, and by no other key
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3, d8).
 
 ## The serving tier
 
@@ -184,7 +191,9 @@ Membership and order of both segments are fixed
 - **Applicable steering** for scope node N is every promoted, served-tip row
   of kind `steering` that is not part of a retired claim, whose workarea is N
   or an ancestor of N, within the key's reader effective access. A
-  descendant's steering belongs to another crew and does not apply at N.
+  descendant's steering belongs to another crew and does not apply at N. A
+  `self_signed` steering row applies only when N is its own workarea; it never
+  applies at a descendant scope.
   Segment 1 is ordered structurally, never by the query: depth from the
   `universe` root ascending, then `promoted_at` ascending, then `artifact_id`
   ascending. Steering never appears among the hits, and the `kinds` filter
@@ -195,7 +204,8 @@ Membership and order of both segments are fixed
   ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)), served tips of kind
   `term`, `term_mapping` or `vocab_release` — never retirement versions, never
   versions of retired claims, plus the caller's own held rows when it asks for
-  them ([below](#own-held-rows-in-recall)). The `kinds` filter names only
+  them ([below](#own-held-rows-in-recall)). A `self_signed` version is a hit
+  only when the scope node is its own workarea. The `kinds` filter names only
   `memory` and `derived_fact`, as ADR-0021 d9 keeps it: a recall that sends it
   narrows the hits to those kinds, and one that omits it also receives
   opted-in vocabulary hits. The order is total: score descending,
@@ -206,6 +216,14 @@ Membership and order of both segments are fixed
   is the count of distinct query terms matched. Equal order across stores is
   not asserted. A superseded version is never a hit; it stays fetchable by id
   as history.
+- **Served tip**, in both bullets above: for a key in a simulation's
+  audience, a claim's served tip is its overlay tip for that simulation where
+  one exists and shadows the default tip
+  ([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)),
+  and the default tip it shadows is then neither a hit nor applicable steering
+  for that key; for every other key the served tip is the default tip
+  (`memories_served_tip`), and overlay tips are never served
+  ([the simulation read predicate](#the-simulation-read-predicate)).
 - **Determinism** holds over a fixed candidate list: the same candidates
   always come back in the same order. Whether approximate vector search fixes
   the candidate list for a given query is part of FR-4's measurement, not a
@@ -235,7 +253,9 @@ are:
 - of kind `memory` or `derived_fact`, and not retirement versions;
 - in a workarea within subtree(scope) ∩ the key's reader effective access,
   minus its global denials;
-- matched by the query.
+- matched by the query;
+- admitted by the request's `kinds` filter when one is sent, as promoted hits
+  are.
 
 They are ranked by the same total order as promoted hits and interleaved in
 `hits`, each with `state: held` and `tip: false`, and they count against `k`

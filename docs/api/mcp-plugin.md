@@ -227,9 +227,9 @@ nothing else.
 | `version` | Its ordinal within the `claim_key` |
 | `kind` | `memory`, `derived_fact`, `steering`, or a vocabulary kind |
 | `state` | `held`, `promoted`, `demoted`, `rejected`, `erased` |
-| `tip` | Whether it is the claim's served tip; a superseded version is `promoted` with `tip: false` |
+| `tip` | Whether it is the claim's served tip for the calling key, audience-scoped: for a key in a simulation's audience the overlay tip, which shadows the default tip, and for every other key the default tip ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); a superseded version is `promoted` with `tip: false` |
 | `retirement` | True on a retirement version ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)) |
-| `replaces` | `{artifact_id, version}` of the version a supersession replaces; null for version 1 |
+| `replaces` | `{artifact_id, version}` of the version a supersession replaces; null for version 1, and null when the calling key cannot read the replaced version, under the same test as `derives_from` ([http-api](http-api.md#get-get-v1memoriesartifact_id)) |
 | `workarea` | The workarea node id; null when the calling key holds no role on the node, which only an own row an admin moved there can show ([naming a node](../architecture/roles-and-keys.md#own)) |
 | `workarea_path` | The derived path of that node; null wherever `workarea` is |
 | `tokens` | Budget tokens of the body under counter `oml-tc/1` — not any model's count ([retrieval](../architecture/retrieval.md#token-budgets)) |
@@ -607,12 +607,17 @@ and `attachments`:
 
 Superseded versions, and every version of a retired claim, stay readable as
 history (`state: promoted`, `tip: false`). `derives_from` names only the
-ancestors this key can read: a promoted version derived from its author's
-held row does not reveal that row's id to its readers.
+ancestors this key can read, and `replaces` is null when the key cannot read
+the replaced version: a promoted version derived from its author's held row
+names that row in neither field. The lineage read on the HTTP API does name
+it, as a redacted bare id, so a reader learns that it exists and its id,
+never its content ([FR-31](../product/roadmap.md)).
 
 **Refusals** — `access.not_found` for anything the key may not read, a held
 row of another key included: unknown and unreadable are indistinguishable;
-`lifecycle.erased` for an erased version.
+`lifecycle.erased` for an erased version this key could read before its
+erasure, and `access.not_found` for any other erased version
+([errors](errors.md)).
 
 ## `oml_supersede`
 
@@ -661,8 +666,17 @@ retirement included; no proposer is then its reviewer (R2).
   neither from the target: only `kind` carries over, so a supersession made
   here leaves the new version with no attachments and no CURIE annotations
   ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)).
-- `idempotency_key` — scoped to (key, target workarea); a retry returns the
-  stored response and writes once (D13).
+- `simulation_id` / `simulated_time` — **optional** pass-through, exactly as
+  on [`oml_learn`](#oml_learn): required when the target or `derives_from`
+  touches a simulation row (`submission.simulation_id_required` otherwise),
+  and honored only for keys in that simulation's audience. A tainted
+  successor, once ratified, becomes the audience's overlay tip and never the
+  default tip
+  ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
+- `idempotency_key` — scoped to the calling key alone, whatever the target's
+  workarea; a retry returns the stored response and writes once, even after
+  the target stops being readable (D13,
+  [http-api](http-api.md#idempotency)).
 
 **Output**
 
@@ -686,7 +700,9 @@ cannot read; `submission.tip_conflict` when the target is not the current tip, w
 `details.current_tip` when the key can read it — one hop to retry against;
 `workarea.frozen` on a `validated` workarea; `request.validation` for a
 `kind` that differs from the target's with `retirement: true`, a `term` on
-retirement, or a target of a vocabulary kind. Every refusal that depends on
+retirement, or a target of a vocabulary kind; `submission.simulation_id_required`
+when the target or `derives_from` touches a simulation row and no
+`simulation_id` is sent. Every refusal that depends on
 the target comes only after the target is known to be readable, in the order
 of the supersede rule. Example:
 
@@ -866,6 +882,9 @@ are refused — the operator never writes, reads or reviews content.
 
 Every filter is optional. `workarea` is a subtree filter; omitted, the listing
 covers every workarea the key wrote to, minus its globally denied subtrees.
+It must name a node the key holds some role on, else `access.not_found`,
+indistinguishable from a node that does not exist
+([http-api.md](http-api.md#search-get-v1memories)).
 `claim_key` lists the versions of one claim. Omit them all for everything the
 key wrote, newest first ([http-api.md](http-api.md#search-get-v1memories)).
 
@@ -1125,10 +1144,12 @@ types and payload shapes are owned by the
 `{artifact_id, claim_key, version}` for `lifecycle.*` and `submission.*` (for
 `lifecycle.supersede` the new version, for `lifecycle.tip_override` the
 version that becomes the tip), `{edge_id, from, to}` for `workarea.relate_*`,
-`{workarea_id}` for every other `workarea.*` — and `workarea`, always present:
-the subject's workarea, an edge's `from` endpoint, or, for
-`lifecycle.reassign`, `to_workarea_id` when `re_enters_held` is false and the
-key holds a role there, else `from_workarea_id`. Any node the
+`{workarea_id}` for every other `workarea.*` — and `workarea`, always present,
+naming the in-scope workarea: the subject's workarea; for `workarea.relate_*`,
+the edge's `from` endpoint when it lies within the scope's subtree, else its
+`to` endpoint; for `lifecycle.reassign`, `to_workarea_id` when
+`re_enters_held` is false and it lies within the scope's subtree, else
+`from_workarea_id`. Any node the
 [naming rule](../architecture/roles-and-keys.md#own) withholds from the key is
 null, so an author-only event on a version an admin moved where the key holds
 nothing carries `workarea: null`. Hashes, signatures, payloads and every

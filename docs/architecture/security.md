@@ -243,8 +243,10 @@ credentials, and the distinction is deliberate:
   table in [deployment](../operations/deployment.md). Database roles are deployment
   configuration — minted by the profile payloads, recorded by the journalled settings digest
   (`system.settings_applied`) — not individually journalled keys.
-- **To `oml-server`**: a **service key** — an ordinary API key, operator-issued at deployment
-  setup, journalled `key.issued` with `held_by: service`, hashed at rest, expiring, and rotated
+- **To `oml-server`**: a **service key** — an ordinary API key, issued by the tenant's admin at
+  deployment setup under the ordinary issuer ceiling (the operator issues none,
+  [roles-and-keys.md](roles-and-keys.md#issuer-ceiling)), journalled `key.issued` with
+  `held_by: service`, hashed at rest, expiring, and rotated
   by the same `key.rotated` act as every other key ([roles-and-keys.md](roles-and-keys.md)).
   There is no new role: the role vocabulary is fixed, so a service key carries the narrowest
   existing role its one job needs, and `held_by: service` is what the evidence export shows.
@@ -254,11 +256,12 @@ credentials, and the distinction is deliberate:
       therefore a journal event attributed to the reconciler's own key, which is the property the
       privileged-services section above leans on. A grant carries a role, not a verb list, so
       nothing narrows that grant to the re-enqueue: it also confers every other dreamer verb
-      ([effective verbs](roles-and-keys.md#effective-verbs)). That is a stated residual. Review
-      next serves a `held_by: service` key nothing, so the key holds no serve and every verdict
-      it sends is refused ([the role each verb needs](roles-and-keys.md#grant-admissibility-and-refusal-order));
-      a stolen reconciler key can still propose and reopen rejections within its grants, and
-      both only return work to non-author review under other keys.
+      ([effective verbs](roles-and-keys.md#effective-verbs)). That is a stated residual. A
+      `held_by: service` key is refused every review-class verb — review next, verdict, reopen,
+      claim-edge and workarea-edge ratify — and status-transition ratify, before any lookup
+      ([the role each verb needs](roles-and-keys.md#grant-admissibility-and-refusal-order)), so a
+      stolen reconciler key can still propose within its grants, which only returns work to
+      non-author review under other keys.
     - **A forwarding follower** holds a reader-role service key with no grants: it authenticates
       the forwarding hop to the lead and authorizes nothing. The client's own bearer key travels
       with the forwarded request, the lead resolves authorization against the *client's* key, and
@@ -464,10 +467,13 @@ rounded up to a guarantee.
    still counts it. `seq`, `head_seq`, `next_after_seq` and `permission_epoch` are tenant-wide
    journal positions, so a key learns how many events it cannot see occurred between two it
    can, and when ([events tail](../api/http-api.md#events-tail)); a successor's version ordinal
-   counts the versions of its claim the key cannot read; and the `claim_key` collision tells a
+   counts the versions of its claim the key cannot read; the `claim_key` collision tells a
    writer that a name is taken
-   ([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)). Each
-   is a count or a name, never content; together they are [FR-31](../product/roadmap.md).
+   ([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); and
+   the [lineage read](../api/http-api.md#lineage-get-v2memoriesartifact_idlineage) names every
+   unreadable ancestor of a version the key can read as a redacted bare id, so a reader of a promoted version
+   derived from its author's held row learns that the held row exists and its id. Each is a
+   count, a name or an id, never content; together they are [FR-31](../product/roadmap.md).
 
 Everything on this page is decided, not built; no control here has been penetration-tested,
 load-tested or measured, and the roadmap rows named above are where each open edge is tracked to an

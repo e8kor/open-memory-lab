@@ -150,14 +150,18 @@ The semantics are D13's **idempotency record**: `(key_id, workarea, idem_key) �
 state + stored response`, claimed in its own transaction **before any side effect** (the row lives
 in Postgres; [postgres-schema.md](../data/postgres-schema.md)). On the provider ring the
 workarea component is the **resolved** target — the key's `default_workarea` or the
-`X-OML-Workarea` override (ADR-0022 d4), never a body field; for supersede the workarea
-component is the target's workarea ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
-d10), and the record is claimed only after steps 1 and 2 of the
-[supersede rule](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) pass,
-so a refusal at either step claims no record and an unreadable target's workarea never enters
-one. For lab endpoints that name no
-workarea (keys, bans, simulations, exports, settings, tenants), the workarea component of the
-scope is a fixed nil value.
+`X-OML-Workarea` override (ADR-0022 d4), never a body field. For supersede, and for lab
+endpoints that name no workarea (keys, bans, simulations, exports, settings, tenants), the
+workarea component of the scope is a fixed nil value, so no supersede target's workarea ever
+enters a record ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
+
+A supersede record is looked up after step 1 of the
+[supersede rule](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) and
+before step 2, and the replay table below answers from it whatever the target's state or the
+key's access now: a retry of a committed supersession replays its stored response even after
+the target was erased or reassigned, or the key lost its reader grant, because that response
+names only the caller's own successor and discloses nothing new. With no record, step 2 runs,
+and the record is claimed only after it passes, so a refusal at step 1 or 2 claims no record.
 
 The request digest is SHA-256 over the RFC 8785 JSON of `{method, route, path_params, body}`:
 the HTTP method, the route template (`/v1/memories/{artifact_id}/supersede`, say), the path
@@ -267,6 +271,11 @@ join this table:
 | `GET /v2/settings` · `POST /v2/settings/validate` · `POST /v2/settings/apply` | admin (key role) |
 | `POST /v2/tenants` | operator (key role) |
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) |
+
+A `held_by: service` key is refused every review-class verb above — the review endpoints,
+claim-edge ratify and workarea-edge ratify — and status-transition ratify, with
+`access.verb_ceiling` before any lookup, whatever its grants
+([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 
 `GET /healthz` · `GET /readyz` are unversioned and unauthenticated ([Health](#health)).
 
@@ -412,13 +421,26 @@ Structured listing, paginated. Filters: `workarea_id` (a subtree filter), `claim
 status** read: any tenant role except operator lists every row the calling key authored
 ([own](../architecture/roles-and-keys.md#own)), in every state — held, promoted, demoted,
 rejected — across all workareas minus its globally denied subtrees, with no grant needed; an
-operator key answers `access.verb_ceiling`. It resolves no workarea: `workarea_id` is its subtree
-filter, and an `X-OML-Workarea` header sent with `own=true` is `request.validation`. An own row
+operator key answers `access.verb_ceiling`. It resolves no workarea, and an `X-OML-Workarea`
+header sent with `own=true` is `request.validation`. An own row
 on a node where the key holds no role carries `workarea_id` and `workarea_path` as null
 ([naming a node](../architecture/roles-and-keys.md#own)). Without `own`, scope defaults to the
 token workarea's subtree, with `X-OML-Workarea` as the override, and the listing returns promoted
-served tips within reader effective access only: held rows belonging to others are never
-returned, whatever the filter says (R3). A retired claim's served tip is its retirement version,
+served tips within reader effective access only — a `self_signed` version only when the scope
+node is its own workarea ([retrieval](../architecture/retrieval.md#the-rule-postgres-serves-the-lake-never-does)):
+held rows belonging to others are never returned, whatever the filter says (R3).
+
+`workarea_id` must name a node the key may be told about, else `access.not_found`,
+indistinguishable from a node that does not exist, so the filter never confirms that a node
+exists ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d13). With `own=true` that
+is a node the key holds some role on, under the
+[naming rule](../architecture/roles-and-keys.md#own), and the filter narrows the listing to the
+key's rows in that node's subtree, whatever the key holds below it. Without `own` it is a node
+where reader is effective, and the listing is the intersection of its subtree with the scope's:
+the scope still resolves from the token, so a key with neither a default workarea nor the header
+answers `request.workarea_unresolved` whatever `workarea_id` says.
+
+A retired claim's served tip is its retirement version,
 so the listing includes it, flagged `retirement: true`; recall, by contrast, serves nothing of a
 retired claim. Ordering is `created_at` descending, then `artifact_id` descending; the cursor is
 an opaque position bound to the calling key and expiring under `api.cursor_ttl`, and every page
@@ -431,26 +453,39 @@ One memory with its body (decrypted on the serving path only), its `tokens` and 
 descriptors. The calling key may fetch its own rows in any state, with no grant needed (global
 denials still mask, [own](../architecture/roles-and-keys.md#own)); anyone else needs reader
 effective access on the row's workarea and sees promoted versions only — superseded versions and
-every version of a retired claim stay fetchable as history. Anything else answers
-`access.not_found`. An erased artifact answers `410 lifecycle.erased` — attribution and journal
-trail remain, bytes do not (D4). Get resolves no workarea, so an `X-OML-Workarea` header sent
-with it is `request.validation`. An own row on a node where the key holds no role carries
-`workarea_id` and `workarea_path` as null
+every version of a retired claim stay fetchable as history. Get takes the row's own workarea as
+its implicit scope, so a non-own `self_signed` version is served to a key with reader effective
+access there ([retrieval](../architecture/retrieval.md#the-rule-postgres-serves-the-lake-never-does)).
+Anything else answers `access.not_found`. An erased artifact answers `410 lifecycle.erased` —
+attribution and journal trail remain, bytes do not (D4) — but only to a key that could read the
+version immediately before its erasure: its author's key set, or, when the version was promoted
+then, a key with reader effective access on its workarea. Readability is checked first, and
+every other key gets `access.not_found`, so the erasure of another author's held version tells
+no one it existed ([errors](errors.md)). Get resolves no workarea, so an `X-OML-Workarea`
+header sent with it is `request.validation`. An own row on a node where the key holds no role
+carries `workarea_id` and `workarea_path` as null
 ([naming a node](../architecture/roles-and-keys.md#own)).
 
 `derives_from` lists only the ancestors the caller can read — its own rows in any state, and
-promoted rows within its reader effective access — on get, recall and every listing alike
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3). A promoted descendant can
-derive from its author's held row, and its readers never learn that row's id from this field;
-the [lineage read](#lineage-get-v2memoriesartifact_idlineage) is where the full closure appears,
-with every node outside the caller's read scope elided to a redacted bare id.
+promoted rows within its reader effective access — on get, recall and every listing alike, and
+`replaces` obeys the same readability test on every read: it is null when the caller cannot
+read the replaced version, as after an admin moves that version into another workarea or back
+into held ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3). A promoted
+descendant can derive from its author's held row, and its readers never learn that row's id
+from either field. The [lineage read](#lineage-get-v2memoriesartifact_idlineage) does name it:
+the full closure appears there, with every node outside the caller's read scope elided to a
+redacted bare id, so a reader learns that an unreadable ancestor exists and its id, never its
+content — a stated residual, [FR-31](../product/roadmap.md).
 
 ### Lineage — `GET /v2/memories/{artifact_id}/lineage`
 
 The derivation closure over `derives_from` and claim edges, **pending and ratified both**,
 serialized as stored — the server serializes the graph, it does not compute analytics over it
 (D13: serialize, don't compute). Nodes outside the key's read scope are elided to bare ids with
-`redacted: true`, so the shape of the closure is visible without leaking content.
+`redacted: true`, so the shape of the closure is visible without leaking content. A redacted
+node still discloses that the version exists and its id — another author's held or rejected
+ancestor of a promoted version included — which is the residual
+[FR-31](../product/roadmap.md) tracks.
 
 ### Supersede — `POST /v1/memories/{artifact_id}/supersede`
 
@@ -470,8 +505,9 @@ rules. The scope is the target's workarea: an `X-OML-Workarea` that differs from
 `request.validation`. Every refusal that depends on the target — that header, the tip, the kind
 and retirement checks, `workarea.frozen` — is answered only after the target is known to be
 readable, in the order step 5 of the supersede rule fixes, so none of them tells a caller that an
-unreadable target exists. `Idempotency-Key` is required and honoured, scoped to (key, target
-workarea), and the record is claimed only after steps 1 and 2 of that rule pass
+unreadable target exists. `Idempotency-Key` is required and honoured, scoped to the key with a
+nil workarea; the record is looked up between steps 1 and 2 of that rule, so a committed
+supersession always replays, and claimed only after step 2 passes
 ([Idempotency](#idempotency)). The body refuses unknown fields and carries `simulation_id`,
 `simulated_time` and `mapping` as the submit body does. Of the target's fields only `kind` carries
 over: an omitted `kind` makes the successor take the target's, and an omitted `attachments` or
@@ -609,17 +645,21 @@ simulation, taint and `self_signed` marks:
 | `submission.attach` | the version the attachment binds into | that version's `workarea_id`, from its submission event |
 | `lifecycle.supersede` | the new version | its `workarea_id` |
 | `lifecycle.tip_override` | the version that becomes the tip (`to_artifact_id`) | its `workarea_id` |
-| `lifecycle.reassign` | the moved version | `from_workarea_id`, and `to_workarea_id` when `re_enters_held` is false — under the author clause, either one; the reader clause's promoted, audience and self-signed conditions apply to it as to every `lifecycle.*` event, so a reassign that fails them — a held version's move, say — is shown only under the author clause |
+| `lifecycle.reassign` | the moved version | `from_workarea_id`, and `to_workarea_id` when `re_enters_held` is false. The reader clause holds when the key has reader on either listed workarea and that workarea lies within the tail's subtree, and its self-signed condition compares the tail's `workarea_id` with that same workarea; under the author clause, either listed workarea within the tail's subtree suffices. The reader clause's promoted, audience and self-signed conditions apply to it as to every `lifecycle.*` event, so a reassign that fails them — a held version's move, say — is shown only under the author clause |
 | `workarea.create`, `workarea.reparent`, `workarea.status_proposed`, `workarea.status_transition`, `workarea.crew_updated` | the node | the node itself |
-| `workarea.relate_proposed`, `workarea.relate_ratified` | the edge | both endpoints; the key needs reader on both |
+| `workarea.relate_proposed`, `workarea.relate_ratified` | the edge | both endpoints: shown when the key has reader on both and at least one lies within the tail's subtree |
 
 An event type the tables do not map is not shown. Two keys with equal access therefore see the
 same `lifecycle.*` and `workarea.*` events in the same order; each additionally sees only its own
 `submission.*` events and, under the author clause, the `lifecycle.*` events of its own versions.
 
-**What a served event names.** A workarea id in a served payload that the
-[naming rule](../architecture/roles-and-keys.md#own) withholds from the key — a node on which it
-holds no role — is replaced by null, so an event never names a node the key holds nothing on. An
+**What a served event names.** A claim-subject workarea id in a served payload —
+`workarea_id`, `from_workarea_id` or `to_workarea_id` — that the
+[naming rule](../architecture/roles-and-keys.md#own) withholds from the key, a node on which it
+holds no role, is replaced by null. `workarea.*` payloads serve `parent_id`, `old_parent_id` and
+`new_parent_id` as the [workarea read](#workareas) serves `parent_id`: the ancestors of a node the
+key can read, and a re-parented node's former parent, are the node ids the naming rule states it
+discloses, so the tail and the workarea read agree about them. An
 event served to a key outside its actor's own key set, the actor being the envelope's
 `api_key_id`, carries `principal` and `api_key_id` as null, and every payload field that names a
 key — `proposer_key_id`, `ratifier_key_id` and each `*_by_key_id` — as null: the tail tells a
@@ -654,7 +694,7 @@ capacity; the CLI is the human exception path (D11, D14). Review throughput is u
 | Endpoint | Semantics |
 |---|---|
 | `GET /v2/review/queue?workarea=…` | Held-item counts and oldest ages per workarea in the reviewer's scope — the same numbers `oml status` reports as queue depth. |
-| `POST /v2/review/next` | Serve exactly one held item: body, **all** attachments (as fetch descriptors honored by `GET /v1/attachments/{digest}?serve_id=…`), and for a supersession the version it replaces. Returns a `serve_id` bound server-side to (reviewer key, artifact version, attachment digest set), expiring, consumed by its first verdict, invalidated by any change to the served content (D14). Serves only rows within the key's dreamer effective access on the row's workarea. `204` when nothing in scope waits, and always to a `held_by: service` key ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). Refused per item with `review.author_in_lineage` when the reviewer's key or principal appears in the item's lineage closure — the server never serves what this key may not judge. |
+| `POST /v2/review/next` | Serve exactly one held item: body, **all** attachments (as fetch descriptors honored by `GET /v1/attachments/{digest}?serve_id=…`), and for a supersession the version it replaces. Returns a `serve_id` bound server-side to (reviewer key, artifact version, attachment digest set), expiring, consumed by its first verdict, invalidated by any change to the served content (D14). Serves only rows within the key's dreamer effective access on the row's workarea. `204` when nothing in scope waits. A `held_by: service` key is refused here, as on every review-class verb and on status-transition ratify, with `access.verb_ceiling` before any lookup ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). Refused per item with `review.author_in_lineage` when the reviewer's key or principal appears in the item's lineage closure — the server never serves what this key may not judge. |
 | `POST /v2/review/verdicts` | `{serve_id, verdict: "approve" \| "reject", reason}` (`reason` required to reject). Accepted only against a valid, unexpired, unconsumed serve bound to this key (`review.serve_invalid` names which condition failed). The journalled verdict records the served digests. Response states the resulting state: `promoted` (policy satisfied, ratification journalled with its policy snapshot), `held` (more verdicts required by the policy's `k`), or `rejected`. Requires dreamer effective access on the row's workarea, resolved by the [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) like every other verb: `access.grant_refused` with `needed_role: dreamer` where reader is effective there, `access.not_found` otherwise. An approve that would ratify a supersession whose target is no longer the tip is refused with `409 submission.tip_conflict` (`details.current_tip` when readable): nothing is journalled and the `serve_id` is not consumed, so the same serve can still carry a reject ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1, d10). |
 | `POST /v2/review/reopen` | `{artifact_id, version, reason}` — non-author reopen of a rejection, a journalled verb in its own right, not a resubmission. The original author is refused (`review.author_in_lineage`). |
 
@@ -809,6 +849,12 @@ attributes per key and tenant (D6), a different mechanism with its own refusals.
 | Upload part size | 5–64 MiB | `uploads.part_size_min` / `uploads.part_size_max` | `request.validation` at session creation; `413` on an oversize part |
 | Attachments per memory | 64 | `submission.max_attachments` | `request.validation` at submit |
 | List page `limit` | max 200 (default 50) | `api.page_limit_max` | `request.validation` above the max |
+
+The claim body bound counts UTF-8 bytes of the NFC-normalized body, on every surface that
+carries a body — submit, supersede, and the agent plugin's `text` inputs: at most
+`submission.max_body_size` (shipped 1 MiB) bytes, and a larger body is
+`413 request.payload_too_large`. No schema states a character count for it, because a character
+bound neither measures bytes nor follows the setting.
 
 Every value is a **shipped default, deployment-tunable** through the named setting
 (`oml settings apply`, journalled). None is tenant-tunable in v1: a tenant that needs a tighter

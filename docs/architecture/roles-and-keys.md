@@ -49,10 +49,12 @@ attestation, never the humanness — a mis-attested key is an admin's journalled
 a server failure. `human_required_classes` consumes exactly this attribute: only verdicts from
 keys attested `held_by: human` satisfy it ([ontologies](ontologies.md),
 [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). The attestation has a third member,
-`held_by: service`, issued by operators for infrastructure processes — the reconciler's repair
-key, a forwarding follower's zero-grant hop key ([security](security.md)) — never for
-review. A service key can never satisfy `human_required_classes` and never counts as review
-capacity.
+`held_by: service`, which a tenant admin issues under the ordinary
+[issuer ceiling](#issuer-ceiling) for infrastructure processes — the reconciler's repair key, a
+forwarding follower's zero-grant hop key ([security](security.md)) — never for review. Only an
+admin key sets `held_by`; the operator issues no service key. A service key is refused every
+review-class verb ([the role each verb needs](#grant-admissibility-and-refusal-order)), can
+never satisfy `human_required_classes` and never counts as review capacity.
 
 ## Permission matrix
 
@@ -119,7 +121,9 @@ journalled crypto-shred ([audit-and-lineage.md](audit-and-lineage.md)).
 
 One bounded exception is inherited from the constitution: a `development` workarea may, by
 journalled tenant policy, permit a writer to self-sign its own rows. Such rows are marked
-`self_signed`, are readable only inside that workarea, and never promote beyond it. How a
+`self_signed`, are served only to reads whose scope node is that workarea
+([retrieval](retrieval.md#the-rule-postgres-serves-the-lake-never-does)), and never promote
+beyond it. How a
 `self_signed` version may take a claim's tip is declared in
 [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). The
 exception is declared in [workareas.md](workareas.md) and ADR-0001; it does not change this
@@ -163,6 +167,10 @@ validates in this order, and the first failure answers:
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
    key has none, and a key never inherits its issuer's default.
+
+`held_by` is the issuing admin's attestation, so an operator key's issuance that carries it is
+`request.validation`; `held_by: service` keys are issued by a tenant admin like every other
+working key.
 
 `key.issued` is journalled first and one `grant.issued` per grant follows; the key value is
 returned only after the last `grant.issued` commits. If issuance fails after `key.issued`, the
@@ -208,8 +216,9 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
        workarea is not `validated`, else `workarea.frozen`. The checks every submit runs follow.
 
     No target-dependent refusal is answered before step 2, so none of them tells a caller that an
-    unreadable target exists, and the idempotency record is claimed only after step 2
-    ([http-api](../api/http-api.md#idempotency)).
+    unreadable target exists. The idempotency record, scoped to the key alone, is looked up
+    between steps 1 and 2, so a committed supersession replays whatever the target's state now,
+    and it is claimed only after step 2 ([http-api](../api/http-api.md#idempotency)).
 
     A claim whose tip another key authored is that key's to supersede: a writer whose version
     was superseded by another key's ratified version no longer owns the claim and answers
@@ -221,11 +230,14 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
   [lineage-closure exclusion](#the-dreamer-split): a row outside dreamer effective access is never
   served, and a verdict on one resolves by the refusal order like every other verb —
   `access.grant_refused` with `needed_role: dreamer` where reader is effective on the row's
-  workarea, `access.not_found` otherwise. Review next serves a `held_by: service` key
-  nothing (`204`), so such a key holds no serve and every verdict it sends is refused with
-  `review.serve_invalid`: a service key's dreamer grant confers review like any dreamer grant,
-  and this rule, not the grant, keeps it out of review
-  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1).
+  workarea, `access.not_found` otherwise.
+- **service keys** — a `held_by: service` key is refused every review-class verb — the
+  [matrix](#permission-matrix)'s review rows (verdict, reopen, claim-edge ratify and
+  workarea-edge ratify) and the review queue and review next that lead to a verdict — and
+  status-transition ratify with `access.verb_ceiling`, before any
+  lookup, as at step 1 of the refusal order. A service key's dreamer grant confers those verbs
+  like any dreamer grant; this rule, not the grant, keeps it out of review and out of every
+  ratification ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1).
 - **admin and operator verbs** — the key's own role, as the [matrix](#permission-matrix) states.
 
 ## Own
@@ -245,13 +257,18 @@ denial covering the row's workarea still masks the row — deny-wins, as everywh
 principal ([lineage-closure exclusion](#the-dreamer-split)).
 
 **Naming a node.** An own row can sit on a node where the calling key holds no role — an admin's
-reassignment can move it there. A response names a node to a key only where
+reassignment can move it there. A response names a claim's node to a key only where
 `effective_roles(node)` is not empty for that key, and serves null in its place elsewhere: the
-`workarea_id` and `workarea_path` of a get or a listing item, a workarea id in an
+`workarea_id` and `workarea_path` of a get or a listing item, a claim-subject workarea id
+(`workarea_id`, `from_workarea_id`, `to_workarea_id`) in an
 [events-tail](../api/http-api.md#events-tail) payload, and `workarea` and `workarea_path` on the
-[agent plugin](../api/mcp-plugin.md#the-claim-item). A key therefore never learns the id or path
-of a node it holds nothing on, as the [workarea read](../api/http-api.md#workareas) already omits
-the children it cannot read ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3).
+[agent plugin](../api/mcp-plugin.md#the-claim-item); a listing's `workarea_id` filter accepts only
+a node the rule names to the key ([Search](../api/http-api.md#search-get-v1memories)). A key never
+learns the id of a node it holds nothing on, except the ancestors of a node it can read, whose ids
+(`parent_id`) and names (path segments) the [workarea read](../api/http-api.md#workareas) and every
+derived path already disclose, and a re-parented node's former parent, which `workarea.reparent`
+names as the workarea read did before the move; the workarea read omits the children the key
+cannot read ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3).
 
 ## Effective verbs
 
@@ -267,7 +284,8 @@ grant roles effective on the node.
 
 A dreamer's `supersede` is edit-as-proposal and also needs `reader` on the node, under the
 supersede rule [above](#grant-admissibility-and-refusal-order). The array lists verbs in table
-order — the `reader`, `writer` and `dreamer` rows, each left to right — without duplicates. The
+order — the `reader`, `writer` and `dreamer` rows, each left to right — without duplicates; for a
+`held_by: service` key it omits `review`, which that key is refused whatever its grants. The
 set states the access conferred, not what a given server build serves; `tools/list` on the
 [agent plugin](../api/mcp-plugin.md) states that.
 
