@@ -194,9 +194,17 @@ step "recall now serves the ratified successor (the replaced version is history)
 jq -r '.hits[].memory.body' "$OUT" | grep -q "399 USD/t" || fail "successor body missing from recall"
 jq -r '.hits[].memory.body' "$OUT" | grep -q "412 USD/t" && fail "the replaced version is still a recall hit"
 
-# --- evidence: verify the signed hash chain from genesis ---------------------
-step "audit verify-chain --genesis (reader key; the signing key set is operator input)" 0 \
-    "$OML" --key "$READER" audit verify-chain --genesis --signing-key "$PUBKEY"
+# --- evidence: the chain export is the one verification surface -------------
+# The events tail is a filtered feed (ADR-0025 d15), so live verification
+# reads the chain export, which this build does not serve: the verb refuses
+# by name (exit 2) rather than report breaks it did not find.
+echo
+echo "=== audit verify-chain --genesis: refused by name while no chain export is served"
+"$OML" --key "$READER" audit verify-chain --genesis --signing-key "$PUBKEY" 2>"$DEMO_DIR/verify.stderr"
+code=$?
+cat "$DEMO_DIR/verify.stderr"
+[ "$code" -eq 2 ] || fail "verify-chain exited $code, expected the local refusal 2"
+grep -q "chain export" "$DEMO_DIR/verify.stderr" || fail "verify-chain did not name the chain export"
 
 step "oml doctor" 0 \
     "$OML" --key "$READER" doctor

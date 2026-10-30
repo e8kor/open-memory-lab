@@ -4,7 +4,7 @@ use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
-    TransitionError, VerdictError, VerifyError,
+    SignedEnvelope, TransitionError, VerdictError, VerifyError,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -558,6 +558,32 @@ pub struct SupersedeOutcome {
     pub replayed: bool,
 }
 
+/// One event as the content tail serves it to the calling key
+/// (http-api.md#events-tail; ADR-0025 d15).
+#[derive(Debug, Clone)]
+pub struct TailedEvent {
+    /// The journalled event, its hash and signature as stored.
+    pub event: SignedEnvelope,
+    /// Whether the event's actor, its envelope `api_key_id`, is in the
+    /// calling key's own key set; outside it the tail serves `principal` and
+    /// `api_key_id` as null.
+    pub names_actor: bool,
+    /// The payload as served: outside the actor's own key set every field
+    /// naming a key is null, and a claim-subject workarea id the naming rule
+    /// withholds is null (roles-and-keys.md#own).
+    pub payload: serde_json::Value,
+}
+
+/// One page of the events tail: what one bounded scan let the key see, the
+/// head read with it, and where the next page resumes
+/// (http-api.md#events-tail; ADR-0025 d15).
+#[derive(Debug, Clone)]
+pub struct TailPage {
+    pub events: Vec<TailedEvent>,
+    pub head_seq: u64,
+    pub next_after_seq: u64,
+}
+
 /// A typed application refusal; every variant names the rule it enforces.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -609,6 +635,10 @@ pub enum AppError {
         "max_tokens counts bodies that include_bodies false would not send (retrieval.md token budgets, request.validation)"
     )]
     BudgetWithoutBodies,
+    #[error(
+        "after_seq {after_seq} is beyond head_seq {head_seq} (http-api.md events tail, request.validation)"
+    )]
+    AfterSeqBeyondHead { after_seq: u64, head_seq: u64 },
     #[error(
         "not found — absence and no-access are indistinguishable (http-api.md access.not_found)"
     )]

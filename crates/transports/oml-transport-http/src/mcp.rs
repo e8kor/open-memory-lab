@@ -465,22 +465,36 @@ where
         Ok(Value::Object(out))
     }
 
-    /// `oml_events_tail`: one `GET /v2/events`.
+    /// `oml_events_tail`: one `GET /v2/events`. `scope` is the ring's
+    /// `workarea_id`; omitted, the app fills it from the key record with the
+    /// journalled default, as the ring does. An omitted `after_seq` is 0, as
+    /// on the ring. The page is projected to `{events, head_seq,
+    /// next_after_seq, idle}`, idle once the resume point has reached the
+    /// head (mcp-plugin.md `oml_events_tail`; ADR-0025 d15).
     async fn tool_events_tail(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
         let args: EventsTailArgs = parse_args(args)?;
-        if args.scope.is_some() {
-            return Err(refusal(ApiError::validation(
-                "scope filtering on the events tail is outside the PoC slice; omit scope to tail the key's tenant",
-            )));
-        }
-        let mut params = HashMap::new();
-        if let Some(after_seq) = args.after_seq {
-            params.insert("after_seq".to_owned(), after_seq.to_string());
+        let mut params = HashMap::from([(
+            "after_seq".to_owned(),
+            args.after_seq.unwrap_or(0).to_string(),
+        )]);
+        if let Some(scope) = args.scope {
+            params.insert("workarea_id".to_owned(), scope);
         }
         if let Some(limit) = args.limit {
             params.insert("limit".to_owned(), limit.to_string());
         }
-        ring_outcome(Self::events_tail_inner(st, &params, &ring_headers(token)).await).await
+        let page =
+            ring_outcome(Self::events_tail_inner(st, &params, &ring_headers(token)).await).await?;
+        let events: Vec<Value> = page["items"]
+            .as_array()
+            .map(|items| items.iter().map(tail_item).collect())
+            .unwrap_or_default();
+        Ok(json!({
+            "events": events,
+            "head_seq": page["head_seq"],
+            "next_after_seq": page["next_after_seq"],
+            "idle": page["next_after_seq"] == page["head_seq"],
+        }))
     }
 }
 
@@ -590,4 +604,36 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Response {
         StatusCode::OK,
         &json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
     )
+}
+
+/// A served ring event as an `oml_events_tail` event (mcp-plugin.md
+/// `oml_events_tail`; ADR-0025 d15): its `subject` — `{artifact_id,
+/// claim_key, version}` for a claim version, the new version for a
+/// `lifecycle.supersede`, `{workarea_id}` for a `workarea.*` node — and
+/// `workarea`, the subject's workarea as the served payload names it, null
+/// where the naming rule withholds it. Hashes, signatures, payloads and
+/// identities are dropped. This build journals no `lifecycle.tip_override`,
+/// `lifecycle.reassign` or `workarea.relate_*` event, so none is projected.
+fn tail_item(event: &Value) -> Value {
+    let payload = &event["payload"];
+    let subject = match event["event_type"].as_str() {
+        Some(t) if t.starts_with("workarea.") => json!({ "workarea_id": payload["workarea_id"] }),
+        Some("lifecycle.supersede") => json!({
+            "artifact_id": payload["new_artifact_id"],
+            "claim_key": payload["claim_key"],
+            "version": payload["new_version"],
+        }),
+        _ => json!({
+            "artifact_id": payload["artifact_id"],
+            "claim_key": payload["claim_key"],
+            "version": payload["version"],
+        }),
+    };
+    json!({
+        "seq": event["seq"],
+        "event_type": event["event_type"],
+        "at": event["at"],
+        "subject": subject,
+        "workarea": payload["workarea_id"],
+    })
 }

@@ -37,13 +37,12 @@ use uuid::Uuid;
 use oml_app::App;
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
-use oml_app::domain::{
-    HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, nfc, sha256_digest_string,
-};
+use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
     AppError, BootstrapRequest, Crew, GrantRequest, IssueKeyRequest, IssuedKey, ListRequest,
-    RecallRequest, ServedMemory, SubmitRequest, SupersedeRequest, Verdict, WorkareaInfo,
+    RecallRequest, ServedMemory, SubmitRequest, SupersedeRequest, TailedEvent, Verdict,
+    WorkareaInfo,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -853,29 +852,26 @@ where
                     ApiError::validation(format!("limit must be between 1 and {PAGE_LIMIT_MAX}"))
                 })?,
         };
-        let events = st
+        // Ids are opaque; one that can name no node is absent.
+        let workarea_id = params
+            .get("workarea_id")
+            .map(|id| Uuid::parse_str(id).map_err(|_| ApiError::not_found()))
+            .transpose()?;
+        let page = st
             .app
-            .tail_events(&token, after_seq, limit)
+            .tail_events(&token, workarea_id, after_seq, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        // head_seq, for measuring lag (http-api.md events tail). The key was
-        // just authenticated by the app; the port lookup names its tenant.
-        let key = st
-            .store
-            .key_by_hash(&sha256_digest_string(token.as_bytes()))
-            .await
-            .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
-            .ok_or_else(|| ApiError::auth_invalid("unknown"))?;
-        let head_seq = st
-            .store
-            .chain_head(key.tenant_id)
-            .await
-            .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
-            .map_or(0, |h| h.seq);
-        let items: Vec<Value> = events.iter().map(event_json).collect();
+        // head_seq for measuring lag, next_after_seq to resume from, both
+        // read in the scan's snapshot (http-api.md events tail; ADR-0025 d15).
+        let items: Vec<Value> = page.events.iter().map(event_json).collect();
         Ok(json_response(
             StatusCode::OK,
-            &json!({ "items": items, "head_seq": head_seq }),
+            &json!({
+                "items": items,
+                "head_seq": page.head_seq,
+                "next_after_seq": page.next_after_seq,
+            }),
         ))
     }
 
@@ -1513,9 +1509,17 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
 }
 
 /// The event-catalog envelope as the tail serves it (digest-only payloads by
-/// construction — the journal never stored plaintext).
+/// construction — the journal never stored plaintext), with the actor named
+/// only to a key in its own key set and the payload as the app serves it
+/// (http-api.md events tail; ADR-0025 d15).
 #[must_use]
-pub fn event_json(e: &SignedEnvelope) -> Value {
+pub fn event_json(tailed: &TailedEvent) -> Value {
+    let e = &tailed.event;
+    let (principal, api_key_id) = if tailed.names_actor {
+        (json!(e.envelope.principal), json!(e.envelope.api_key_id))
+    } else {
+        (Value::Null, Value::Null)
+    };
     json!({
         "seq": e.envelope.seq,
         "event_id": e.envelope.event_id,
@@ -1523,9 +1527,9 @@ pub fn event_json(e: &SignedEnvelope) -> Value {
         "prev_hash": e.envelope.prev_hash.to_prefixed(),
         "hash": e.hash.to_prefixed(),
         "sig": hex::encode(e.sig.to_bytes()),
-        "principal": e.envelope.principal,
-        "api_key_id": e.envelope.api_key_id,
+        "principal": principal,
+        "api_key_id": api_key_id,
         "at": e.envelope.at.as_str(),
-        "payload": e.envelope.payload,
+        "payload": tailed.payload,
     })
 }

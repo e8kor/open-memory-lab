@@ -18,7 +18,7 @@ use oml_app::domain::{
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
     CommitReceipt, CommitRequest, IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold,
-    StoreError,
+    StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
     ClaimKeyState, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter,
@@ -934,6 +934,84 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         rows.iter().map(signed_envelope_from_row).collect()
+    }
+
+    async fn events_with_subjects(
+        &self,
+        tenant_id: Uuid,
+        from_seq: u64,
+        limit: usize,
+    ) -> Result<TailScan, StoreError> {
+        let from = i64::try_from(from_seq).unwrap_or(i64::MAX);
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // One snapshot for the head, the scan and the subject rows, so
+        // head_seq is read where the scan reads (http-api.md events tail).
+        // SET TRANSACTION must precede every other statement.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let head = sqlx::query("SELECT seq FROM journal_chain_head WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let rows = sqlx::query(
+            "SELECT signed_bytes, signed_bytes_hash, sig FROM journal \
+             WHERE tenant_id = $1 AND seq >= $2 ORDER BY seq ASC LIMIT $3",
+        )
+        .bind(tenant_id)
+        .bind(from)
+        .bind(limit)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let events = rows
+            .iter()
+            .map(signed_envelope_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let ids: Vec<Uuid> = events
+            .iter()
+            .filter_map(|e| claim_subject(&e.envelope.event_type, &e.envelope.payload))
+            .collect();
+        let subjects = sqlx::query(
+            "SELECT id, workarea_id, author_key_id FROM memories \
+             WHERE tenant_id = $1 AND id = ANY($2::uuid[])",
+        )
+        .bind(tenant_id)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let subjects = subjects
+            .iter()
+            .map(|row| {
+                let subject = SubjectRow {
+                    artifact_id: row.try_get("id").map_err(backend)?,
+                    workarea_id: row.try_get("workarea_id").map_err(backend)?,
+                    author_key_id: row.try_get("author_key_id").map_err(backend)?,
+                };
+                Ok((subject.artifact_id, subject))
+            })
+            .collect::<Result<std::collections::HashMap<_, _>, StoreError>>()?;
+        Ok(TailScan {
+            head_seq: head
+                .as_ref()
+                .map(|row| seq_from_column(row, "seq"))
+                .transpose()?
+                .unwrap_or(0),
+            events: events
+                .into_iter()
+                .map(|event| TailEvent {
+                    subject: claim_subject(&event.envelope.event_type, &event.envelope.payload)
+                        .and_then(|id| subjects.get(&id).copied()),
+                    event,
+                })
+                .collect(),
+        })
     }
 
     async fn memory(

@@ -127,7 +127,7 @@ per [docs/engineering/workspace-plan.md](docs/engineering/workspace-plan.md).
   there is no separate migrate step.
 - `jq` and `psql` for the demo script.
 
-**Three commands**
+**Two commands**
 
 ```sh
 # 1. Build, then boot the lead (migrates on start, mints the keyring, prints the
@@ -138,10 +138,6 @@ OML_POSTGRES__URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev ./target/re
 # 2. Or let the demo script drive the whole story against a throwaway database —
 #    bootstrap, keys, submit, review, the R2 refusal, supersede, audit, shutdown:
 bash scripts/poc-demo.sh
-
-# 3. Verify the signed journal chain independently (the public key is operator
-#    input, confirmed out of band — the server logs it at boot):
-./target/release/oml audit verify-chain --genesis --signing-key <64-hex ed25519 public key>
 ```
 
 CLI verbs, exit codes and transcripts are specified in [docs/cli/reference.md](docs/cli/reference.md).
@@ -150,10 +146,13 @@ CLI verbs, exit codes and transcripts are specified in [docs/cli/reference.md](d
 [critical path](docs/product/critical-path.md): one standalone lead, one tenant
 (bootstrap-claimed), held-by-default admission with a deterministic marker scanner, the
 dreamer review ceremony with R2 enforced against the lineage closure, supersede, substring
-recall, the signed per-tenant hash chain with an independent CLI verifier, and four of the
+recall, the signed per-tenant hash chain, and four of the
 agent plugin's twelve tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_events_tail`). **Not
 implemented yet:** the other eight plugin tools, one key that both writes and recalls (grants of
-several roles on one key), attachments and the object lake, erasure ceremonies, follower servers and read scaling, simulations,
+several roles on one key), attachments and the object lake, erasure ceremonies, checking the
+signed chain against a live server (the command-line verifier reads an export of the whole
+chain that the server does not serve yet, so `oml audit verify-chain` stops with an error that
+says so), follower servers and read scaling, simulations,
 embedding-based retrieval, and the operator tier; and two working pieces still differ from the
 design: the slice's supersede replaces the version readers see as soon as the replacement is
 proposed, before anyone reviews it, and its event feed shows every reader the held writes of
