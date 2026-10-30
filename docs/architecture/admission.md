@@ -40,12 +40,10 @@ stateDiagram-v2
     [*] --> held : capture (journalled, digest-only payload)
 
     state held {
-        [*] --> captured
-        captured --> scanned : deterministic scan, same call, pre-transaction
-        scanned --> under_review : enters the review queue
+        [*] --> under_review : the deterministic scan already passed —<br/>it runs pre-capture, in the same call
     }
+    note left of held : a scan veto refuses before capture,<br/>same call, journalling nothing
 
-    held --> rejected : scan veto (same call)
     held --> rejected : rejecting verdict
     held --> dead_letter : held-item expiry (journalled)
     held --> promoted : ratification (k verdicts met, policy snapshot journalled)
@@ -77,9 +75,10 @@ Reading the diagram:
   ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — the transaction holds nothing
   but the chain-head read, the signature and one insert statement.
 - **Scan** happens in the same call as capture, before the transaction, and can veto — see
-  [the deterministic scan](#the-deterministic-scan) below. A veto is a journalled rejection,
-  not a dropped request: the caller gets a typed error naming the rule, and the event stays
-  in the journal.
+  [the deterministic scan](#the-deterministic-scan) below. A veto is a deterministic refusal,
+  not a silent drop: the caller gets a typed error naming the rule class, and the verdict is
+  reproducible from the journalled rule-set pin — refusals journal nothing (a durable veto
+  trace is RS-16 on the [roadmap](../product/roadmap.md)).
 - **Review and ratification.** Reviewers record verdicts; when the workarea's policy is
   satisfied (k approving verdicts from identities meeting the independence axis), the server
   ratifies: a journalled promotion event carrying a snapshot of the policy it was decided
@@ -147,8 +146,8 @@ into the submission envelope by digest; their storage protocol is
 
 The scan runs in the same call as capture — before the commit transaction, never inside it
 ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — and returns before the call does:
-the writer learns the scan outcome synchronously, and a veto means the submission is journalled
-as rejected and nothing waits in the queue. The scan is same-call by design: an asynchronous
+the writer learns the scan outcome synchronously, and a veto means the submission is refused
+before capture — nothing is journalled and nothing waits in the queue. The scan is same-call by design: an asynchronous
 scan either delays the author's error to a moment they are no longer listening, or admits
 unscanned bytes into the queue.
 

@@ -32,6 +32,22 @@ Reconstructed from the repository history; all dates 2026-10-29. The set was wri
 revised in one sustained effort, so the entries below group commits by what they decided
 rather than pretending a longer calendar.
 
+### 2026-10-30 — Scan-veto journalling decided; a transition precondition added
+
+Two design points the Live Atlas review rounds forced into the open, now decided:
+
+- **A scan veto journals nothing.** `submission.scan_veto` is a refusal like any other refusal:
+  deterministic, reproducible from the journalled rule-set pin, and never a write into the
+  signed chain (hostile input must not grow it). The wording is now uniform across
+  [admission](architecture/admission.md), the
+  [event catalog](data/event-catalog.md#what-is-deliberately-not-an-event),
+  [errors](api/errors.md), [concepts](concepts.md), the [HTTP API](api/http-api.md),
+  ADR-0012 (amended) and ADR-0020; whether refused submissions deserve a durable trace outside
+  the chain is RS-16 on the [roadmap](product/roadmap.md).
+- **`committed` → `validated` is refused while a simulation is fenced on the subtree** — the
+  simulation must be ended (journalled) first, since taint can never enter a `validated` area
+  ([workareas](architecture/workareas.md), transition matrix).
+
 ### 2026-10-30 — Live Atlas visualization
 
 - The published site gains the [Live Atlas](atlas/index.html): an interactive 3D visualization

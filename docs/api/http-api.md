@@ -303,9 +303,9 @@ grants. A key with neither is refused with `request.workarea_unresolved` (422).
   to be in that simulation's audience ([simulations.md](../architecture/simulations.md)).
 - `universe` refuses direct claim writes (`submission.universe_refused`); a `validated` workarea
   refuses all new writes (`workarea.frozen`).
-- The deterministic scan runs in the same call and can veto (`submission.scan_veto` — the
-  submission is journalled as rejected, nothing waits in the queue;
-  [admission.md](../architecture/admission.md)). Banned authors and sources are refused at this
+- The deterministic scan runs in the same call and can veto (`submission.scan_veto` — a refusal
+  that journals nothing, reproducible from the journalled rule-set pin; nothing waits in the
+  queue; [admission.md](../architecture/admission.md)). Banned authors and sources are refused at this
   same admission check (`access.banned`).
 
 Success is `202 Accepted` — **held, visible to no one else until ratified** (R3):

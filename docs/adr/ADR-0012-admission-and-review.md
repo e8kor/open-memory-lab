@@ -42,8 +42,10 @@ other defect of the claim.
 - **d1 — The pipeline stages, in order.** capture → quarantine → deterministic scan →
   non-author review → ratification → journal → release. Quarantined bodies live in Postgres or
   in a quarantine bucket under service-only credentials, never in the lake. The scan is
-  deterministic, runs in the same call as capture, and can veto — a scan veto is a typed,
-  journalled refusal, not a silent drop. Ratification journals a snapshot of the policy it was
+  deterministic, runs in the same call as capture, and can veto — a scan veto is a typed
+  refusal, not a silent drop; it journals nothing, being reproducible from the journalled
+  rule-set pin (wording amended 2026-10-30 — the catalog's refusals-journal-nothing rule
+  governs, and a durable veto trace is RS-16). Ratification journals a snapshot of the policy it was
   taken under; release is the outbox row the lake-writer drains
   ([storage](../architecture/storage.md)). Only promoted rows ever reach silver.
 
