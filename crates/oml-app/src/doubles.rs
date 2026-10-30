@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use uuid::Uuid;
 
-use oml_domain::{ChainHead, EventTime, MemoryStatus, Role};
+use oml_domain::budget::{hit_order, steering_order};
+use oml_domain::{ChainHead, EventTime, MemoryKind, MemoryStatus, Role};
 
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyRecord,
@@ -20,7 +21,8 @@ use crate::ports::{
     ScanOutcome, Scanner, Signer, StoreError,
 };
 use crate::types::{
-    ClaimKeyState, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
+    ClaimKeyState, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, MemoryRecord,
+    WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -30,6 +32,23 @@ const LIVE: [MemoryStatus; 3] = [
     MemoryStatus::Promoted,
     MemoryStatus::Demoted,
 ];
+
+/// Whether recall may serve `m` at all: a promoted served tip that is not a
+/// retirement version, so no version of a retired claim qualifies
+/// (retrieval.md, the recall-ordering contract; ADR-0025 d8, d11).
+fn served_tip(m: &MemoryRecord) -> bool {
+    m.status == MemoryStatus::Promoted && m.is_tip && !m.retirement
+}
+
+/// The distinct lower-cased alphanumeric words of `text`: this store's
+/// stand-in for the `simple` text-search configuration, which stems
+/// nothing (retrieval.md, text handling).
+fn words(text: &str) -> BTreeSet<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
 
 // ---------------------------------------------------------------------------
 // Journal store
@@ -361,22 +380,58 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         readable: &[Uuid],
         query: &str,
+        kinds: &[MemoryKind],
         k: usize,
+    ) -> Result<Vec<(MemoryRecord, f32)>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let terms = words(query);
+        let mut hits: Vec<(MemoryRecord, f32)> = state
+            .memories
+            .values()
+            .filter(|m| served_tip(m) && HIT_KINDS.contains(&m.kind) && kinds.contains(&m.kind))
+            .filter(|m| readable.contains(&m.workarea_id))
+            .filter_map(|m| {
+                // This store's score is the count of distinct query terms
+                // matched (retrieval.md, the recall-ordering contract).
+                let body = words(&m.body);
+                let matched = terms.iter().filter(|t| body.contains(*t)).count();
+                (matched > 0).then(|| (m.clone(), matched as f32))
+            })
+            .collect();
+        hit_order(&mut hits, |(m, score)| (*score, m.memory_id));
+        hits.truncate(k);
+        Ok(hits)
+    }
+
+    async fn steering_in_force(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
     ) -> Result<Vec<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
-        let needle = query.to_lowercase();
-        Ok(state
+        // A promoted version always carries the `promoted_at` its fold
+        // stamped, so no row in force is passed over here.
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = state
             .memories
             .values()
-            .filter(|m| m.status == MemoryStatus::Promoted && m.is_tip)
-            .filter(|m| readable.contains(&m.workarea_id))
-            .filter(|m| m.body.to_lowercase().contains(&needle))
-            .take(k)
-            .cloned()
-            .collect())
+            .filter(|m| served_tip(m) && m.kind == MemoryKind::Steering)
+            .filter_map(|m| {
+                let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
+                Some((
+                    u32::try_from(depth).unwrap_or(u32::MAX),
+                    m.promoted_at.clone()?,
+                    m.clone(),
+                ))
+            })
+            .collect();
+        steering_order(&mut rows, |(depth, at, m)| (*depth, at, m.memory_id));
+        Ok(rows.into_iter().map(|(_, _, m)| m).collect())
     }
 
     async fn claim_key_state(

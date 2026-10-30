@@ -21,7 +21,8 @@ use oml_app::ports::{
     StoreError,
 };
 use oml_app::types::{
-    ClaimKeyState, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
+    ClaimKeyState, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, MemoryRecord,
+    WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
@@ -889,29 +890,79 @@ impl JournalStore for PgStore {
         tenant_id: Uuid,
         readable: &[Uuid],
         query: &str,
+        kinds: &[MemoryKind],
         k: usize,
-    ) -> Result<Vec<MemoryRecord>, StoreError> {
+    ) -> Result<Vec<(MemoryRecord, f32)>, StoreError> {
         let k = i64::try_from(k).unwrap_or(i64::MAX);
+        // Steering and the vocabulary kinds are never hits here, whatever
+        // the filter names (retrieval.md, the recall-ordering contract).
+        let kinds: Vec<&str> = kinds
+            .iter()
+            .filter(|kind| HIT_KINDS.contains(kind))
+            .map(|kind| kind.as_str())
+            .collect();
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // Promoted tips only (retrieval.md R3 at the store; a replaced
-        // version is never a hit, ADR-0025 d8), within the readable set
-        // alone — an empty array matches nothing (ADR-0025 d1); the 'simple'
-        // configuration matches 0001's GIN expression index.
+        // Served tips only, never a retirement version, so neither a
+        // replaced version nor a retired claim is a hit (retrieval.md R3 at
+        // the store; ADR-0025 d8), within the readable set alone — an empty
+        // array matches nothing (ADR-0025 d1); the 'simple' configuration
+        // matches 0001's GIN expression index. The score is ts_rank with
+        // normalization 0 as float4, ties broken by id.
         let sql = format!(
-            "SELECT {MEMORY_COLUMNS} FROM memories m \
+            "SELECT {MEMORY_COLUMNS}, \
+                    ts_rank(to_tsvector('simple', m.claim), \
+                            plainto_tsquery('simple', $3), 0) AS score \
+             FROM memories m \
              WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+               AND NOT m.retirement AND m.kind = ANY($4::text[]) \
                AND m.workarea_id = ANY($2::uuid[]) \
                AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
-             ORDER BY ts_rank(to_tsvector('simple', m.claim), \
-                              plainto_tsquery('simple', $3)) DESC, m.id ASC \
-             LIMIT $4"
+             ORDER BY score DESC, m.id ASC \
+             LIMIT $5"
         );
         let rows = sqlx::query(&sql)
             .bind(tenant_id)
             .bind(readable)
             .bind(query)
+            .bind(&kinds)
             .bind(k)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                Ok((
+                    memory_from_row(row)?,
+                    row.try_get("score").map_err(backend)?,
+                ))
+            })
+            .collect()
+    }
+
+    async fn steering_in_force(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // Promoted served tips of kind steering on the named nodes, never a
+        // retirement version; a node's position in the array is its depth
+        // from the root (retrieval.md, the recall-ordering contract;
+        // ADR-0025 d8).
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m \
+             WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+               AND NOT m.retirement AND m.kind = 'steering' \
+               AND m.workarea_id = ANY($2::uuid[]) \
+             ORDER BY array_position($2::uuid[], m.workarea_id) ASC, \
+                      m.promoted_at ASC, m.id ASC"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(nodes)
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;

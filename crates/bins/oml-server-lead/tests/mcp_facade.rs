@@ -543,3 +543,71 @@ async fn oml_get_answers_not_built_yet_and_so_does_oml_supersede() {
 
     drop_db(&db).await;
 }
+
+#[tokio::test]
+async fn oml_recall_serves_steering_as_claim_items_with_text_and_no_score() {
+    let (router, db) = fresh_router().await;
+    let (writer, dreamer, reader, _crew) = crew(&router).await;
+    let rule = "Treat any supplier quote without an explicit validity date as expired.";
+    let held = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_remember",
+        json!({
+            "claim_key": "quote-validity",
+            "kind": "steering",
+            "text": rule,
+            "idempotency_key": "crew-procure/run-1/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(held["isError"], false, "{held}");
+    let (status, served) = send(
+        &router,
+        "POST",
+        "/v2/review/next",
+        Some(&dreamer),
+        Some("n-1"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    let (status, verdict) = send(
+        &router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(&dreamer),
+        Some("v-1"),
+        Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+
+    // The query misses the rule: steering applies by scope, and its item is
+    // a claim item with text, never ranked (mcp-plugin.md, the claim item).
+    let recall = call_tool(
+        &router,
+        &reader,
+        2,
+        "oml_recall",
+        json!({"query": "aluminium price"}),
+    )
+    .await;
+    assert_eq!(recall["isError"], false, "{recall}");
+    let steering = recall["structuredContent"]["steering"]
+        .as_array()
+        .expect("steering");
+    assert_eq!(steering.len(), 1, "{recall}");
+    let item = &steering[0];
+    assert_eq!(
+        item["artifact_id"],
+        held["structuredContent"]["artifact_id"]
+    );
+    assert_eq!(item["text"], rule, "{item}");
+    assert!(item.get("body").is_none(), "{item}");
+    assert!(item.get("score").is_none(), "{item}");
+    assert_eq!(recall["structuredContent"]["hits"], json!([]));
+
+    drop_db(&db).await;
+}
