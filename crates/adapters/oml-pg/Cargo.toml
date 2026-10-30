@@ -1,0 +1,22 @@
+[package]
+name = "oml-pg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Postgres journal-and-metadata store adapter: the ADR-0002 one-transaction commit point over the committed migrations (workspace-plan.md M1 step 3)."
+
+[dependencies]
+oml-app.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+oml-port-contracts.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

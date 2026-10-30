@@ -1,0 +1,59 @@
+# Open Memory Lab — docker profile, PoC (M1) slice.
+#
+# Shape per docs/operations/deployment.md ("The docker profile", ADR-0023 d7),
+# reduced to the M1 slice: postgres + oml-server only.
+#
+# Deliberately absent from the PoC, all specified in docs/operations/deployment.md:
+#   - minio            — the PoC has no attachments, so no object store yet; when it
+#                        joins it uses the SAME pinned tag the Helm chart pins
+#                        (the If-None-Match conditional-put pin, declared once).
+#   - oml-bootstrap    — the one-shot migration/keyring/enrollment ceremony; the PoC
+#                        server migrates on boot instead (see Dockerfile).
+#   - oml-server-follower, oml-lakewriter, oml-reconciler, oml-indexer — join at
+#                        their milestones per docs/product/critical-path.md.
+#
+# Resource hints, when they appear here, are comments, not claims — no number
+# is measured (deployment.md).
+
+services:
+  postgres:
+    # Pinned to the pgvector project's pg17 major tag per deployment.md:
+    # Postgres 18 images changed the data-directory layout, so the pin matters
+    # for volume mounts.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: oml
+      # Dev-only credential; a real install overrides this (and deployment.md's
+      # C6 owner/service role split arrives with the bootstrap service).
+      POSTGRES_PASSWORD: oml_dev_only
+      POSTGRES_DB: oml
+    volumes:
+      - oml-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oml -d oml"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  oml-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # One configuration surface, file + env (docs/operations/configuration.md).
+      DATABASE_URL: postgres://oml:oml_dev_only@postgres:5432/oml
+      OML_SERVER__BIND: 0.0.0.0:8080
+      OML_KEYRING__PATH: /var/lib/oml/keyring
+    volumes:
+      # kms-file software keyring: oml-server is the only service that mounts it
+      # (deployment.md — custody separation between containers).
+      - oml-keyring:/var/lib/oml/keyring
+    ports:
+      - "8080:8080"
+
+volumes:
+  oml-pgdata:
+  oml-keyring:

@@ -1,0 +1,39 @@
+# oml-cli: a thin /v1-and-/v2 HTTP client (ADR-0006 d6, workspace-plan.md):
+# it composes no port trait and no domain crate — no oml-app, no oml-domain.
+# ed25519-dalek/sha2 appear directly because `oml audit verify-chain` is an
+# INDEPENDENT re-implementation of the public chain-format.md procedure.
+# The dev-dependencies spin the real lead composition for the end-to-end
+# test only; nothing from them links into the shipped `oml` binary.
+[package]
+name = "oml-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The oml administration CLI (ADR-0015): a lab client that speaks the same HTTP API as every agent and holds no authority of its own."
+
+[[bin]]
+name = "oml"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+ureq.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+oml-pg.workspace = true
+oml-server-lead.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["net"] }
+
+[lints]
+workspace = true

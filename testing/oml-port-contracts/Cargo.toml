@@ -1,0 +1,18 @@
+[package]
+name = "oml-port-contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Port-law contract suites: written against the in-memory doubles first, run identically by every real adapter (workspace-plan.md M1 step 2, test-strategy.md)."
+
+[dependencies]
+oml-app.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "oml-transport-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The two-ring HTTP transport (/v1 provider, /v2 lab) as an axum adapter over oml-app — paths, field spellings and the typed error envelope per docs/api/openapi.yaml and docs/api/errors.md."
+
+[dependencies]
+oml-app.workspace = true
+axum.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

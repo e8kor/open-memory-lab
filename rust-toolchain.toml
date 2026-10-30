@@ -1,0 +1,4 @@
+# The one pinned toolchain (docs/engineering/ci-and-toolchain.md)
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

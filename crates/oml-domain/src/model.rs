@@ -1,0 +1,162 @@
+//! The M1 domain model slice: roles, key holders, the memory status
+//! transition function, and the constitution's R2 reviewer check
+//! (ADR-0001 d2, admission.md).
+
+use std::collections::BTreeSet;
+
+use uuid::Uuid;
+
+/// The five roles (ADR-0010, admission.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Role {
+    Reader,
+    Writer,
+    Dreamer,
+    Admin,
+    Operator,
+}
+
+impl Role {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Reader => "reader",
+            Role::Writer => "writer",
+            Role::Dreamer => "dreamer",
+            Role::Admin => "admin",
+            Role::Operator => "operator",
+        }
+    }
+}
+
+/// The issuing admin's journalled attestation of who holds a key
+/// (event-catalog.md, `key.issued`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HeldBy {
+    Agent,
+    Human,
+    Service,
+}
+
+impl HeldBy {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HeldBy::Agent => "agent",
+            HeldBy::Human => "human",
+            HeldBy::Service => "service",
+        }
+    }
+}
+
+/// Memory status for the M1 slice (admission.md lifecycle).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryStatus {
+    Held,
+    Promoted,
+    Rejected,
+    Superseded,
+}
+
+impl MemoryStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MemoryStatus::Held => "held",
+            MemoryStatus::Promoted => "promoted",
+            MemoryStatus::Rejected => "rejected",
+            MemoryStatus::Superseded => "superseded",
+        }
+    }
+}
+
+/// A refused status transition.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("illegal memory status transition {from:?} -> {to:?} (admission.md lifecycle)")]
+pub struct TransitionError {
+    pub from: MemoryStatus,
+    pub to: MemoryStatus,
+}
+
+/// The pure transition function for the M1 slice:
+/// held -> promoted | rejected; promoted -> superseded.
+/// Everything else is refused — the gate changes visibility exactly once
+/// (admission.md), and nothing leaves a terminal state.
+pub fn transition(from: MemoryStatus, to: MemoryStatus) -> Result<MemoryStatus, TransitionError> {
+    match (from, to) {
+        (MemoryStatus::Held, MemoryStatus::Promoted)
+        | (MemoryStatus::Held, MemoryStatus::Rejected)
+        | (MemoryStatus::Promoted, MemoryStatus::Superseded) => Ok(to),
+        _ => Err(TransitionError { from, to }),
+    }
+}
+
+/// The derivation lineage closure of a row — the author plus every declared
+/// ancestor's principal and key id, pending and ratified edges alike
+/// (ADR-0001 d2). Only as good as what writers declared (ADR-0001 d6).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LineageClosure {
+    principals: BTreeSet<String>,
+    key_ids: BTreeSet<Uuid>,
+}
+
+impl LineageClosure {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_principal(&mut self, principal: impl Into<String>) {
+        self.principals.insert(principal.into());
+    }
+
+    pub fn add_key_id(&mut self, key_id: Uuid) {
+        self.key_ids.insert(key_id);
+    }
+
+    #[must_use]
+    pub fn contains_principal(&self, principal: &str) -> bool {
+        self.principals.contains(principal)
+    }
+
+    #[must_use]
+    pub fn contains_key_id(&self, key_id: Uuid) -> bool {
+        self.key_ids.contains(&key_id)
+    }
+}
+
+/// A refused verdict.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum VerdictError {
+    #[error(
+        "verdicts are the dreamer surface; a {0:?} key cannot review (ADR-0001 R1, admission.md)"
+    )]
+    NotDreamer(Role),
+    #[error("reviewer principal {0:?} appears in the row's lineage closure (ADR-0001 R2)")]
+    PrincipalInLineage(String),
+    #[error("reviewer key {0} appears in the row's lineage closure (ADR-0001 R2)")]
+    KeyInLineage(Uuid),
+}
+
+/// The R2 check at verdict time: a dreamer whose key or principal appears
+/// anywhere in the lineage closure — the author included — is refused the
+/// verdict (ADR-0001 d2). The caller builds the closure with the author in it.
+pub fn check_reviewer(
+    reviewer_role: Role,
+    reviewer_principal: &str,
+    reviewer_key_id: Uuid,
+    lineage: &LineageClosure,
+) -> Result<(), VerdictError> {
+    if reviewer_role != Role::Dreamer {
+        return Err(VerdictError::NotDreamer(reviewer_role));
+    }
+    if lineage.contains_principal(reviewer_principal) {
+        return Err(VerdictError::PrincipalInLineage(
+            reviewer_principal.to_owned(),
+        ));
+    }
+    if lineage.contains_key_id(reviewer_key_id) {
+        return Err(VerdictError::KeyInLineage(reviewer_key_id));
+    }
+    Ok(())
+}
