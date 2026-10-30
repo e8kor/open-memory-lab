@@ -2,14 +2,14 @@
 id: adr/ADR-0026-names-are-keys
 tier: engineering
 status: proposed
-answers: which records carry a unique name, what a name may spell, how a name is accepted wherever an id is and resolved on the server without leaking existence, what the universe root is called, how paths relate to names, what a crew is, how a key's name differs from its principal and label, whether a name is ever released, how rows that predate names are named, how the CLI issues an agent key, defaults its reader grant and keeps the value out of a transcript, and what workarea structure an admin key reads
+answers: which records carry a unique name, what a name may spell, how a name is accepted wherever an id is and resolved on the server without leaking existence, what the universe root is called, how paths relate to names, what a crew is, how a key's name differs from its principal and label, whether a name is ever released, how rows that predate names are named, how the CLI's agent-key verb takes a key's name, and what workarea structure an admin key reads
 -->
 
 # ADR-0026 — Workareas, crews, keys and tenants are named by unique, immutable keys that every surface accepts in place of their ids
 
 **Status:** proposed · 2026-10-30
 
-**Amends:** ADR-0008 (d7), ADR-0010 (d6, d7), ADR-0012 (d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14)
+**Amends:** ADR-0008 (d7), ADR-0010 (d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14)
 
 ## Context
 
@@ -44,7 +44,9 @@ grants, denials and journal events keep binding to ids and creation events recor
 become named records; the CLI gains `oml keys issue-agent`, with `--out` writing the key value to
 a file so that an `oml-admin` skill can run it without the value entering a transcript; the CLI's
 issuing verbs add a reader grant beside every writer grant unless `--write-only` is passed; and
-admin keys read workarea structure in their tenant without grants, never content.
+admin keys read workarea structure in their tenant without grants, never content. The maintainer
+later moved the key tool ahead of names: `issue-agent`, its `--out` key file, the reader grant
+default and the `oml-admin` plugin are decided in ADR-0028, and d12–d14 below say what names add.
 
 **What this record holds itself to.** Nothing it decides may leak existence: a name that does not
 exist and a name outside the caller's access must answer exactly as an id does
@@ -344,78 +346,17 @@ record decides is design; nothing below is built.
     rule. A derived name is ugly by construction, and that is its cost: it is unambiguous,
     collision-free and reproducible, and a row whose name matters is cheap to recreate.
 
-- **d12 — `oml keys issue-agent <key-name> --workarea <workarea>` issues one plugin key in one
-  `POST /v2/keys` and prints the two export lines the `oml` plugin reads.** The verb sends a
-  writer-role issuance with `name` the key name, `principal` the key name unless `--principal` is
-  given, `held_by: agent`, and grants writer and reader on the workarea, by the id or name given,
-  with no `default_workarea_id`, so the default is the first grant's node, that workarea
-  (ADR-0025 d2). `--write-only` (d13), `--crew`, `--expires` and `--label` pass through. Without
-  `--out`, on success it prints exactly two lines on stdout:
+- **d12 — Moved to ADR-0028 d1.** `oml keys issue-agent` and its `--out` key file are decided in
+  ADR-0028 d1, and this record's d1 adds the key's name to the verb as its positional `<key-name>`
+  argument, which also becomes the key's principal unless `--principal` names another.
 
-    ```console
-    export OML_URL='https://oml.example.com'
-    export OML_API_KEY='oml_…'
-    ```
+- **d13 — Moved to ADR-0028 d2.** The CLI's reader grant beside every writer grant and
+  `--write-only` are decided in ADR-0028 d2, and they apply unchanged to `issue-agent` once this
+  record's d1 adds the positional key name to it.
 
-    `OML_URL` is the CLI context's endpoint, without `/mcp`; `OML_API_KEY` is the value, printed
-    this once (ADR-0015 d1); every other line goes to stderr, and `--json` prints the `201` body
-    instead, as every verb does.
-
-    **`--out <path>` writes the value to a file instead of printing it.** Before it sends anything
-    the CLI creates `<path>` exclusively, with mode 0600; a path that already exists is refused
-    before anything is issued, so no file is ever overwritten. After the `201` it writes the value and one
-    newline to that file, and prints only:
-
-    ```console
-    export OML_URL='https://oml.example.com'
-    export OML_API_KEY="$(cat '/home/op/.config/oml/keys/claude-laptop')"
-    ```
-
-    No key value reaches stdout, stderr or the terminal. A refused issuance removes the empty file
-    the CLI created. If the value cannot be written once the key is issued, the value is lost: the
-    CLI prints the key's name and id on stderr and exits `2`, and the key is to be revoked. A path
-    containing a quote or a newline is refused, so the printed line is always safe to run, and
-    `--out` with `--json` is refused, because the `201` body carries the value. This amends
-    ADR-0015 d1: an issued value is shown exactly once, or written exactly once to the file the
-    operator named, and the [key format rule](../architecture/roles-and-keys.md#key-format) names
-    that file as the one place a value may rest.
-
-    The verb is a composition of an existing call, so it adds no HTTP surface, and every refusal
-    is the issuance's own. Its acceptance test is that the printed lines, exported, let the plugin
-    remember and recall on that workarea with one key. The rule is declared on the [CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation).
-
-    A principal equal to the key name gives every plugin key its own principal by default, which
-    R2 and the reciprocal-approval statistics key on ([agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent)).
-
-- **d13 — The CLI's issuing verbs add a reader grant beside every writer grant unless
-  `--write-only` is passed.** `oml keys issue` and `oml keys issue-agent` send, for each writer
-  grant they are asked for, a reader grant on the same workarea with the same deny masks, unless
-  the request already names that reader grant or `--write-only` is given. The default is the
-  CLI's alone: the server takes exactly the grants it is sent, as ADR-0025 d2 decides, and the
-  added grant is an ordinary grant in the request body, journalled as its own `grant.issued` and
-  listed by `oml keys show` like any other. A write-only key still reads its own work without any
-  grant ([own](../architecture/roles-and-keys.md#own), ADR-0025 d3). The flag and the default are
-  declared on the [CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation).
-
-    The common key — one agent that remembers and recalls — needs both grants, and the error the
-    default prevents is silent until the agent's first recall answers `access.not_found`. Making it
-    a CLI default keeps the authority explicit: the grant exists because a request named it, the
-    journal shows it, and `--write-only` is the visible choice for a crew whose writers must not
-    read each other's promoted work.
-
-- **d14 — An `oml-admin` Claude Code plugin wraps the CLI in one skill that runs `issue-agent` with
-  `--out`, serves no MCP tool, and never puts a key value in the model's context.** The plugin,
-  listed beside `oml` in the repository's marketplace, holds one skill, `issue-agent-key`, and no
-  MCP server entry. The skill checks the admin context with `oml context show`, runs `oml keys
-  issue-agent <key-name> --workarea <workarea> --out <path>` itself — always with `--out`, never
-  with `--json` — and hands the operator the two printed lines, which carry a path and no value,
-  to run in the shell that starts Claude Code; it then verifies the key with `oml keys show
-  <key-name>`, which prints no value. It never runs a command whose output carries a key value,
-  never reads the key file and never runs the printed lines itself, because a value in a
-  command's output or in its own shell would enter the session transcript or the model's
-  context, places ADR-0015 d1 and the [key format rule](../architecture/roles-and-keys.md#key-format)
-  forbid. The agent-facing `oml` plugin still cannot issue a key: its tools are the agent-safe
-  subset (ADR-0014 d2). Declared on the [CLI reference](../cli/reference.md#the-oml-admin-plugin).
+- **d14 — Moved to ADR-0028 d3.** The `oml-admin` plugin is decided in ADR-0028 d3, and once this
+  record's d1 adds the positional key name to `issue-agent`, its skill passes the key's name there
+  and names the key file after it.
 
 - **d15 — Admin keys read workarea structure in their tenant, by key role and without grants,
   and never claim content.** An admin key reads, across its whole tenant, the workarea read
@@ -432,7 +373,7 @@ record decides is design; nothing below is built.
   `access.verb_ceiling` at step 1 of the refusal order. The rule is declared once, in the
   [permission matrix](../architecture/roles-and-keys.md#permission-matrix).
 
-    The verbs an admin already holds name workareas — issuance (d12), grants, denials, reassign,
+    The verbs an admin already holds name workareas — issuance (ADR-0028 d1), grants, denials, reassign,
     re-parent, a workarea's crew — and the CLI that administers the tree runs under an admin
     context, yet every read that finds a workarea's name or id needed reader effective access, so
     an admin could create a node and never read it back. Structure is what an admin already
@@ -455,8 +396,8 @@ record decides is design; nothing below is built.
   `request.validation`; only admins and operators ever see `name.taken`.
 - Paths are no longer accepted where an id or a name is; `GET /v2/workareas?path=` is the one
   path lookup left.
-- An operator in Claude Code asks the `oml-admin` skill for a plugin key and gets two lines to
-  run, neither carrying the value, which sits in a 0600 file.
+- An operator in Claude Code asks the `oml-admin` skill (ADR-0028 d3) for a plugin key by name
+  and gets two lines to run, neither carrying the value, which sits in a 0600 file.
 - `oml workareas tree` and `show` run under an admin context; recall under it still answers
   `access.verb_ceiling`.
 
@@ -512,7 +453,7 @@ the PoC's single tenant; the independence axis's crew and manager comparisons.
   [changelog](../changelog.md) entry records the change.
 - On acceptance, and not before: this record's Status line and frontmatter `status` become
   `accepted design` with the acceptance date, its register row's Status cell follows, the Status
-  lines of ADR-0008, ADR-0010, ADR-0012, ADR-0015, ADR-0018 and ADR-0022 gain "· amended by ADR-0026", and
+  lines of ADR-0008, ADR-0010, ADR-0012, ADR-0018 and ADR-0022 gain "· amended by ADR-0026", and
   ADR-0025's gains it once ADR-0025 is itself accepted.
 
 ## Rejected alternatives
@@ -557,18 +498,6 @@ the PoC's single tenant; the independence axis's crew and manager comparisons.
 | **d11 — Refuse to start until an operator supplies every name** | The upgrade would block on a manual step; a chosen name for a live key is one reissue away. |
 | **d11 — Derive legacy key names from principals or labels** | They collide (one principal, several keys) or fail d2 (`crew-procure/agent-7`). |
 | **d11 — One crew record per workarea with crew metadata** | Two workareas that recorded the same crew would get two records, which is the failure d8 exists to remove. |
-| **d12 — A new HTTP operation for agent keys** | `POST /v2/keys` already carries every field the verb needs; a second issuance path would need its own validation order and refusals. |
-| **d12 — Print the value alone and let the operator write the exports** | The two lines are what the plugin reads; printing them removes a step where the value gets pasted somewhere else. |
-| **d12 — Let `--out` overwrite an existing file** | A mistyped path would destroy an unrelated file, and a second issuance to one path would destroy the only copy of an earlier key's value. |
-| **d12 — Create the `--out` file after the issuance succeeds** | A path that cannot be created would surface only after the key exists, with its value already lost. |
-| **d13 — The server implies read from writer** | It contradicts roles-and-keys.md ("not a writer key with implied read") and ADR-0025's rejected "writer implying read", and the authority would never appear in the journal. |
-| **d13 — The HTTP issuance adds the reader grant** | It would amend ADR-0025 d2, under which the server takes exactly the grants it is sent. |
-| **d13 — A tenant-wide default read** | It voids per-workarea access. |
-| **d13 — No default** | Every issuer of the common key must remember the second grant, and the key that forgets it fails only at its first recall. |
-| **d14 — An admin MCP server or an `oml_issue_key` tool** | An admin verb on MCP breaks ADR-0014 d2 and R1: the facade serves the agent ceiling and nothing above it. |
-| **d14 — The skill runs `issue-agent` and relays the export lines** | The key value would sit in the transcript and the model's context, which ADR-0015 d1 and the key format rule forbid. |
-| **d14 — Hand the command to the operator to run in a terminal of their own** | It defeats the skill's purpose, running the ceremony for the operator, and moves the one error-prone step back to the operator. |
-| **d14 — Put the skill in the `oml` plugin** | The agent plugin would carry an admin ceremony into every agent that installs it. |
 | **d15 — A reader grant on the root for admin keys** | A reader grant confers recall, get and the events tail over the whole tenant: content, which the two-key rule keeps from admin keys, and the admissibility table admits no grant on an admin key at all. |
 | **d15 — Keep admin keys blind to structure** | Admins name workareas in every verb they hold, and could not look up the name or id of the workarea they grant, re-parent or reassign, nor run `oml workareas tree` under the context that administers the tree. |
 | **d15 — A sixth, structure-reader role** | The role set is fixed at five (ADR-0018 d4), and the admin already decides the structure it would read. |

@@ -3625,7 +3625,7 @@ components:
       properties:
         role: { $ref: '#/components/schemas/Role' }
         name: { $ref: '#/components/schemas/Name', description: "The key's name: unique in its namespace (409 name.taken), never changed, never released; distinct from principal and label (ADR-0026 d9)." }
-        grants: { type: array, items: { $ref: '#/components/schemas/GrantRequest' }, description: "Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0026 d13)." }
+        grants: { type: array, items: { $ref: '#/components/schemas/GrantRequest' }, description: "Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2)." }
         default_workarea_id: { $ref: '#/components/schemas/WorkareaRef', description: "The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md." }
         held_by: { type: string, enum: [agent, human, service], description: "The issuing admin's journalled attestation (ADR-0021); never verified as fact." }
         crew: { $ref: '#/components/schemas/CrewRef', description: "The key's crew record, by id or name, journalled as crew_id and fixed for the key's life (ADR-0026 d8)." }
