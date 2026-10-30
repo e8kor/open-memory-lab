@@ -146,20 +146,27 @@ impl ApiError {
         )
     }
 
-    /// Finishes the refusal as the envelope response, carrying the request id
-    /// in the body and the `X-Request-Id` header (errors.md "The envelope").
+    /// The envelope's `error` object without the request id — the shape the
+    /// MCP facade carries as a refused tool's structured content.
     #[must_use]
-    pub fn into_response(self, request_id: &str) -> Response {
+    pub fn error_object(&self) -> Value {
         let mut error = json!({
             "code": self.code,
             "message": self.message,
             "rule": self.rule,
             "retryable": self.retryable,
         });
-        if let (Some(details), Some(obj)) = (self.details, error.as_object_mut()) {
-            obj.insert("details".to_owned(), details);
+        if let (Some(details), Some(obj)) = (&self.details, error.as_object_mut()) {
+            obj.insert("details".to_owned(), details.clone());
         }
-        let body = json!({ "error": error, "request_id": request_id });
+        error
+    }
+
+    /// Finishes the refusal as the envelope response, carrying the request id
+    /// in the body and the `X-Request-Id` header (errors.md "The envelope").
+    #[must_use]
+    pub fn into_response(self, request_id: &str) -> Response {
+        let body = json!({ "error": self.error_object(), "request_id": request_id });
         let mut response = Response::new(axum::body::Body::from(body.to_string()));
         *response.status_mut() = self.status;
         response.headers_mut().insert(
