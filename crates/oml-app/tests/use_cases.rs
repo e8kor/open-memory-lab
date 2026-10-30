@@ -147,6 +147,41 @@ fn recall_req(query: &str) -> RecallRequest {
     }
 }
 
+/// A supersession of `target` with `body`, under idempotency key `idem`:
+/// no kind sent, no retirement, no ancestor beyond the target.
+fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
+    SupersedeRequest {
+        idempotency_key: idem.to_owned(),
+        target_id: target,
+        body: body.to_owned(),
+        kind: None,
+        retirement: false,
+        derives_from: Vec::new(),
+        reason: None,
+        workarea_id: None,
+    }
+}
+
+/// The retire-proposal of `target`: a supersession carrying `retirement`
+/// whose body states why (ADR-0025 d11).
+fn retire_req(idem: &str, target: Uuid, why: &str) -> SupersedeRequest {
+    SupersedeRequest {
+        retirement: true,
+        ..supersede_req(idem, target, why)
+    }
+}
+
+/// The ids of `key`'s recall hits for `query`, in rank order.
+async fn hit_ids(app: &TestApp, key: &str, query: &str) -> Vec<Uuid> {
+    app.recall(key, &recall_req(query))
+        .await
+        .expect("recall")
+        .hits
+        .iter()
+        .map(|m| m.memory.memory_id)
+        .collect()
+}
+
 /// The `derives_from` that get and the recall hit serve `key` for row `id`,
 /// asserted equal: the two reads apply one readability test (ADR-0025 d3).
 async fn served_lineage(app: &TestApp, key: &str, id: Uuid, query: &str) -> Vec<Uuid> {
@@ -238,29 +273,31 @@ async fn happy_path_end_to_end() {
     assert_eq!(recall.hits.len(), 1);
     assert_eq!(recall.hits[0].memory.memory_id, memory_id);
 
-    // Supersede the promoted tip.
+    // Supersede the promoted tip: the successor is held, and the target
+    // stays the tip until a non-author ratifies (ADR-0025 d10).
     let superseded = app
         .supersede(
             &writer.value,
-            &SupersedeRequest {
-                target_id: memory_id,
-                body: "The canary stage must drain and settle before promotion.".to_owned(),
-                claim_key: None,
-            },
+            &supersede_req(
+                "sup-1",
+                memory_id,
+                "The canary stage must drain and settle before promotion.",
+            ),
         )
         .await
         .expect("supersede");
-    assert_eq!(superseded.superseded_id, memory_id);
+    assert_eq!(superseded.receipt.replaces.artifact_id, memory_id);
     let old = app
         .get_memory(&reader.value, memory_id)
         .await
         .expect("get old tip");
-    // Supersession adds no state: the replaced version stays promoted and
-    // only loses the tip (ADR-0025 d10).
     assert_eq!(old.memory.status, MemoryStatus::Promoted);
-    assert!(!old.memory.is_tip);
+    assert!(
+        old.memory.is_tip,
+        "the target stays the tip until ratification"
+    );
     let successor = app
-        .get_memory(&writer.value, superseded.successor_id)
+        .get_memory(&writer.value, superseded.receipt.memory_id)
         .await
         .expect("author reads own held successor");
     assert_eq!(successor.memory.status, MemoryStatus::Held);
@@ -268,7 +305,7 @@ async fn happy_path_end_to_end() {
 
     // The whole chain verifies: genesis, root, admin key, crew, three keys
     // of one grant each (a key.issued and a grant.issued apiece), submit,
-    // approve, promote, supersede = 14 events.
+    // approve, promote, the successor's submission = 14 events.
     let head = app.verify_chain(admin).await.expect("verify chain");
     assert_eq!(head.seq, 14);
     assert_eq!(head.tenant_id, boot.tenant_id);
@@ -279,7 +316,8 @@ async fn happy_path_end_to_end() {
     assert_eq!(tail[0].envelope.event_type, event_types::TENANT_GENESIS);
     assert_eq!(
         tail[13].envelope.event_type,
-        event_types::LIFECYCLE_SUPERSEDE
+        event_types::SUBMISSION_REMEMBER,
+        "a supersession is a submission until it is ratified"
     );
     let submit_event = &tail[10].envelope;
     assert_eq!(submit_event.event_type, event_types::SUBMISSION_REMEMBER);
@@ -309,15 +347,12 @@ async fn a_ratified_successor_is_the_one_hit_and_the_version_it_replaced_stays_p
     let second = app
         .supersede(
             &writer.value,
-            &SupersedeRequest {
-                target_id: first,
-                body: "the canary drains and settles first".to_owned(),
-                claim_key: None,
-            },
+            &supersede_req("sup-1", first, "the canary drains and settles first"),
         )
         .await
         .expect("supersede")
-        .successor_id;
+        .receipt
+        .memory_id;
     app.post_verdict(&dreamer.value, second, Verdict::Approve, None)
         .await
         .expect("ratify the successor");
@@ -577,18 +612,14 @@ async fn supersede_is_author_only_and_tip_only() {
         .await
         .expect("submit");
     let memory_id = submitted.receipt.memory_id;
-    let revise = |body: &str| SupersedeRequest {
-        target_id: memory_id,
-        body: body.to_owned(),
-        claim_key: None,
-    };
+    let revise = |body: &str| supersede_req(&format!("sup-{body}"), memory_id, body);
 
     // A held row has no promoted tip to supersede.
     let err = app
         .supersede(&writer.value, &revise("v2"))
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::TipConflict));
+    assert!(matches!(err, AppError::TipConflict { .. }), "{err:?}");
 
     app.post_verdict(&dreamer.value, memory_id, Verdict::Approve, None)
         .await
@@ -608,15 +639,21 @@ async fn supersede_is_author_only_and_tip_only() {
         .unwrap_err();
     assert!(matches!(err, AppError::NotFound), "{err:?}");
 
-    // The author supersedes once; the second attempt hits a stale tip.
-    app.supersede(&writer.value, &revise("v2"))
+    // Held successors of one tip coexist, each at its own ordinal, and
+    // none blocks another (ADR-0025 d10).
+    let v2 = app
+        .supersede(&writer.value, &revise("v2"))
         .await
         .expect("supersede");
-    let err = app
+    let v3 = app
         .supersede(&writer.value, &revise("v3"))
         .await
-        .unwrap_err();
-    assert!(matches!(err, AppError::TipConflict));
+        .expect("a second held successor of the same tip");
+    assert_eq!(
+        (v2.receipt.version, v3.receipt.version),
+        (2, 3),
+        "1 + the greatest version of the claim_key, whatever its state"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -834,15 +871,12 @@ async fn a_successor_takes_the_next_version_and_the_targets_kind() {
     let successor = app
         .supersede(
             &writer.value,
-            &SupersedeRequest {
-                target_id: first,
-                body: "the canary drains and settles first".to_owned(),
-                claim_key: None,
-            },
+            &supersede_req("sup-1", first, "the canary drains and settles first"),
         )
         .await
         .expect("supersede")
-        .successor_id;
+        .receipt
+        .memory_id;
     let read = app
         .get_memory(&writer.value, successor)
         .await
@@ -891,15 +925,16 @@ async fn replaces_names_the_replaced_version_only_to_a_key_that_can_read_it() {
         let successor = app
             .supersede(
                 &writer.value,
-                &SupersedeRequest {
-                    target_id: first,
-                    body: "the canary drains and settles first".to_owned(),
-                    claim_key: None,
-                },
+                &supersede_req(
+                    &format!("sup-{idem}"),
+                    first,
+                    "the canary drains and settles first",
+                ),
             )
             .await
             .expect("supersede")
-            .successor_id;
+            .receipt
+            .memory_id;
         pairs.push((first, successor));
     }
     let replaced = |first| {
@@ -1839,4 +1874,895 @@ async fn a_failed_grant_commit_discloses_no_key_value() {
 
     // The refusal was one-shot: the next issuance completes.
     issue(&app, admin, Role::Reader, "rhea", crew).await;
+}
+
+// ---------------------------------------------------------------------------
+// Supersession: the tip moves only at ratification, by compare-and-set;
+// retirement is a supersession; edit-as-proposal (ADR-0025 d10, d11)
+// ---------------------------------------------------------------------------
+
+/// A writer key on `crew` (writer and reader), a reader key, and a dreamer
+/// key with dreamer and reader, each under its own principal.
+async fn crew_keys(app: &TestApp, admin: &str, crew: Uuid) -> (IssuedKey, IssuedKey, IssuedKey) {
+    let writer = agent(app, admin, "wanda", crew).await;
+    let reader = issue(app, admin, Role::Reader, "rhea", crew).await;
+    let dreamer = issue_with(
+        app,
+        admin,
+        Role::Dreamer,
+        "dana",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+    (writer, reader, dreamer)
+}
+
+#[tokio::test]
+async fn a_supersession_leaves_the_old_tip_served_to_others_until_a_non_author_ratifies() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let authors_dreamer = issue(&app, admin, Role::Dreamer, "wanda", crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let successor = app
+        .supersede(
+            &writer.value,
+            &supersede_req("sup-1", first, "the canary drains and settles first"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+
+    // Other keys keep the old tip: it reads promoted and tip, it is their
+    // one hit, and the held successor does not exist for them (R3).
+    let old = app.get_memory(&reader.value, first).await.expect("get");
+    assert_eq!(old.memory.status, MemoryStatus::Promoted);
+    assert!(old.memory.is_tip);
+    assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![first]);
+    let err = app.get_memory(&reader.value, successor).await.unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+
+    // The author's principal cannot ratify, under any key (R2).
+    let err = app
+        .post_verdict(&authors_dreamer.value, successor, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Verdict(_)), "{err:?}");
+    assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![first]);
+
+    // A non-author ratifies: only now does the successor replace the tip.
+    app.post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+        .await
+        .expect("ratify");
+    assert_eq!(
+        hit_ids(&app, &reader.value, "canary").await,
+        vec![successor]
+    );
+    let old = app.get_memory(&reader.value, first).await.expect("get");
+    assert_eq!(old.memory.status, MemoryStatus::Promoted);
+    assert!(
+        !old.memory.is_tip,
+        "a superseded version is promoted, tip false"
+    );
+}
+
+#[tokio::test]
+async fn ratifying_a_supersession_journals_one_lifecycle_supersede_and_flips_the_tip_once() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let successor = app
+        .supersede(
+            &writer.value,
+            &supersede_req("sup-1", first, "the canary drains and settles first"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    let before = journal(&store, boot.tenant_id).await.len();
+    app.post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+        .await
+        .expect("ratify");
+
+    let events = journal(&store, boot.tenant_id).await;
+    let ratified: Vec<_> = events[before..].iter().map(|e| &e.envelope).collect();
+    let types: Vec<&str> = ratified.iter().map(|e| e.event_type.as_str()).collect();
+    assert_eq!(
+        types,
+        vec![
+            event_types::REVIEW_APPROVE,
+            event_types::LIFECYCLE_SUPERSEDE
+        ],
+        "one event flips the tip, never a promote beside it"
+    );
+    let supersede = &ratified[1].payload;
+    assert_eq!(supersede["claim_key"], "claim-i1");
+    assert_eq!(supersede["workarea_id"], crew.to_string());
+    assert_eq!(supersede["new_artifact_id"], successor.to_string());
+    assert_eq!(supersede["new_version"], 2);
+    assert_eq!(supersede["replaces_artifact_id"], first.to_string());
+    assert_eq!(supersede["replaces_version"], 1);
+    assert_eq!(supersede["retirement"], false);
+    assert_eq!(supersede["self_signed"], false);
+    assert_eq!(
+        supersede["ratification_event_id"],
+        ratified[0].event_id.to_string()
+    );
+
+    // The first version's promotion was a lifecycle.promote with no
+    // previous tip; it is the claim's only one.
+    let promotes: Vec<_> = events
+        .iter()
+        .filter(|e| e.envelope.event_type == event_types::LIFECYCLE_PROMOTE)
+        .collect();
+    assert_eq!(promotes.len(), 1);
+    let promote = &promotes[0].envelope.payload;
+    assert_eq!(promote["artifact_id"], first.to_string());
+    assert_eq!(promote["version"], 1);
+    assert_eq!(promote["previous_tip_version"], serde_json::Value::Null);
+
+    // One served tip: the successor's.
+    let tip = store
+        .claim_tip(boot.tenant_id, crew, "claim-i1")
+        .await
+        .expect("tip")
+        .expect("the claim has a tip");
+    assert_eq!(tip.memory_id, successor);
+    assert!(tip.promoted_at.is_some());
+    let old = store
+        .memory(boot.tenant_id, first)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(old.status, MemoryStatus::Promoted);
+    assert!(!old.is_tip);
+}
+
+#[tokio::test]
+async fn a_supersession_whose_target_lost_the_tip_is_tip_conflict_at_verdict_and_journals_nothing()
+{
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let editor = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "eddie",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    // Two held successors of one tip: the author's revision and a
+    // dreamer's edit-as-proposal.
+    let revision = app
+        .supersede(&writer.value, &supersede_req("sup-w", first, "revision"))
+        .await
+        .expect("revision")
+        .receipt;
+    let edit = app
+        .supersede(&editor.value, &supersede_req("sup-e", first, "edit"))
+        .await
+        .expect("edit")
+        .receipt;
+    assert_eq!((revision.version, edit.version), (2, 3));
+
+    app.post_verdict(&dreamer.value, revision.memory_id, Verdict::Approve, None)
+        .await
+        .expect("the first ratified takes the tip");
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .post_verdict(&dreamer.value, edit.memory_id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::TipConflict {
+                current_tip: Some(VersionRef {
+                    artifact_id,
+                    version: 2,
+                })
+            } if artifact_id == revision.memory_id
+        ),
+        "{err:?}"
+    );
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        head,
+        "a lost compare-and-set journals nothing"
+    );
+    let stale = store
+        .memory(boot.tenant_id, edit.memory_id)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(stale.status, MemoryStatus::Held, "it stays held");
+    assert!(!stale.is_tip);
+
+    // It stays held until a reviewer rejects it.
+    let rejected = app
+        .post_verdict(
+            &dreamer.value,
+            edit.memory_id,
+            Verdict::Reject,
+            Some("stale"),
+        )
+        .await
+        .expect("reject the stale successor");
+    assert_eq!(rejected.state, MemoryStatus::Rejected);
+}
+
+#[tokio::test]
+async fn a_replayed_supersede_returns_the_stored_receipt_and_writes_once() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let other = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i2", "the canary drains last"),
+    )
+    .await;
+    let req = supersede_req("sup-1", first, "the canary drains and settles first");
+    let original = app.supersede(&writer.value, &req).await.expect("supersede");
+    assert!(!original.replayed);
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let replay = app.supersede(&writer.value, &req).await.expect("replay");
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, original.receipt, "the stored receipt");
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        head,
+        "writes once"
+    );
+
+    // The key names one request: another body, or the same body against
+    // another target, is a digest mismatch, never a replay.
+    let err = app
+        .supersede(
+            &writer.value,
+            &supersede_req("sup-1", first, "another body"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::IdempotencyDigestMismatch),
+        "{err:?}"
+    );
+    let err = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                target_id: other,
+                ..req.clone()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::IdempotencyDigestMismatch),
+        "{err:?}"
+    );
+
+    // A committed supersession replays even after the key lost its access
+    // to the target's workarea (http-api.md idempotency).
+    app.deny_key(admin, writer.key_id, crew)
+        .await
+        .expect("deny");
+    let late = app
+        .supersede(&writer.value, &req)
+        .await
+        .expect("late replay");
+    assert!(late.replayed);
+    assert_eq!(late.receipt, original.receipt);
+}
+
+#[tokio::test]
+async fn tip_conflict_names_the_current_tip_when_readable() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    // Writer only: it reads its own rows and nothing else on crew.
+    let blind = issue(&app, admin, Role::Writer, "wren", crew).await;
+    let approver = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+
+    // The reading writer's claim moves to a version it can read.
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let second = app
+        .supersede(&writer.value, &supersede_req("sup-1", first, "v2"))
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    app.post_verdict(&dreamer.value, second, Verdict::Approve, None)
+        .await
+        .expect("ratify");
+    let err = app
+        .supersede(&writer.value, &supersede_req("sup-2", first, "v3"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::TipConflict {
+                current_tip: Some(VersionRef { artifact_id, version: 2 })
+            } if artifact_id == second
+        ),
+        "{err:?}"
+    );
+
+    // The blind writer's claim moves to a dreamer's edit it cannot read:
+    // the refusal names no tip.
+    let blind_first = promoted(
+        &app,
+        &blind.value,
+        &approver.value,
+        &submit_req("i2", "the canary drains last"),
+    )
+    .await;
+    let edit = app
+        .supersede(&dreamer.value, &supersede_req("sup-e", blind_first, "edit"))
+        .await
+        .expect("edit-as-proposal")
+        .receipt
+        .memory_id;
+    app.post_verdict(&approver.value, edit, Verdict::Approve, None)
+        .await
+        .expect("ratify the edit");
+    let err = app
+        .supersede(&blind.value, &supersede_req("sup-b", blind_first, "v3"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::TipConflict { current_tip: None }),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_ratified_retirement_takes_the_claim_out_of_recall_and_keeps_every_version_fetchable() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let proposal = app
+        .supersede(
+            &writer.value,
+            &retire_req("ret-1", first, "the canary runbook replaced this"),
+        )
+        .await
+        .expect("retire-proposal")
+        .receipt;
+    assert!(proposal.retirement);
+    let before = journal(&store, boot.tenant_id).await.len();
+    app.post_verdict(&dreamer.value, proposal.memory_id, Verdict::Approve, None)
+        .await
+        .expect("ratify the retirement");
+
+    // Recall serves nothing of a retired claim, whatever matches.
+    assert!(hit_ids(&app, &reader.value, "canary").await.is_empty());
+    let recall = app
+        .recall(&reader.value, &recall_req("runbook"))
+        .await
+        .expect("recall");
+    assert!(recall.hits.is_empty() && recall.steering.is_empty());
+
+    // Every version stays fetchable as history; nothing is demoted.
+    let old = app.get_memory(&reader.value, first).await.expect("get");
+    assert_eq!(old.memory.status, MemoryStatus::Promoted);
+    assert!(!old.memory.is_tip);
+    let tip = app
+        .get_memory(&reader.value, proposal.memory_id)
+        .await
+        .expect("get the retirement version");
+    assert_eq!(tip.memory.status, MemoryStatus::Promoted);
+    assert!(tip.memory.is_tip);
+    assert!(tip.memory.retirement);
+
+    // The flip is journalled with the retirement named.
+    let events = journal(&store, boot.tenant_id).await;
+    let flip = &events[before + 1].envelope;
+    assert_eq!(flip.event_type, event_types::LIFECYCLE_SUPERSEDE);
+    assert_eq!(flip.payload["retirement"], true);
+}
+
+#[tokio::test]
+async fn a_held_retirement_changes_no_recall() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    app.supersede(&writer.value, &retire_req("ret-1", first, "stop serving"))
+        .await
+        .expect("retire-proposal");
+    assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![first]);
+    assert!(
+        app.get_memory(&reader.value, first)
+            .await
+            .expect("get")
+            .memory
+            .is_tip
+    );
+}
+
+#[tokio::test]
+async fn superseding_a_retirement_version_returns_the_claim_to_recall() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let retirement = app
+        .supersede(&writer.value, &retire_req("ret-1", first, "stop serving"))
+        .await
+        .expect("retire-proposal")
+        .receipt
+        .memory_id;
+    app.post_verdict(&dreamer.value, retirement, Verdict::Approve, None)
+        .await
+        .expect("ratify the retirement");
+    assert!(hit_ids(&app, &reader.value, "canary").await.is_empty());
+
+    let revived = app
+        .supersede(
+            &writer.value,
+            &supersede_req("sup-1", retirement, "the canary drains again"),
+        )
+        .await
+        .expect("supersede the retirement version")
+        .receipt;
+    assert_eq!(revived.version, 3);
+    assert!(!revived.retirement);
+    app.post_verdict(&dreamer.value, revived.memory_id, Verdict::Approve, None)
+        .await
+        .expect("ratify");
+    assert_eq!(
+        hit_ids(&app, &reader.value, "canary").await,
+        vec![revived.memory_id]
+    );
+}
+
+#[tokio::test]
+async fn a_term_cannot_retire_it_deprecates() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let term = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &SubmitRequest {
+            kind: MemoryKind::Term,
+            ..submit_req("i1", "canary: a staged rollout slice")
+        },
+    )
+    .await;
+    let err = app
+        .supersede(&writer.value, &retire_req("ret-1", term, "stop serving"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::TermRetirement), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_successor_kind_changes_only_within_its_class() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let memory = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let term = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &SubmitRequest {
+            kind: MemoryKind::Term,
+            ..submit_req("i2", "canary: a staged rollout slice")
+        },
+    )
+    .await;
+    let with_kind = |idem: &str, target, kind, retirement| SupersedeRequest {
+        kind: Some(kind),
+        retirement,
+        ..supersede_req(idem, target, "revised")
+    };
+
+    // A memory may become a standing instruction under review.
+    let steering = app
+        .supersede(
+            &writer.value,
+            &with_kind("s-1", memory, MemoryKind::Steering, false),
+        )
+        .await
+        .expect("memory to steering");
+    let read = app
+        .get_memory(&writer.value, steering.receipt.memory_id)
+        .await
+        .expect("own read");
+    assert_eq!(read.memory.kind, MemoryKind::Steering);
+
+    for (idem, target, kind, retirement) in [
+        ("s-2", memory, MemoryKind::Term, false),
+        ("s-3", term, MemoryKind::Memory, false),
+        ("s-4", memory, MemoryKind::DerivedFact, true),
+    ] {
+        let err = app
+            .supersede(&writer.value, &with_kind(idem, target, kind, retirement))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::KindChangeRefused { .. }), "{err:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_derived_fact_successor_journals_submission_learn() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    app.supersede(
+        &writer.value,
+        &SupersedeRequest {
+            kind: Some(MemoryKind::DerivedFact),
+            ..supersede_req("sup-1", first, "the canary always drains first")
+        },
+    )
+    .await
+    .expect("supersede");
+    let events = journal(&store, boot.tenant_id).await;
+    let capture = &events.last().expect("an event").envelope;
+    assert_eq!(capture.event_type, event_types::SUBMISSION_LEARN);
+    assert_eq!(capture.payload["kind"], "derived_fact");
+    assert_eq!(
+        capture.payload["replaces"],
+        serde_json::json!({ "artifact_id": first.to_string(), "version": 1 })
+    );
+    assert_eq!(
+        capture.payload["derives_from"],
+        serde_json::json!([first.to_string()])
+    );
+    assert_eq!(capture.payload["retirement"], false);
+}
+
+#[tokio::test]
+async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let err = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                workarea_id: Some(boot.root_workarea_id),
+                ..supersede_req("sup-1", first, "revised")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::WorkareaNotTarget { .. }), "{err:?}");
+    app.supersede(
+        &writer.value,
+        &SupersedeRequest {
+            workarea_id: Some(crew),
+            ..supersede_req("sup-2", first, "revised")
+        },
+    )
+    .await
+    .expect("the target's own workarea");
+}
+
+#[tokio::test]
+async fn a_writer_cannot_supersede_another_keys_claim() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let other = agent(&app, admin, "walt", crew).await;
+    let approver = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let err = app
+        .supersede(&other.value, &supersede_req("sup-o", first, "mine now"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AuthorOnly), "{err:?}");
+
+    // Once a dreamer's ratified edit holds the tip, the claim is the
+    // dreamer's: own is read on the tip, never on the first version.
+    let edit = app
+        .supersede(&dreamer.value, &supersede_req("sup-e", first, "edit"))
+        .await
+        .expect("edit-as-proposal")
+        .receipt
+        .memory_id;
+    app.post_verdict(&approver.value, edit, Verdict::Approve, None)
+        .await
+        .expect("ratify the edit");
+    let err = app
+        .supersede(&writer.value, &supersede_req("sup-w", edit, "revised"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AuthorOnly), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_dreamer_proposes_an_edit_to_another_authors_claim_and_cannot_review_it() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let approver = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let reviewer_only = issue(&app, admin, Role::Dreamer, "dina", crew).await;
+    let reads_only = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dale",
+        vec![grant(crew, Role::Reader)],
+    )
+    .await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &approver.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+
+    // Edit-as-proposal needs dreamer and reader on the target's workarea,
+    // resolved by the refusal order.
+    let err = app
+        .supersede(&reviewer_only.value, &supersede_req("e-0", first, "edit"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let err = app
+        .supersede(&reads_only.value, &supersede_req("e-1", first, "edit"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::GrantRefused {
+                needed_role: Role::Dreamer,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+
+    let edit = app
+        .supersede(
+            &dreamer.value,
+            &supersede_req("e-2", first, "the canary drains and settles first"),
+        )
+        .await
+        .expect("edit-as-proposal")
+        .receipt;
+    assert_eq!(edit.version, 2);
+    assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![first]);
+
+    // Its proposer is in its lineage: never served it, refused its verdict.
+    assert!(
+        app.review_next(&dreamer.value)
+            .await
+            .expect("review next")
+            .is_none()
+    );
+    let err = app
+        .post_verdict(&dreamer.value, edit.memory_id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Verdict(_)), "{err:?}");
+
+    // Another dreamer ratifies it.
+    app.post_verdict(&approver.value, edit.memory_id, Verdict::Approve, None)
+        .await
+        .expect("ratify");
+    assert_eq!(
+        hit_ids(&app, &reader.value, "canary").await,
+        vec![edit.memory_id]
+    );
+}
+
+#[tokio::test]
+async fn the_author_cannot_ratify_its_own_retirement() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let authors_dreamer = issue(&app, admin, Role::Dreamer, "wanda", crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let retirement = app
+        .supersede(&writer.value, &retire_req("ret-1", first, "stop serving"))
+        .await
+        .expect("retire-proposal")
+        .receipt
+        .memory_id;
+    assert!(
+        app.review_next(&authors_dreamer.value)
+            .await
+            .expect("review next")
+            .is_none()
+    );
+    let err = app
+        .post_verdict(&authors_dreamer.value, retirement, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::Verdict(oml_app::domain::VerdictError::PrincipalInLineage(_))
+        ),
+        "{err:?}"
+    );
+    assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![first]);
+}
+
+#[tokio::test]
+async fn a_rival_successors_author_is_kept_off_the_others_review() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let approver = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &approver.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    // The dreamer's edit and the author's revision compete for one tip.
+    let edit = app
+        .supersede(&dreamer.value, &supersede_req("e-1", first, "edit"))
+        .await
+        .expect("edit")
+        .receipt
+        .memory_id;
+    let revision = app
+        .supersede(&writer.value, &supersede_req("w-1", first, "revision"))
+        .await
+        .expect("revision")
+        .receipt
+        .memory_id;
+
+    // The edit's author may not judge its rival: never served, refused.
+    assert!(
+        app.review_next(&dreamer.value)
+            .await
+            .expect("review next")
+            .is_none()
+    );
+    let err = app
+        .post_verdict(&dreamer.value, revision, Verdict::Reject, Some("mine wins"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Verdict(_)), "{err:?}");
+
+    // Once its own successor is no longer held, the exclusion lifts.
+    app.post_verdict(&approver.value, edit, Verdict::Reject, Some("superfluous"))
+        .await
+        .expect("reject the edit");
+    let served = app
+        .review_next(&dreamer.value)
+        .await
+        .expect("review next")
+        .expect("the revision waits");
+    assert_eq!(served.memory.memory_id, revision);
 }

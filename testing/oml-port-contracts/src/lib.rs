@@ -317,6 +317,27 @@ async fn promote<S: JournalStore>(
     .await
 }
 
+/// Commits the ratification of `successor`, which takes the tip from
+/// `replaced`, through the rig.
+async fn supersede_tip<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    successor: Uuid,
+    replaced: Uuid,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_SUPERSEDE,
+        json!({ "new_artifact_id": successor.to_string() }),
+        MetadataFold::TipSuperseded {
+            successor,
+            replaced,
+        },
+        None,
+    )
+    .await
+}
+
 /// Commits the rejection of `memory_id` through the rig.
 async fn reject<S: JournalStore>(
     rig: &mut ChainRig,
@@ -1511,9 +1532,16 @@ pub async fn promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its
         read(v1.memory_id).await.is_tip,
         "a held successor moves nothing"
     );
-    promote(&mut rig, store, v2.memory_id)
+    let receipt = supersede_tip(&mut rig, store, v2.memory_id, v1.memory_id)
         .await
-        .expect("promote v2");
+        .expect("ratify v2");
+    let at = store
+        .events_range(rig.tenant_id, receipt.seq, 1)
+        .await
+        .expect("range")
+        .remove(0)
+        .envelope
+        .at;
     let replaced = read(v1.memory_id).await;
     assert_eq!(
         replaced.status,
@@ -1521,7 +1549,114 @@ pub async fn promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its
         "no superseded state"
     );
     assert!(!replaced.is_tip, "the replaced version is history");
-    assert!(read(v2.memory_id).await.is_tip);
+    let tip = read(v2.memory_id).await;
+    assert!(tip.is_tip);
+    assert_eq!(tip.status, MemoryStatus::Promoted);
+    assert_eq!(tip.promoted_at, Some(at), "the ratifying event's at");
+    assert_eq!(
+        store
+            .claim_tip(rig.tenant_id, wa, &v1.claim_key)
+            .await
+            .expect("claim_tip")
+            .map(|m| m.memory_id),
+        Some(v2.memory_id),
+        "the claim's one served tip"
+    );
+}
+
+/// The compare-and-set of ratification: a successor takes the tip only
+/// while the version it replaces is still the promoted tip under the
+/// successor's own workarea and claim_key; a lost compare-and-set commits
+/// nothing, journal row included, and leaves the successor held
+/// (audit-and-lineage.md supersession chains; ADR-0025 d10).
+pub async fn tip_superseded_refuses_when_the_target_is_no_longer_tip<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(25);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB27);
+    let v1 = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC2B),
+        "wanda",
+        Uuid::from_u128(0xD25),
+        "v1",
+    );
+    let successor = |id: u128, version: u32| MemoryRecord {
+        memory_id: Uuid::from_u128(id),
+        version,
+        replaces: Some(v1.memory_id),
+        body: format!("v{version}"),
+        ..v1.clone()
+    };
+    let (first, rival) = (successor(0xC2C, 2), successor(0xC2D, 3));
+    let rekeyed = MemoryRecord {
+        claim_key: "another-claim".to_owned(),
+        ..successor(0xC2E, 1)
+    };
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    for m in [&first, &rival, &rekeyed] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    let tenant = rig.tenant_id;
+    let read = |id| async move {
+        store
+            .memory(tenant, id)
+            .await
+            .expect("memory")
+            .expect("the row exists")
+    };
+    let mut held = store
+        .held_successors(tenant, v1.memory_id)
+        .await
+        .expect("held_successors")
+        .into_iter()
+        .map(|m| m.memory_id)
+        .collect::<Vec<_>>();
+    held.sort();
+    let mut expected = vec![first.memory_id, rival.memory_id, rekeyed.memory_id];
+    expected.sort();
+    assert_eq!(held, expected, "every held successor of the tip");
+
+    // A successor re-keyed away from its target fails the compare-and-set.
+    let head = store.chain_head(tenant).await.expect("head");
+    assert!(matches!(
+        supersede_tip(&mut rig, store, rekeyed.memory_id, v1.memory_id).await,
+        Err(StoreError::TipMoved { .. })
+    ));
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert!(read(v1.memory_id).await.is_tip);
+
+    // The first ratified takes the tip; its rival then commits nothing.
+    supersede_tip(&mut rig, store, first.memory_id, v1.memory_id)
+        .await
+        .expect("ratify the first successor");
+    let head = store.chain_head(tenant).await.expect("head");
+    assert!(matches!(
+        supersede_tip(&mut rig, store, rival.memory_id, v1.memory_id).await,
+        Err(StoreError::TipMoved { .. })
+    ));
+    assert_eq!(
+        store.chain_head(tenant).await.expect("head"),
+        head,
+        "a lost compare-and-set journals nothing"
+    );
+    let stale = read(rival.memory_id).await;
+    assert_eq!(stale.status, MemoryStatus::Held, "it stays held");
+    assert!(!stale.is_tip);
+    assert!(read(first.memory_id).await.is_tip);
+    assert!(!read(v1.memory_id).await.is_tip);
+    assert_eq!(
+        store
+            .held_successors(tenant, v1.memory_id)
+            .await
+            .expect("held_successors")
+            .len(),
+        2,
+        "the ratified successor is no longer held"
+    );
 }
 
 /// The tenant a rig built with `seed` writes under.
@@ -1742,6 +1877,7 @@ where
     promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
         .await;
     a_second_served_tip_of_one_claim_commits_nothing(&new_store().await).await;
+    tip_superseded_refuses_when_the_target_is_no_longer_tip(&new_store().await).await;
     a_second_live_version_with_one_ordinal_commits_nothing(&new_store().await).await;
     claim_key_state_counts_every_version_and_only_live_ones_hold_the_key(&new_store().await).await;
 }

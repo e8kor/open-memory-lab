@@ -183,6 +183,16 @@ impl ApiError {
     }
 }
 
+/// `submission.tip_conflict` with its stable rule (errors.md).
+fn tip_conflict(message: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "submission.tip_conflict",
+        "Supersession promotion CAS-checks its target is the current tip; the tip flip is one journalled fact, never a lost update.",
+        message,
+    )
+}
+
 /// Which endpoint family the refusal surfaced on — a refused status
 /// transition means different things to a verdict (the serve no longer names
 /// a held row) and to a write (the target is not the current tip).
@@ -284,11 +294,30 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "A writer proposes supersessions of its own claims only (D9).",
             "a writer key may supersede only its own claims",
         ),
-        AppError::TipConflict => ApiError::new(
-            StatusCode::CONFLICT,
-            "submission.tip_conflict",
-            "Supersession promotion CAS-checks its target is the current tip; the tip flip is one journalled fact, never a lost update.",
-            "the supersede target is not the current served tip",
+        AppError::TipConflict { current_tip } => {
+            let error = tip_conflict("the supersede target is not the current served tip");
+            match current_tip {
+                // One-hop recovery: the tip to propose against, named only
+                // when the caller can read it (ADR-0025 d10, d16).
+                Some(tip) => error.with_details(json!({
+                    "current_tip": {
+                        "artifact_id": tip.artifact_id.to_string(),
+                        "version": tip.version,
+                    },
+                })),
+                None => error,
+            }
+        }
+        AppError::WorkareaNotTarget { workarea_id } => ApiError::validation(format!(
+            "X-OML-Workarea names {workarea_id}, but a supersession is captured in its target's workarea"
+        )),
+        AppError::KindChangeRefused { target, sent } => ApiError::validation(format!(
+            "a {} target admits no {} successor: a kind changes only within its class, and a retirement keeps the target's",
+            target.as_str(),
+            sent.as_str()
+        )),
+        AppError::TermRetirement => ApiError::validation(
+            "a term is never retired: terms deprecate, through a supersession with term_status deprecated",
         ),
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
@@ -335,6 +364,9 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             // Surfaces only after the write path exhausted its head-retry
             // loop (the oml-pg phase's intended lead write shape).
             ApiError::unavailable("chain head contention")
+        }
+        AppError::Store(StoreError::TipMoved { .. }) => {
+            tip_conflict("the supersede target stopped being the served tip before ratification")
         }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
         AppError::StoredResponse(e) => ApiError::internal(e),

@@ -338,6 +338,10 @@ where
         )
     }
 
+    /// `POST /v1/memories/{artifact_id}/supersede`: a held successor that
+    /// names what it replaces; the target stays the tip until ratification
+    /// (http-api.md supersede; ADR-0025 d10, d11). The body is closed: a
+    /// field the server does not serve is refused, never dropped (d16).
     async fn supersede_inner(
         st: &Self,
         artifact_id: &str,
@@ -346,41 +350,69 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
-        let _idem = idempotency_key(headers)?;
+        let idem_key = idempotency_key(headers)?;
         let target_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let req: SupersedeBody = parse_json(headers, body)?;
-        if nfc(&req.body).len() > MAX_BODY_BYTES {
+        let text = nfc(&req.body);
+        if text.len() > MAX_BODY_BYTES {
             return Err(ApiError::payload_too_large("the claim body"));
         }
+        let kind = req.kind.as_deref().map(parse_kind).transpose()?;
         refuse_attachments(&req.attachments)?;
+        refuse_simulation(req.simulation_id.as_ref())?;
+        // Vocabulary successors are unbuilt: their fields are parsed so the
+        // closed body can name them, and refused by name (ADR-0025 d16).
+        for (field, sent) in [
+            ("mapping", req.mapping.is_some()),
+            ("terms", req.terms.is_some()),
+            ("term_status", req.term_status.is_some()),
+            ("successors", req.successors.is_some()),
+        ] {
+            if sent {
+                return Err(ApiError::validation(format!(
+                    "{field} on supersede is not built: vocabulary successors are outside this slice, so the field is refused, never dropped"
+                )));
+            }
+        }
         let app_req = SupersedeRequest {
+            idempotency_key: idem_key,
             target_id,
-            body: req.body,
-            claim_key: None, // the successor keeps the claim's key
+            body: text,
+            kind,
+            retirement: req.retirement,
+            derives_from: req.derives_from,
+            reason: req.reason,
+            workarea_id: workarea_override(headers)?,
         };
         let outcome = retry_chain(|| st.app.supersede(&token, &app_req))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        // The successor is the caller's own held row, so the author read is
-        // always admitted — it supplies the claim_key/digest the receipt
-        // shape (SubmitAccepted) carries.
-        let successor = st
-            .app
-            .get_memory(&token, outcome.successor_id)
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let m = &successor.memory;
-        Ok(json_response(
+        let r = &outcome.receipt;
+        let mut response = json_response(
             StatusCode::ACCEPTED,
+            // SubmitAccepted for a supersession: the successor, the version
+            // it replaces, and whether it proposes retirement.
             &json!({
-                "artifact_id": outcome.successor_id,
-                "claim_key": m.claim_key,
-                "version": m.version,
-                "state": "held",
-                "plaintext_digest": m.body_digest,
-                "journal_seq": outcome.journal_seq,
+                "artifact_id": r.memory_id,
+                "claim_key": r.claim_key,
+                "version": r.version,
+                "state": r.state,
+                "workarea_id": r.workarea_id,
+                "retirement": r.retirement,
+                "replaces": {
+                    "artifact_id": r.replaces.artifact_id,
+                    "version": r.replaces.version,
+                },
+                "plaintext_digest": r.body_digest,
+                "journal_seq": r.journal_seq,
             }),
-        ))
+        );
+        if outcome.replayed {
+            response
+                .headers_mut()
+                .insert("idempotency-replay", HeaderValue::from_static("true"));
+        }
+        Ok(response)
     }
 
     async fn review_next(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
@@ -413,9 +445,23 @@ where
                 *response.status_mut() = StatusCode::NO_CONTENT;
                 Ok(response)
             }
-            Some(memory) => Ok(json_response(
-                StatusCode::OK,
-                &json!({
+            Some(memory) => {
+                // A supersession is served with the version it replaces
+                // whenever the reviewer can read it — the item's `replaces`
+                // says so, under the readability test every read applies —
+                // and the serve records that version's digest (ADR-0012 d5;
+                // ADR-0025 d3, d10).
+                let replaced = match memory.replaces {
+                    None => None,
+                    Some(r) => match st.app.get_memory(&token, r.artifact_id).await {
+                        Ok(replaced) => Some(replaced),
+                        // Unreadable since the item was served: shown as
+                        // the item's own read would show it, not at all.
+                        Err(AppError::NotFound) => None,
+                        Err(e) => return Err(map_app_error(e, ErrorContext::Review)),
+                    },
+                };
+                let mut serve = json!({
                     // The PoC serve binding is the claimed row itself
                     // (review_queue.held_by_key); the id round-trips the
                     // memory id rather than naming a serve table row.
@@ -426,8 +472,13 @@ where
                         "body": memory.memory.body_digest,
                         "attachments": [],
                     },
-                }),
-            )),
+                });
+                if let (Some(replaced), Some(obj)) = (&replaced, serve.as_object_mut()) {
+                    obj.insert("replaces".to_owned(), memory_json(replaced, true));
+                    obj["served_digests"]["replaces"] = json!(replaced.memory.body_digest);
+                }
+                Ok(json_response(StatusCode::OK, &serve))
+            }
         }
     }
 
@@ -792,17 +843,36 @@ struct RecallBody {
     include_bodies: Option<bool>,
 }
 
+/// openapi.yaml `SupersedeRequest`, closed: it declares every submission
+/// field a successor can need beside its own (ADR-0025 d16).
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SupersedeBody {
     body: String,
     #[serde(default)]
+    retirement: bool,
+    kind: Option<String>,
+    #[serde(default)]
     attachments: Vec<String>,
+    #[serde(default)]
+    derives_from: Vec<Uuid>,
+    reason: Option<String>,
+    #[serde(default)]
+    simulation_id: Option<String>,
     #[serde(default)]
     #[allow(
         dead_code,
-        reason = "recorded reason text is outside the PoC journal payload"
+        reason = "declared data, accepted; the PoC journals real time only"
     )]
-    reason: Option<String>,
+    simulated_time: Option<String>,
+    #[serde(default)]
+    mapping: Option<Value>,
+    #[serde(default)]
+    terms: Option<Value>,
+    #[serde(default)]
+    term_status: Option<Value>,
+    #[serde(default)]
+    successors: Option<Value>,
 }
 
 #[derive(Deserialize)]
