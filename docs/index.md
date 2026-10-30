@@ -7,7 +7,7 @@ answers: what Open Memory Lab is, the problem it solves, what it guarantees in p
 
 # Open Memory Lab
 
-Design revision **0.1.0-design** — see the [changelog](changelog.md).
+Design revision **0.2.0-design** — see the [changelog](changelog.md).
 **See it move:** the [Live Atlas](atlas/index.html) is an interactive 3D tour of how crews work
 memory through OML — recall along grants, remember, review, supersede, and the grants a freeze
 opens — over mocked data.

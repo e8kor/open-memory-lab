@@ -46,8 +46,9 @@ works:
 
 ## What is served today
 
-The catalog in [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares ten tools.
-This release serves the four above. The other six, `oml_attach`, `oml_relate_propose`,
-`oml_my_work`, `oml_workarea_info`, `oml_graph` and `oml_vocab`, answer with an error
-saying they are not built yet. They arrive with the milestones in the
+The catalog in [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares twelve tools.
+This release serves the four above. The other eight are not served yet: `oml_attach`,
+`oml_relate_propose`, `oml_my_work`, `oml_workarea_info`, `oml_graph` and `oml_vocab` answer
+with an error saying they are not built yet, and `oml_get` and `oml_supersede`, added to the
+catalog by ADR-0025, are not yet named by the server. They arrive with the milestones in the
 [critical path](../../docs/product/critical-path.md).

@@ -66,8 +66,13 @@ include.
   yet. In cluster mode the window also covers follower-written rows awaiting the lead's anchor,
   and a crashed follower loses its unflushed async batch ([RS-13](roadmap.md)).
   [Audit and lineage](../architecture/audit-and-lineage.md).
-- **Revocation and grant latency.** A revoked key or withdrawn grant can act until the bounded
-  cache epoch lapses; the window is stated in [security](../architecture/security.md), not zero.
+- **Revocation and grant latency.** A revoked key or withdrawn grant stops acting at the key's
+  next request served by the lead: access is recomputed from the record on every request, and no
+  cache holds an older answer. In cluster mode a follower checks access against its own copy of
+  the record, so on the reads a follower serves, a revoked key or withdrawn grant keeps acting
+  until replication catches up: the window is replication lag, exposed as a follower metric and
+  never assumed zero. A lead-only deployment, the default, has no such window
+  ([security](../architecture/security.md)).
 - **Rate limiting.** In cluster mode the split follows the topology: write-path limits are
   exact (one lead — nothing to divide); read-path limits are limit/N across followers, so a
   tenant can briefly exceed its read quota and the error grows with follower churn.

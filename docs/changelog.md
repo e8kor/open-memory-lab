@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design covers, and what each revision changed
+answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design cover, and what each revision changed
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design covers, and what ea
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.1.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.2.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -25,6 +25,66 @@ implementation milestone where it changes what the repository holds.
 - **The repo is tagged `spec-vX.Y` at each published revision**, starting with `spec-v0.1` at
   implementation start, so an implementation can state exactly which revision of the design it
   was built against.
+
+## 0.2.0-design
+
+### 2026-10-30 — the agent-only memory surface (ADR-0025)
+
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) (proposed) decides the surface
+FR-10 and FR-11 need and the access model it rests on. It amends ADR-0001 (d5), ADR-0008 (d4,
+d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2) and ADR-0018 (d4);
+each of those records' Status lines gains the back-pointer when ADR-0025 is accepted.
+
+- **Decided:** grant admissibility per key role and one four-step refusal order, so one
+  writer-role key with writer and reader grants remembers and recalls; issuance that carries
+  grants and denies and discloses the value only after the last grant commits; "own" as the
+  authoring key; `include_own_held` on recall, with held text matched only through an
+  author-fenced index; the budget token (counter `oml-tc/1`) and the `max_tokens` cut with a
+  `budget` object; applicable steering and a total hit order; a recall logs the ids served and a
+  digest of the whole request; supersession moves the tip only at ratification, by
+  compare-and-set, as one `lifecycle.supersede`; the author's retire-proposal as a supersession
+  carrying `retirement: true`, open to the same keys as any supersession; distinct version
+  ordinals, so competing held successors coexist and the tip compare-and-set decides between
+  them; own read on the target version; a self-signed version never replacing a reviewed tip;
+  `oml_get` and `oml_supersede` and one claim-item shape; the own-work
+  listing across every workarea the key wrote to; the workarea read with the caller's children,
+  effective verbs and permission epoch; per-family visibility on the events tail with a bounded
+  scan and `next_after_seq`, where a `lifecycle.*` event reaches readers only for a version the
+  read path would have served them; effective access computed on every request with no cache,
+  so a revocation applies to the key's next request served by the lead, and on follower-served
+  reads after replication lag (amending ADR-0008 d4 and d6); request bodies
+  that refuse unknown fields.
+- **`info.version` 0.1.0-design → 0.2.0-design**, because `/v1` request and response shapes
+  change. No operation, error code, event type or claim state is added: the taxonomy and the
+  operation set are unchanged. The MCP catalog goes from ten tools to twelve.
+- **Roadmap:** FR-30 (the budget-token count against model tokenizers, unmeasured), FR-31 (the
+  `claim_key` collision as a residual existence signal) and RS-17 (revising one's own claim
+  before its review) are opened. FR-10 and FR-11 stay open until the
+  agent-only-memory scenario passes in CI.
+- **The release image** is decided as one index for `linux/amd64` and `linux/arm64`, signed on the
+  index digest; a page edit, no decision change.
+- **Pages touched:** the [decision register](adr/index.md) (register row; D7, D9, D11, D12 and
+  D13 cells), the Status lines of ADR-0001, ADR-0008, ADR-0010, ADR-0012, ADR-0013, ADR-0014
+  and ADR-0018,
+  `mkdocs.yml`, [llms.txt](llms.txt), [openapi.yaml](api/openapi.yaml),
+  [HTTP API](api/http-api.md), [errors](api/errors.md), [the agent plugin](api/mcp-plugin.md),
+  [mcp-tools.json](api/mcp-tools.json) (the two new tools, `oml_my_work`, `oml_workarea_info` and
+  `_meta`, with `_meta.pending_design` naming what the served `oml_recall` and `oml_events_tail`
+  entries still lack; those entries gain only what the build already serves — the `k` maximum,
+  the `after_seq` default, and no `scope` on the tail),
+  [retrieval](architecture/retrieval.md), [roles and keys](architecture/roles-and-keys.md),
+  [workareas](architecture/workareas.md), [admission](architecture/admission.md),
+  [audit and lineage](architecture/audit-and-lineage.md),
+  [event catalog](data/event-catalog.md), [Postgres schema](data/postgres-schema.md),
+  [roadmap](product/roadmap.md), [CLI reference](cli/reference.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md), [upgrades](operations/upgrades.md),
+  [security](architecture/security.md), [configuration](operations/configuration.md),
+  [commitments](product/commitments.md), [compliance](product/compliance.md),
+  [concepts](concepts.md), [the overview](index.md) and this page; outside `docs/`, `CONTRIBUTING.md`, `README.md` and
+  `plugins/oml/README.md` (version and tool counts).
+- **Not built.** Nothing above is implemented by this entry; the PoC's divergences are named in
+  ADR-0025's Context, and the code lands in later changes, each with its own entry. A
+  `spec-v0.2` tag follows the maintainer's acceptance.
 
 ## 0.1.0-design
 

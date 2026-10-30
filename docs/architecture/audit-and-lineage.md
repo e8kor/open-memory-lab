@@ -2,7 +2,7 @@
 id: architecture/audit-and-lineage
 tier: engineering
 status: design draft for review · decided, not built
-answers: what the journal records and never records; what an evidence export contains; how lineage is queried; what erasure does to every copy class
+answers: what the journal records and never records; what an evidence export contains; how lineage is queried; what erasure does to every copy class; how versions are numbered, superseded and retired
 -->
 
 # Audit and lineage
@@ -134,11 +134,66 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
 - One served tip per `(tenant, workarea_id, claim_key)` — a partial unique index over served
   rows; the [Postgres schema](../data/postgres-schema.md) records why the index is spelled with
   the workarea: `claim_key` is namespaced per workarea.
-- `claim_key` is unique per `(tenant, workarea_id)` over non-erased rows.
-- **Promotion of a supersession CAS-checks its target is still the current tip.** Two
-  supersessions racing for the same tip cannot both win; the loser is refused with a typed
-  error and re-proposes against the new tip. The tip never changes except by a ratified
-  promotion, so readers never see an unreviewed version ahead of a reviewed one.
+- **Each version has its own `artifact_id`, and `version` is its ordinal within the
+  `claim_key`.** A new claim's first version is 1. A successor's version is 1 + the greatest
+  `version` of any row of that `claim_key` in the workarea, whatever its state, so ordinals grow
+  past rejected versions and past a tip that a tip override moved back to an earlier version. `replaces` names the target; the ordinal only places the version in
+  the claim's history. The ordinal is read before the capture transaction opens, like every
+  deterministic input of a capture ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1);
+  the per-tenant chain lock serializes commits, the `memories_claim_version` index refuses a
+  capture whose ordinal a concurrent capture took first, and the server retries that capture
+  with a fresh ordinal. A superseded version reads state `promoted`, tip `false`. The ordinal is
+  a stated residual: a successor's version ordinal, returned to its proposer and shown on every
+  version, counts every earlier version of the `claim_key` in any state, so a key learns how many
+  versions it cannot read (held, rejected or demoted, by any author) precede it — a count, never
+  content ([FR-31](../product/roadmap.md)).
+- **A `claim_key` names one live claim per `(tenant, workarea_id)`.** A new claim (version 1)
+  collides with a held, promoted or demoted version of that `claim_key` in the workarea —
+  held now, or promoted at some point and not erased (`submission.claim_key_conflict`). A
+  version 1 rejected without ever being promoted releases the key for a fresh version 1, and so
+  does a claim whose every version is rejected or erased, so a rejection never blocks
+  resubmission. A demoted claim keeps its key, because a demoted version can return to service
+  ([simulations](simulations.md): a sim-derived row that survives re-review is un-demoted); a
+  claim whose every version is demoted therefore holds its key until it is erased or returns to
+  service, and its replacement starts under another `claim_key`. No
+  two held, promoted or demoted versions of one `claim_key` therefore share an ordinal, and
+  (`claim_key`, `version`) — a tip override's `to_version` among its uses — names one version;
+  an erased chain keeps its `artifact_id`s in the journal and the evidence export beside any
+  fresh chain under the released key. Reopening a rejected first version is refused with
+  `submission.claim_key_conflict` under the same test, so a reopen never sets a second live
+  first version beside a fresh one. A reopened successor needs no such test, since the
+  compare-and-set below guards the tip; any reopen whose ordinal a held, promoted or demoted
+  version of its `claim_key` already carries is refused with the same code. The collision is a
+  stated residual: it tells any writer on the workarea that a held version, or a promoted or
+  demoted one the writer cannot read, holds that `claim_key` — a name, never content
+  ([FR-31](../product/roadmap.md); [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
+  d10).
+- **Supersession targets the current served tip, and only ratification moves the tip.** A
+  supersession is a held successor that names the version it replaces; the replaced version
+  stays the served tip, and stays in every reader's recall, until a non-author ratifies the
+  successor. Several held successors of one tip may coexist — an author's revision beside a
+  dreamer's edit-as-proposal, say — and none blocks another. Ratification compare-and-sets that
+  the target is still the promoted tip and journals one `lifecycle.supersede`, which promotes the
+  successor and flips the tip in the same commit, so the compare-and-set decides between
+  competing successors: once one is ratified, a verdict that would ratify another is refused
+  with `submission.tip_conflict`, nothing is journalled, its serve is not consumed, and that
+  successor stays held until a reviewer rejects it or its author re-proposes against the new
+  tip. The tip never changes except by a ratified promotion, so readers never see a version
+  nobody reviewed ahead of a reviewed one.
+- **A self-signed version takes the tip only from a self-signed tip.** In a `development`
+  workarea whose policy permits self-signing, a `self_signed` version may take the tip only as a
+  claim's first version or from a `self_signed` tip. A supersession or retirement whose target
+  was promoted by non-author review needs full non-author ratification even there — the review
+  policy does not admit self-sign for that row. `self_signed` rows are served only to reads
+  scoped inside their workarea ([retrieval](retrieval.md)), so a self-signed replacement would
+  take reviewed content away from every read scoped above the workarea with no second identity
+  ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5;
+  [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
+- **A retirement version as tip makes a retired claim.** A ratified supersession carrying
+  `retirement: true` takes the tip; recall then serves nothing of the claim — neither hits nor
+  steering ([retrieval](retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked))
+  — while get still answers for every version as history, and nothing is demoted or erased (R4).
+  A later ratified supersession of the retirement version returns the claim to service.
 - **Reassignment that would collide on `claim_key` in the destination is refused**, unless the
   journalled move event records a re-key. A silent re-key would break the chain's identity;
   a recorded one is lineage.
@@ -195,6 +250,7 @@ here rather than restating it.
 | OS/block-level volume snapshots of the Postgres volume | Everything the volume held at snapshot time — plaintext-derived index content **and** wrapped DEKs — outside the base-backup/WAL accounting above | Whether the deployment takes volume snapshots is an operational choice; if it does, their retention window joins the erasure SLO composition exactly as base backups do, and the [deployment](../operations/deployment.md) backup table must list them |
 | `artifact_keys.wrapped_dek` in Postgres base backups and WAL | The **wrapped DEK itself** — a usable key copy, not content | The live row is nulled at erase; copies in base backups and WAL survive until the backup retention window expires, and **while the wrapping KEK lives, a restored backup plus KMS unwrap could recover the DEK and decrypt every surviving ciphertext copy**. The designed bound: scheduled KEK rotation re-wraps **live** DEKs only, and a retired KEK is destroyed once the backup horizon has passed — destroying it invalidates every wrapped-DEK copy in older backups. Erasure therefore completes against live stores immediately, and against backups no later than **backup retention window + KEK rotation period** ([security](security.md) owns key custody; the fenced-restore ceremony is [deployment](../operations/deployment.md)'s) |
 | The `kms-file` keyring file and its backups (standalone and docker profiles, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d4) | The **KEK itself**, held as a host file behind the KMS port — not content, the key that unwraps every DEK it wrapped | The live file's retired-KEK destruction is file deletion, journalled. Any backup of the keyring file — host backup, volume snapshot, copied compose volume — is a usable key copy and extends the erasure SLO exactly as wrapped-DEK copies in Postgres backups do; its window is whatever backs up that path, which only the operator controls, and the bound is stated as exactly that strong ([RS-12](../product/roadmap.md); the backup table in [deployment](../operations/deployment.md) lists this class) |
+| `held_fts` (decided, not built — [retrieval](retrieval.md#held-text-containment)) — `tsvector` entries, the class above, on a row of its own for its held transitions | **Plaintext-derived** `tsvector` rows of held versions, readable only by the authoring key | Inserted by every transition into `held` and removed by every transition out of it, each in the commit that makes the transition ([retrieval](retrieval.md#held-text-containment) owns the list), so a held row's index entry never outlives its held state; persists in Postgres base backups and WAL until the backup retention window expires, exactly as the `tsvector` row above |
 | `read_events` | Memory ids and query digests, not bodies | Retention-bounded by tenant policy ([retrieval](retrieval.md)); in this inventory because a query digest can correlate with erased content until its window closes |
 | Serving-path caches | Decrypted bodies in flight | Invalidated at erase; any cache added later enters this inventory as a named copy class before it ships |
 | Attribution metadata (writer identity, principal, timestamps, workarea path) | Plaintext, in journal, metadata rows and lake rows | **Not erased by crypto-shredding.** Its erasure or pseudonymization is a tracked FR with an exit criterion in the [roadmap](../product/roadmap.md) — open, not solved |
@@ -254,3 +310,7 @@ and a chain that still verifies.
   ([decision register](../adr/index.md)).
 - The journal's own decisions (system of record, per-tenant chains) are ADR-0002, owned by
   [storage](storage.md); the read log's are ADR-0013, owned by [retrieval](retrieval.md).
+- [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) — the tip moves only at
+  ratification, by compare-and-set; distinct version ordinals; retirement as a supersession; the
+  self-signed tip rule; the `claim_key` release after a never-promoted rejection and the reopen
+  that would collide with it; the `held_fts` table, `tsvector` entries in the inventory.

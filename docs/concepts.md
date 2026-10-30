@@ -13,8 +13,9 @@ This page is the design's vocabulary, explained in reading order. Nothing is dec
 every concept below is decided on an owning page or ADR, and this page links it rather than
 restating it. Where a sentence here and an owning page disagree, the owning page wins. The
 fixed term-by-term table that binds every engineering page is
-[ADR-0018](adr/ADR-0018-the-documentation-set.md) d4; the end of this page maps each concept
-to where it is decided.
+[ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, amended by
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11; the end of this page maps
+each concept to where it is decided.
 
 ## Tenant
 
@@ -35,7 +36,10 @@ Claims come in **versions**. A `claim_key` groups the versions of one claim, and
 served to readers is the **tip** — exactly one per claim per workarea, changed only by a
 ratified promotion. Replacing the tip is **supersession**: a new version is submitted, held,
 and reviewed like any write, and its promotion is checked against the tip it claims to
-replace, so two racing supersessions cannot both win.
+replace, so two racing supersessions cannot both win. A supersession may instead propose
+retiring the claim: once ratified, its **retirement version** is the tip, the claim is a
+**retired claim**, and recall stops serving it while every version stays readable as history
+([audit and lineage](architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
 
 Claims also declare where they came from. A submission may carry `derives_from` edges naming
 the claims it was built from; the transitive closure over those edges and claim↔claim
@@ -132,12 +136,13 @@ Every caller holds an API key issued with exactly one of five roles:
 - **operator** — provider level: creates tenants and issues each tenant's first admin key;
   never touches content.
 
-Authority over *where* comes from **grants**: a grant binds a role (no higher than the key's)
-to a workarea **node id** and covers that node's subtree. A **deny** inside a grant masks a
+Authority over *where* comes from **grants**: a grant binds a role the key's role admits
+([grant admissibility](architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)) to
+a workarea **node id** and covers that node's subtree. A **deny** inside a grant masks a
 subtree within that grant only; a **global per-key deny** is a separate journalled object that
 wins over every grant. Effective access is the union of attenuated grants minus global denies,
-recomputed whenever a permission epoch bumps — so every access answer is reproducible from
-journalled records.
+computed on every request; the permission epoch labels the journalled state it was computed
+against — so every access answer is reproducible from journalled records.
 
 Keys are shown once at issuance, expire, and rotate by minting a journalled **successor key**
 (linked by `rotated_from`, with a bounded grace window on the old key) — there is no in-place
@@ -251,6 +256,10 @@ relevance scoring could bury fails exactly when an agent most needs the instruct
 contract is part of the API surface: clients may rely on the segment order, and nothing a
 client sends re-ranks the steering segment.
 
+A recall may carry a budget counted in **budget tokens**, a server-defined unit of claim text
+that is not any model's tokenizer count; steering is never cut, and the hits served are the longest
+rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
+
 ## Where each concept is decided
 
 | Concept | Owning page | Decision record |
@@ -273,4 +282,4 @@ client sends re-ranks the steering segment.
 | The overlay tip | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
 | The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](architecture/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
 | The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
-| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4 |
+| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, amended by [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 |

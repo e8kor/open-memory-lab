@@ -96,11 +96,35 @@ derived path". Two consequences:
 
 Every effective-access computation is reproducible from journalled grants: the
 grant, its denies, and the global per-key deny objects are all journalled
-records, and a **permission epoch** counter invalidates any cached resolution
-when any of them changes. No cached answer survives past the next epoch check;
-the window between a revocation's commit and that check is bounded by a stated
-deployment parameter ([security](security.md) names it as the EoP residual).
-The cost is a recomputation on every epoch bump, which is accepted.
+records, and each carries the **permission epoch** it was written at.
+
+The permission epoch of a key is the journal seq of the latest `key.issued`,
+`key.rotated` (for its `new_key_id`), `key.revoked`, `grant.issued`,
+`grant.revoked`, `key.denied` or `key.denial_lifted` event for that key; a
+grant row and a denial row each store their own event's seq as their epoch
+([event catalog](../data/event-catalog.md)). A successor minted by
+`key.rotated` has no `key.issued` and no `grant.issued`, so its
+`api_keys.issued_seq` and the epoch of each grant row reproduced for it are the
+`key.rotated` seq. A
+[re-parent](#re-parenting)'s `workarea.reparent` event joins that list for
+every key of the tenant (when re-parent is built, ADR-0025 d14), because it
+changes which nodes a node-id grant covers. A tenant's journal seq only increases, so the epoch is monotone and
+reproducible from the journal; no separate counter exists beside it
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d14).
+
+Effective access is computed on every request, and no resolution is cached:
+the epoch labels the journalled state an answer was computed against, and
+invalidates nothing. The cost is one grants read and one ancestry walk per
+request, unmeasured like every cost on the request path
+([FR-25](../product/roadmap.md)). A revocation, grant change or denial
+therefore applies to the key's next request served by the lead. In cluster
+mode a follower resolves keys, grants and denials from its local replica, so
+on follower-served reads a revocation, grant change or denial takes effect
+after replication lag — the same follower metric
+[retrieval](retrieval.md#reads-in-cluster-mode) states for promoted reads, and
+the window [security](security.md) states as the EoP residual. A lead-only
+deployment, the default, has no such window. A cache would be a new decision
+that states its own staleness window there.
 
 ## Effective access: union of attenuated grants, then deny-wins
 
@@ -225,8 +249,9 @@ Re-parenting a workarea — giving the node a different parent — exists as a
 
 Because grants bind to node ids, no grant is touched; because paths are
 derived, the rewrite is a cache-maintenance act on the derived column, not an
-authority change — but it still bumps the permission epoch, because any cached
-subtree resolution computed against old paths is now wrong. The cost of the
+authority change — but its event still joins every key's permission epoch
+(above), because an access answer computed against old paths no longer
+describes the tree. The cost of the
 single-transaction form is a lock proportional to the size of the moved
 subtree; that cost is accepted so that no read ever observes a tree in which a
 path and its parent pointer disagree. [Decided, not built: the locking
@@ -260,7 +285,9 @@ stateDiagram-v2
   permit `self_signed` rows under the one bounded constitutional exception
   (such rows are marked, readable only inside that workarea, never promote
   beyond it, and never enter silver or gold — the full scope is declared in
-  the constitution, [ADR-0001](../adr/index.md)).
+  the constitution, [ADR-0001](../adr/index.md)). How a `self_signed` version
+  may take a claim's tip is declared in
+  [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
 - **committed** — full non-author review required; promotions allowed. The
   working state of a governed crew space, and the permanent state of the
   universe root.
@@ -329,4 +356,6 @@ lake is declared: unreviewed content never enters a consumer-readable zone.
 ## Decision record
 
 The workarea algebra is registered as ADR-0008 and the status ladder as
-ADR-0009 ([adr/index.md](../adr/index.md)).
+ADR-0009 ([adr/index.md](../adr/index.md)); the permission-epoch reading and
+per-request effective access are
+[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1, d14).
