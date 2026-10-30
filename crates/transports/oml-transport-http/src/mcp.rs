@@ -44,7 +44,10 @@ const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 pub const SERVED_TOOLS: [&str; 4] = ["oml_remember", "oml_learn", "oml_recall", "oml_events_tail"];
 
 /// Catalog tools whose ring endpoint is not built yet: named, not unknown.
-const UNBUILT_TOOLS: [&str; 6] = [
+/// `oml_get` and `oml_supersede` joined the catalog with ADR-0025 d12.
+const UNBUILT_TOOLS: [&str; 8] = [
+    "oml_get",
+    "oml_supersede",
     "oml_attach",
     "oml_relate_propose",
     "oml_my_work",
