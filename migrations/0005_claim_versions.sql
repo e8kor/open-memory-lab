@@ -37,8 +37,14 @@ ALTER TABLE memories
 -- * body_bytes: the octets of the claim's NFC form, which is what capture
 --   counts now (ADR-0025 d6). The stored text is not rewritten: its digest
 --   is journalled.
--- * version: numbered per (workarea, claim_key) in capture order.
 -- * replaces_artifact_id: a replaced row's superseded_by named its successor.
+-- * version: what capture assigns now, per (workarea, claim_key) in capture
+--   order. A version that replaces nothing is 1, so a claim captured after
+--   a never-promoted rejection is a fresh version 1 (ADR-0025 d18). A
+--   successor is 1 + the greatest version before it, whatever its state
+--   (audit-and-lineage.md supersession chains): every PoC supersession
+--   replaced a promoted version and kept its claim_key, so that is 1 + the
+--   successors captured before it.
 -- * is_tip: a promoted version, or one the first PoC wrote 'superseded', is
 --   the served tip unless its successor reached promotion. The PoC moved the
 --   tip when a supersession was proposed; a version whose successor is still
@@ -49,9 +55,13 @@ ALTER TABLE memories
 -- * idempotency: a stored PoC submit receipt names no version; every PoC
 --   submit captured a version 1.
 --
--- Two promoted, unreplaced rows sharing one claim_key in one workarea leave
--- no single served tip to choose: the migration refuses them by name rather
--- than hide one from recall.
+-- The PoC never refused a second claim under a claim_key in use, and d18
+-- never lets two held, promoted or demoted versions that replace nothing
+-- share one claim_key in one workarea: two promoted ones leave no single
+-- served tip to choose, and a held one beside a live one would meet the
+-- served tip as a constraint error when it was approved. The migration
+-- refuses them by name rather than choose which one keeps the claim_key,
+-- hide one from recall, or leave one that no verdict can promote.
 DO $$
 DECLARE
     t        uuid;
@@ -66,20 +76,23 @@ BEGIN
                body_bytes = octet_length(normalize(claim, NFC))
          WHERE tenant_id = t;
 
-        UPDATE memories m
-           SET version = n.version
-          FROM (SELECT id,
-                       row_number() OVER (PARTITION BY workarea_id, claim_key
-                                          ORDER BY created_at, id) AS version
-                  FROM memories
-                 WHERE tenant_id = t) n
-         WHERE m.tenant_id = t AND m.id = n.id;
-
         UPDATE memories s
            SET replaces_artifact_id = r.id
           FROM memories r
          WHERE s.tenant_id = t AND r.tenant_id = t
            AND r.superseded_by = s.id;
+
+        UPDATE memories m
+           SET version = n.version
+          FROM (SELECT id,
+                       CASE WHEN replaces_artifact_id IS NULL THEN 1
+                            ELSE 1 + count(replaces_artifact_id)
+                                     OVER (PARTITION BY workarea_id, claim_key
+                                           ORDER BY created_at, id)
+                       END AS version
+                  FROM memories
+                 WHERE tenant_id = t) n
+         WHERE m.tenant_id = t AND m.id = n.id;
 
         UPDATE memories m
            SET is_tip = NOT EXISTS (
@@ -106,15 +119,16 @@ BEGIN
            AND jsonb_typeof(response) = 'object'
            AND NOT response ? 'version';
 
-        SELECT workarea_id, claim_key INTO rivalled
+        SELECT workarea_id, claim_key, count(*) AS live INTO rivalled
           FROM memories
-         WHERE tenant_id = t AND is_tip AND status = 'promoted'
+         WHERE tenant_id = t AND replaces_artifact_id IS NULL
+           AND status IN ('held', 'promoted', 'demoted')
          GROUP BY workarea_id, claim_key
         HAVING count(*) > 1
          LIMIT 1;
         IF FOUND THEN
-            RAISE EXCEPTION '0005: tenant % has two promoted versions of claim_key % in workarea % that replace nothing; one claim serves one tip (ADR-0025 d10, d18)',
-                t, rivalled.claim_key, rivalled.workarea_id;
+            RAISE EXCEPTION '0005: tenant % has % live first versions of claim_key % in workarea %; a claim_key names one live claim, and one claim serves one tip (ADR-0025 d10, d18)',
+                t, rivalled.live, rivalled.claim_key, rivalled.workarea_id;
         END IF;
     END LOOP;
     PERFORM set_config('oml.tenant_id', '', true);
