@@ -71,5 +71,7 @@ actions belong to other identities on purpose. When a write is refused, the resu
 `isError: true` and an `error` object with `code`, `rule` and `message`. Report the code
 and the rule, and do not retry a refusal whose `retryable` is `false`.
 
-To follow what happened after a write, poll `oml_events_tail` with the last `seq` you saw
-as `after_seq`.
+To follow what happened after a write, poll `oml_events_tail` and pass each call's
+`next_after_seq` back as the next call's `after_seq`; `idle: true` means you have caught up.
+Resume from `next_after_seq`, never from the last `seq` you saw: a page can hold no events
+while `next_after_seq` still advances past events this key may not see.
