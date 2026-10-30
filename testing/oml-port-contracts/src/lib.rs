@@ -317,6 +317,29 @@ async fn promote<S: JournalStore>(
     .await
 }
 
+/// Commits the ratification of `successor`, which takes the tip from
+/// `replaced`, through the rig.
+async fn supersede_tip<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    successor: Uuid,
+    replaced: Uuid,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_SUPERSEDE,
+        json!({
+            "new_artifact_id": successor.to_string(),
+            "replaces_artifact_id": replaced.to_string(),
+        }),
+        MetadataFold::MemoryPromoted {
+            memory_id: successor,
+        },
+        None,
+    )
+    .await
+}
+
 /// Commits the rejection of `memory_id` through the rig.
 async fn reject<S: JournalStore>(
     rig: &mut ChainRig,
@@ -525,12 +548,23 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
     );
 }
 
-/// Holds `memory` and promotes it through the rig: the claim's served tip
-/// until a promoted successor replaces it.
+/// Holds `memory`, a claim's first version, and promotes it through the
+/// rig: the claim's served tip until a ratified successor takes it.
 async fn hold_and_promote<S: JournalStore>(rig: &mut ChainRig, store: &S, memory: MemoryRecord) {
     let id = memory.memory_id;
     hold(rig, store, memory).await.expect("hold");
     promote(rig, store, id).await.expect("promote");
+}
+
+/// Holds `successor` and ratifies it through the rig, so it takes the tip
+/// from the version it replaces (ADR-0025 d10).
+async fn hold_and_ratify<S: JournalStore>(rig: &mut ChainRig, store: &S, successor: MemoryRecord) {
+    let id = successor.memory_id;
+    let replaced = successor.replaces.expect("a successor replaces a version");
+    hold(rig, store, successor).await.expect("hold");
+    supersede_tip(rig, store, id, replaced)
+        .await
+        .expect("ratify");
 }
 
 /// The next version of `target`'s claim, held: `retirement` marks a
@@ -598,7 +632,7 @@ pub async fn recall_serves_promoted_tips_only_within_the_readable_set<S: Journal
     hold_and_promote(&mut rig, store, promoted.clone()).await;
     hold(&mut rig, store, held).await.expect("hold the twin");
     hold_and_promote(&mut rig, store, replaced).await;
-    hold_and_promote(&mut rig, store, tip.clone()).await;
+    hold_and_ratify(&mut rig, store, tip.clone()).await;
     hold_and_promote(&mut rig, store, derived.clone()).await;
 
     let recall = |readable: Vec<Uuid>, kinds: Vec<MemoryKind>, k: usize| async move {
@@ -780,7 +814,7 @@ pub async fn retired_claims_are_absent_from_recall_and_steering<S: JournalStore>
         let retired = fixture(base, kind, "the canary claim");
         let retirement = successor_of(&retired, Uuid::from_u128(base + 1), retire, true);
         hold_and_promote(&mut rig, store, retired.clone()).await;
-        hold_and_promote(&mut rig, store, retirement).await;
+        hold_and_ratify(&mut rig, store, retirement).await;
 
         let pending = fixture(base + 2, kind, "the canary claim still served");
         let held_retirement = successor_of(&pending, Uuid::from_u128(base + 3), retire, true);
