@@ -1,4 +1,5 @@
-"""The agent plugin agrees with the server it connects to.
+"""The agent plugin agrees with the server it connects to, and the admin plugin
+issues keys only the way ADR-0028 d3 allows.
 
 Run by .github/workflows/ci.yml (job plugin). Checks, failing on the first
 class of disagreement found:
@@ -11,7 +12,13 @@ class of disagreement found:
 - every MCP entry targets the server's /mcp endpoint with a bearer key;
 - the skill and the plugin README name exactly the tools the server serves
   (SERVED_TOOLS in crates/transports/oml-transport-http/src/mcp.rs), and every
-  served tool is declared in docs/api/mcp-tools.json.
+  served tool is declared in docs/api/mcp-tools.json;
+- the marketplace lists oml-admin at a directory that has a manifest, at the
+  workspace version;
+- oml-admin has no .mcp.json, so it adds no tool to any tool list;
+- every command in the oml-admin skill that runs `issue-agent` carries `--out`
+  and never `--json`, so the key value never reaches the model's context
+  (docs/cli/reference.md, "The oml-admin plugin").
 """
 
 import json
@@ -21,6 +28,10 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+ADMIN_SKILL = "skills/issue-agent-key/SKILL.md"
+# A fenced block, indented or not, and an inline code span outside one.
+FENCE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
+SPAN = re.compile(r"`([^`\n]+)`")
 
 
 def main() -> int:
@@ -76,14 +87,54 @@ def main() -> int:
                 f"{doc.relative_to(ROOT)} names tools the server does not serve: {sorted(unbuilt_mentioned)}"
             )
 
+    check_admin(entries, workspace_version, errors)
     return report(errors)
+
+
+def check_admin(entries: dict, workspace_version: str, errors: list[str]) -> None:
+    if "oml-admin" not in entries:
+        errors.append("marketplace.json does not list the oml-admin plugin")
+        return
+    plugin_dir = (ROOT / entries["oml-admin"]["source"]).resolve()
+    manifest_path = plugin_dir / ".claude-plugin/plugin.json"
+    if not manifest_path.is_file():
+        errors.append(f"{manifest_path} is missing")
+        return
+    manifest = json.loads(manifest_path.read_text())
+    if manifest["version"] != workspace_version:
+        errors.append(
+            f"oml-admin plugin.json version {manifest['version']} != workspace version {workspace_version}"
+        )
+    if (plugin_dir / ".mcp.json").exists():
+        errors.append("oml-admin has an .mcp.json: an admin plugin serves no MCP tool (ADR-0028 d3)")
+
+    skill_path = plugin_dir / ADMIN_SKILL
+    if not skill_path.is_file():
+        errors.append(f"{skill_path} is missing")
+        return
+    runs = [c for c in commands(skill_path.read_text()) if re.search(r"\boml\b", c) and "issue-agent" in c]
+    if not runs:
+        errors.append(f"{ADMIN_SKILL} runs no `oml keys issue-agent` command")
+    for run in runs:
+        flags = set(re.findall(r"(?<!\S)(--[a-z-]+)", run))
+        if "--out" not in flags:
+            errors.append(f"{ADMIN_SKILL} runs issue-agent without --out: {run.strip()}")
+        if "--json" in flags:
+            errors.append(f"{ADMIN_SKILL} runs issue-agent with --json: {run.strip()}")
+
+
+def commands(text: str) -> list[str]:
+    """Every line of every fenced block, backslash continuations joined, and
+    every inline code span outside the blocks."""
+    lines = [line for block in FENCE.findall(text) for line in block.replace("\\\n", " ").splitlines()]
+    return lines + SPAN.findall(FENCE.sub("", text))
 
 
 def report(errors: list[str]) -> int:
     for e in errors:
         print(f"plugin check: {e}", file=sys.stderr)
     if not errors:
-        print("plugin check: the oml plugin agrees with the server")
+        print("plugin check: the oml plugin agrees with the server, and oml-admin issues keys only with --out")
     return 1 if errors else 0
 
 

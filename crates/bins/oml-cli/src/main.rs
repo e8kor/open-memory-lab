@@ -8,6 +8,7 @@
 // as <role> must print as written rather than as markdown code.
 #![allow(rustdoc::invalid_html_tags)]
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
@@ -17,6 +18,7 @@ use uuid::Uuid;
 
 use oml_cli::client::{CallOpts, CliError, Client};
 use oml_cli::creds::{self, Credentials};
+use oml_cli::issue::{KeyFile, sh_quote, with_reader_beside_writers};
 use oml_cli::verify::parse_verifying_key;
 
 #[derive(Parser)]
@@ -113,6 +115,9 @@ enum TenantsCommand {
 enum KeysCommand {
     /// Issue a key; the value is printed exactly once.
     Issue(KeysIssueArgs),
+    /// Issue the one key the agent plugin needs, in one POST /v2/keys, and
+    /// print the OML_URL and OML_API_KEY export lines it reads (ADR-0028 d1).
+    IssueAgent(IssueAgentArgs),
 }
 
 #[derive(Args)]
@@ -127,14 +132,40 @@ struct KeysIssueArgs {
     /// some grant must cover it. Omitted, the first grant's node.
     #[arg(long)]
     default_workarea: Option<Uuid>,
-    /// Grant as <workarea-node-id>:<role>; repeatable.
+    /// Grant as <workarea-node-id>:<role>; repeatable. A writer grant brings
+    /// a reader grant on the same workarea unless --write-only.
     #[arg(long = "grant", value_parser = parse_grant)]
     grants: Vec<(Uuid, String)>,
+    /// Send the writer grants alone, with no reader grant beside them
+    /// (ADR-0028 d2).
+    #[arg(long)]
+    write_only: bool,
     /// Principal the key acts as.
     #[arg(long)]
     principal: Option<String>,
     #[arg(long)]
     label: Option<String>,
+}
+
+#[derive(Args)]
+struct IssueAgentArgs {
+    /// Principal the key acts as; give each agent its own.
+    #[arg(long)]
+    principal: String,
+    /// The workarea node id the key writes and recalls on, and its default.
+    #[arg(long)]
+    workarea: Uuid,
+    /// Who holds the key.
+    #[arg(long, default_value = "agent", value_parser = ["agent", "human"])]
+    held_by: String,
+    /// Send the writer grant alone, with no reader grant beside it
+    /// (ADR-0028 d2).
+    #[arg(long)]
+    write_only: bool,
+    /// Write the key value to this new file (mode 0600, never overwritten)
+    /// and print a line that reads it back instead of the value.
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -384,15 +415,19 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: KeysCommand::Issue(args),
         } => {
             let client = resolve(cli, &stored)?;
-            let grants: Vec<Value> = args
-                .grants
-                .iter()
-                .map(|(node, role)| json!({ "workarea_node_id": node, "role": role }))
-                .collect();
+            let grants = with_reader_beside_writers(&args.grants, args.write_only);
+            if !cli.json {
+                for (node, _) in grants.iter().filter(|g| !args.grants.contains(g)) {
+                    eprintln!(
+                        "adding {node}:reader beside {node}:writer \
+                         (pass --write-only to send the writer grants alone)"
+                    );
+                }
+            }
             let mut body = json!({
                 "role": args.role,
                 "held_by": args.held_by,
-                "grants": grants,
+                "grants": grants_json(&grants),
             });
             if let Some(wa) = args.default_workarea {
                 body["default_workarea_id"] = json!(wa);
@@ -427,6 +462,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             Ok(ExitCode::SUCCESS)
         }
+
+        Command::Keys {
+            command: KeysCommand::IssueAgent(args),
+        } => run_issue_agent(cli, &stored, args),
 
         Command::Deny {
             command:
@@ -663,6 +702,112 @@ fn write_opts() -> CallOpts {
 
 fn field<'a>(v: &'a Value, name: &str) -> &'a str {
     v[name].as_str().unwrap_or("—")
+}
+
+/// The issuance body's `grants` (openapi.yaml `GrantRequest`).
+fn grants_json(grants: &[(Uuid, String)]) -> Vec<Value> {
+    grants
+        .iter()
+        .map(|(node, role)| json!({ "workarea_node_id": node, "role": role }))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// oml keys issue-agent (ADR-0028 d1)
+// ---------------------------------------------------------------------------
+
+/// One `POST /v2/keys` for a writer key with writer and reader grants on the
+/// workarea and that workarea as its default, then exactly two lines on
+/// stdout: `export OML_URL=…` and `export OML_API_KEY=…`, the second reading
+/// the value back from the `--out` file when one is named. Every other line
+/// goes to stderr, and no key value reaches either stream once `--out` is
+/// given (cli/reference.md `oml keys issue-agent`).
+fn run_issue_agent(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &IssueAgentArgs,
+) -> Result<ExitCode, CliError> {
+    if cli.json && args.out.is_some() {
+        return Err(CliError::local(
+            "refused: --out with --json, because the 201 body --json prints carries the key \
+             value; nothing was sent (ADR-0028 d1)",
+        ));
+    }
+    let client = resolve(cli, stored)?;
+    let key_file = match &args.out {
+        Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
+        None => None,
+    };
+    let grants =
+        with_reader_beside_writers(&[(args.workarea, "writer".to_owned())], args.write_only);
+    let body = json!({
+        "role": "writer",
+        "held_by": args.held_by,
+        "principal": args.principal,
+        "default_workarea_id": args.workarea,
+        "grants": grants_json(&grants),
+    });
+    let response = match client.post("/v2/keys", &body, &write_opts()) {
+        Ok((_, response)) => response,
+        Err(refusal) => {
+            // No key exists: the empty file goes with the refusal.
+            if let Some(Err(e)) = key_file.map(KeyFile::discard) {
+                eprintln!("note: {e}");
+            }
+            return Err(refusal);
+        }
+    };
+    if cli.json {
+        print_json(&response);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let key_id = field(&response, "key_id");
+    let lost = |why: &str| {
+        CliError::local(format!(
+            "key {key_id} was issued, but {why}: its value is lost and the key is live. Revoke \
+             key {key_id}; until key revocation is built, `oml deny set {key_id} <root workarea \
+             id>` keeps it from every workarea (ADR-0028 d1)"
+        ))
+    };
+    let value = response["value"]
+        .as_str()
+        .ok_or_else(|| lost("the 201 carried no value"))?;
+    let key_line = match key_file {
+        None => format!("export OML_API_KEY={}", sh_quote(value)),
+        Some(file) => {
+            let shown = file.shown().to_owned();
+            file.write_value(value)
+                .map_err(|e| lost(&format!("writing {shown} failed ({e})")))?;
+            format!("export OML_API_KEY=\"$(cat {})\"", sh_quote(&shown))
+        }
+    };
+    println!("export OML_URL={}", sh_quote(client.server()));
+    println!("{key_line}");
+
+    let granted: Vec<String> = response["grants"]
+        .as_array()
+        .map(|grants| {
+            grants
+                .iter()
+                .map(|g| format!("{}:{}", field(g, "workarea_node_id"), field(g, "role")))
+                .collect()
+        })
+        .unwrap_or_default();
+    eprintln!(
+        "key {key_id} issued to {} (writer, held by {}): {}; default workarea {}",
+        field(&response, "principal"),
+        args.held_by,
+        granted.join(", "),
+        field(&response, "default_workarea_id"),
+    );
+    match &args.out {
+        Some(_) => eprintln!(
+            "the value is only in the key file (0600); delete it once the key is in the \
+             environment that needs it"
+        ),
+        None => eprintln!("the value is shown once, above, and never again"),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn print_json(v: &Value) {
