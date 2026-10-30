@@ -18,7 +18,7 @@ use oml_domain::{ChainHead, EventTime, MemoryKind, MemoryStatus, Role};
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyRecord,
     IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
-    ScanOutcome, Scanner, Signer, StoreError,
+    ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use crate::types::{
     ClaimKeyState, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter,
@@ -427,6 +427,39 @@ impl JournalStore for MemStore {
             .take(limit)
             .cloned()
             .collect())
+    }
+
+    async fn events_with_subjects(
+        &self,
+        tenant_id: Uuid,
+        from_seq: u64,
+        limit: usize,
+    ) -> Result<TailScan, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(TailScan::default());
+        };
+        // One lock is one snapshot: the head and the scan agree.
+        let state = tenant.lock().expect("tenant lock");
+        let events = state
+            .events
+            .iter()
+            .filter(|e| e.envelope.seq >= from_seq)
+            .take(limit)
+            .map(|e| TailEvent {
+                subject: claim_subject(&e.envelope.event_type, &e.envelope.payload)
+                    .and_then(|id| state.memories.get(&id))
+                    .map(|m| SubjectRow {
+                        artifact_id: m.memory_id,
+                        workarea_id: m.workarea_id,
+                        author_key_id: m.author_key_id,
+                    }),
+                event: e.clone(),
+            })
+            .collect();
+        Ok(TailScan {
+            head_seq: state.events.last().map_or(0, |e| e.envelope.seq),
+            events,
+        })
     }
 
     async fn memory(
