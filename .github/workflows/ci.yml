@@ -1,0 +1,132 @@
+name: CI
+
+# The merge gates of docs/engineering/ci-and-toolchain.md for the code, plus
+# the two end-to-end paths a user takes: the release binaries (the PoC demo
+# and the quickstart) and the docker profile (docker-compose.yml). Docs keep
+# their own gate in docs-checks.yml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The integration suites create and drop throwaway databases through this
+  # role (crates/adapters/oml-pg/tests/pg_store.rs).
+  DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+
+jobs:
+  lint:
+    name: fmt, clippy, doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Reads rust-toolchain.toml: the one pinned toolchain.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: cargo test (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # The deployment pin (docs/operations/deployment.md).
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test --workspace --locked
+
+  e2e:
+    name: demo and quickstart (release binaries)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo build --release --locked --bin oml-server-lead --bin oml
+      - name: PoC demo
+        run: bash scripts/poc-demo.sh
+      - name: Quickstart, then the agent plugin over /mcp
+        env:
+          PGPASSWORD: oml_dev_only
+        run: |
+          state="$RUNNER_TEMP/quickstart"
+          mkdir -p "$state"
+          psql -h 127.0.0.1 -U oml -d oml_dev -c "CREATE DATABASE oml_quickstart"
+          OML_POSTGRES__URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_quickstart \
+          OML_SERVER__LISTEN=127.0.0.1:8080 \
+          OML_KMS__KEYRING_PATH="$state/keyring" \
+            ./target/release/oml-server-lead >"$state/stdout" 2>"$state/stderr" &
+          for _ in $(seq 1 50); do
+            grep -q 'enr_' "$state/stdout" 2>/dev/null && break
+            sleep 0.2
+          done
+          export OML_ENROLLMENT_TOKEN="$(grep -o 'enr_[0-9a-f]\{48\}' "$state/stdout" | head -1)"
+          OML_CLI=./target/release/oml OML_CLI_CREDENTIALS="$state/credentials" \
+            bash scripts/quickstart.sh || { tail -n 50 "$state/stderr"; exit 1; }
+
+  compose:
+    name: docker profile (compose up, quickstart)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start
+        run: docker compose up -d --build
+      - name: Quickstart inside the container
+        run: bash scripts/quickstart.sh
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Stop
+        if: always()
+        run: docker compose down -v
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  plugin:
+    name: agent plugin agrees with the server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_plugin.py

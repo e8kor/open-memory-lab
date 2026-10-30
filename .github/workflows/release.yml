@@ -1,0 +1,184 @@
+name: Release
+
+# A release is a set of verifiable artifacts, not a tag
+# (docs/engineering/ci-and-toolchain.md "Release artifacts"). One tag vX.Y.Z,
+# equal to the workspace version, ships:
+#   - oml-X.Y.Z-x86_64-linux.tar.gz (oml-server-lead + oml), its CycloneDX SBOM
+#     and a SHA-256 sum, each signed keyless with cosign;
+#   - ghcr.io/e8kor/open-memory-lab:X.Y.Z (and :latest), signed by digest, with
+#     buildx SBOM and provenance attestations;
+#   - the `oml` agent plugin, whose marketplace is this repository at the tag.
+# The verification command the release notes carry is the one that page
+# states; this file's path is the identity it pins.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  version:
+    name: tag equals the workspace version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(python3 -c 'import tomllib;print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')"
+          plugin="$(python3 -c 'import json;print(json.load(open("plugins/oml/.claude-plugin/plugin.json"))["version"])')"
+          if [ "$tag" != "$crate" ] || [ "$tag" != "$plugin" ]; then
+            echo "tag $tag, workspace $crate, plugin $plugin: all three must agree" >&2
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: linux binaries, SBOM, signatures
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+      - uses: sigstore/cosign-installer@v3
+      - run: cargo build --release --locked --bin oml-server-lead --bin oml
+      - name: Package
+        run: |
+          name="oml-${VERSION}-x86_64-linux"
+          mkdir -p "dist/$name"
+          cp target/release/oml-server-lead target/release/oml README.md LICENSE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/$name"
+          # One SBOM per crate, written beside its manifest; ship the two binaries'.
+          cargo cyclonedx --format json --override-filename sbom
+          cp crates/bins/oml-server-lead/sbom.json "dist/oml-server-lead-${VERSION}.cdx.json"
+          cp crates/bins/oml-cli/sbom.json "dist/oml-${VERSION}.cdx.json"
+          (cd dist && sha256sum ./*.tar.gz ./*.cdx.json > SHA256SUMS)
+      - name: Sign (keyless, bound to this workflow)
+        run: |
+          cd dist
+          for f in *.tar.gz *.cdx.json SHA256SUMS; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  image:
+    name: container image
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the image by digest
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+  publish:
+    name: GitHub release
+    needs: [version, binaries, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      DIGEST: ${{ needs.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Release notes
+        run: |
+          identity='^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/.*$'
+          cat > notes.md <<EOF
+          ## Install
+
+          Docker (Postgres + oml-server):
+
+              curl -fsSLO https://raw.githubusercontent.com/${{ github.repository }}/v${VERSION}/docker-compose.yml
+              OML_VERSION=${VERSION} docker compose up -d
+
+          Then follow the quickstart in the README to claim the server and issue keys.
+
+          The agent plugin for Claude Code:
+
+              claude plugin marketplace add ${{ github.repository }}
+              claude plugin install oml@open-memory-lab
+
+          Image: \`${IMAGE}:${VERSION}\` (\`${IMAGE}@${DIGEST}\`)
+
+          ## Verify
+
+          Every artifact here and the image are signed keyless by this release workflow:
+
+              cosign verify \\
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+                --certificate-identity-regexp '${identity}' \\
+                ${IMAGE}@${DIGEST}
+
+              cosign verify-blob \\
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+                --certificate-identity-regexp '${identity}' \\
+                --bundle oml-${VERSION}-x86_64-linux.tar.gz.sigstore.json \\
+                oml-${VERSION}-x86_64-linux.tar.gz
+
+          Each binary has a CycloneDX SBOM (\`*.cdx.json\`), generated from the committed Cargo.lock.
+          EOF
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Open Memory Lab ${VERSION}" \
+            --notes-file notes.md \
+            --verify-tag
