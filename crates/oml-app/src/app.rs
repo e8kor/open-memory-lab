@@ -8,6 +8,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -507,6 +508,25 @@ where
             hash,
             sig,
         })
+    }
+
+    /// The response recorded under `scope` for this request, if any; a
+    /// record of another request is `idempotency.digest_mismatch`
+    /// (http-api.md idempotency).
+    async fn recorded<T: DeserializeOwned>(
+        &self,
+        scope: &IdempotencyScope,
+        request_digest: &str,
+    ) -> Result<Option<T>, AppError> {
+        let Some(record) = self.journal.idempotency_get(scope).await? else {
+            return Ok(None);
+        };
+        if record.request_digest != request_digest {
+            return Err(AppError::IdempotencyDigestMismatch);
+        }
+        serde_json::from_value(record.response)
+            .map(Some)
+            .map_err(|e| AppError::StoredResponse(e.to_string()))
     }
 
     async fn commit(
@@ -1434,7 +1454,11 @@ where
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks
     /// (step 5); then the checks every submit runs. The successor takes the
     /// next ordinal of the claim_key and journals `submission.remember`
-    /// (`submission.learn` for a `derived_fact`) naming what it replaces.
+    /// (`submission.learn` for a `derived_fact`) naming what it replaces,
+    /// with the idempotency record in the same transaction; a commit that
+    /// finds the record already written by a concurrent attempt under the
+    /// same key writes nothing and answers that attempt's receipt as a
+    /// replay ([`IdempotencyPut`] says what the slice does not claim).
     pub async fn supersede(
         &self,
         api_key: &str,
@@ -1463,12 +1487,7 @@ where
             idem_key: req.idempotency_key.clone(),
         };
         let request_digest = supersede_request_digest(req)?;
-        if let Some(record) = self.journal.idempotency_get(&scope).await? {
-            if record.request_digest != request_digest {
-                return Err(AppError::IdempotencyDigestMismatch);
-            }
-            let receipt: SupersedeReceipt = serde_json::from_value(record.response)
-                .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+        if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
             return Ok(SupersedeOutcome {
                 receipt,
                 replayed: true,
@@ -1658,22 +1677,38 @@ where
             body_digest,
         };
         let idempotency = Some(IdempotencyPut {
-            scope,
+            scope: scope.clone(),
             record: IdempotencyRecord {
-                request_digest,
+                request_digest: request_digest.clone(),
                 response: serde_json::to_value(&receipt)
                     .map_err(|e| AppError::StoredResponse(e.to_string()))?,
             },
         });
-        self.commit(
-            event,
-            MetadataFold::MemoryHeld {
-                memory: successor,
-                enqueue: true,
-            },
-            idempotency,
-        )
-        .await?;
+        let committed = self
+            .commit(
+                event,
+                MetadataFold::MemoryHeld {
+                    memory: successor,
+                    enqueue: true,
+                },
+                idempotency,
+            )
+            .await;
+        if let Err(AppError::Store(StoreError::IdempotencyRecorded)) = committed {
+            // An attempt under the same key committed between this one's
+            // lookup and its commit, which wrote nothing: the record that
+            // attempt committed answers this one, as it answers any replay
+            // (http-api.md idempotency).
+            let receipt = self
+                .recorded(&scope, &request_digest)
+                .await?
+                .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
+            return Ok(SupersedeOutcome {
+                receipt,
+                replayed: true,
+            });
+        }
+        committed?;
         Ok(SupersedeOutcome {
             receipt,
             replayed: false,

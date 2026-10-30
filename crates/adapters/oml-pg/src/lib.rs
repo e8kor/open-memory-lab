@@ -781,9 +781,12 @@ async fn append_event(
     if let Some(put) = req.idempotency {
         // request_digest stores the digest string's bytes verbatim —
         // the PoC digest is an opaque comparand (http-api.md idempotency).
-        sqlx::query(
+        // A scope already recorded is a concurrent attempt that committed
+        // first; returning before COMMIT rolls this whole commit back.
+        let inserted = sqlx::query(
             "INSERT INTO idempotency (tenant_id, key, request_digest, response, \
-             committed_at) VALUES ($1, $2, $3, $4, now())",
+             committed_at) VALUES ($1, $2, $3, $4, now()) \
+             ON CONFLICT (tenant_id, key) DO NOTHING",
         )
         .bind(put.scope.tenant_id)
         .bind(scope_key(&put.scope))
@@ -791,7 +794,11 @@ async fn append_event(
         .bind(put.record.response)
         .execute(&mut **tx)
         .await
-        .map_err(backend)?;
+        .map_err(backend)?
+        .rows_affected();
+        if inserted == 0 {
+            return Err(StoreError::IdempotencyRecorded);
+        }
     }
 
     Ok(CommitReceipt {

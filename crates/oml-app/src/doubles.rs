@@ -6,7 +6,7 @@
 //! every test chain is reproducible byte for byte.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
@@ -67,6 +67,8 @@ pub struct MemStore {
     /// The event type whose next commit is refused, with the refusal, then
     /// forgotten.
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
+    /// The next idempotency lookup answers no record, then reads normally.
+    miss_next_lookup: Arc<AtomicBool>,
 }
 
 impl MemStore {
@@ -95,6 +97,14 @@ impl MemStore {
     /// compare-and-set, armed on any handle mid-test.
     pub fn refuse_next_commit_of(&self, event_type: &'static str, error: StoreError) {
         *self.refuse_next.lock().expect("refusal lock") = Some((event_type, error));
+    }
+
+    /// Answers the next idempotency lookup with no record, whatever is
+    /// stored, then reads normally again: the lookup of an attempt that ran
+    /// before a concurrent attempt under the same key committed, armed on
+    /// any handle after that commit.
+    pub fn miss_next_idempotency_lookup(&self) {
+        self.miss_next_lookup.store(true, Ordering::SeqCst);
     }
 
     fn tenant(&self, tenant_id: Uuid) -> Arc<Mutex<TenantState>> {
@@ -313,10 +323,13 @@ fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, 
     }
     apply_fold(state, req.fold, expected_seq, &req.event.envelope.at)?;
     if let Some(put) = req.idempotency {
-        state.idempotency.insert(
-            (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key),
-            put.record,
-        );
+        // One scope holds one record; the caller drops the staged state on
+        // a refusal, so the fold above is undone with it.
+        let scope = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
+        if state.idempotency.contains_key(&scope) {
+            return Err(StoreError::IdempotencyRecorded);
+        }
+        state.idempotency.insert(scope, put.record);
     }
     state.outbox.push(req.outbox);
     let receipt = CommitReceipt {
@@ -681,6 +694,9 @@ impl JournalStore for MemStore {
         &self,
         scope: &IdempotencyScope,
     ) -> Result<Option<IdempotencyRecord>, StoreError> {
+        if self.miss_next_lookup.swap(false, Ordering::SeqCst) {
+            return Ok(None);
+        }
         let Some(tenant) = self.tenant_existing(scope.tenant_id) else {
             return Ok(None);
         };

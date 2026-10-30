@@ -29,6 +29,11 @@ pub enum StoreError {
     /// commit wrote nothing (ADR-0025 d10).
     #[error("version {replaced} is no longer the served tip its successor replaces")]
     TipMoved { replaced: Uuid },
+    /// A commit's idempotency record found its scope already recorded: a
+    /// concurrent attempt under the same Idempotency-Key committed first,
+    /// and this commit wrote nothing (http-api.md idempotency).
+    #[error("an idempotency record already holds this scope")]
+    IdempotencyRecorded,
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -134,6 +139,18 @@ pub struct IdempotencyRecord {
     pub response: Value,
 }
 
+/// The record a commit writes inside its own transaction. The slice records
+/// at commit instead of claiming an `in_progress` record in a transaction of
+/// its own before any side effect (http-api.md idempotency): no use-case has
+/// a side effect before its commit, and a second record under one scope
+/// refuses the whole commit ([`StoreError::IdempotencyRecorded`]), so a
+/// request still commits once. `idempotency.in_progress` is never answered.
+/// A supersede that lost the race to another under the same key answers the
+/// winner's response as a replay: directly when its commit finds the record,
+/// or through the transport's retry when its commit was sealed on the head
+/// the winner moved. A submit does the same unless it read the `claim_key`
+/// after the winner committed; then it answers
+/// `submission.claim_key_conflict`, because the winner's version holds it.
 #[derive(Debug, Clone)]
 pub struct IdempotencyPut {
     pub scope: IdempotencyScope,
