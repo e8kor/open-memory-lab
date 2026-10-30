@@ -93,7 +93,8 @@ jobs:
             grep -q 'enr_' "$state/stdout" 2>/dev/null && break
             sleep 0.2
           done
-          export OML_ENROLLMENT_TOKEN="$(grep -o 'enr_[0-9a-f]\{48\}' "$state/stdout" | head -1)"
+          OML_ENROLLMENT_TOKEN="$(grep -o 'enr_[0-9a-f]\{48\}' "$state/stdout" | head -1)"
+          export OML_ENROLLMENT_TOKEN
           OML_CLI=./target/release/oml OML_CLI_CREDENTIALS="$state/credentials" \
             bash scripts/quickstart.sh || { tail -n 50 "$state/stderr"; exit 1; }
 
