@@ -532,8 +532,9 @@ async fn apply_fold(
         // a verdict short of the policy's k is journalled, metadata unchanged.
         MetadataFold::TenantGenesis | MetadataFold::VerdictRecorded { .. } => {}
         MetadataFold::WorkareaCreated(w) => {
-            // 0001's ladder floor: the PoC WorkareaRecord carries no status,
-            // so every node lands 'development' (workareas.md ladder start).
+            // No status transition is built, so the status stored is the one
+            // the workarea read serves: the universe root's permanent
+            // 'committed', every other node's 'development'.
             let crew = w
                 .crew
                 .as_ref()
@@ -542,12 +543,13 @@ async fn apply_fold(
                 .map_err(backend)?;
             sqlx::query(
                 "INSERT INTO workareas (id, tenant_id, parent_id, name, status, crew) \
-                 VALUES ($1, $2, $3, $4, 'development', $5)",
+                 VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(w.workarea_id)
             .bind(w.tenant_id)
             .bind(w.parent_id)
             .bind(&w.name)
+            .bind(w.status())
             .bind(crew)
             .execute(&mut **tx)
             .await

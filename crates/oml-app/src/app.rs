@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use oml_domain::access::{
     AccessRefusal, Grant, IssuanceRefusal, KeyDenial, admissible_grant_roles, check_issuance,
-    effective_roles, resolve,
+    effective_roles, effective_verbs, resolve,
 };
 use oml_domain::{
     ChainHead, EventDraft, HeldBy, KeySet, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
@@ -26,10 +26,10 @@ use crate::ports::{
     Scanner, Signer, StoreError,
 };
 use crate::types::{
-    AppError, BootstrapRequest, BootstrapResult, DenialRecord, GrantRecord, IssueKeyRequest,
-    IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult, ServedMemory,
-    SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest, Verdict,
-    VerdictOutcome, VersionRef, WorkareaRecord,
+    AppError, BootstrapRequest, BootstrapResult, CreatedWorkarea, Crew, DenialRecord, GrantRecord,
+    IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult,
+    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest,
+    Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -54,6 +54,8 @@ struct Caller {
     key: KeyRecord,
     grants: Vec<Grant>,
     denials: Vec<KeyDenial>,
+    /// The epoch of the access read above (workareas.md permission epoch).
+    permission_epoch: u64,
 }
 
 impl Caller {
@@ -162,6 +164,18 @@ fn base62_43(bytes: &[u8; 32]) -> String {
     String::from_utf8(digits).expect("base62 alphabet is ASCII")
 }
 
+/// A node's derived path from its ancestry, listed node to root: the names
+/// from `universe` down to the node, joined with `.` (ADR-0025 d14). Every
+/// path the app serves is this derivation.
+fn derived_path(ancestry: &[WorkareaRecord]) -> String {
+    ancestry
+        .iter()
+        .rev()
+        .map(|w| w.name.as_str())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 fn submit_request_digest(req: &SubmitRequest, workarea_id: Uuid) -> String {
     let doc = json!({
         "body": req.body,
@@ -212,6 +226,7 @@ where
             .ok_or(AppError::Unauthorized)?;
         Ok(Caller {
             key,
+            permission_epoch: access.permission_epoch(),
             grants: access.grants.into_iter().map(|g| g.grant).collect(),
             denials: access.denials.into_iter().map(|d| d.denial).collect(),
         })
@@ -293,14 +308,7 @@ where
             .journal
             .workarea_ancestry(tenant_id, memory.workarea_id)
             .await?
-            .map(|ancestry| {
-                ancestry
-                    .iter()
-                    .rev()
-                    .map(|w| w.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(".")
-            });
+            .map(|ancestry| derived_path(&ancestry));
         Ok(ServedMemory {
             memory,
             replaces,
@@ -588,8 +596,11 @@ where
             None,
             json!({
                 "workarea_id": root_workarea_id.to_string(),
-                "name": workarea.name,
                 "parent_id": Value::Null,
+                "name": workarea.name,
+                "status": workarea.status(),
+                "crew": Value::Null,
+                "prefix": Value::Null,
             }),
         )?;
         prev = event.clone();
@@ -814,20 +825,35 @@ where
         })
     }
 
+    /// Create a node under `parent_id`, admin by key role. The crew is
+    /// recorded, not operated: `workarea.create` journals it and the fold
+    /// stores it, so the workarea read serves it from the store (event-
+    /// catalog.md `workarea.create`; ADR-0025 d14). The answer carries the
+    /// node's path derived from the parent's stored ancestry, as the read
+    /// derives it.
     pub async fn create_workarea(
         &self,
         api_key: &str,
         name: &str,
         parent_id: Option<Uuid>,
-    ) -> Result<WorkareaRecord, AppError> {
+        crew: Option<Crew>,
+    ) -> Result<CreatedWorkarea, AppError> {
         let key = self.authenticate(api_key).await?.key;
         require_role(&key, Role::Admin, "create_workarea")?;
+        let ancestors = match parent_id {
+            Some(parent) => self
+                .journal
+                .workarea_ancestry(key.tenant_id, parent)
+                .await?
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
         let workarea = WorkareaRecord {
             workarea_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
             parent_id,
             name: name.to_owned(),
-            crew: None,
+            crew,
         };
         let prev = self.head_event(key.tenant_id).await?;
         let event = self.seal(
@@ -838,13 +864,70 @@ where
             Some(key.key_id),
             json!({
                 "workarea_id": workarea.workarea_id.to_string(),
-                "name": workarea.name,
                 "parent_id": parent_id.map(|p| p.to_string()),
+                "name": workarea.name,
+                "status": workarea.status(),
+                "crew": workarea.crew,
+                "prefix": Value::Null,
             }),
         )?;
         self.commit(event, MetadataFold::WorkareaCreated(workarea.clone()), None)
             .await?;
-        Ok(workarea)
+        let ancestry: Vec<WorkareaRecord> =
+            std::iter::once(workarea.clone()).chain(ancestors).collect();
+        Ok(CreatedWorkarea {
+            path: derived_path(&ancestry),
+            workarea,
+        })
+    }
+
+    /// One workarea as the calling key may see it, at reader effective
+    /// access by the refusal order and otherwise absent (http-api.md
+    /// workareas; ADR-0025 d14): the node and its derived path, the
+    /// immediate children the key can read, the verbs its effective roles
+    /// on the node confer, and the permission epoch of the access this
+    /// request read. An omitted node is the key's journalled default,
+    /// resolved only after step 1 of the refusal order, as recall resolves
+    /// it (roles-and-keys.md refusal order; mcp-plugin.md
+    /// `oml_workarea_info`).
+    pub async fn workarea_info(
+        &self,
+        api_key: &str,
+        node: Option<Uuid>,
+    ) -> Result<WorkareaInfo, AppError> {
+        let caller = self.authenticate(api_key).await?;
+        require_admissible(&caller.key, Role::Reader, "workarea_info")?;
+        let node = node
+            .or(caller.key.default_workarea)
+            .ok_or(AppError::WorkareaUnresolved)?;
+        let tenant_id = caller.key.tenant_id;
+        let ancestry = self
+            .journal
+            .workarea_ancestry(tenant_id, node)
+            .await?
+            .unwrap_or_default();
+        let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workarea_id).collect();
+        let effective = caller.effective(&ids);
+        resolve(caller.key.role, &effective, Role::Reader)
+            .map_err(|refusal| access_refusal(refusal, node, "workarea_info"))?;
+        let workarea = ancestry.first().cloned().ok_or(AppError::NotFound)?;
+        let mut children = Vec::new();
+        // A child's ancestry is the node's with the child in front.
+        for child in self.journal.workarea_children(tenant_id, node).await? {
+            let child_ancestry: Vec<Uuid> = std::iter::once(child.workarea_id)
+                .chain(ids.iter().copied())
+                .collect();
+            if caller.effective(&child_ancestry).contains(&Role::Reader) {
+                children.push(child);
+            }
+        }
+        Ok(WorkareaInfo {
+            path: derived_path(&ancestry),
+            workarea,
+            children,
+            my_effective_verbs: effective_verbs(&effective, caller.key.held_by),
+            permission_epoch: caller.permission_epoch,
+        })
     }
 
     /// Submit a memory: writer on the resolved node, which must exist, by

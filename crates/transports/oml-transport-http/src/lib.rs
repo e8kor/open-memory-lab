@@ -6,9 +6,10 @@
 //!
 //! The PoC slice: submit / get / recall / supersede on `/v1`; review next,
 //! verdicts, key issuance, global per-key denials, workarea creation, the
-//! events tail and the bootstrap claim on `/v2`; `/healthz` and `/readyz`
-//! unversioned and unauthenticated (http-api.md "Health"); `/mcp`, the agent
-//! plugin's stateless facade over those rings ([`mcp`]).
+//! workarea read, the events tail and the bootstrap claim on `/v2`;
+//! `/healthz` and `/readyz` unversioned and unauthenticated (http-api.md
+//! "Health"); `/mcp`, the agent plugin's stateless facade over those rings
+//! ([`mcp`]).
 
 #![forbid(unsafe_code)]
 
@@ -37,8 +38,8 @@ use oml_app::domain::budget::budget_tokens;
 use oml_app::domain::{HeldBy, MemoryKind, Role, SignedEnvelope, nfc, sha256_digest_string};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
-    AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey, RecallRequest,
-    ServedMemory, SubmitRequest, SupersedeRequest, Verdict,
+    AppError, BootstrapRequest, Crew, GrantRequest, IssueKeyRequest, IssuedKey, RecallRequest,
+    ServedMemory, SubmitRequest, SupersedeRequest, Verdict, WorkareaInfo,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -126,6 +127,7 @@ where
             .route("/v2/keys", post(Self::issue_key))
             .route("/v2/keys/{key_id}/denials", post(Self::deny_key))
             .route("/v2/workareas", post(Self::create_workarea))
+            .route("/v2/workareas/{workarea_id}", get(Self::get_workarea))
             .route("/v2/events", get(Self::events_tail))
             .route("/v2/bootstrap/claim", post(Self::bootstrap_claim))
             .route("/mcp", post(Self::mcp).get(mcp::mcp_get))
@@ -621,24 +623,63 @@ where
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
             ));
         }
-        let workarea = retry_chain(|| {
+        let created = retry_chain(|| {
             st.app
-                .create_workarea(&token, &req.name, Some(req.parent_id))
+                .create_workarea(&token, &req.name, Some(req.parent_id), req.crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let workarea = &created.workarea;
         Ok(json_response(
             StatusCode::CREATED,
             &json!({
                 "id": workarea.workarea_id,
                 "parent_id": workarea.parent_id,
-                // The PoC derives no ltree; the node's own name stands in.
-                "path": workarea.name,
-                "status": "development",
-                "crew": req.crew,
+                // Derived from the parent names, as the workarea read serves
+                // it (ADR-0025 d14).
+                "path": created.path,
+                "status": workarea.status(),
+                // The crew as stored, which the workarea read serves.
+                "crew": workarea.crew,
                 "created_at": system_event_time().as_str(),
             }),
         ))
+    }
+
+    async fn get_workarea(
+        State(st): State<Self>,
+        Path(workarea_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(
+            &rid,
+            Self::get_workarea_inner(&st, Some(&workarea_id), &headers).await,
+        )
+    }
+
+    /// `GET /v2/workareas/{workarea_id}`: the node and the calling key's
+    /// view of it in one call, at reader effective access and otherwise
+    /// `access.not_found` (http-api.md workareas; ADR-0025 d14). `None` is
+    /// the MCP facade's omitted workarea: the key's default, which the app
+    /// resolves after step 1 of the refusal order (mcp-plugin.md
+    /// `oml_workarea_info`).
+    async fn get_workarea_inner(
+        st: &Self,
+        workarea_id: Option<&str>,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        // Ids are opaque; one that can name no node is absent.
+        let id = workarea_id
+            .map(|id| Uuid::parse_str(id).map_err(|_| ApiError::not_found()))
+            .transpose()?;
+        let info = st
+            .app
+            .workarea_info(&token, id)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
     }
 
     async fn events_tail(
@@ -867,7 +908,7 @@ struct WorkareaCreateBody {
     parent_id: Uuid,
     name: String,
     #[serde(default)]
-    crew: Option<Value>,
+    crew: Option<Crew>,
     #[serde(default)]
     prefix: Option<String>,
 }
@@ -1152,6 +1193,33 @@ pub fn memory_json(served: &ServedMemory, include_body: bool) -> Value {
     });
     if include_body && let Some(obj) = value.as_object_mut() {
         obj.insert("body".to_owned(), Value::String(m.body.clone()));
+    }
+    value
+}
+
+/// openapi.yaml `WorkareaView`: the `Workarea` fields — `crew` absent when
+/// none was recorded — and the calling key's children, edges, effective
+/// verbs and permission epoch (ADR-0025 d14).
+#[must_use]
+pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
+    let w = &info.workarea;
+    let mut value = json!({
+        "id": w.workarea_id,
+        "parent_id": w.parent_id,
+        "path": info.path,
+        "status": w.status(),
+        "children": info.children.iter().map(|c| json!({
+            "id": c.workarea_id,
+            "path_leaf": c.name,
+            "status": c.status(),
+        })).collect::<Vec<_>>(),
+        // No workarea edge can exist in this build (ADR-0025 d14).
+        "edges": [],
+        "my_effective_verbs": info.my_effective_verbs,
+        "permission_epoch": info.permission_epoch,
+    });
+    if let (Some(crew), Some(obj)) = (&w.crew, value.as_object_mut()) {
+        obj.insert("crew".to_owned(), json!(crew));
     }
     value
 }

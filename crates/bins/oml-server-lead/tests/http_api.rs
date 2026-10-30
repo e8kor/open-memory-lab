@@ -1603,3 +1603,130 @@ async fn the_body_limit_counts_the_nfc_text() {
     assert_envelope(&body, "request.payload_too_large");
     drop_db(&rig.db_name).await;
 }
+
+// ---------------------------------------------------------------------------
+// The workarea read (ADR-0025 d14)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn crew_given_at_create_is_persisted_and_returned() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew_record = json!({
+        "name": "metals-crew",
+        "charter_uri": "https://crews.example.com/metals/charter.md",
+        "external_manager": "crewd.example.com",
+    });
+    let (status, _, created) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(&admin).idem("wa-crew").body(json!({
+            "parent_id": root,
+            "name": "metals-crew",
+            "crew": crew_record,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["crew"], crew_record);
+    // The create serves the same derived path the read serves.
+    assert_eq!(created["path"], "universe.metals-crew");
+    let crew = Uuid::parse_str(created["id"].as_str().expect("id")).expect("uuid");
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let agent = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": crew, "role": "reader" },
+        ]),
+    )
+    .await;
+    let agent = agent["value"].as_str().expect("value");
+
+    // One call carries the node and the calling key's view of it; the crew
+    // is the stored record, read back, not the request echoed.
+    let (status, _, view) = send(
+        router,
+        "GET",
+        &format!("/v2/workareas/{crew}"),
+        Call::auth(agent),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(
+        view,
+        json!({
+            "id": crew,
+            "parent_id": root,
+            "path": "universe.metals-crew",
+            "status": "development",
+            "crew": crew_record,
+            "children": [{ "id": quarter, "path_leaf": "q1-2027", "status": "development" }],
+            "edges": [],
+            "my_effective_verbs": [
+                "recall", "read", "graph_read", "events_tail",
+                "remember", "learn", "attach", "supersede",
+            ],
+            "permission_epoch": view["permission_epoch"],
+        })
+    );
+    assert!(view["permission_epoch"].is_u64(), "{view}");
+
+    // A node created without a crew has none, stored and served absent.
+    let (status, _, leaf) = send(
+        router,
+        "GET",
+        &format!("/v2/workareas/{quarter}"),
+        Call::auth(agent),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{leaf}");
+    assert_eq!(leaf["path"], "universe.metals-crew.q1-2027");
+    assert!(leaf.get("crew").is_none(), "{leaf}");
+    assert_eq!(leaf["children"], json!([]));
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_unreadable_workarea_is_not_found() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+
+    let get = |token: &str, id: String| {
+        let call = Call::auth(token);
+        async move { send(router, "GET", &format!("/v2/workareas/{id}"), call).await }
+    };
+    let (status, _, body) = get(&reader, crew.to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // A writer-only key, an unknown node and an id that names no node all
+    // answer as absence.
+    for (token, id) in [
+        (&writer, crew.to_string()),
+        (&reader, Uuid::from_u128(0xDEAD).to_string()),
+        (&reader, "wa_not_a_node".to_owned()),
+    ] {
+        let (status, _, body) = get(token, id).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_envelope(&body, "access.not_found");
+    }
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v2/workareas/{crew}"),
+        Call::default(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.missing");
+
+    drop_db(&rig.db_name).await;
+}
