@@ -628,7 +628,9 @@ CREATE POLICY tenant_isolation ON memories
     ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1), for the whole transaction; no
     restore is needed, since that transaction reads no other held text. Only `oml-server` sets
     that setting, never a client, so the fence binds every read path without blocking the
-    transitions.
+    transitions. Because the policy skips a row it does not match without an error, each of
+    those commits checks that its `held_fts` statement affected exactly one row and aborts
+    otherwise ([retrieval](../architecture/retrieval.md#held-text-containment)).
 
 A `current_setting`-based policy is simple and index-friendly; its cost is that a service bug that
 sets the wrong tenant GUC becomes a cross-tenant read. That risk and its mitigations (one

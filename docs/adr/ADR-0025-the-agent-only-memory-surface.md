@@ -83,9 +83,10 @@ sourced to the code that has them; nothing decided below is built.
     | operator | none |
 
     A grant role is never admin or operator. A grant whose role falls outside its key role's set is
-    refused with `access.issuer_ceiling`, details `{role, admissible}`. A key of role admin carrying
-    any dreamer grant is refused with `access.role_exclusive`; that check runs first, at issuance
-    and at every grant amendment, and it moves from the HTTP transport into `oml-domain`.
+    refused with `access.issuer_ceiling`, details `{role, admissible}`, plus `grant_index` at
+    issuance (d2). A key of role admin carrying any dreamer grant is refused with
+    `access.role_exclusive`; that check runs first, at issuance and at every grant amendment, and
+    it moves from the HTTP transport into `oml-domain`.
 
     `effective_roles(N)` is a pure `oml-domain` function computed on every request, with no cache:
     take every grant whose node is N or an ancestor of N; skip a grant whose own deny list names N
@@ -111,12 +112,14 @@ sourced to the code that has them; nothing decided below is built.
     info; **dreamer** for status-transition propose and ratify and for dead-letter re-enqueue, on
     the node, while admin keys act on those verbs by their key role. Supersede follows the ordered
     rule of d10. Review next and verdict need dreamer on the row's workarea in addition to the
-    unchanged reviewer check: a row outside dreamer access is never served, and a verdict on one
-    is `access.not_found`. Review next serves a `held_by: service` key nothing (`204`), so such a
-    key holds no serve and every verdict it sends is refused with `review.serve_invalid`; a
-    service key's dreamer grant confers review like any dreamer grant, and this rule, not the
-    grant, keeps it out of review. Admin and operator verbs keep their checks on the key's own
-    role ([HTTP API](../api/http-api.md), http-api.md:113-117).
+    unchanged reviewer check: a row outside dreamer effective access is never served, and a verdict
+    on one resolves by the refusal order above, with no exception for review —
+    `access.grant_refused` with `needed_role: dreamer` where reader is effective on the row's
+    workarea, `access.not_found` otherwise. Review next serves a `held_by: service` key nothing
+    (`204`), so such a key holds no serve and every verdict it sends is refused with
+    `review.serve_invalid`; a service key's dreamer grant confers review like any dreamer grant, and
+    this rule, not the grant, keeps it out of review. Admin and operator verbs keep their checks on
+    the key's own role ([HTTP API](../api/http-api.md), http-api.md:113-117).
 
     A writer-role key holding `wa:writer` and `wa:reader` therefore remembers and recalls on `wa`.
     Recall refuses only through grants: the tenant-wide fallback goes, and a request with no scope
@@ -165,7 +168,10 @@ sourced to the code that has them; nothing decided below is built.
   [{subtree_node_id}]}], default_workarea_id?, held_by?, principal?, label?, expiry?}`; an unknown
   field is `request.validation`. Validation runs in this order: `access.role_exclusive`; the
   issuer ceiling on the key role (`access.issuer_ceiling`, including an admin minting an operator
-  key); grant admissibility (d1); every grant node and deny node exists in the tenant, else
+  key, with details `{role, admissible}`: the requested key role and the key roles the issuer
+  may issue); grant admissibility (d1; `access.issuer_ceiling` with details `{role, admissible,
+  grant_index}`: the first refused grant's role, the key role's admissible set and that grant's
+  0-based index in `grants`); every grant node and deny node exists in the tenant, else
   `access.not_found`; each deny node lies inside its own grant's subtree, else
   `request.validation`; a `default_workarea_id`, when present, is covered by some grant of the
   key, else `request.validation`.
@@ -206,7 +212,18 @@ sourced to the code that has them; nothing decided below is built.
     every supersede target must be readable by the submitting key — promoted within its reader
     effective access, or its own row in any state — and anything else is `access.not_found`,
     indistinguishable from a nonexistent id. http-api.md:287-291 is reworded to say writer is the
-    only role needed and the ancestors must still be readable.
+    only role needed and the ancestors must still be readable. Served, `derives_from` obeys the
+    same test: on get, recall and every listing it lists only the ancestors the caller can read,
+    so a promoted version derived from its author's held row never gives that row's id to its
+    readers; the lineage read still shows such an ancestor as a redacted bare id, as it shows
+    every node outside the reader's scope.
+
+    **Naming a node.** An own row can sit on a node where the key holds no role, since an admin's
+    reassignment can move it there. A response names a node to a key only where
+    `effective_roles(node)` is not empty for that key, and serves null in its place elsewhere:
+    `workarea_id` and `workarea_path` on get and the listings, workarea ids in an events-tail
+    payload (d15), and `workarea` and `workarea_path` on the agent plugin (d12). The rule is
+    declared with own, on [roles and keys](../architecture/roles-and-keys.md#own).
 
     R3 lets exactly "its author" see a held row (ADR-0018 d4, "held"), and mcp-plugin.md:606-607
     scopes own work to "the calling key's own submissions". A principal is set at issuance and
@@ -214,7 +231,9 @@ sourced to the code that has them; nothing decided below is built.
     and dreamer keys, blurring the capacities ADR-0010 d6 keeps apart, and so fail open. Narrower
     visibility beside wider reviewer exclusion fails closed on both sides. Masking by global
     denials keeps own work inside the deny-wins formula rather than beside it, and a readable
-    lineage target removes an existence oracle for other authors' held rows.
+    lineage target removes an existence oracle for other authors' held rows. One naming rule for
+    get, the listings and the tail keeps them from disagreeing about a moved row, and naming every
+    node the key holds any role on lets a writer-only key see where its own rows sit.
 
 - **d4 — `include_own_held`: the calling key's held rows join the ranked hits, flagged by state,
   inside the recall's read set.** `RecallRequest` and `oml_recall` gain `include_own_held`
@@ -276,7 +295,12 @@ sourced to the code that has them; nothing decided below is built.
   already lists, so this adds no copy class; the
   [erasure inventory](../architecture/audit-and-lineage.md#the-erasure-inventory) names the
   table on its own row because its rows also enter and leave on held transitions.
-  `memories_fts` and `memory_embeddings` stay promoted-only.
+  `memories_fts` and `memory_embeddings` stay promoted-only. Under RLS a row the policy does not
+  match is skipped without an error, so a wrong `oml.own_key_ids` would let a removal affect
+  nothing and still commit. Every commit that moves a version out of held, or reassigns a held
+  version, therefore checks that its `held_fts` DELETE or UPDATE affected exactly one row, and the
+  capture insert checks that it inserted one; any other count aborts the commit with
+  `system.internal`. The `lifecycle.erase` copy-class list names `held_fts`.
 
     The PoC stores bodies inline, so it uses one port method instead:
     `JournalStore::recall_own_held(tenant, author_key_ids, readable_workareas, query, k)`, whose SQL
@@ -285,8 +309,9 @@ sourced to the code that has them; nothing decided below is built.
     and the README name the gap to the designed form. This amends ADR-0013 d1.
 
     ADR-0013 d3 prefers containment by construction to filter discipline, so that a forgotten
-    predicate fails toward invisibility. Designed bodies are encrypted, so held rows cannot be
-    matched at query time without decrypting rows that will never be served
+    predicate fails toward invisibility; on a removal the same policy fails toward retention, and
+    the row-count check is what turns that into a failed commit. Designed bodies are encrypted,
+    so held rows cannot be matched at query time without decrypting rows that will never be served
     ([ADR-0024](ADR-0024-performance-foundation.md) d3-d4). A plaintext-derived index of held rows
     has to exist, and it must be fenced to the author.
 
@@ -371,10 +396,11 @@ sourced to the code that has them; nothing decided below is built.
     versions and every version of a retired claim out of the hits, so a ratified retirement, or a
     later supersession of one, changes no index row. Superseded versions are readable history
     under the same access, so the predicate hides nothing a reader may not see. The order is
-    total: score descending, then `artifact_id` ascending in byte order. The score is the
-    store's real rank — `ts_rank` in the Postgres store; in the in-memory test store, the count
-    of distinct query terms matched — not the fixed 0.0 at lib.rs:296-306. Determinism is guaranteed over a fixed candidate list; whether
-    approximate vector search fixes that list is part of FR-4, and the page says so. A superseded
+    total: score descending, then `artifact_id` ascending in byte order. The score is the one
+    [retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)
+    declares for each store, never the fixed 0.0 at lib.rs:296-306. Determinism is guaranteed
+    over a fixed candidate list; whether approximate vector search fixes that list is part of
+    FR-4, and the page says so. A superseded
     version is never a hit and stays fetchable by id as history. This amends ADR-0013 d5, whose
     "in force there" was undefined.
 
@@ -392,7 +418,8 @@ sourced to the code that has them; nothing decided below is built.
   (the NFC string), `k` (default 8 applied), `kinds` (sorted ascending, deduplicated; `[]` when
   absent), `include_bodies` (default `true` applied), `include_own_held` (default `false`
   applied), `max_tokens` (`null` when absent), `terms` (sorted ascending, deduplicated; `[]` when
-  absent), `expand_terms` (default `"none"` applied) and `scope` (the resolved node id). This
+  absent), `expand_terms` (default `"none"` applied) and `scope` (the resolved node id). A sent
+  empty `kinds` or `terms` is `request.validation` (d16), so `[]` stands only for absence. This
   resolves http-api.md:354-355 against mcp-plugin.md:309-310: both are logged. The read log
   itself stays unbuilt (migrations/0001_init.sql:9-10); the PoC is to compute `query_digest` by
   this rule and the app to return the served id set, so a future logger has one input. This
@@ -439,8 +466,8 @@ sourced to the code that has them; nothing decided below is built.
     decides between competing successors: once one is ratified, a verdict that would ratify
     another is refused with `submission.tip_conflict`, nothing is journalled, the serve is not
     consumed, and that successor stays held until a reviewer rejects it; its author may propose
-    afresh against the new tip. A superseded version reads state `promoted`, tip `false`; the
-    PoC's "superseded" status is migrated away.
+    afresh against the new tip, and the fresh proposal leaves the stale one held. A superseded
+    version reads state `promoted`, tip `false`; the PoC's "superseded" status is migrated away.
 
     **Who may supersede.** Own is evaluated against the target version's authoring key — the
     current tip's `author_key_id` (d3) — never against the claim's first version. The rule runs in
@@ -455,7 +482,15 @@ sourced to the code that has them; nothing decided below is built.
        the refusal order of d1; a target another key authored answers `access.author_only`;
     4. a dreamer key needs dreamer and reader on the target's workarea, resolved by the refusal
        order of d1, whoever authored the target — its own ratified edits included
-       (edit-as-proposal, http-api.md:215).
+       (edit-as-proposal, http-api.md:215);
+    5. only then the refusals that depend on the target, in this order: an `X-OML-Workarea`
+       equal to the target's workarea, else `request.validation`; the target is the current
+       served tip, else `submission.tip_conflict`; the kind and retirement checks of d11, and on
+       `oml_supersede` the vocabulary-kind check of d12, else `request.validation`; the workarea
+       is not `validated`, else `workarea.frozen`. The checks every submit runs follow.
+
+    No target-dependent refusal is answered before step 2, so none of them tells a caller that an
+    unreadable target exists, or hints at its workarea, kind or state.
 
     A writer whose version was superseded by another key's ratified version therefore no longer
     owns the claim: the tip is the other key's, and the writer's supersede answers
@@ -467,7 +502,12 @@ sourced to the code that has them; nothing decided below is built.
     [admission](../architecture/admission.md) (admission.md:65-66) is edited to match
     http-api.md:386-387. The scope is the target's workarea: an `X-OML-Workarea` that differs from
     it is `request.validation`. `Idempotency-Key` is stored and honoured, scoped to
-    (key, target workarea).
+    (key, target workarea); its record is claimed only after steps 1 and 2 above, so a refusal
+    there claims none and an unreadable target's workarea never enters a record. The request
+    digest of every idempotency record covers the method, the route template and the path
+    parameters as well as the body ([HTTP API](../api/http-api.md#idempotency)), so one key
+    reused for two targets in one workarea is `idempotency.digest_mismatch`, never a replay of
+    the first.
 
     **Self-signed versions.** In a `development` workarea whose policy permits self-signing
     ([ADR-0001](ADR-0001-the-constitution.md) d5), a `self_signed` version may take the tip only
@@ -522,8 +562,13 @@ sourced to the code that has them; nothing decided below is built.
   true}`. The body is required as for any supersession and states why the claim is retired; it is
   scanned, NFC-normalized, bounded by `submission.max_body_size` and digested like any body, and it
   is what the reviewer judges. An omitted `kind` makes the successor take the target's kind, for
-  every supersession. `retirement: true` is refused with `request.validation` when the target's
-  kind is `term`, because terms deprecate ([ADR-0021](ADR-0021-ai-human-ontologies.md) d3), or
+  every supersession, and `kind` is the only field a successor inherits: an omitted `attachments`
+  or `terms` leaves it with none. A sent `kind` changes only within its class — a `memory`,
+  `derived_fact` or `steering` target admits any of those three, a vocabulary-kind target keeps
+  its kind — and anything else is `request.validation`; the rule is declared on
+  [audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
+  `retirement: true` is refused with `request.validation` when the target's kind is `term`,
+  because terms deprecate ([ADR-0021](ADR-0021-ai-human-ontologies.md) d3), or
   when a `kind` is sent that differs from the target's; a `validated` workarea refuses it with
   `workarea.frozen`, as it refuses every write, and an admin's demote is the path there.
 
@@ -558,7 +603,11 @@ sourced to the code that has them; nothing decided below is built.
     every check supersession has, with no second implementation: R1 (it only proposes), R2, R3
     (visibility changes at ratified promotion only), R4, the compare-and-set and the serve binding.
     It is journalled as a named field on a submission and on the flip, so an auditor's tail and the
-    evidence export show it, and it can be undone.
+    evidence export show it, and it can be undone. An inherited attachment would bind digests
+    another key uploaded, which a submit refuses (`submission.attachment_missing`), and inherited
+    terms would annotate a body nobody re-cited; a kind change among the non-vocabulary kinds is
+    what `submission.learn` for a `derived_fact` successor already implies (d10), while a
+    vocabulary kind carries structural fields no other kind has.
 
 - **d12 — The MCP catalog grows from ten to twelve tools with `oml_get` and `oml_supersede`; one
   claim-item shape.** The agent-safe tool list of ADR-0014 d2 adds "get by id", `oml_get` (one
@@ -575,11 +624,12 @@ sourced to the code that has them; nothing decided below is built.
     stay unbuilt, unlisted in `tools/list`, and answer "not built".
     [The agent plugin](../api/mcp-plugin.md#the-claim-item) declares one claim-item shape: base
     fields `{artifact_id, claim_key, version, kind, state, tip, retirement, replaces, workarea,
-    workarea_path, tokens, created_at, promoted_at}`, plus `text` in recall and get, `score` on
-    hits only, `held_expires_at` in my_work, and `derives_from` and `attachments` in get. Recall
-    steering items use the same shape, carrying `text` in place of the ring's `body`. A test asserts
-    that every property an advertised `inputSchema` declares is accepted by the tool's argument
-    struct. This amends ADR-0014 d2.
+    workarea_path, tokens, created_at, promoted_at}`, with `workarea` and `workarea_path` null
+    under d3's naming rule, plus `text` in recall and get, `score` on hits only,
+    `held_expires_at` in my_work, and `derives_from` (readable ancestors only, d3) and `attachments`
+    in get. Recall steering items use the same shape, carrying `text` in place of the ring's `body`.
+    A test asserts that every property an advertised `inputSchema` declares is accepted by the
+    tool's argument struct. This amends ADR-0014 d2.
 
     Both tools pass mcp-plugin.md:107-110: `oml_get` is a read that fails closed as absence, and
     `oml_supersede` succeeds only into admission. Both endpoints exist on `/v1` (ADR-0022 d2), so
@@ -593,25 +643,34 @@ sourced to the code that has them; nothing decided below is built.
   every state, across all workarea nodes minus globally denied subtrees. It needs no grant and
   admits any tenant role; an operator key is refused with `access.verb_ceiling`, and the adapter's
   provider-key path (crates/adapters/oml-pg/src/lib.rs:766-775) is fixed so that the refusal is
-  reachable rather than an internal error. `workarea_id` is a subtree filter; `claim_key`,
-  `state`, `kind`, `since` and `until` also filter. The order is `created_at` descending, then
-  `artifact_id` descending. The cursor is an opaque keyset position bound to the key id and
-  expiring under `api.cursor_ttl`; a foreign or stale cursor answers `request.validation`, and
-  every page re-applies the predicates. Without `own`, the listing returns promoted served tips
-  within subtree(scope) ∩ reader access, as summaries only, and never another key's held row.
+  reachable rather than an internal error. `workarea_id` is a subtree filter; `claim_key`, `state`,
+  `kind`, `since` and `until` also filter. The own-work listing and get resolve no workarea, so an
+  `X-OML-Workarea` header sent with either is `request.validation`. The order is `created_at`
+  descending, then `artifact_id` descending. The cursor is an opaque keyset position bound to the
+  key id and expiring under `api.cursor_ttl`; a foreign or stale cursor answers
+  `request.validation`, and every page re-applies the predicates. Without `own`, the listing returns
+  promoted served tips within subtree(scope) ∩ reader access, as summaries only, and never another
+  key's held row; a retired claim's tip, its retirement version, is among them, flagged
+  `retirement: true`.
 
     `MemorySummary` gains `tokens`, `retirement`, `replaces` and `held_expires_at` (null while
-    held-item expiry is unbuilt, and stated). `oml_my_work` uses `created_at`; `submitted_at` at
+    held-item expiry is unbuilt, and stated), and its `workarea_id` and `workarea_path` become
+    nullable under d3's naming rule. `oml_my_work` uses `created_at`; `submitted_at` at
     mcp-plugin.md:633,642 is renamed to it. This resolves http-api.md:360-362 against
     mcp-plugin.md:620 in favour of the agent's promise, as a page edit recorded here. An agent
     writing into two areas would otherwise miss half its own work, and every field comes from the
-    ring, so ADR-0014 d1 holds.
+    ring, so ADR-0014 d1 holds. Refusing the header where nothing resolves a workarea keeps
+    "refused, not coerced" (errors.md:78), and listing the retirement tip keeps "served tips"
+    literal while showing a reader what get already shows: that the claim is retired.
 
 - **d14 — The workarea read carries the caller's children, effective verbs and permission epoch in
   one ring call.** `GET /v2/workareas/{workarea_id}`, at reader effective access and otherwise
   `access.not_found`, returns the workarea plus `children` (the immediate children the key can
-  read, as `[{id, path_leaf, status}]`), `edges` (`[]` while no workarea edge can exist in the
-  build), `my_effective_verbs` and `permission_epoch`. `path` is derived by walking `parent_id`
+  read, as `[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then
+  `id`), `edges` (the workarea edges touching the node whose other endpoint the key can read, in
+  either direction, as `[{edge_id, from, to, label, state}]` ordered by `edge_id` ascending, so
+  each matches the `edge_id` the events tail reports; `[]` while no workarea edge can exist in
+  the build), `my_effective_verbs` and `permission_epoch`. `path` is derived by walking `parent_id`
   names from `universe`, joined with `.`; the same derivation fills `workarea_path` everywhere
   (null today at mcp.rs:337). `crew` is persisted at `workarea.create`, and returned.
 
@@ -662,7 +721,7 @@ sourced to the code that has them; nothing decided below is built.
 
     | Family | Who sees it |
     |---|---|
-    | `lifecycle.*` | keys with reader access on the subject's workarea, and only when the subject version was promoted by that event or at an earlier seq, is not a simulation row or sim-derived version outside the key's audience, and is not `self_signed` unless the tail's `workarea_id` is the subject's own workarea; `lifecycle.reassign` names two workareas and is shown to a key with reader on `from_workarea_id`, or, when `re_enters_held` is false, on `to_workarea_id`; every other `lifecycle.*` event is shown only to the subject version's authoring key, under the `submission.*` rule |
+    | `lifecycle.*` | a key for which (a) or (b) holds, and no other. **(a)** The key has reader access on the subject's workarea, and three conditions hold: *promoted* — in the journal up to and including the event, the subject version's latest transition between held and promoted is a promotion (`lifecycle.promote` or `lifecycle.supersede`), not a `lifecycle.reassign` with `re_enters_held: true` or a `review.reopen`, so a version never promoted fails it, and a `lifecycle.reassign` is judged on the journal before it; *audience* — the subject is not a simulation row or sim-derived version outside the key's audience; *self-signed* — the subject is not `self_signed` unless the tail's `workarea_id` is the subject's own workarea. `lifecycle.reassign` names two workareas: its subject's workarea is `from_workarea_id`, and `to_workarea_id` when `re_enters_held` is false. **(b)** The key's own key set (d3) holds the subject version's authoring key, read as the `submission.*` row says, and the subject's workarea — for a reassign, either listed one — lies within the tail's subtree minus the key's global denials |
     | `workarea.*` | keys with reader access on the subject workarea: the node itself, or both endpoints for `workarea.relate_*` |
     | `submission.*` | only a key whose own key set (d3) holds the subject version's authoring key, `memories.author_key_id` — for `submission.*` the envelope `api_key_id`, for `lifecycle.*` the `api_key_id` of the subject's submission event, read from the journal — within the tail's subtree minus its global denials, with no reader grant needed on the event's own workarea (the own-work rule of d3) |
     | `review.*`, `claim_edge.*`, `key.*`, `grant.*`, `tenant.*`, `system.*` | no key on the content tail; they belong to the evidence export |
@@ -678,8 +737,15 @@ sourced to the code that has them; nothing decided below is built.
     `from_artifact_id` and `to_artifact_id`; and `workarea.relate_ratified` gains `src_id` and
     `dst_id`. The subject's own earlier events — its submission, and the `lifecycle.promote` or
     `lifecycle.supersede` that promoted it — supply its simulation, taint and `self_signed`
-    marks. In a served `lifecycle.reassign` payload, a workarea id the key cannot read is
-    replaced by null, so the event never names a node outside the key's read scope.
+    marks. A workarea id in a served payload that d3's naming rule withholds is replaced by null,
+    so an event never names a node the key holds nothing on. An event served to a key outside
+    its actor's own key set — the actor being the envelope's `api_key_id` — carries `principal`
+    and `api_key_id` as null, and every payload field naming a key (`proposer_key_id`,
+    `ratifier_key_id`, each `*_by_key_id`) as null; the evidence export carries the identities.
+    The stated residual: `seq`, `head_seq`, `next_after_seq` and `permission_epoch` (d14) are
+    tenant-wide journal positions, so a key learns how many events it cannot see occurred
+    between two it can, and when — a count, never content, tracked as
+    [FR-31](../product/roadmap.md).
 
     An event type the table does not map is not shown. One call scans at most `limit` raw events
     from `after_seq + 1`. `next_after_seq` is `after_seq` when no raw event follows it, and
@@ -692,7 +758,8 @@ sourced to the code that has them; nothing decided below is built.
     becomes the tip), `{edge_id, from, to}` for `workarea.relate_*`, and `{workarea_id}` for every
     other `workarea.*`; `workarea` is always present — the subject's workarea, an edge's `from`
     endpoint, or, for `lifecycle.reassign`, `to_workarea_id` when `re_enters_held` is false and
-    the key can read it, else `from_workarea_id` — and `idle = (next_after_seq == head_seq)`.
+    the key holds a role there, else `from_workarea_id`, any of them null where d3's naming rule
+    withholds it — and `idle = (next_after_seq == head_seq)`.
     Hashes, signatures and payloads are dropped. On MCP an omitted `after_seq` means 0, as on the
     ring — a page edit to mcp-plugin.md:805-806.
 
@@ -700,21 +767,26 @@ sourced to the code that has them; nothing decided below is built.
     writer's held submissions and every reviewer's key id, an R3 breach (mcp-plugin.md:787-789).
     Fixed per-family rules show two keys with equal access the same `lifecycle.*` and
     `workarea.*` events in the same order, each additionally seeing only its own `submission.*`
-    events and the author-only `lifecycle.*` events of its own versions (mcp-plugin.md:833-836),
-    and a bounded scan with a resume point bounds the work per call and cannot loop.
+    events and, under (b), the `lifecycle.*` events of its own versions (mcp-plugin.md:833-836),
+    and a bounded scan with a resume point bounds the work per call and cannot loop. Judging
+    promotion by the latest transition, not by any earlier one, keeps the later events of a
+    version an admin moved back into held out of its new readers' tails; judging a reassign on
+    the journal before it lets the readers it takes a promoted version from see it leave.
+    Nulling identities keeps the tail from naming the reviewer that `oml_my_work` and the
+    review queue never name.
 
 - **d16 — Request bodies refuse what they do not serve; refusals carry one-hop recovery details;
   no new codes.** The recall, supersede, key-issuance and grant bodies refuse unknown fields
-  (`additionalProperties: false` in OpenAPI, `deny_unknown_fields` in serde). The supersede body
-  therefore declares every submission field a successor can need — `simulation_id` and
-  `simulated_time` for a target or lineage that touches a simulation row, and `mapping` for a
-  `term_mapping` successor — beside its own, so closing it refuses nothing a supersession must
-  carry. `terms` and
-  `expand_terms` are parsed and refused by name with `request.validation` while unbuilt; `kinds`
-  is honoured. Refusals carry details: `access.grant_refused` → `{workarea_id, needed_role}`;
-  `access.issuer_ceiling` → `{role, admissible}`; `submission.tip_conflict` →
-  `current_tip {artifact_id, version}`, present only when the caller can read it. The taxonomy
-  is unchanged.
+  (`additionalProperties: false` in OpenAPI, `deny_unknown_fields` in serde), nested objects
+  included; the submit body stays open. The supersede body therefore declares every submission field
+  a successor can need — `simulation_id` and `simulated_time` for a target or lineage that touches a
+  simulation row, and `mapping` for a `term_mapping` successor — beside its own, so closing it
+  refuses nothing a supersession must carry. `terms` and `expand_terms` are parsed and refused by
+  name with `request.validation` while unbuilt; `kinds` is honoured, and an empty `kinds` or `terms`
+  array is `request.validation`. Refusals carry details: `access.grant_refused` → `{workarea_id,
+  needed_role}`; `access.issuer_ceiling` → `{role, admissible}`, plus `grant_index` for an
+  inadmissible grant at issuance (d2); `submission.tip_conflict` → `current_tip {artifact_id,
+  version}`, present only when the caller can read it. The taxonomy is unchanged.
 
     Today a recall carrying `max_tokens` or `include_own_held` gets a silently unbudgeted,
     promoted-only answer (lib.rs:756-765) — the coercion errors.md:78 forbids. The details let an
@@ -736,15 +808,13 @@ sourced to the code that has them; nothing decided below is built.
 
 **Opened and recorded**
 
-- **Opened:** [FR-30](../product/roadmap.md) — the budget-token counter `oml-tc/1` is not any
-  model's count, and how far the two differ is unmeasured; exit: a dated measurement against
-  named tokenizers on a stated corpus, then either a recorded decision to keep `oml-tc/1` or a new
-  counter id. [RS-17](../product/roadmap.md) — an author cannot revise its own claim before it is
-  reviewed; exit: a recorded decision on held→held supersession. [FR-31](../product/roadmap.md) —
-  the `claim_key` collision of d10 tells a writer that a held or unreadable version holds a name,
-  and a successor's version ordinal counts the versions its key cannot read; exit: a recorded
-  decision that scopes the collision to what the caller can read, or keeps it with its reason
-  stated.
+- **Opened**, each with its exit criterion on the [roadmap](../product/roadmap.md):
+  [FR-30](../product/roadmap.md) — the budget-token counter `oml-tc/1` is not any model's count,
+  and how far the two differ is unmeasured; [RS-17](../product/roadmap.md) — an author cannot
+  revise its own claim before it is reviewed; [FR-31](../product/roadmap.md) — the `claim_key`
+  collision of d10 tells a writer that a held or unreadable version holds a name, a successor's
+  version ordinal counts the versions its key cannot read, and the tenant-wide journal positions
+  of the events tail and the permission epoch (d14, d15) count the events a key cannot see.
 - **Resolved by page edit and recorded here:** `derives_from` readability (d3); the `own=true`
   default scope (d13); the MCP `after_seq` default (d15); what a recall logs (d9);
   admission.md:65-66 brought into line with http-api.md:386-387 (d10); the `claim_key` release
@@ -779,7 +849,8 @@ sourced to the code that has them; nothing decided below is built.
   default workarea and never answer it.
 - A second supersession of a tip whose first successor is still held is admitted, not refused;
   the competing verdicts meet the compare-and-set (d10).
-- Unknown request fields that were tolerated are refused.
+- Unknown request fields that were tolerated are refused, and an `X-OML-Workarea` header on get
+  or the own-work listing is refused (d13).
 - The PoC's "superseded" status is migrated away; rows whose successor never reached promotion
   become served tips again.
 - "Own" means the authoring key, so held-row visibility across keys that share a principal ends;
@@ -800,16 +871,16 @@ the designed `held_fts` (the PoC uses an author-predicated port method); the rea
 expiry (`held_expires_at` is null); workarea edges (`edges` is `[]`); grant add and revoke, and
 denial lift; issuance idempotency; key rotation and expiry enforcement; the operator tier.
 
-**Process obligations for whoever lands this**
+**Process obligations**
 
-- The record registers at its three points — this file, a [register](index.md) row and a
-  `mkdocs.yml` nav entry — and `llms.txt` moves to ADR-0001–ADR-0025.
-- The D7, D9, D11, D12 and D13 cells of the D-register gain ADR-0025.
-- The Status lines of ADR-0001, ADR-0008, ADR-0010, ADR-0012, ADR-0013, ADR-0014 and ADR-0018
-  gain "· amended by ADR-0025".
-- One [changelog](../changelog.md) entry, and a `spec-v0.2` tag is cut. The record lands as
-  accepted design: the maintainer's approval of the change that carries it is the acceptance,
-  and its Status date is the date of that approval.
+- With the proposal: the record registers at its three points (this file, a
+  [register](index.md) row and a `mkdocs.yml` nav entry), `llms.txt` moves to
+  ADR-0001–ADR-0025, the D7, D9, D11, D12 and D13 cells of the D-register name ADR-0025, and one
+  [changelog](../changelog.md) entry records the 0.2.0-design bump.
+- On acceptance, and not before: this record's Status line and frontmatter `status` become
+  `accepted design` with the acceptance date, its register row's Status cell follows, the Status
+  lines of ADR-0001, ADR-0008, ADR-0010, ADR-0012, ADR-0013, ADR-0014 and ADR-0018 gain
+  "· amended by ADR-0025", and a `spec-v0.2` tag is cut.
 
 ## Rejected alternatives
 
@@ -820,6 +891,7 @@ denial lift; issuance idempotency; key rotation and expiry enforcement; the oper
 | **d1 — Answer `access.not_found` for any node outside reader access, writes included** | Read literally, it refuses a write-only crew key on a node it holds writer on. errors.md ties `access.grant_refused` to readability, not to the order of checks. |
 | **d1 — Keep `access.verb_ceiling` for a writer without a reader grant calling recall** | The writer role admits reader grants, so the ceiling is not what refuses the call; mcp-plugin.md:371-382 specifies `access.not_found`. |
 | **d1 — Cache effective access, invalidated by the epoch** | No measurement shows it is needed, and a cache opens a staleness window, beyond the follower's replication lag, that [security](../architecture/security.md) would have to state. Recomputing on every request is one grants read plus one ancestry walk. |
+| **d1 — `access.not_found` for a verdict whenever dreamer is not effective** | A second refusal order for one verb; the reviewer already holds the serve, so `access.grant_refused` tells it nothing the serve did not. |
 | **d1 — Compute effective access in SQL in the adapter** | It puts policy in an adapter (ADR-0019 d1) and leaves no pure function to property-test against workareas.md:130-143. |
 | **d2 — One transaction with N+1 events** | It changes the commit request for every caller, which is FR-12's batch-commit work. |
 | **d2 — Disclose the value after `key.issued` and add the grants afterwards** | A grant failure would leave a disclosed key with fewer rights than its caller believes it holds. |
@@ -828,12 +900,15 @@ denial lift; issuance idempotency; key rotation and expiry enforcement; the oper
 | **d3 — Require a reader grant for own-work reads** | A writer-only key could never see its own held rows; http-api.md:213 says `own=true` admits any tenant role. |
 | **d3 — Own-work ignores global denials** | A second access mechanism. |
 | **d3 — `derives_from` needs only writer and may name unreadable ids** | Refusals that differ between an unreadable id and a nonexistent one leak existence and state. |
+| **d3 — Serve unreadable ancestors as `{artifact_id, redacted: true}` on get** | It turns `derives_from` from ids into objects on every `/v1` read, for a disclosure the lineage read already serves. |
+| **d3 — Name an own row's node whatever the key holds** | The tail would null the node the listing names, and a key would learn the id and path of a node it holds no role on. |
 | **d4 — A separate `own_held` segment** | A second ranked list for the budget to order, which the agent must merge with the hits. The flag is opt-in, so the meaning of `hits` for existing clients is unchanged anyway. |
 | **d4 — Include rejected rows** | FR-10 names held rows; rejected rows stay reachable through get and the own-work listing. |
 | **d4 — Own held rows wherever the key ever wrote, regardless of current read access** | Recall would route around denies and revocation. |
 | **d4 — Admit `include_own_held` for writer-only keys** | Recall is the reader verb (roles-and-keys.md:64), and the own-work listing serves that case. |
 | **d5 — Widen `memories_fts` to every state and filter on state** | Filter discipline on a shared index, which ADR-0013 d3 rejects. |
 | **d5 — Decrypt and match the author's held rows on every query** | One KMS unwrap per held row, decrypting rows that are never served. |
+| **d5 — Trust the author policy on removals** | Under RLS a removal the policy does not match affects nothing and commits, so held text would outlive its held state. |
 | **d5 — Return own held rows by recency, unmatched** | Fails "search it" (critical-path.md:163-166). |
 | **d5 — An author policy keyed to the one authenticated key** | A rotated key could never match its predecessor's held text, so `include_own_held` would stop returning held rows across a rotation, against own (d3). |
 | **d6 — An embedded BPE vocabulary** | Still one model family's proxy. It needs plaintext or a new journalled field, its version must ride every count (ADR-0019 d4), and an upgrade forces a re-count that needs decryption. |
@@ -866,8 +941,11 @@ denial lift; issuance idempotency; key rotation and expiry enforcement; the oper
 | **d10 — Lock the target row inside the capture commit to allocate the ordinal** | A statement inside the chain lock beyond the one insert (ADR-0024 d1); the unique index plus a server-side retry yields the same distinct ordinals. |
 | **d10 — Own as authorship of the claim's first version** | Own would stop being a property of one row (d3), and an original writer could keep revising a claim whose tip another key's ratified edit now carries. |
 | **d10 — Let a self-signed version replace a reviewed tip** | Replaces or retires reviewed content with no second identity, and hides the claim from every read scoped above the workarea (ADR-0001 d5). |
+| **d10 — Answer target-dependent refusals before readability** | A `request.validation`, `submission.tip_conflict` or `workarea.frozen` on an unreadable target confirms it exists and hints at its workarea, kind or state. |
+| **d10 — Digest the body alone** | Two supersessions of different targets with one body under one key would replay the first's stored response, and the second would silently not happen. |
 | **d10 — Scope the version-1 collision to what the caller can read** | Two keys' held first versions of one `claim_key` would coexist and the refusal would move to a verdict that the author never sees; the residual is tracked as FR-31 instead. |
 | **d11 — A dedicated retire endpoint, a `submission.retire` event and an `oml_retire` tool** | A second path to the same tip flip that must re-implement idempotency, the serve, the compare-and-set and `access.author_only`. It adds an operation, an event type and a thirteenth tool, and amends ADR-0010 d1 and ADR-0022 d2. |
+| **d11 — Inherit the target's attachments and terms when omitted** | An inherited digest binds bytes another key uploaded, which a submit refuses, and inherited terms annotate a body nobody re-cited. |
 | **d11 — A proposal ratified into `lifecycle.demote`** | Makes demote an effect of dreamer ratification, amending the admin-only demote row (ADR-0010 d6); it leaves the claim's tip undefined and cannot be undone. |
 | **d11 — A new claim state for retirement** | Widening a `/v1` response enum is breaking (http-api.md:83-87). |
 | **d11 — Reuse `term_status: deprecated` for every kind** | A deprecated term stays served so citations self-heal; a retired claim must leave recall. |
@@ -879,6 +957,8 @@ denial lift; issuance idempotency; key rotation and expiry enforcement; the oper
 | **d12 — A batch get** | No ring endpoint for it exists, and recall already returns text. |
 | **d13 — Default `own=true` to the token workarea's subtree** | Silently leaves out the key's rows in other areas. |
 | **d13 — Facade-only `submitted_at` and `held_expires_at`** | ADR-0014 d1. |
+| **d13 — `X-OML-Workarea` with `own=true` as a second subtree filter** | Two filters on one listing need an intersection rule of their own; refusing the header is the smaller contract. |
+| **d13 — Omit retirement tips from the listing** | The listing would hide a promoted served tip that get serves, and no reader could see in it that a claim is retired. |
 | **d14 — Compose `/tree`, `/edges` and `/status` in the facade** | Several ring calls, against mcp-plugin.md:14-16. |
 | **d14 — Open `GET /v2/keys/{id}/effective-access` to agents** | It is an admin read, and it returns roles. |
 | **d14 — MCP tool names as verbs, computed in the facade** | The facade would say more than the ring, and it would replace a vocabulary the page already uses. |
@@ -888,6 +968,9 @@ denial lift; issuance idempotency; key rotation and expiry enforcement; the oper
 | **d15 — Let the recording key see its own review events** | A second rule per family for little value; `oml_my_work` shows the outcome. |
 | **d15 — Start from the newest event on MCP only** | Facade-only semantics; an agent starts from now by passing `head_seq`. |
 | **d15 — Every `lifecycle.*` event to every reader of the subject's workarea** | Shows the erase of another author's held version (R3), a simulation row's promote to keys outside its audience (D10), and a `self_signed` row's promote to tails scoped above the only workarea that serves it. |
+| **d15 — Show a version's later events once it was ever promoted** | A version an admin moved back into held would show its later events, its erase included, to every reader of its new workarea (R3). |
+| **d15 — Serve the actor's identity on the tail** | Every reader would see which reviewer ratified a row and which admin moved or erased it, which the review queue and `oml_my_work` withhold. |
 | **d15 — Fill the subject's workarea from the current `memories` row** | Visibility would then depend on later row state, so two reads of one range could disagree. |
 | **d16 — Lenient parsing** | A wrong answer that looks right. |
+| **d16 — Read an empty `kinds` or `terms` as no filter** | `[]` would mean "all" by convention while narrowing to nothing by the letter, and the read-log digest could not tell it from absence. |
 | **d16 — New codes such as a retired-claim refusal** | The existing codes already name the rules; a retired claim is simply not served. |

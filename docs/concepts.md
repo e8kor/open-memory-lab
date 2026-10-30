@@ -13,8 +13,8 @@ This page is the design's vocabulary, explained in reading order. Nothing is dec
 every concept below is decided on an owning page or ADR, and this page links it rather than
 restating it. Where a sentence here and an owning page disagree, the owning page wins. The
 fixed term-by-term table that binds every engineering page is
-[ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, amended by
-[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11; the end of this page maps
+[ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add; the end of this page maps
 each concept to where it is decided.
 
 ## Tenant
@@ -282,4 +282,4 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | The overlay tip | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
 | The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](architecture/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
 | The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
-| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, amended by [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 |
+| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add |

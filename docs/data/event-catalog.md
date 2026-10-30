@@ -282,14 +282,16 @@ outbox. `workarea_id`, `claim_key` and `version` name the subject, so the
   "artifact_id": "…", "version": 3,
   "workarea_id": "…", "claim_key": "deploy-runbook",
   "dek_destroyed": true,
-  "copy_classes": ["silver.body", "object_store", "fts", "embeddings"],
+  "copy_classes": ["silver.body", "object_store", "fts", "embeddings", "held_fts"],
   "erased_by_key_id": "…"
 }
 ```
 
-Crypto-shredding: the DEK is destroyed and plaintext-derived index rows removed in the same commit;
-the payload names the copy classes affected, and the honest boundary of what persists as ciphertext
-or in backups is declared in [audit-and-lineage](../architecture/audit-and-lineage.md) (D4).
+Crypto-shredding: the DEK is destroyed and plaintext-derived index rows removed in the same
+commit — `held_fts` among them when the erased version is held, with the row count checked
+([retrieval](../architecture/retrieval.md#held-text-containment)); the payload names the copy
+classes affected, and the honest boundary of what persists as ciphertext or in backups is
+declared in [audit-and-lineage](../architecture/audit-and-lineage.md) (D4).
 `workarea_id`, `claim_key` and `version` name the subject for the events tail, as on
 `lifecycle.demote`.
 

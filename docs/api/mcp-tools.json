@@ -157,7 +157,7 @@
     },
     {
       "name": "oml_supersede",
-      "description": "Propose a new version of a claim, or with retirement:true propose retiring it. Enters admission held; the old version stays served until a non-author ratifies. Rides POST /v1/memories/{artifact_id}/supersede.",
+      "description": "Propose a new version of a claim, or with retirement:true propose retiring it. Enters admission held; the old version stays served until a non-author ratifies. Only kind carries over from the target: the new version has no attachments and no terms. Rides POST /v1/memories/{artifact_id}/supersede.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -178,7 +178,7 @@
           "kind": {
             "type": "string",
             "enum": ["memory", "derived_fact", "steering"],
-            "description": "Optional successor kind, passed through to the supersede body. With retirement true it must equal the target's kind (request.validation otherwise)."
+            "description": "Optional successor kind, passed through to the supersede body; omitted, the target's kind. A memory, derived_fact or steering target admits any of these three, and with retirement true the kind must equal the target's (request.validation otherwise; docs/architecture/audit-and-lineage.md)."
           },
           "derives_from": {
             "type": "array",
