@@ -9,7 +9,7 @@ use oml_app::domain::{
     HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types, sha256_digest_string,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
-use oml_app::ports::JournalStore as _;
+use oml_app::ports::{JournalStore as _, StoreError};
 use oml_app::types::{
     AppError, BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, IssuedKey,
     RecallRequest, SubmitRequest, SupersedeRequest, Verdict, VersionRef,
@@ -2120,6 +2120,137 @@ async fn a_supersession_whose_target_lost_the_tip_is_tip_conflict_at_verdict_and
         .await
         .expect("reject the stale successor");
     assert_eq!(rejected.state, MemoryStatus::Rejected);
+}
+
+/// A promoted first version and one held successor of it: the tenant, the
+/// dreamer that may ratify, the target and the successor.
+async fn a_held_successor(app: &TestApp) -> (BootstrapResult, IssuedKey, Uuid, Uuid) {
+    let (boot, crew) = tenant(app).await;
+    let (writer, _reader, dreamer) = crew_keys(app, &boot.admin_key.value, crew).await;
+    let first = promoted(
+        app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let successor = app
+        .supersede(
+            &writer.value,
+            &supersede_req("sup-1", first, "the canary drains and settles first"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    (boot, dreamer, first, successor)
+}
+
+/// The types of the events journalled from `from` on.
+async fn types_since(store: &MemStore, tenant: Uuid, from: usize) -> Vec<String> {
+    journal(store, tenant).await[from..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_verdict_whose_ratification_loses_the_compare_and_set_in_the_store_journals_no_verdict() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, dreamer, first, successor) = a_held_successor(&app).await;
+    let served = app
+        .review_next(&dreamer.value)
+        .await
+        .expect("review next")
+        .expect("the successor is served");
+    assert_eq!(served.memory.memory_id, successor);
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    // The store's compare-and-set refuses the ratification; the app's
+    // pre-check read cannot see a race it lost after reading.
+    store.refuse_next_commit_of(
+        event_types::LIFECYCLE_SUPERSEDE,
+        StoreError::TipMoved { replaced: first },
+    );
+    let err = app
+        .post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::TipConflict {
+                current_tip: Some(VersionRef {
+                    artifact_id,
+                    version: 1,
+                })
+            } if artifact_id == first
+        ),
+        "{err:?}"
+    );
+    assert_eq!(
+        types_since(&store, boot.tenant_id, before).await,
+        Vec::<String>::new(),
+        "nothing is journalled, the verdict included"
+    );
+    let row = store
+        .memory(boot.tenant_id, successor)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(row.status, MemoryStatus::Held, "it stays held");
+    assert!(!row.is_tip);
+    let again = app
+        .review_next(&dreamer.value)
+        .await
+        .expect("review next")
+        .expect("the serve is not consumed");
+    assert_eq!(again.memory.memory_id, successor);
+}
+
+#[tokio::test]
+async fn a_ratification_that_loses_the_chain_head_journals_its_verdict_once_on_retry() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, dreamer, _first, successor) = a_held_successor(&app).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    // A commit landed between the verdict's head read and its ratification.
+    let seq = before as u64 + 2;
+    store.refuse_next_commit_of(
+        event_types::LIFECYCLE_SUPERSEDE,
+        StoreError::SeqConflict {
+            expected_seq: seq + 1,
+            found_seq: seq,
+        },
+    );
+    let err = app
+        .post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::Store(StoreError::SeqConflict { .. })),
+        "{err:?}"
+    );
+    assert_eq!(
+        types_since(&store, boot.tenant_id, before).await,
+        Vec::<String>::new(),
+        "the conflicted verdict is not journalled"
+    );
+
+    // The transport retries the whole verdict on a chain-head conflict.
+    app.post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+        .await
+        .expect("the retry ratifies");
+    assert_eq!(
+        types_since(&store, boot.tenant_id, before).await,
+        vec![
+            event_types::REVIEW_APPROVE,
+            event_types::LIFECYCLE_SUPERSEDE
+        ],
+        "one verdict and one ratification"
+    );
 }
 
 #[tokio::test]

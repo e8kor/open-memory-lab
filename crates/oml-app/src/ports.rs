@@ -165,6 +165,21 @@ pub trait JournalStore: Send + Sync {
     fn commit(
         &self,
         req: CommitRequest,
+    ) -> impl Future<Output = Result<CommitReceipt, StoreError>> + Send {
+        self.commit_chain(vec![req])
+    }
+
+    /// Several events of one tenant as one transaction: the first extends
+    /// the current head and each next one extends the one before it. Any
+    /// refusal — a conflict on any link, or a fold the store refuses, a lost
+    /// compare-and-set included — writes none of them. An approving verdict
+    /// and the ratification it triggers commit this way, so a verdict that
+    /// loses the compare-and-set is never journalled (ADR-0002 d1; ADR-0025
+    /// d10). Returns the receipt of the last event, the new head; an empty
+    /// chain is refused.
+    fn commit_chain(
+        &self,
+        reqs: Vec<CommitRequest>,
     ) -> impl Future<Output = Result<CommitReceipt, StoreError>> + Send;
 
     fn chain_head(

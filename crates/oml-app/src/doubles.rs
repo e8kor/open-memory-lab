@@ -35,13 +35,13 @@ const LIVE: [MemoryStatus; 3] = [
 // Journal store
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct QueueEntry {
     memory_id: Uuid,
     claimed_by: Option<Uuid>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct TenantState {
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
@@ -64,8 +64,9 @@ struct TenantState {
 #[derive(Debug, Default, Clone)]
 pub struct MemStore {
     tenants: Arc<Mutex<BTreeMap<Uuid, Arc<Mutex<TenantState>>>>>,
-    /// The event type whose next commit is refused, then forgotten.
-    refuse_next: Arc<Mutex<Option<&'static str>>>,
+    /// The event type whose next commit is refused, with the refusal, then
+    /// forgotten.
+    refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
 }
 
 impl MemStore {
@@ -79,8 +80,21 @@ impl MemStore {
     /// a storage failure in the middle of a multi-commit use-case, on demand.
     #[must_use]
     pub fn refusing_next_commit_of(self, event_type: &'static str) -> Self {
-        *self.refuse_next.lock().expect("refusal lock") = Some(event_type);
+        self.refuse_next_commit_of(
+            event_type,
+            StoreError::Backend(format!(
+                "the double refused this {event_type} commit on request"
+            )),
+        );
         self
+    }
+
+    /// Refuses the next commit carrying an `event_type` event with `error`,
+    /// writing none of its events, then commits normally again: a refusal a
+    /// use-case cannot provoke through honest stores, such as a lost
+    /// compare-and-set, armed on any handle mid-test.
+    pub fn refuse_next_commit_of(&self, event_type: &'static str, error: StoreError) {
+        *self.refuse_next.lock().expect("refusal lock") = Some((event_type, error));
     }
 
     fn tenant(&self, tenant_id: Uuid) -> Arc<Mutex<TenantState>> {
@@ -282,47 +296,73 @@ fn apply_fold(
     Ok(())
 }
 
+/// Appends one event to `state` if it extends the head, with its fold,
+/// idempotency record and outbox row, or refuses it.
+fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, StoreError> {
+    let expected_seq = state.events.len() as u64 + 1;
+    if req.event.envelope.seq != expected_seq {
+        return Err(StoreError::SeqConflict {
+            expected_seq,
+            found_seq: req.event.envelope.seq,
+        });
+    }
+    if let Some(last) = state.events.last()
+        && req.event.envelope.prev_hash != last.hash
+    {
+        return Err(StoreError::PrevHashConflict { seq: expected_seq });
+    }
+    apply_fold(state, req.fold, expected_seq, &req.event.envelope.at)?;
+    if let Some(put) = req.idempotency {
+        state.idempotency.insert(
+            (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key),
+            put.record,
+        );
+    }
+    state.outbox.push(req.outbox);
+    let receipt = CommitReceipt {
+        seq: req.event.envelope.seq,
+        hash: req.event.hash,
+    };
+    state.events.push(req.event);
+    Ok(receipt)
+}
+
 impl JournalStore for MemStore {
-    async fn commit(&self, req: CommitRequest) -> Result<CommitReceipt, StoreError> {
+    async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
         {
             let mut refuse = self.refuse_next.lock().expect("refusal lock");
-            if *refuse == Some(req.event.envelope.event_type.as_str()) {
-                *refuse = None;
-                return Err(StoreError::Backend(format!(
-                    "the double refused this {} commit on request",
-                    req.event.envelope.event_type
-                )));
+            if refuse
+                .as_ref()
+                .is_some_and(|(t, _)| reqs.iter().any(|r| r.event.envelope.event_type == *t))
+                && let Some((_, error)) = refuse.take()
+            {
+                return Err(error);
             }
         }
-        let tenant = self.tenant(req.event.envelope.tenant_id);
-        // The per-tenant lock IS the serialization point the real adapter
-        // provides with a row lock on the chain head (ADR-0002).
-        let mut state = tenant.lock().expect("tenant lock");
-        let expected_seq = state.events.len() as u64 + 1;
-        if req.event.envelope.seq != expected_seq {
-            return Err(StoreError::SeqConflict {
-                expected_seq,
-                found_seq: req.event.envelope.seq,
-            });
-        }
-        if let Some(last) = state.events.last()
-            && req.event.envelope.prev_hash != last.hash
-        {
-            return Err(StoreError::PrevHashConflict { seq: expected_seq });
-        }
-        apply_fold(&mut state, req.fold, expected_seq, &req.event.envelope.at)?;
-        if let Some(put) = req.idempotency {
-            state.idempotency.insert(
-                (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key),
-                put.record,
-            );
-        }
-        state.outbox.push(req.outbox);
-        let receipt = CommitReceipt {
-            seq: req.event.envelope.seq,
-            hash: req.event.hash,
+        let mut reqs = reqs.into_iter();
+        let Some(first) = reqs.next() else {
+            return Err(StoreError::Backend(
+                "an empty chain commits nothing".to_owned(),
+            ));
         };
-        state.events.push(req.event);
+        let tenant_id = first.event.envelope.tenant_id;
+        let tenant = self.tenant(tenant_id);
+        // The per-tenant lock IS the serialization point the real adapter
+        // provides with a row lock on the chain head (ADR-0002). The links
+        // apply to a copy that replaces the state only once every one has
+        // applied, so a refused link leaves the earlier ones unwritten.
+        let mut state = tenant.lock().expect("tenant lock");
+        let mut staged = state.clone();
+        let mut receipt = append(&mut staged, first)?;
+        for req in reqs {
+            if req.event.envelope.tenant_id != tenant_id {
+                return Err(StoreError::Backend(
+                    "a chain commit names one tenant".to_owned(),
+                ));
+            }
+            receipt = append(&mut staged, req)?;
+        }
+        *state = staged;
         Ok(receipt)
     }
 

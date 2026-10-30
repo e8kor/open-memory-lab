@@ -123,6 +123,37 @@ impl ChainRig {
         }
     }
 
+    /// Seal `links` one on the next and commit them as one chain; advance
+    /// the rig head past the last on success, leave it where it was on a
+    /// refusal.
+    pub async fn commit_chain<S: JournalStore>(
+        &mut self,
+        store: &S,
+        links: Vec<(&str, Value, MetadataFold)>,
+    ) -> Result<CommitReceipt, StoreError> {
+        let (head, n) = (self.head.clone(), self.n);
+        let mut reqs = Vec::new();
+        for (event_type, payload, fold) in links {
+            let event = self.next_event(event_type, payload);
+            self.head = Some(event.clone());
+            reqs.push(CommitRequest {
+                outbox: OutboxRow {
+                    event_id: event.envelope.event_id,
+                    topic: event.envelope.event_type.clone(),
+                    payload: json!({ "seq": event.envelope.seq }),
+                },
+                event,
+                fold,
+                idempotency: None,
+            });
+        }
+        let receipt = store.commit_chain(reqs).await;
+        if receipt.is_err() {
+            (self.head, self.n) = (head, n);
+        }
+        receipt
+    }
+
     /// Commit one `workarea.create` folding `workarea`.
     pub async fn create_workarea<S: JournalStore>(
         &mut self,
@@ -1659,6 +1690,145 @@ pub async fn tip_superseded_refuses_when_the_target_is_no_longer_tip<S: JournalS
     );
 }
 
+/// An approving verdict and the ratification it triggers commit as one
+/// chain, each link extending the one before; a chain whose ratification
+/// loses the compare-and-set writes neither event, nor does a chain whose
+/// second link does not extend the first (ADR-0002 d1; ADR-0025 d10).
+pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_verdict<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(60);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let v1 = held_memory(
+        tenant,
+        Uuid::from_u128(0xB60),
+        Uuid::from_u128(0xC60),
+        "wanda",
+        Uuid::from_u128(0xD60),
+        "v1",
+    );
+    let successor = |id: u128, version: u32| MemoryRecord {
+        memory_id: Uuid::from_u128(id),
+        version,
+        replaces: Some(v1.memory_id),
+        body: format!("v{version}"),
+        ..v1.clone()
+    };
+    let (first, rival) = (successor(0xC61, 2), successor(0xC62, 3));
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    for m in [&first, &rival] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    let ratify = |m: &MemoryRecord| {
+        vec![
+            (
+                event_types::REVIEW_APPROVE,
+                json!({ "artifact_id": m.memory_id.to_string() }),
+                MetadataFold::VerdictRecorded {
+                    memory_id: m.memory_id,
+                    reviewer_key_id: Uuid::from_u128(0xD61),
+                },
+            ),
+            (
+                event_types::LIFECYCLE_SUPERSEDE,
+                json!({ "new_artifact_id": m.memory_id.to_string() }),
+                MetadataFold::TipSuperseded {
+                    successor: m.memory_id,
+                    replaced: v1.memory_id,
+                },
+            ),
+        ]
+    };
+    let types_after = |seq: u64| async move {
+        store
+            .events_range(tenant, seq + 1, 10)
+            .await
+            .expect("range")
+            .into_iter()
+            .map(|e| e.envelope.event_type)
+            .collect::<Vec<_>>()
+    };
+
+    let before = store
+        .chain_head(tenant)
+        .await
+        .expect("head")
+        .expect("a head");
+    let receipt = rig
+        .commit_chain(store, ratify(&first))
+        .await
+        .expect("the first ratified takes the tip");
+    assert_eq!(
+        receipt.seq,
+        before.seq + 2,
+        "the receipt names the last link"
+    );
+    assert_eq!(
+        types_after(before.seq).await,
+        vec![
+            event_types::REVIEW_APPROVE,
+            event_types::LIFECYCLE_SUPERSEDE
+        ]
+    );
+    let head = store.chain_head(tenant).await.expect("head");
+    assert_eq!(
+        head.as_ref().map(|h| (h.seq, h.hash)),
+        Some((receipt.seq, receipt.hash))
+    );
+    let read = |id| async move {
+        store
+            .memory(tenant, id)
+            .await
+            .expect("memory")
+            .expect("the row exists")
+    };
+    assert!(read(first.memory_id).await.is_tip);
+
+    // The rival's verdict lands with its ratification or not at all.
+    assert!(matches!(
+        rig.commit_chain(store, ratify(&rival)).await,
+        Err(StoreError::TipMoved { .. })
+    ));
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert!(
+        types_after(receipt.seq).await.is_empty(),
+        "a lost compare-and-set journals no verdict"
+    );
+    assert_eq!(read(rival.memory_id).await.status, MemoryStatus::Held);
+
+    // A second link that does not extend the first refuses the first too.
+    let request = |event: SignedEnvelope| CommitRequest {
+        outbox: OutboxRow {
+            event_id: event.envelope.event_id,
+            topic: event.envelope.event_type.clone(),
+            payload: json!({ "seq": event.envelope.seq }),
+        },
+        event,
+        fold: MetadataFold::TenantGenesis,
+        idempotency: None,
+    };
+    let filler = || json!({ "body_digest": "sha256:00" });
+    let (a, b) = (
+        rig.next_event(event_types::SUBMISSION_REMEMBER, filler()),
+        rig.next_event(event_types::SUBMISSION_REMEMBER, filler()),
+    );
+    assert!(matches!(
+        store.commit_chain(vec![request(a), request(b)]).await,
+        Err(StoreError::SeqConflict { .. })
+    ));
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert!(
+        store.commit_chain(Vec::new()).await.is_err(),
+        "an empty chain is refused"
+    );
+}
+
 /// The tenant a rig built with `seed` writes under.
 fn rig_tenant(seed: u64) -> Uuid {
     ChainRig::new(seed).tenant_id
@@ -1878,6 +2048,8 @@ where
         .await;
     a_second_served_tip_of_one_claim_commits_nothing(&new_store().await).await;
     tip_superseded_refuses_when_the_target_is_no_longer_tip(&new_store().await).await;
+    a_chain_whose_ratification_loses_the_compare_and_set_journals_no_verdict(&new_store().await)
+        .await;
     a_second_live_version_with_one_ordinal_commits_nothing(&new_store().await).await;
     claim_key_state_counts_every_version_and_only_live_ones_hold_the_key(&new_store().await).await;
 }
