@@ -538,9 +538,14 @@ function Universe(){
     if(w.child){
       w.childGroup=new THREE.Group();
       w.childGroup.add(glow(LADDER.development,1.3,.9), glow(LADDER.development,2.6,.25,HALO));
+      w.childClaims=[];
       w.childPts=softPoints(8,()=> {
         const a=rnd(0,Math.PI*2),rr=rnd(.5,1.1);
-        return {p:[Math.cos(a)*rr,rnd(-.3,.3),Math.sin(a)*rr],c:new THREE.Color(Math.random()<.5?CLR.prom:CLR.held)};
+        const s=Math.random()<.5?'prom':'held';
+        const cl=mkClaim(w,s);cl.wa=w.child;cl.seq=1+(Math.random()*journal.seq|0);
+        cl.history.push({seq:cl.seq,ev:s==='prom'?'lifecycle.promote':'submission.remember'});
+        w.childClaims.push(cl);
+        return {p:[Math.cos(a)*rr,rnd(-.3,.3),Math.sin(a)*rr],c:new THREE.Color(CLR[s])};
       });
       w.childGroup.add(w.childPts);
       w.group.add(w.childGroup);
@@ -553,8 +558,13 @@ function Universe(){
       const fence=new THREE.Mesh(new THREE.SphereGeometry(1.7,18,14),
         new THREE.MeshBasicMaterial({color:CLR.sim,transparent:true,opacity:THEME.op.fence,side:THREE.DoubleSide}));
       w.simGroup.add(fence, glow(CLR.sim,2.2,.5,HALO));
+      w.simClaims=[];
       w.simPts=softPoints(9,()=> {
         const a=rnd(0,Math.PI*2),rr=rnd(.3,1.1);
+        w.simClaims.push({key:`bt-fill-${hex(4)}`,status:'sim',wa:`${w.name} · ${w.sim.id}`,
+          text:'Backtest fill — simulated sweep over recorded book states. Served only to the audience; anything derived from it carries the taint.',
+          author:`audience key_${hex(4)}`,terms:['fin:backtest','fin:provenance-sim'],
+          digest:`sha256:${hex(12)}…`,seq:null,supersedes:null,history:[{seq:journal.seq,ev:'simulation.write'}]});
         return {p:[Math.cos(a)*rr,rnd(-.4,.4),Math.sin(a)*rr],c:new THREE.Color(CLR.sim)};
       });
       w.simGroup.add(w.simPts);
@@ -623,7 +633,9 @@ function Universe(){
   /* held memories carry a white RING marker — the category reads by form,
      not only by color */
   function refreshMarks(w){
-    if(!w.marks){w.marks=new THREE.Group();w.group.add(w.marks);}
+    /* w.group is rebuilt on every Universe entry — a stale marks group would
+       render into an orphan and the held rings would silently vanish */
+    if(!w.marks||w.marks.parent!==w.group){w.marks=new THREE.Group();w.group.add(w.marks);}
     w.marks.children.forEach(m=>m.material.dispose());w.marks.clear();
     const attr=w.pts.geometry.attributes.position;
     w.statuses.forEach((s,i)=>{if(s!=='held')return;
@@ -640,7 +652,8 @@ function Universe(){
   }
   function addParticle(w,status,avoid=-1){
     let i=w.statuses.indexOf('ers');if(i<0)i=w.statuses.indexOf('sup');if(i<0)i=(Math.random()*w.n)|0;
-    if(i===avoid)i=(i+1)%w.n;
+    const ps=w.pendingSupersede;let guard=0;
+    while(guard++<w.n&&(i===avoid||(ps&&(i===ps.pred||i===ps.succ))))i=(i+1)%w.n;
     w.claims[i]=mkClaim(w,status);
     setParticle(w,i,status);return i;
   }
@@ -671,8 +684,11 @@ function Universe(){
           const pred=w.statuses.indexOf('prom');
           if(pred>=0){const succ=addParticle(w,'held',pred);
             const sc=w.claims[succ], pc=w.claims[pred];
-            sc.supersedes=pc.key;sc.text=pc.text.replace(/\d+\.\d+/, m=>px(+m*.97,+m*1.03, (m.split('.')[1]||'').length||2));
-            w.pendingSupersede={pred,succ};
+            sc.supersedes=pc.key;
+            let t2=pc.text.replace(/\d+\.\d+/, m=>px(+m*.97,+m*1.03, (m.split('.')[1]||'').length||2));
+            if(t2===pc.text)t2=pc.text+' — revised';
+            sc.text=t2;
+            w.pendingSupersede={pred,succ,predCl:pc,succCl:sc};
             sc.seq=journal.emit('submission.remember',`supersede proposal · ${sc.key} derives_from ${pc.key} · evidence ← wa:${src.name} · successor held`);
             note(sc,'submission.remember (supersede proposal)');}
         }});
@@ -692,13 +708,19 @@ function Universe(){
   }
   function promoteBeat(w){
     if(w.pendingSupersede){
-      const {pred,succ}=w.pendingSupersede;w.pendingSupersede=null;
-      setParticle(w,succ,'prom');
-      if(w.statuses[pred]==='prom')setParticle(w,pred,'sup');
-      flow.burst(w.group.position.clone(),CLR.prom,3);
-      journal.emit('lifecycle.promote',`${w.claims[succ].key} ratified · wa:${w.name} · k=${w.k}`);note(w.claims[succ],'lifecycle.promote');
-      journal.emit('lifecycle.supersede',`tip: ${w.claims[pred].key} → ${w.claims[succ].key} · ratification_event_id ev_${hex(8)}`);
-      note(w.claims[pred],'lifecycle.supersede (tip moved)');
+      const {pred,succ,predCl,succCl}=w.pendingSupersede;w.pendingSupersede=null;
+      /* the mock may have reused these slots meanwhile — verify the records
+         still stand before flipping any tip or naming any claim */
+      if(w.claims[succ]===succCl&&w.statuses[succ]==='held'){
+        setParticle(w,succ,'prom');
+        flow.burst(w.group.position.clone(),CLR.prom,3);
+        journal.emit('lifecycle.promote',`${succCl.key} ratified · wa:${w.name} · k=${w.k}`);note(succCl,'lifecycle.promote');
+        if(w.claims[pred]===predCl&&w.statuses[pred]==='prom'){
+          setParticle(w,pred,'sup');
+          journal.emit('lifecycle.supersede',`tip: ${predCl.key} → ${succCl.key} · ratification_event_id ev_${hex(8)}`);
+          note(predCl,'lifecycle.supersede (tip moved)');
+        }
+      }
     } else {
       const i=w.statuses.indexOf('held');
       if(i<0)return;
@@ -707,7 +729,7 @@ function Universe(){
       journal.emit('lifecycle.promote',`${w.vocab?`term ${pick(TERMS[w.name])} · `:''}${cl.key} · wa:${w.name} · k=${w.k} · ratification ev_${hex(8)}`);
       note(cl,'lifecycle.promote');
       if(w.vocab&&Math.random()<.25){
-        const d=w.statuses.indexOf('prom');
+        const d=w.statuses.findIndex((s,idx)=>s==='prom'&&idx!==i);
         if(d>=0){setParticle(w,d,'sup');
           journal.emit('lifecycle.supersede',`term deprecated · oml:replaced_by → ${pick(TERMS[w.name])}-v2`);
           note(w.claims[d],'lifecycle.supersede (deprecated)');}
@@ -730,7 +752,7 @@ function Universe(){
       journal.emit('simulation.ended',`${w.sim.id} · tainted rows demoted · fence lifted`);
       if(w.simGroup){disposeGroup(w.simGroup);w.group.remove(w.simGroup);w.simGroup=null;}
       if(w.simLbl){w.simLbl.remove();w.simLbl=null;}
-      w.simKeys=null;w.sim=null;
+      w.simKeys=null;w.sim=null;w.simPts=null;w.simClaims=null;
       return;
     }
     w.ceremony=next;
@@ -782,7 +804,9 @@ function Universe(){
   let acc=0;
   return {
     group,cam:{theta:.6,phi:1.02,radius:35,min:10,max:92,target:new THREE.Vector3()},
-    hoverables(){return [coreHit,...WAS.map(w=>w.hub),...WAS.map(w=>w.pts)];},
+    hoverables(){const hs=[coreHit,...WAS.map(w=>w.hub)];
+      WAS.forEach(w=>{hs.push(w.pts);if(w.childPts)hs.push(w.childPts);if(w.simPts)hs.push(w.simPts);});
+      return hs;},
     onHover(obj){
       WAS.forEach(w=>{w.hovered=(obj===w.hub);});
     },
@@ -814,11 +838,15 @@ function Universe(){
       }
     },
     onClick(ray){
-      /* memories first: every particle is a readable claim */
-      const ptHit=ray.intersectObjects(WAS.map(w=>w.pts));
+      /* memories first: every particle — desk, child area, backtest row — is a readable record */
+      const sets=[];
+      WAS.forEach(w=>{sets.push({pts:w.pts,claims:w.claims});
+        if(w.childPts)sets.push({pts:w.childPts,claims:w.childClaims});
+        if(w.simPts)sets.push({pts:w.simPts,claims:w.simClaims});});
+      const ptHit=ray.intersectObjects(sets.map(s=>s.pts));
       if(ptHit.length){
-        const w=WAS.find(x=>x.pts===ptHit[0].object);
-        const cl=w.claims[ptHit[0].index];
+        const set=sets.find(s=>s.pts===ptHit[0].object);
+        const cl=set&&set.claims[ptHit[0].index];
         if(cl){showClaim(cl);return;}
       }
       const hitCore=ray.intersectObject(coreHit,true);
@@ -921,8 +949,9 @@ function Reactor(w){
     frame(t,dt){
       dreamers.forEach(d=>{d._a+=1.2*dt;d.position.set(10+Math.cos(d._a)*3.2,.2,Math.sin(d._a)*3.2);});
       humanGate.position.y=6+Math.sin(t*1.4)*.15;
-      if((spawnAcc+=dt)>(REDUCED?4:1.6)){spawnAcc=0;if(claims.size<26)spawn();}
+      if(LIVE&&(spawnAcc+=dt)>(REDUCED?4:1.6)){spawnAcc=0;if(claims.size<26)spawn();}
       claims.forEach(c=>{
+        if(!LIVE)return; /* live traffic off freezes the pipeline — state never outruns the journal */
         c._t+=dt;
         switch(c._phase){
           case 'intake': c.position.x+=5.6*dt;if(c.position.x>=-8){
@@ -974,6 +1003,9 @@ function Reactor(w){
                   journal.emit('review.reopen',`${c._name} · a non-author reopens it · back to held`);
                   const n2=glow(CLR.held,1.05,.98,RING);n2._phase='held';n2._t=0;n2._cl=c._cl;n2._name=c._name;
                   n2._cl.status='held';note(n2._cl,'review.reopen');
+                  n2._vocab=c._vocab;n2._att=c._att;
+                  if(n2._vocab){const vd=glow(CLR.gold,.42,.95,DIA);vd.position.set(-.5,.5,0);n2.add(vd);}
+                  if(n2._att){const at2=glow(LADDER.development,.45,.95,SQ);at2.position.set(.5,.5,0);n2.add(at2);}
                   n2._author=(Math.random()*3)|0;n2._reviews=0;n2._served=false;n2._a=rnd(0,Math.PI*2);
                   n2.position.set(0,0,3.4);group.add(n2);claims.add(n2);
                   counts.held++;els.held.textContent=counts.held;},800));}break;}
@@ -987,8 +1019,13 @@ function Reactor(w){
     },
     onClick(ray){
       const hit=ray.intersectObjects([...claims]);
-      if(hit.length&&hit[0].object._cl){showClaim(hit[0].object._cl);}
-      else panel.hidden=true;
+      if(hit.length){
+        /* the raycast recurses into satellite markers (◆ vocab, ■ attachment) —
+           walk up to the claim that owns them */
+        let o=hit[0].object;while(o&&!o._cl)o=o.parent;
+        if(o&&o._cl){showClaim(o._cl);return;}
+      }
+      panel.hidden=true;
     }
   };
 }
@@ -1082,7 +1119,7 @@ function Ledger(){
     blocks[broken].material.color.set(CLR.rej);blocks[broken]._halo.material.color.set(CLR.rej);
     const atSeq=blocks[broken]._seq;
     setVerdict(false,atSeq);
-    journal.emit('verify-chain',`oml audit verify-chain → FAIL: rewritten signed_bytes at seq ${atSeq} — steps 3–5 fail; refusing ${atSeq}..head`,'note');
+    journal.emit('verify-chain',`oml audit verify-chain → FAIL: rewritten signed_bytes at seq ${atSeq} — steps 3–5 fail; refusing ${atSeq}..head`,'read');
   };
   document.getElementById('lErase').onclick=()=>{
     if(erased)return;
