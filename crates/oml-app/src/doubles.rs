@@ -446,7 +446,10 @@ impl Scanner for MarkerScanner {
                 self.veto_marker
             ))
         } else if envelope.body.contains(&self.hold_marker) {
-            ScanOutcome::Hold(format!("marker finding: body matches {:?}", self.hold_marker))
+            ScanOutcome::Hold(format!(
+                "marker finding: body matches {:?}",
+                self.hold_marker
+            ))
         } else {
             ScanOutcome::Pass
         }

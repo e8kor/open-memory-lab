@@ -10,9 +10,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use oml_app::domain::{
-    Envelope, EventTime, KeySet, Sha256Hash, event_types, sign, verify_chain,
-};
+use oml_app::domain::{Envelope, EventTime, KeySet, Sha256Hash, event_types, sign, verify_chain};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, JournalStore, MetadataFold, OutboxRow, StoreError,
 };
@@ -31,7 +29,9 @@ fn base_url() -> String {
 
 fn db_url(name: &str) -> String {
     let base = base_url();
-    let (prefix, _) = base.rsplit_once('/').expect("DATABASE_URL names a database path");
+    let (prefix, _) = base
+        .rsplit_once('/')
+        .expect("DATABASE_URL names a database path");
     format!("{prefix}/{name}")
 }
 
@@ -43,7 +43,9 @@ async fn fresh_store(created: &Mutex<Vec<String>>) -> PgStore {
         std::process::id(),
         DB_N.fetch_add(1, Ordering::SeqCst)
     );
-    let mut admin = PgConnection::connect(&base_url()).await.expect("admin connect");
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
     admin
         .execute(format!("CREATE DATABASE {name}").as_str())
         .await
@@ -92,7 +94,8 @@ async fn commit_at(
     prev_hash: Sha256Hash,
     event_type: &str,
 ) -> Result<CommitReceipt, StoreError> {
-    let event_id = Uuid::from_u128(0xE000_0000 + u128::from(EVENT_N.fetch_add(1, Ordering::SeqCst)));
+    let event_id =
+        Uuid::from_u128(0xE000_0000 + u128::from(EVENT_N.fetch_add(1, Ordering::SeqCst)));
     let envelope = Envelope {
         tenant_id,
         seq,
@@ -126,9 +129,15 @@ async fn concurrent_commits_serialize_per_tenant() {
     let created = Mutex::new(Vec::new());
     let store = Arc::new(fresh_store(&created).await);
     let tenant_id = Uuid::from_u128(0xCAFE);
-    commit_at(&store, tenant_id, 1, Sha256Hash::ZERO, event_types::TENANT_GENESIS)
-        .await
-        .expect("genesis");
+    commit_at(
+        &store,
+        tenant_id,
+        1,
+        Sha256Hash::ZERO,
+        event_types::TENANT_GENESIS,
+    )
+    .await
+    .expect("genesis");
 
     let tasks: Vec<_> = (0..2)
         .map(|_| {
@@ -154,7 +163,9 @@ async fn concurrent_commits_serialize_per_tenant() {
                         // The loser of the race re-reads the head and retries:
                         // the advisory lock plus the typed conflict is the
                         // serialization story (ADR-0002 d3).
-                        Err(StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. }) => {}
+                        Err(
+                            StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. },
+                        ) => {}
                         Err(e) => panic!("unexpected store error: {e}"),
                     }
                 }

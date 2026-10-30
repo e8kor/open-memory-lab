@@ -11,9 +11,8 @@ use oml_app::types::{
 
 /// The committed test key seed (docs/data/chain-format.md test vector key).
 const TEST_SEED: [u8; 32] = [
-    0x09, 0x87, 0x45, 0x94, 0xaf, 0xc9, 0x3c, 0x44, 0xaf, 0x9c, 0x48, 0x6d, 0x6d, 0xd4, 0x8b,
-    0x68, 0x51, 0x4b, 0x57, 0x36, 0xa7, 0xd6, 0x4c, 0xac, 0x72, 0xd9, 0x07, 0x2f, 0x98, 0xa6,
-    0x37, 0x1c,
+    0x09, 0x87, 0x45, 0x94, 0xaf, 0xc9, 0x3c, 0x44, 0xaf, 0x9c, 0x48, 0x6d, 0x6d, 0xd4, 0x8b, 0x68,
+    0x51, 0x4b, 0x57, 0x36, 0xa7, 0xd6, 0x4c, 0xac, 0x72, 0xd9, 0x07, 0x2f, 0x98, 0xa6, 0x37, 0x1c,
 ];
 
 type TestApp = App<MemStore, MemSigner, FixedClock, SeqIdGen, MarkerScanner>;
@@ -85,7 +84,10 @@ async fn happy_path_end_to_end() {
     // Held rows are invisible to everyone but the author (R3).
     let err = app.get_memory(&reader.value, memory_id).await.unwrap_err();
     assert!(matches!(err, AppError::NotFound));
-    let own = app.get_memory(&writer.value, memory_id).await.expect("own-work read");
+    let own = app
+        .get_memory(&writer.value, memory_id)
+        .await
+        .expect("own-work read");
     assert_eq!(own.status, MemoryStatus::Held);
 
     // Recall before promotion finds nothing.
@@ -144,7 +146,10 @@ async fn happy_path_end_to_end() {
         .await
         .expect("supersede");
     assert_eq!(superseded.superseded_id, memory_id);
-    let old = app.get_memory(&reader.value, memory_id).await.expect("get old tip");
+    let old = app
+        .get_memory(&reader.value, memory_id)
+        .await
+        .expect("get old tip");
     assert_eq!(old.status, MemoryStatus::Superseded);
     assert_eq!(old.superseded_by, Some(superseded.successor_id));
     let successor = app
@@ -160,16 +165,19 @@ async fn happy_path_end_to_end() {
     assert_eq!(head.tenant_id, boot.tenant_id);
 
     // The tail serves the journal ascending with digest-only payloads.
-    let tail = app
-        .tail_events(&reader.value, 0, 100)
-        .await
-        .expect("tail");
+    let tail = app.tail_events(&reader.value, 0, 100).await.expect("tail");
     assert_eq!(tail.len(), 10);
     assert_eq!(tail[0].envelope.event_type, event_types::TENANT_GENESIS);
-    assert_eq!(tail[9].envelope.event_type, event_types::LIFECYCLE_SUPERSEDE);
+    assert_eq!(
+        tail[9].envelope.event_type,
+        event_types::LIFECYCLE_SUPERSEDE
+    );
     let submit_event = &tail[6].envelope;
     assert_eq!(submit_event.event_type, event_types::SUBMISSION_REMEMBER);
-    assert!(submit_event.payload.get("body").is_none(), "digest-only payloads");
+    assert!(
+        submit_event.payload.get("body").is_none(),
+        "digest-only payloads"
+    );
     assert!(submit_event.payload.get("body_digest").is_some());
 }
 
@@ -194,7 +202,13 @@ async fn r2_author_cannot_verdict_its_own_work() {
         .post_verdict(&writer.value, memory_id, Verdict::Approve, None)
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::VerbCeiling { role: Role::Writer, .. }));
+    assert!(matches!(
+        err,
+        AppError::VerbCeiling {
+            role: Role::Writer,
+            ..
+        }
+    ));
 
     // The same principal behind a dreamer key is refused by the lineage
     // closure (R2), and the queue never serves it the row at all.
@@ -204,7 +218,12 @@ async fn r2_author_cannot_verdict_its_own_work() {
         .expect("review next");
     assert!(served.is_none(), "the queue skips lineage-excluded rows");
     let err = app
-        .post_verdict(&same_principal_dreamer.value, memory_id, Verdict::Approve, None)
+        .post_verdict(
+            &same_principal_dreamer.value,
+            memory_id,
+            Verdict::Approve,
+            None,
+        )
         .await
         .unwrap_err();
     assert!(matches!(
@@ -234,13 +253,25 @@ async fn role_ceilings_are_refused_with_typed_errors() {
         .submit_memory(&reader.value, &submit_req("i", "x"))
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::VerbCeiling { role: Role::Reader, .. }));
+    assert!(matches!(
+        err,
+        AppError::VerbCeiling {
+            role: Role::Reader,
+            ..
+        }
+    ));
     // Dreamer cannot write.
     let err = app
         .submit_memory(&dreamer.value, &submit_req("i", "x"))
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::VerbCeiling { role: Role::Dreamer, .. }));
+    assert!(matches!(
+        err,
+        AppError::VerbCeiling {
+            role: Role::Dreamer,
+            ..
+        }
+    ));
     // Writer cannot recall (roles do not nest — roles-and-keys.md).
     let err = app
         .recall(
@@ -253,10 +284,22 @@ async fn role_ceilings_are_refused_with_typed_errors() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::VerbCeiling { role: Role::Writer, .. }));
+    assert!(matches!(
+        err,
+        AppError::VerbCeiling {
+            role: Role::Writer,
+            ..
+        }
+    ));
     // Writer cannot verify the chain (admin verb).
     let err = app.verify_chain(&writer.value).await.unwrap_err();
-    assert!(matches!(err, AppError::VerbCeiling { role: Role::Writer, .. }));
+    assert!(matches!(
+        err,
+        AppError::VerbCeiling {
+            role: Role::Writer,
+            ..
+        }
+    ));
     // Reader cannot issue keys.
     let err = app
         .issue_key(
@@ -270,7 +313,13 @@ async fn role_ceilings_are_refused_with_typed_errors() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::VerbCeiling { role: Role::Reader, .. }));
+    assert!(matches!(
+        err,
+        AppError::VerbCeiling {
+            role: Role::Reader,
+            ..
+        }
+    ));
     // Admin cannot mint an operator key (issuer ceiling).
     let err = app
         .issue_key(
@@ -320,8 +369,14 @@ async fn idempotent_submit_replays_the_first_result() {
         .expect("replay");
     assert!(replay.replayed);
     assert_eq!(replay.receipt, first.receipt);
-    let head = app.verify_chain(&boot.admin_key.value).await.expect("verify");
-    assert_eq!(head.seq, 5, "replay journalled nothing: genesis, workarea, 2 keys, 1 submit");
+    let head = app
+        .verify_chain(&boot.admin_key.value)
+        .await
+        .expect("verify");
+    assert_eq!(
+        head.seq, 5,
+        "replay journalled nothing: genesis, workarea, 2 keys, 1 submit"
+    );
 
     // Same key, different request: refused, never silently honored.
     let err = app
@@ -349,7 +404,10 @@ async fn scan_veto_is_a_journalled_rejection() {
 
     // The rejection was journalled (admission.md: a veto is a journalled
     // rejection, not a dropped request) and nothing waits in the queue.
-    let head = app.verify_chain(&boot.admin_key.value).await.expect("verify");
+    let head = app
+        .verify_chain(&boot.admin_key.value)
+        .await
+        .expect("verify");
     assert_eq!(head.seq, 6, "the vetoed submission is event 6");
     let served = app.review_next(&dreamer.value).await.expect("review next");
     assert!(served.is_none(), "nothing waits in the queue after a veto");

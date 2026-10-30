@@ -94,7 +94,9 @@ impl PgStore {
         let mut events = Vec::new();
         let mut from_seq = 1_u64;
         loop {
-            let page = self.events_range(tenant_id, from_seq, FORK_CHECK_PAGE).await?;
+            let page = self
+                .events_range(tenant_id, from_seq, FORK_CHECK_PAGE)
+                .await?;
             let n = page.len();
             events.extend(page);
             if n < FORK_CHECK_PAGE {
@@ -128,10 +130,7 @@ fn chain_lock_key(tenant_id: Uuid) -> i64 {
 /// `SET LOCAL oml.tenant_id` via `set_config(..., is_local = true)` — the
 /// RLS fence of 0001_init.sql, scoped to this transaction. (`SET LOCAL`
 /// itself cannot take a bind parameter.)
-async fn set_tenant(
-    tx: &mut Transaction<'_, Postgres>,
-    tenant_id: Uuid,
-) -> Result<(), StoreError> {
+async fn set_tenant(tx: &mut Transaction<'_, Postgres>, tenant_id: Uuid) -> Result<(), StoreError> {
     sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
         .bind(tenant_id.to_string())
         .execute(&mut **tx)
@@ -144,10 +143,7 @@ async fn set_tenant(
 /// `(key_id, workarea_id, idem_key)` packs into the key column. Uuids
 /// contain no `:`, so the packing is injective.
 fn scope_key(scope: &IdempotencyScope) -> String {
-    format!(
-        "{}:{}:{}",
-        scope.key_id, scope.workarea_id, scope.idem_key
-    )
+    format!("{}:{}:{}", scope.key_id, scope.workarea_id, scope.idem_key)
 }
 
 /// The port's key hash is `sha256:<hex>`; `api_keys.hash` stores the raw
@@ -475,11 +471,12 @@ impl JournalStore for PgStore {
             .await
             .map_err(backend)?;
 
-        let head = sqlx::query("SELECT seq, head_hash FROM journal_chain_head WHERE tenant_id = $1")
-            .bind(tenant_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(backend)?;
+        let head =
+            sqlx::query("SELECT seq, head_hash FROM journal_chain_head WHERE tenant_id = $1")
+                .bind(tenant_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?;
         let (expected_seq, expected_prev) = match &head {
             None => (1_u64, Sha256Hash::ZERO),
             Some(row) => {
@@ -509,12 +506,14 @@ impl JournalStore for PgStore {
                 .get("tenant_name")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
-                .bind(tenant_id)
-                .bind(name)
-                .execute(&mut *tx)
-                .await
-                .map_err(backend)?;
+            sqlx::query(
+                "INSERT INTO tenants (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(tenant_id)
+            .bind(name)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
         }
 
         let seq = i64::try_from(env.seq).map_err(backend)?;
@@ -649,9 +648,8 @@ impl JournalStore for PgStore {
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let sql = format!(
-            "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 AND m.id = $2"
-        );
+        let sql =
+            format!("SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 AND m.id = $2");
         let row = sqlx::query(&sql)
             .bind(tenant_id)
             .bind(memory_id)
