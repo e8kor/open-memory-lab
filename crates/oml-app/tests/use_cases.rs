@@ -2331,6 +2331,38 @@ async fn a_replayed_supersede_returns_the_stored_receipt_and_writes_once() {
 }
 
 #[tokio::test]
+async fn a_supersede_that_loses_the_idempotency_race_replays_the_winner_and_writes_once() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let req = supersede_req("sup-1", first, "the canary drains and settles first");
+    let winner = app.supersede(&writer.value, &req).await.expect("winner");
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    // The loser looked the key up before the winner committed, so it found
+    // no record, and it reaches its own commit after the winner's: the
+    // target is still the tip, so nothing refuses it before the commit.
+    store.miss_next_idempotency_lookup();
+    let loser = app.supersede(&writer.value, &req).await.expect("loser");
+    assert!(loser.replayed, "the winner's stored receipt, as a replay");
+    assert_eq!(loser.receipt, winner.receipt);
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        head,
+        "writes once"
+    );
+}
+
+#[tokio::test]
 async fn tip_conflict_names_the_current_tip_when_readable() {
     let app = app();
     let (boot, crew) = tenant(&app).await;

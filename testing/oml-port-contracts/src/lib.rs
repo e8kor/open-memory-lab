@@ -858,6 +858,88 @@ pub async fn journal_idempotency_roundtrip<S: JournalStore>(store: &S) {
     assert_eq!(store.idempotency_get(&other).await.expect("get"), None);
 }
 
+/// One scope holds one record: a commit carrying a second record under a
+/// recorded scope is refused whole, so an attempt that looked the key up
+/// before a concurrent one committed journals nothing, and the first record
+/// stands (http-api.md idempotency; ADR-0025 d10).
+pub async fn a_second_record_under_one_idempotency_scope_commits_nothing<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(26);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB26);
+    let scope = IdempotencyScope {
+        tenant_id: rig.tenant_id,
+        key_id: Uuid::from_u128(0xD26),
+        workarea_id: Uuid::nil(),
+        idem_key: "sup-1".to_owned(),
+    };
+    let put = |memory: &MemoryRecord| IdempotencyPut {
+        scope: scope.clone(),
+        record: IdempotencyRecord {
+            request_digest: "sha256:aa".to_owned(),
+            response: json!({ "artifact_id": memory.memory_id.to_string() }),
+        },
+    };
+    let winner = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC26),
+        "wanda",
+        scope.key_id,
+        "the canary drains first",
+    );
+    let loser = MemoryRecord {
+        memory_id: Uuid::from_u128(0xC27),
+        claim_key: "another-claim".to_owned(),
+        ..winner.clone()
+    };
+    let held = |memory: &MemoryRecord| MetadataFold::MemoryHeld {
+        memory: memory.clone(),
+        enqueue: true,
+    };
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({}),
+        held(&winner),
+        Some(put(&winner)),
+    )
+    .await
+    .expect("the first record");
+    let head = store.chain_head(rig.tenant_id).await.expect("head");
+
+    let err = rig
+        .commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({}),
+            held(&loser),
+            Some(put(&loser)),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, StoreError::IdempotencyRecorded), "{err:?}");
+    assert_eq!(
+        store.chain_head(rig.tenant_id).await.expect("head"),
+        head,
+        "nothing is journalled"
+    );
+    assert_eq!(
+        store
+            .memory(rig.tenant_id, loser.memory_id)
+            .await
+            .expect("memory"),
+        None,
+        "nothing is folded"
+    );
+    assert_eq!(
+        store.idempotency_get(&scope).await.expect("get"),
+        Some(put(&winner).record),
+        "the first record stands"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Grants, denials and the workarea tree (ADR-0025 d1, d2, d14)
 // ---------------------------------------------------------------------------
@@ -2035,6 +2117,7 @@ where
     journal_key_lookup_by_hash(&new_store().await).await;
     a_revoked_key_no_longer_resolves_by_its_hash(&new_store().await).await;
     journal_idempotency_roundtrip(&new_store().await).await;
+    a_second_record_under_one_idempotency_scope_commits_nothing(&new_store().await).await;
     grants_and_denials_round_trip_through_their_folds_and_key_access(&new_store().await).await;
     a_grant_epoch_is_its_event_seq(&new_store().await).await;
     a_grant_or_denial_the_schema_refuses_commits_nothing(&new_store().await).await;

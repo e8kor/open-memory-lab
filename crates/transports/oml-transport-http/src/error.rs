@@ -368,6 +368,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::Store(StoreError::TipMoved { .. }) => {
             tip_conflict("the supersede target stopped being the served tip before ratification")
         }
+        AppError::Store(StoreError::IdempotencyRecorded) => {
+            // Surfaces only when the record a concurrent attempt committed
+            // was gone again when the use-case read it back to replay it.
+            ApiError::unavailable("idempotency record contention")
+        }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
         AppError::StoredResponse(e) => ApiError::internal(e),
         AppError::Chain(e) => ApiError::internal(e.to_string()),
