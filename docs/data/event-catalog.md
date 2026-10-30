@@ -2,7 +2,7 @@
 id: data/event-catalog
 tier: engineering
 status: design draft for review · decided, not built
-answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events
+answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events; which events record a name, and how rows that predate names are named
 -->
 
 # Journal event catalog
@@ -60,6 +60,12 @@ signed (nine — `hash` and `sig` are derived, outside the signed bytes), their 
 `signed_bytes` as RFC 8785 canonical JSON, the hash, the signature, the chaining rule and the
 verification procedure, with computed test vectors. In the signed form `at` carries exactly six
 fractional digits; displays like the one above may trim.
+
+Every creation event of a named record — `workarea.create`, `crew.created`, `key.issued`,
+`key.rotated` (for the successor), `tenant.created` and `tenant.genesis` — records the record's
+[name](../api/http-api.md#names-and-ids); every other payload field names a row by its id, never
+its name, so the journal binds ids exactly as before
+([ADR-0026](../adr/ADR-0026-names-are-keys.md)).
 
 ## Submission family
 
@@ -372,12 +378,16 @@ Tree and edge governance. Rules: [workareas](../architecture/workareas.md).
 {
   "workarea_id": "…", "parent_id": "…",
   "name": "crew-redline", "status": "development",
-  "crew": {"name": "redline", "charter_uri": "…", "external_manager": "…"},
+  "crew_id": "…",
   "prefix": null
 }
 ```
 
-A new node under an existing parent; refused when the parent is validated. A non-null `prefix`
+A new node under an existing parent; refused when the parent is validated. `name` is unique in
+the tenant and never changes; a tenant's root is created by this event with the name `universe`
+and a null `parent_id`. `crew_id` names the [crew record](#crewcreated) the workarea names, or is
+null. Before ADR-0026 this event carried a `crew` object instead; such events stay as they were
+signed, and `system.names_assigned` turns their objects into crew records. A non-null `prefix`
 registers the workarea as a vocabulary ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the
 prefix is tenant-unique and **permanent** — never reused or reassigned, even after the vocabulary
 retires — and `vocab_prefixes` folds from exactly these events.
@@ -454,12 +464,45 @@ moment snapshotted.
 ```json
 {
   "workarea_id": "…",
-  "crew": {"name": "redline", "charter_uri": "…", "external_manager": "…"}
+  "crew_id": "…"
 }
 ```
 
-Crew metadata update — recorded, not operated — and permitted on validated areas, since freeze
-covers claim content and promotions, not workarea metadata.
+Crew metadata update — recorded, not operated: the workarea now names this crew record. Permitted
+on validated areas, since freeze covers claim content and promotions, not workarea metadata.
+Before ADR-0026 it carried a `crew` object; such events stay as they were signed.
+
+## Crew family
+
+Named crew records — recorded, not operated. Rules:
+[workareas](../architecture/workareas.md#crews-recorded-not-operated). No key sees this family on
+the events tail ([HTTP API](../api/http-api.md#events-tail)).
+
+### crew.created
+
+```json
+{
+  "crew_id": "…", "name": "redline",
+  "charter_uri": "…", "external_manager": "…",
+  "created_by_key_id": "…"
+}
+```
+
+An admin creates a crew record; `name` is unique in the tenant and never changes.
+
+### crew.updated
+
+```json
+{
+  "crew_id": "…",
+  "charter_uri": "…", "external_manager": "…",
+  "updated_by_key_id": "…"
+}
+```
+
+An admin corrects a crew record's charter URI or external manager — the full new values, so the
+fold needs no earlier event to read the record. The name is not updatable. The independence axis
+reads a crew's external manager as of the latest of these events before the promotion it judges.
 
 ## Keys and grants family
 
@@ -471,7 +514,7 @@ Authorization changes. Semantics: [roles-and-keys](../architecture/roles-and-key
 {"tenant_id": "…", "name": "…", "created_by_key_id": "…"}
 ```
 
-An operator creates a tenant — the root of the issuance chain; the operator then issues the
+`name` is unique in the deployment and never changes. An operator creates a tenant — the root of the issuance chain; the operator then issues the
 tenant's first admin key and nothing else. Journalled in the **reserved provider tenant's chain**
 ([storage.md](../architecture/storage.md)); the new tenant's own chain opens with
 `tenant.genesis` below.
@@ -498,11 +541,15 @@ genesis byte rule).
   "issued_by_key_id": "…", "expiry": "2027-10-29T00:00:00Z",
   "value_disclosed": false,
   "held_by": "agent",
-  "default_workarea_id": "…"
+  "default_workarea_id": "…",
+  "name": "procure-agent-7",
+  "crew_id": null
 }
 ```
 
-A key issued without its value (show-once ceremony; the journal never learns the secret), under the
+`name` is the key's [name](../architecture/roles-and-keys.md#key-names-principals-and-labels),
+unique in its namespace and never released; `crew_id` is the crew record it named at issuance, or
+null, fixed for the key's life. A key issued without its value (show-once ceremony; the journal never learns the secret), under the
 issuer ceiling: role no higher than the issuer's. `held_by` is the issuing admin's journalled
 attestation that the key is held by a human, an agent, or a service process — the server verifies
 the attestation, never the humanness ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md));
@@ -527,8 +574,11 @@ over the fixed reason `issuance_incomplete`
 ### key.rotated
 
 ```json
-{"old_key_id": "…", "new_key_id": "…", "grace_until": "2026-11-12T00:00:00Z"}
+{"old_key_id": "…", "new_key_id": "…", "new_name": "…", "grace_until": "2026-11-12T00:00:00Z"}
 ```
+
+`new_name` is the successor's own name: both keys are live through the grace window, so the
+successor never takes the old key's, and it carries the old key's `crew_id`.
 
 One journalled act carries both key ids and the grace deadline: the successor is minted with a new
 key id, linked to the old by `rotated_from`, its grants reproduced from the journalled grant
@@ -847,6 +897,31 @@ event that retired this KEK, `backup_horizon` is the instant past which no retai
 DEKs wrapped by it, and `evidence_digest` is the digest of the operator's retention-evidence
 record. In the standalone and docker profiles the destruction is journalled file deletion of the
 keyring entry ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d4).
+
+### system.names_assigned
+
+```json
+{
+  "rule": "ADR-0026 d11",
+  "names": [
+    {"kind": "workarea", "id": "…", "name": "universe", "prior_name": "root"},
+    {"kind": "key", "id": "…", "name": "key-0f3c…", "prior_name": null}
+  ],
+  "crews": [
+    {"crew_id": "…", "name": "redline", "charter_uri": "…", "external_manager": "…",
+     "workarea_ids": ["…"]}
+  ]
+}
+```
+
+Names the rows that predate names, once: signed by the lead at its first start on the schema
+version that adds names, before it serves a request, in each chain that has anything to assign —
+each tenant's chain for its workareas, crews and keys, and the provider chain for tenant and
+operator-key names. `prior_name` is the name the row's creation event carried, or null. `crews`
+lists the crew records made from the crew objects that workarea events carried, and the
+workareas that name each. The rule it applies is declared on the
+[HTTP API](../api/http-api.md#rows-created-before-names); every earlier event stays as it was
+signed.
 
 ## Reserved: the `import` family
 

@@ -83,8 +83,8 @@ dreamer grant (flagged orphaned), and a policy naming
 
 **Decide.**
 
-- Keys expired → `oml keys rotate <key-id>` or issue fresh dreamer keys
-  (`oml keys issue --role dreamer --grant <workarea>:dreamer`).
+- Keys expired → `oml keys rotate <key> <new-key-name>` or issue fresh dreamer keys
+  (`oml keys issue <key-name> --role dreamer --grant <workarea>:dreamer`).
 - Keys exist but lack scope → `oml grants add <key-id> <workarea>:dreamer`.
 - Orphaned vocabulary workarea → the named next action is propose freeze
   (`oml workareas status propose`), not a synthetic reviewer.

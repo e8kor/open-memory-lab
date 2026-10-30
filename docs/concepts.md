@@ -14,8 +14,9 @@ every concept below is decided on an owning page or ADR, and this page links it 
 restating it. Where a sentence here and an owning page disagree, the owning page wins. The
 fixed term-by-term table that binds every engineering page is
 [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed
-[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add; the end of this page maps
-each concept to where it is decided.
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 and the proposed
+[ADR-0026](adr/ADR-0026-names-are-keys.md) d1 add; the end of this page maps each concept to where
+it is decided.
 
 ## Tenant
 
@@ -23,7 +24,17 @@ A tenant is one organization's isolated space in a deployment. Everything below 
 keys, claims, the journal — exists per tenant. Tenant identity is derived server-side from the
 API key, never taken from the request, and row-level security applies it to every table. No
 structure in this design crosses a tenant boundary; relating tenants into one "whole world" is
-an explicitly future federation item, not a latent feature.
+an explicitly future federation item, not a latent feature. A tenant has a name, unique in the
+deployment.
+
+## Names
+
+Workareas, crews, keys and tenants each carry a **name** beside their id: unique in its namespace
+(the tenant, or for a tenant the deployment), given at creation, never changed and never
+released. A name is accepted everywhere the row's id is — an agent can target `metals-crew`
+rather than a UUID — and the server resolves it to the id before any check, so a name the caller
+may not see answers exactly as its id would, and everything stored still binds to ids
+([HTTP API](api/http-api.md#names-and-ids)).
 
 ## Memory as claim
 
@@ -70,13 +81,15 @@ journalled, which is the constitution's R4.
 ## Workarea
 
 A workarea is a governed node in a tree — exactly one tree per tenant, rooted at that tenant's
-**universe**. The universe root exists to give paths and subtree grants a top: it is
-permanently `committed`, cannot be deleted or re-parented, and refuses direct claim writes.
-Claims live in the workareas beneath it.
+**universe**, which is also its name in every tenant. The universe root exists to give paths and
+subtree grants a top: it is permanently `committed`, cannot be deleted or re-parented, and refuses
+direct claim writes. Claims live in the workareas beneath it. A workarea's path is the names from
+`universe` down to it, joined with `.`.
 
-A workarea exists to mirror an externally managed AI crew. OML records the crew — name,
-charter, external manager — but never operates it: it admits or refuses what the crew writes,
-nothing more. Besides the containment tree, workareas can be joined by **related edges**
+A workarea exists to mirror an externally managed AI crew. OML keeps a **crew** record — name,
+charter, external manager — that workareas and keys name, but never operates the crew: it admits
+or refuses what the crew writes, nothing more
+([crews](architecture/workareas.md#crews-recorded-not-operated)). Besides the containment tree, workareas can be joined by **related edges**
 (`relates_to`, `continues`, `derived_from`, `mirrors`) — recorded structure for lineage and
 navigation that confers zero access, proposed and ratified like other governed changes.
 
@@ -122,7 +135,7 @@ registers a vocabulary runs a plain memory provider
 
 ## Roles and keys
 
-Every caller holds an API key issued with exactly one of five roles:
+Every caller holds an API key, addressed by its name, issued with exactly one of five roles:
 
 - **reader** — recall, search, fetch, graph reads; every read is logged.
 - **writer** — remember and learn (held on arrival), attachments, supersession proposals on
@@ -267,7 +280,8 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | Tenant and isolation | [architecture/security.md](architecture/security.md) | [ADR-0007](adr/ADR-0007-tenancy-first-class.md) |
 | The constitution (R1–R4, the development exception) | [architecture/overview.md](architecture/overview.md) §5 | [ADR-0001](adr/ADR-0001-the-constitution.md) |
 | Claim versions, the tip, lineage closure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) (erasure), [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md) (the record) |
-| Workarea tree, grants, denies, edges | [architecture/workareas.md](architecture/workareas.md) | [ADR-0008](adr/ADR-0008-workarea-algebra.md) |
+| Workarea tree, grants, denies, edges, crews | [architecture/workareas.md](architecture/workareas.md) | [ADR-0008](adr/ADR-0008-workarea-algebra.md), [ADR-0026](adr/ADR-0026-names-are-keys.md) |
+| Names | [api/http-api.md](api/http-api.md#names-and-ids) | [ADR-0026](adr/ADR-0026-names-are-keys.md) |
 | The status ladder | [architecture/workareas.md](architecture/workareas.md) | [ADR-0009](adr/ADR-0009-status-ladder.md) |
 | Vocabularies, terms, releases | [architecture/ontologies.md](architecture/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |
 | Roles, the dreamer split, key lifecycle | [architecture/roles-and-keys.md](architecture/roles-and-keys.md) | [ADR-0010](adr/ADR-0010-roles-and-keys.md) |
@@ -282,4 +296,4 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | The overlay tip | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
 | The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](architecture/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
 | The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
-| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add |
+| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 and the proposed [ADR-0026](adr/ADR-0026-names-are-keys.md) d1 add |

@@ -2,7 +2,7 @@
 id: cli/reference
 tier: engineering
 status: design draft for review · decided, not built
-answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own
+answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; the oml-admin plugin
 -->
 
 # CLI reference
@@ -40,9 +40,13 @@ Every verb below is designed, not built; no transcript or flag on this page has 
   prefix is permanent and asks for confirmation before registering it.
   Single-target verbs whose synopsis lists `[--dry-run]` (`claims reassign`, `erase`) act by
   default; there `--dry-run` is an explicit opt-in preview, not the default.
-- **Names resolve to ids.** Workareas may be named by path for convenience, but every grant, act
-  and journal event binds to the workarea **node id** ([workareas](../architecture/workareas.md));
-  the CLI prints both and the JSON output always carries the id.
+- **Names or ids.** Every argument that names a workarea, crew, key or tenant takes its id or its
+  [name](../api/http-api.md#names-and-ids), and the server resolves it; the CLI resolves nothing
+  itself. Every grant, act and journal event binds to the **id**
+  ([workareas](../architecture/workareas.md)); the CLI prints name and id, and the JSON output
+  carries both. A derived path is not an argument: `oml workareas tree` shows paths, and every
+  verb takes the node's name. No verb renames anything — names never change
+  ([ADR-0026](../adr/ADR-0026-names-are-keys.md)).
 - **Nothing is deleted silently.** There is no `oml ... delete` for content. Erasure is
   `oml erase`, a journalled crypto-shredding act whose honest boundary is declared in
   [audit and lineage](../architecture/audit-and-lineage.md).
@@ -73,7 +77,7 @@ context or key exists, so there is nothing for a context to resolve.
 
 | Verb | Does |
 |---|---|
-| `oml bootstrap claim --url <https://…> [--token-stdin]` | Exchange the enrollment secret for the root operator key (fronts `POST /v2/bootstrap/claim` — bootstrap is a lab ceremony, [ADR-0022](../adr/ADR-0022-two-ring-api.md)). With `--token-stdin` the secret is read once from stdin, never from argv. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). |
+| `oml bootstrap claim --url <https://…> --name <key-name> [--token-stdin]` | Exchange the enrollment secret for the root operator key, named `<key-name>` in the provider's namespace (fronts `POST /v2/bootstrap/claim` — bootstrap is a lab ceremony, [ADR-0022](../adr/ADR-0022-two-ring-api.md)). With `--token-stdin` the secret is read once from stdin, never from argv. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). |
 
 ## `oml tenants` — the operator's verbs
 
@@ -86,9 +90,9 @@ shows the whole ceremony.
 
 | Verb | Does |
 |---|---|
-| `oml tenants create <name>` | Create a tenant and its permanent `universe` root workarea. |
+| `oml tenants create <name>` | Create a tenant named `<name>`, unique in the deployment (`name.taken`), and its permanent root workarea, named `universe`. |
 | `oml tenants list` | Tenants and their chain-head seqs. No content crosses this surface. |
-| `oml tenants issue-admin <tenant> [--label <text>]` | Issue the tenant's **first** admin key, show-once. Refused once the tenant has an admin: further keys come from that admin under the issuer ceiling. |
+| `oml tenants issue-admin <tenant> <key-name> [--label <text>]` | Issue the tenant's **first** admin key, named `<key-name>`, show-once; `<tenant>` is the tenant's id or name. Refused once the tenant has an admin: further keys come from that admin under the issuer ceiling. |
 
 ## `oml keys` — issuance, revocation, rotation
 
@@ -98,13 +102,40 @@ value is printed exactly once, at issuance, and the journal records the issuance
 *without the value*. The server stores only the key hash; a lost value is unrecoverable by design, and the remedy is
 revoke-and-reissue.
 
+**The reader grant beside a writer grant.** This paragraph is the single declaration site of the
+CLI's issuance default ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d13). `oml keys issue` and
+`oml keys issue-agent` send, beside every writer grant they are asked for, a reader grant on the
+same workarea with the same deny masks, unless the request already carries that reader grant or
+`--write-only` is passed. The default is the CLI's alone: `POST /v2/keys` takes exactly the grants
+it is sent ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)),
+so the added grant is an ordinary grant in the request body, journalled as its own `grant.issued`
+and listed by `oml keys show` like any other. `--write-only` sends the writer grants alone, for a
+crew whose writers must not read one another's promoted work; such a key still reads its own work,
+in every state, with no grant at all ([own](../architecture/roles-and-keys.md#own)). `oml grants
+add` is not an issuing verb and sends exactly the grant it names.
+
 | Verb | Does |
 |---|---|
-| `oml keys issue --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <node>] [--expires <duration>] [--label <text>]` | Issue a key. Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, so one writer key with `--grant <wa>:writer --grant <wa>:reader` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key id ever again. |
-| `oml keys revoke <key-id>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
-| `oml keys rotate <key-id> [--grace <duration>]` | Mint a successor key — new key id, linked by `rotated_from`, grants reproduced from the journalled grant records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
-| `oml keys list [--role …] [--expiring <duration>]` | Key ids, roles, labels, expiries. Never values. |
-| `oml keys show <key-id>` | One key: grants, denials, epoch, issuance and revocation events. |
+| `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. |
+| `oml keys issue-agent <key-name> --workarea <workarea> [--write-only] [--crew <crew>] [--principal <text>] [--expires <duration>] [--label <text>]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, principal `<key-name>` unless `--principal` names another, `held_by: agent`, a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), and no default workarea, so the default is `<workarea>`, the first grant's node. No other call and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below, and nothing else on stdout ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d12). |
+| `oml keys revoke <key>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
+| `oml keys rotate <key> <new-key-name> [--grace <duration>]` | Mint a successor key named `<new-key-name>` — new key id and name, since both keys are live through the grace window, linked by `rotated_from`, grants and crew reproduced from the journalled records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
+| `oml keys list [--role …] [--expiring <duration>]` | Key names, ids, roles, principals, labels, expiries. Never values. |
+| `oml keys show <key>` | One key, by id or name — a revoked or expired key's name still resolves: grants, denials, crew, epoch, issuance and revocation events. |
+
+**`oml keys issue-agent` output.** On success the verb prints exactly two lines on stdout, the ones
+the `oml` plugin reads, and every other line on stderr:
+
+```console
+export OML_URL='https://oml.example.com'
+export OML_API_KEY='oml_…'
+```
+
+`OML_URL` is the active context's endpoint, without `/mcp`; `OML_API_KEY` is the key value,
+printed this once and never again (the show-once ceremony). `eval "$(oml keys issue-agent
+claude-laptop --workarea metals-crew)"` puts both into the shell that will start the agent without
+the value entering shell history. With `--json` the verb prints the `201` body instead, as every
+verb does, and no export lines.
 
 ## `oml grants`, `oml deny`, `oml bans` — scope and refusal
 
@@ -118,12 +149,12 @@ a ban would refuse — without journalling anything.
 
 | Verb | Does |
 |---|---|
-| `oml grants add <key-id> <workarea>:<role> [--deny <subtree> …]` | Add a grant, optionally carrying deny entries that mask subtrees within this grant only. A dreamer-class grant on an admin key is refused (`access.role_exclusive` — the two-key rule). Journalled; bumps the key's permission epoch. |
-| `oml grants remove <key-id> <grant-id>` | Remove one grant. Journalled; epoch bump. |
-| `oml grants list [--key <key-id>] [--workarea <path>]` | Grants as journalled, with the derived effective access per key. |
-| `oml grants effective <key-id> [--at <workarea>]` | The resolved answer: what this key can do, where, and which deny produced each hole — reproducible from the journal by construction. |
-| `oml deny set <key-id> <subtree> [--reason <text>]` | Create or extend the key's **global** deny object (deny-wins across all grants). Distinct from a per-grant `--deny`. |
-| `oml deny lift <key-id> <deny-id>` | Journalled lift. |
+| `oml grants add <key> <workarea>:<role> [--deny <subtree> …]` | Add a grant, optionally carrying deny entries that mask subtrees within this grant only. A dreamer-class grant on an admin key is refused (`access.role_exclusive` — the two-key rule). Journalled; bumps the key's permission epoch. |
+| `oml grants remove <key> <grant-id>` | Remove one grant. Journalled; epoch bump. |
+| `oml grants list [--key <key>] [--workarea <workarea>]` | Grants as journalled, with the derived effective access per key. |
+| `oml grants effective <key> [--at <workarea>]` | The resolved answer: what this key can do, where, and which deny produced each hole — reproducible from the journal by construction. |
+| `oml deny set <key> <subtree> [--reason <text>]` | Create or extend the key's **global** deny object (deny-wins across all grants). Distinct from a per-grant `--deny`. |
+| `oml deny lift <key> <deny-id>` | Journalled lift. |
 | `oml bans add --principal <id>\|--source <selector> [--reason <text>] [--apply]` | Ban an author or source. Default `--dry-run` prints the reach preview: keys affected, held submissions that would be refused, workareas touched. `--apply` journals it (`ban.imposed`). |
 | `oml bans lift <ban-id>` | Journalled lift; admission resumes at the next check. |
 | `oml bans list` | Active and lifted bans with who imposed and who lifted each. |
@@ -138,16 +169,30 @@ them into `propose` and `ratify` run under different keys.
 
 | Verb | Does |
 |---|---|
-| `oml workareas create <parent> <name> [--crew-name …] [--charter-uri …] [--external-manager …] [--prefix <PREFIX>]` | Create a child workarea in `development`. Refused under a `validated` parent. `--prefix` registers a vocabulary workarea ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the prefix is tenant-unique and **permanent** — the command states this and confirms before acting — and requires the crew flags (a vocabulary needs a named curator crew). |
+| `oml workareas create <parent> <name> [--crew <crew>] [--prefix <PREFIX>]` | Create a child workarea named `<name>` — unique in the tenant (`name.taken`; `universe` is the root's) — in `development`. Refused under a `validated` parent. `--crew` names an existing [crew record](#oml-crews-crew-records). `--prefix` registers a vocabulary workarea ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the prefix is tenant-unique and **permanent** — the command states this and confirms before acting — and requires `--crew` (a vocabulary needs a named curator crew). |
 | `oml workareas tree [--root <workarea>] [--status]` | The tenant tree from `universe` down, with status and crew per node. |
-| `oml workareas show <workarea>` | One node: id, path (derived), status, crew metadata, edges, policy snapshot in force. |
-| `oml workareas crew set <workarea> --crew-name … [--charter-uri …]` | Journalled crew-metadata update. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
+| `oml workareas show <workarea>` | One node, by id or name: name, id, path (derived), status, crew record, edges, policy snapshot in force. |
+| `oml workareas crew set <workarea> --crew <crew>` | Journalled crew-metadata update: point the workarea at another crew record. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
 | `oml workareas relate propose <a> <b> --label <relates_to\|continues\|derived_from\|mirrors>` | Propose an edge. Requires dreamer(propose) on ≥1 endpoint and reader on both. |
 | `oml workareas relate ratify <edge-id>` | Ratify under a different key with dreamer(review) on **both** endpoints; ratifier ≠ proposer, refused otherwise. |
 | `oml workareas re-parent <workarea> --new-parent <target> [--apply]` | Journalled admin act; the server performs the single-transaction descendant path rewrite. Mass-reach act: defaults to `--dry-run` showing the paths that would be rewritten and the grants whose derived paths change; `--apply` performs the rewrite. |
 | `oml workareas status propose <workarea> --to <committed\|validated>` | Propose the next forward rung; the proposal is itself journalled (`workarea.status_proposed`). The ladder has no skips: `--to validated` is proposable only from `committed`, and a rung-skipping or out-of-ladder proposal is refused as `workarea.transition_refused` — the same code that refuses proposing `validated` while any child is not `validated`. Backward transitions do not exist; there is no flag for them. |
 | `oml workareas status ratify <transition-id>` | Second, non-proposing dreamer or admin ratifies; the journal records the transition with its policy snapshot. The [freeze transcript](sessions.md#4-freezing-a-workarea) shows the full ceremony. |
 | `oml workareas status pending` | Transitions awaiting a ratifier. |
+
+## `oml crews` — crew records
+
+A crew is a named record — name, charter URI, external manager — recorded, not operated; a
+workarea names at most one, and a key may name one at issuance
+([workareas](../architecture/workareas.md#crews-recorded-not-operated)). Admin key role
+throughout; no agent role reaches these verbs.
+
+| Verb | Does |
+|---|---|
+| `oml crews create <name> [--charter-uri <uri>] [--external-manager <text>]` | Create a crew record (`crew.created`). The name is unique in the tenant (`name.taken`) and never changes. |
+| `oml crews update <crew> [--charter-uri <uri>] [--external-manager <text>]` | Journalled crew-record update (`crew.updated`), at least one flag; the name is not updatable. |
+| `oml crews list` | Crew records: name, id, charter URI, external manager. |
+| `oml crews show <crew>` | One crew record, by id or name. |
 
 ## `oml review` — the review ceremony
 
@@ -181,7 +226,7 @@ operates the fence; it cannot weaken it.
 
 | Verb | Does |
 |---|---|
-| `oml simulations open --audience <key-id>[,…] [--label <text>]` | Journalled act creating the simulation and its audience list. A simulation whose audience contains no dreamer key can promote nothing — the CLI warns, the server fails closed. |
+| `oml simulations open --audience <key>[,…] [--label <text>]` | Journalled act creating the simulation and its audience list. A simulation whose audience contains no dreamer key can promote nothing — the CLI warns, the server fails closed. |
 | `oml simulations list [--ended]` | Simulations with state, audience size, row and taint counts. |
 | `oml simulations show <sim-id>` | One simulation: audience, rows written, sim-derived (tainted) claims outside it. |
 | `oml simulations end <sim-id> [--apply]` | Journalled end: demotes the simulation's rows and triggers re-review of tainted claims. Mass-reach act: defaults to `--dry-run` listing every row and taint the end would touch; `--apply` journals `simulation.ended` and the per-row demotions. |
@@ -236,6 +281,34 @@ what to do next. Both emit the same four named signals — the contract that
 | `oml status` | The four signals, one screen, plus chain-head seq and last reconciler run per tenant. |
 | `oml doctor` | Each signal against its threshold with a verdict (`ok`/`warn`/`fail`) and the next action — the named command or the runbook anchor. Exit `1` on any `fail`, so probes and CI can consume it. |
 
+## The `oml-admin` plugin
+
+A Claude Code plugin that wraps this CLI for an operator working inside Claude Code. This section
+is its single declaration site ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d14); it is decided,
+not built. It is listed beside the agent-facing `oml` plugin in the repository's marketplace and is
+installed separately: an agent that installs `oml` gains no admin instruction, and the `oml` plugin
+cannot issue keys, since its tools are the agent-safe subset
+([agent plugin](../api/mcp-plugin.md); ADR-0014 d2).
+
+- **Contents.** One skill, `issue-agent-key`, and no MCP server entry, so the plugin adds no tool
+  to any tool list. Every act goes through the `oml` CLI on the operator's `PATH`, under the
+  operator's active context.
+- **What the skill does**, in order: runs `oml context show` and stops unless the active context's
+  key role is `admin`; checks the key name and the workarea reference against the
+  [name grammar](../api/http-api.md#names-and-ids) and says which rule fails, sending nothing;
+  composes `oml keys issue-agent <key-name> --workarea <workarea>`, with `--write-only`, `--crew`,
+  `--expires` or `--label` when the operator asks for them, and states the reader grant it adds
+  ([above](#oml-keys-issuance-revocation-rotation)); hands that command to the operator to run in
+  a terminal of their own — `eval "$(…)"` in the shell that will start Claude Code — and does not
+  run it; once the operator says it ran, runs `oml keys show <key-name>` and reports the key's id,
+  grants and default workarea; and tells the operator to start Claude Code from that shell, so the
+  `oml` plugin reads `OML_URL` and `OML_API_KEY`.
+- **What it never does.** It never runs a verb whose output carries a key value — `keys issue`,
+  `keys issue-agent`, `keys rotate`, `tenants issue-admin`, `bootstrap claim` — because that output
+  would enter the session transcript and the model's context, places the show-once ceremony
+  ([ADR-0015](../adr/ADR-0015-cli-administration.md) d1) and the
+  [key format rule](../architecture/roles-and-keys.md#key-format) forbid.
+
 ## Verbs that do not exist
 
 Absences are design, not gaps. No `oml promote` — promotion is only an effect of ratification
@@ -243,5 +316,7 @@ inside the review ceremony, and the gate cannot be bypassed from the admin seat 
 R1/R2). Demotion exists only as the journalled admin act `oml claims demote` above — it is
 governance, never a verdict. No
 `oml delete` — erasure is journalled crypto-shredding, demotion keeps bytes (R4). No backward
-status transition. No verb reads another tenant. Where a workflow seems to need one of these, the
+status transition. No verb reads another tenant. No verb renames a workarea, crew, key or tenant:
+a name never changes, and a row that needs another name is a new row
+([ADR-0026](../adr/ADR-0026-names-are-keys.md)). Where a workflow seems to need one of these, the
 answer is a policy or roadmap question — see the [roadmap](../product/roadmap.md), not a flag.

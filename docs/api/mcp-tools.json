@@ -6,10 +6,10 @@
     "design_spec_version": "0.2.0-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
-      "oml_remember": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_learn": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_recall": "ADR-0025 d4, d7, d8, d12, d16: include_own_held and max_tokens inputs; the caller's own held rows among the hits; steering never among the hits; the claim-item output with tokens; the budget object; refusal of unknown and unbuilt fields by name.",
-      "oml_events_tail": "ADR-0025 d15: the scope input (the ring's workarea_id, defaulting to the key's default workarea, request.workarea_unresolved for a key with none); per-family visibility; next_after_seq; the subject and workarea output fields; idle; request.validation for an after_seq beyond head_seq."
+      "oml_remember": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet. ADR-0026 d3, d4, d7: workarea takes the workarea's id or its name, resolved on the server so that an unknown or unreadable name answers exactly what its id would; a path is not accepted (request.validation), so the description's path sentence goes when the code lands; the build parses the value as an id only.",
+      "oml_learn": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet. ADR-0026 d3, d4: workarea takes the workarea's id or its name, as on oml_remember; the build parses the value as an id only.",
+      "oml_recall": "ADR-0025 d4, d7, d8, d12, d16: include_own_held and max_tokens inputs; the caller's own held rows among the hits; steering never among the hits; the claim-item output with tokens; the budget object; refusal of unknown and unbuilt fields by name. ADR-0026 d3, d4: scope takes the workarea's id or its name, resolved on the server, an unknown or unreadable name answering exactly what its id would; the build parses the value as an id only.",
+      "oml_events_tail": "ADR-0025 d15: the scope input (the ring's workarea_id, defaulting to the key's default workarea, request.workarea_unresolved for a key with none); per-family visibility; next_after_seq; the subject and workarea output fields; idle; request.validation for an after_seq beyond head_seq. ADR-0026 d4: that scope input takes the workarea's id or its name."
     }
   },
   "tools": [
@@ -248,7 +248,7 @@
           "kind": {
             "type": "string",
             "enum": ["workarea", "claim"],
-            "description": "Which graph the edge lives in; endpoints are workarea node ids or artifact ids accordingly."
+            "description": "Which graph the edge lives in; endpoints are workareas, by node id or name, or artifact ids accordingly."
           },
           "label": {
             "type": "string",
@@ -256,11 +256,11 @@
           },
           "from": {
             "type": "string",
-            "description": "The from endpoint (workarea node id or artifact id, per kind)."
+            "description": "The from endpoint (a workarea's node id or name, or an artifact id, per kind)."
           },
           "to": {
             "type": "string",
-            "description": "The to endpoint (workarea node id or artifact id, per kind)."
+            "description": "The to endpoint (a workarea's node id or name, or an artifact id, per kind)."
           },
           "note": {
             "type": "string",
@@ -279,7 +279,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea node id, a subtree filter; omitted, every workarea the key wrote to. It must name a node the key holds some role on, else access.not_found, indistinguishable from a nonexistent node."
+            "description": "Optional workarea, by node id or name, a subtree filter; omitted, every workarea the key wrote to. It must name a node the key holds some role on, else access.not_found, indistinguishable from a nonexistent node, whether it was given by id or by name."
           },
           "claim_key": {
             "type": "string",
@@ -312,7 +312,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the tool describes the key's default workarea; a key with none is refused (request.workarea_unresolved)."
+            "description": "Optional workarea, by node id or name; a name the key may not see answers access.not_found, as its id would. Omitted: the tool describes the key's default workarea; a key with none is refused (request.workarea_unresolved)."
           }
         },
         "required": [],
@@ -327,7 +327,7 @@
         "properties": {
           "scope": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the key's default workarea."
+            "description": "Optional workarea, by node id or name. Omitted: the key's default workarea."
           },
           "roots": {
             "type": "array",
@@ -391,7 +391,7 @@
           },
           "workarea_id": {
             "type": "string",
-            "description": "With action suggest: optionally restrict to one granted vocabulary workarea."
+            "description": "With action suggest: optionally restrict to one granted vocabulary workarea, by node id or name."
           },
           "curie": {
             "type": "string",

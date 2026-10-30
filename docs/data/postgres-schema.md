@@ -89,6 +89,36 @@ CREATE TRIGGER journal_no_truncate
 A superuser can still bypass both; the design treats superuser access as deployment-key-equivalent
 compromise, stated in [security](../architecture/security.md).
 
+## names and tenants
+
+Workareas, crews, keys and tenants each carry a name: unique in its namespace, never changed,
+never released ([names](../api/http-api.md#names-and-ids),
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)). The grammar is one domain, so every named table
+checks the same rule; the unique indexes on each table are the authority `name.taken` reports,
+and an insert that loses a race to one answers it with nothing journalled.
+
+```sql
+-- a lowercase RFC 1035 label, 1-63 characters, that never reads as an id:
+-- not the RFC 9562 hex-and-dash form, and not 32 hex digits.
+CREATE DOMAIN oml_name AS text CHECK (
+    VALUE ~ '^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$'
+    AND VALUE !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    AND VALUE !~ '^[0-9a-f]{32}$'
+);
+
+-- the tenant registry: provider-level, folded from the provider chain's tenant.created
+-- events; read by the operator path's own policy, never by a tenant session.
+CREATE TABLE tenants (
+    id         uuid        PRIMARY KEY,
+    name       oml_name    NOT NULL UNIQUE,   -- unique per deployment
+    created_at timestamptz NOT NULL
+);
+```
+
+The domain admits the derived form `<prefix>-<32 hex digits>`, because the fold of
+`system.names_assigned` writes it; every creation refuses that form in the name check the server
+runs before it journals anything ([names](../api/http-api.md#names-and-ids)).
+
 ## memories
 
 The fold of submission, review and lifecycle events into the current state of every claim version.
@@ -225,16 +255,31 @@ node-id grants, deny semantics, status ladder — is declared in
 ```sql
 CREATE EXTENSION IF NOT EXISTS ltree;
 
+CREATE TABLE crews (                -- named records, recorded not operated (ADR-0026 d8)
+    id               uuid        PRIMARY KEY,
+    tenant_id        uuid        NOT NULL,
+    name             oml_name    NOT NULL,   -- immutable; OML's key for the crew
+    charter_uri      text,
+    external_manager text,
+    created_at       timestamptz NOT NULL,
+    UNIQUE (tenant_id, name),
+    UNIQUE (tenant_id, id)                   -- target of tenant-scoped crew references
+);
+
 CREATE TABLE workareas (
     id         uuid        PRIMARY KEY,
     tenant_id  uuid        NOT NULL,
     parent_id  uuid        REFERENCES workareas (id),   -- NULL only for universe
-    path       ltree       NOT NULL,   -- DERIVED; rewritten in one transaction on re-parent
+    name       oml_name    NOT NULL,   -- unique in the tenant; never changed
+    path       ltree       NOT NULL,   -- DERIVED from names; rewritten in one transaction on re-parent
     status     text        NOT NULL
         CHECK (status IN ('development', 'committed', 'validated')),
-    crew       jsonb,                  -- {name, charter_uri, external_manager}
+    crew_id    uuid,                   -- the crew record this workarea names, or NULL
     created_at timestamptz NOT NULL,
-    UNIQUE (tenant_id, id)             -- target of the tenant-scoped grant and denial references
+    UNIQUE (tenant_id, name),          -- one flat namespace across the whole tree
+    UNIQUE (tenant_id, id),            -- target of the tenant-scoped grant and denial references
+    FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
+    CHECK ((parent_id IS NULL) = (name = 'universe'))   -- the root, and only the root, is universe
 );
 
 -- exactly one universe root per tenant; it is permanently 'committed'.
@@ -271,8 +316,11 @@ CREATE TABLE claim_edges (
 The key-inequality `CHECK` is the cheap spelling of R2 on edges; the full rule — ratifier principal
 distinct from proposer principal, resolved at ratification time — is enforced in the ratification
 transaction, because a principal can hold several keys and a column constraint cannot see that.
-`path` is derived: grants bind to node ids, and every path is recomputable from `parent_id`, so a
-re-parent is a single-transaction descendant rewrite rather than a grant migration.
+`path` is derived: grants bind to node ids, and every path is recomputable from `parent_id` and
+the names, so a re-parent is a single-transaction descendant rewrite rather than a grant migration.
+Every name is a valid `ltree` label — PostgreSQL 17 admits "alphanumeric characters, underscores,
+and hyphens" up to 1000 characters per label
+([ltree](https://www.postgresql.org/docs/17/ltree.html), fetched 2026-10-30) — so every path is.
 
 ## api_keys, grants, key_denials, bans
 
@@ -289,6 +337,8 @@ CREATE TABLE api_keys (
     principal  text        NOT NULL,
     issued_by  uuid        REFERENCES api_keys (id),  -- issuer ceiling checked at issuance
     rotated_from uuid      REFERENCES api_keys (id),  -- successor link; predecessor revoked at grace end
+    name       oml_name    NOT NULL,      -- the key's name; never changed, never released
+    crew_id    uuid,                      -- the crew record named at issuance; fixed for life
     held_by    text        NOT NULL DEFAULT 'agent'
         CHECK (held_by IN ('agent', 'human', 'service')),
                                           -- issuance-time attestation by the issuing admin
@@ -303,7 +353,11 @@ CREATE TABLE api_keys (
                                           -- permission epoch (ADR-0025 d14)
     expiry     timestamptz,
     revoked_at timestamptz,
-    UNIQUE (tenant_id, id)                -- target of the tenant-scoped grant and denial references
+    UNIQUE NULLS NOT DISTINCT (tenant_id, name),
+                                          -- unique per tenant; operator keys (tenant_id NULL)
+                                          -- share the provider's one namespace
+    UNIQUE (tenant_id, id),               -- target of the tenant-scoped grant and denial references
+    FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id)
 );
 
 CREATE TABLE grants (
@@ -687,13 +741,15 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | Table | Folded from |
 |---|---|
 | `memories` | submission, review, lifecycle, simulation events |
-| `workareas` | workarea create / re-parent / status / crew events |
+| `workareas` | workarea create / re-parent / status / crew events, `system.names_assigned` |
+| `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
+| `tenants` | the provider chain's `tenant.created`, `system.names_assigned` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |
 | `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |
 | `simulations` | simulation open / end events |
-| `api_keys` (state columns) | key issue / revoke events |
+| `api_keys` (state columns) | key issue / rotate / revoke events, `system.names_assigned` |
 
 One honest exception inside that last row: `api_keys.hash` is operational secret material. The
 journal records issuance **without the key value** (show-once ceremony), so a re-fold reconstructs

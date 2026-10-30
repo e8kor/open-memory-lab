@@ -129,3 +129,4 @@ nav:
       - ADR-0023: adr/ADR-0023-install-profiles-and-cluster-mode.md
       - ADR-0024: adr/ADR-0024-performance-foundation.md
       - ADR-0025: adr/ADR-0025-the-agent-only-memory-surface.md
+      - ADR-0026: adr/ADR-0026-names-are-keys.md

@@ -2,7 +2,7 @@
 id: architecture/roles-and-keys
 tier: engineering
 status: design draft for review · decided, not built
-answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers
+answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis
 -->
 
 # Roles and keys
@@ -65,7 +65,7 @@ supersession, steering, propose, review, status-transition propose and ratify, a
 re-enqueue — a column names the grant role that effective access must confer on the workarea the
 verb touches, resolved in the [refusal order](#grant-admissibility-and-refusal-order) below; the
 admin column of the last three names the key's role. For a key-level verb — keys,
-grants, denials, workarea create and re-parent, reassignment, bans, demote, erase, exports,
+grants, denials, workarea create and re-parent, crews, reassignment, bans, demote, erase, exports,
 settings, tenants — a column names the key's role itself.
 
 | Verb | reader | writer | dreamer | admin | operator |
@@ -93,7 +93,7 @@ settings, tenants — a column names the key's role itself.
 | ban / lift-ban an author or source | — | — | — | ✓ | — |
 | demote (journalled; bytes kept, R4) | — | — | — | ✓ | — |
 | erase (crypto-shred, journalled) | — | — | — | ✓ | — |
-| crew metadata update | — | — | — | ✓ | — |
+| crew records (create, update) and a workarea's crew-metadata update | — | — | — | ✓ | — |
 | create / end simulations | — | — | — | ✓ | — |
 | tip override (designate served tip, journalled) | — | — | — | ✓ | — |
 | evidence export / chain verification | — | — | — | ✓ | — |
@@ -167,7 +167,18 @@ first checks that `tenant_id` is present if and only if the issuer is an operato
 5. each deny node lies inside its own grant's subtree — else `request.validation`;
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
-   key has none, and a key never inherits its issuer's default.
+   key has none, and a key never inherits its issuer's default;
+7. the key's `name` is not already held in its namespace, a revoked or expired key's included —
+   else `name.taken`, journalling nothing ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d5).
+
+Every workarea, crew and tenant reference in the body — a grant's node, a deny's subtree, the
+default workarea, `crew`, `tenant_id` — takes an id or a [name](../api/http-api.md#names-and-ids),
+and each name is replaced by its row's id, or by an id that matches no row, before step 1, so an
+unknown name fails step 4 exactly as an unknown id does. `name` is checked against the
+[name grammar](../api/http-api.md#names-and-ids) with the rest of the body, before step 0. The
+server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is a
+[CLI default](../cli/reference.md#oml-keys-issuance-revocation-rotation) the body carries like
+any other grant.
 
 `held_by` is the issuing admin's attestation, so an operator key's issuance that carries it is
 `request.validation`; `held_by: service` keys are issued by a tenant admin like every other
@@ -364,6 +375,10 @@ administer and propose or ratify edges holds two keys, because a key never combi
 role with dreamer-class grants (the two-key rule above). Semantics, including the universe root
 and the forward-only ladder, are declared in [workareas.md](workareas.md).
 
+**Crews.** Create crew records, update their charter URI and external manager, and point a
+workarea at a crew record — journalled acts on recorded, not operated, metadata
+([crews](workareas.md#crews-recorded-not-operated)). No agent role reaches them.
+
 **Reassignment.** Moving a claim between workareas is a journalled act whose event records both
 workareas' policy snapshots; a claim moved to a stricter-policy destination re-enters `held`, and
 reassignment into a `validated` workarea is refused. This paragraph is the declaration site for
@@ -434,6 +449,29 @@ can show, for every key, that its role was within its issuer's at the moment of 
 does not prevent an admin from issuing another admin key — tenant administration is delegable by
 design — it prevents escalation above the issuer.
 
+## Key names, principals and labels
+
+A key carries three identifying fields, and they are independent: none is derived from another on
+the server ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d9). This section is their single
+declaration site.
+
+| Field | What it is | Unique | Changes |
+|---|---|---|---|
+| `name` | What admin verbs address the key by — show, revoke, rotate, grants, denials, effective access, a simulation audience — wherever its id is accepted ([names](../api/http-api.md#names-and-ids)) | in its tenant; operator keys in the provider's namespace | never, and never released: a revoked or expired key keeps it |
+| `principal` | Who acts: the attribution identity in every journal envelope, shared by design across the keys one identity holds, compared by R2 and matched by bans | no | never |
+| `label` | An optional free-text note for the people who administer the key | no | never |
+
+A principal is not a name: the two keys of the two-key rule share one principal, and a principal
+may carry `/` (`crew-procure/agent-7`). Rotation mints a new key, so the successor takes a new name
+of its own, given in the rotation request. `oml keys issue-agent` sets the principal to the key
+name unless told otherwise, so every plugin key gets its own principal
+([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
+
+A key may also name a [crew](workareas.md#crews-recorded-not-operated) at issuance: journalled in
+`key.issued` as `crew_id`, fixed for the key's life and carried to a rotation's successor. It is
+the key→crew link the [independence axis](#review-independence-and-the-evidence-of-collusion)
+reads.
+
 ## Key format
 
 This section is normative for the key value itself: what crosses the wire, what is stored, and
@@ -490,9 +528,9 @@ issued-without-value. There is no "show me the key again" verb anywhere in the s
 error; nothing is deleted — the key row and its journalled history remain for the evidence export.
 
 **Rotation.** There is no in-place re-key. Rotation is one journalled act (`key.rotated`,
-[event catalog](../data/event-catalog.md)) that mints a successor key — a **new** `key_id`,
-linked to the old one by `rotated_from`, its grants reproduced from the journalled grant records
-— and starts a bounded grace window on the old key, its length the admin's choice
+[event catalog](../data/event-catalog.md)) that mints a successor key — a **new** `key_id` and a
+new [name](#key-names-principals-and-labels), linked to the old one by `rotated_from`, its grants
+and crew reproduced from the journalled records — and starts a bounded grace window on the old key, its length the admin's choice
 (`oml keys rotate --grace`, [cli/reference.md](../cli/reference.md)). The event carries both key
 ids and the grace deadline; the holder switches credentials inside the window, and at the
 deadline the old key is revoked — a journalled `key.revoked` citing the rotation as cause — so
@@ -522,6 +560,14 @@ resolved at promotion time from journalled key→crew→external-manager metadat
 - optionally, for `committed` workareas by policy: reviewer crew or external manager ≠ author crew
   — the second opinion must come from outside the authoring crew.
 
+A key's crew is the [crew record](workareas.md#crews-recorded-not-operated) it named at issuance
+([key names](#key-names-principals-and-labels)), and a crew's external manager is that record's
+`external_manager`. A key that names no crew satisfies neither optional requirement, and a crew
+that records no external manager satisfies no manager-inequality requirement: such a verdict does
+not count toward the requirement it cannot establish, and the row stays held until one that does
+— failing closed by holding, as admission does everywhere
+([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8).
+
 Both checks use metadata as journalled at promotion time, so a later crew reshuffle does not
 rewrite what was independent when the verdict landed.
 
@@ -538,6 +584,7 @@ no threshold auto-demotes anything.
 
 This page's decisions are registered as ADR-0010 ([decision register](../adr/index.md)); grant
 admissibility, the refusal order, the issuance order, own and the effective verbs are
-[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14). One
+[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14); key names and the
+key's crew are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9). One
 adjacent decision is named elsewhere: programs hold keys, humans hold ceremonies, and OAuth for
 MCP clients remains a named roadmap trigger ([roadmap](../product/roadmap.md)).

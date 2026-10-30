@@ -157,7 +157,7 @@ $ kubectl --namespace oml wait --for=condition=Ready pod --all --timeout=300s
 $ kubectl --namespace oml port-forward svc/oml-server 8080:8080 &
 $ kubectl --namespace oml get secret oml-enrollment -o jsonpath='{.data.token}' \
     | base64 -d \
-    | oml bootstrap claim --url http://localhost:8080 --token-stdin
+    | oml bootstrap claim --url http://localhost:8080 --name root-operator --token-stdin
 enrollment secret accepted — consumed (single-use)
 root operator key (shown once, journalled as issued-without-value):
   oml_3fJ9***************************************
@@ -227,7 +227,7 @@ $ oml standalone init --config oml-standalone.toml
   migrations applied (owner role) · keyring minted · data dir verified (local fs, conditional-put OK)
   enrollment secret written to ./oml-enrollment.token (single-use)
 $ oml standalone up --config oml-standalone.toml &
-$ oml bootstrap claim --url http://localhost:8080 --token-stdin < oml-enrollment.token
+$ oml bootstrap claim --url http://localhost:8080 --name root-operator --token-stdin < oml-enrollment.token
 root operator key (shown once, journalled as issued-without-value): oml_8Wkd***************************************
 ```
 
@@ -286,7 +286,7 @@ the consequences.
 $ curl -LO https://e8kor.github.io/open-memory-lab/compose/docker-compose.yaml
 $ docker compose up --detach --wait
 $ docker compose cp oml-bootstrap:/run/oml/enrollment.token - \
-    | oml bootstrap claim --url http://localhost:8080 --token-stdin
+    | oml bootstrap claim --url http://localhost:8080 --name root-operator --token-stdin
 ```
 
 Follower scale-out, when read load calls for it:
