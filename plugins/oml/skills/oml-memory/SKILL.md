@@ -10,32 +10,46 @@ An Open Memory Lab server holds every write for review. `oml_remember` succeeds 
 other keys only after a different identity approves it. Plan around that delay rather
 than writing the same fact twice.
 
-## Two connections, one server
+## One connection, one key
 
-The plugin connects twice. The `oml` connection uses the agent's writer key, so call
-`oml_remember`, `oml_learn`, `oml_supersede` and `oml_my_work` there. The `oml-recall`
-connection uses a reader key, so call `oml_recall`, `oml_workarea_info` and
-`oml_events_tail` there. Each connection lists all eight tools, and a tool called on the
-wrong connection is refused: `oml_remember`, `oml_learn` and `oml_supersede` with
-`access.verb_ceiling` on the reader key, and the three reads with `access.not_found` on a
-writer key that holds no reader grant. `oml_my_work` and `oml_get` answer on either
-connection for the writes of the key behind it; `oml_get` of another key's approved memory
-needs the `oml-recall` connection.
+The plugin connects once, as `oml`, with the agent's one key, and every tool runs there.
+The key holds a writer grant and a reader grant on its default workarea, so the whole loop
+is one connection:
+
+1. recall before you act (`oml_recall`);
+2. remember (`oml_remember`, `oml_learn`), which answers `held`;
+3. check your held writes (`oml_my_work`, `oml_get`, `oml_recall` with
+   `include_own_held: true`);
+4. follow what happens to them once a different identity reviews them (`oml_events_tail`);
+5. revise or retire what no longer holds (`oml_supersede`).
 
 ## Check what a workarea allows
 
 Call `oml_workarea_info` with no arguments to describe the key's default workarea, or pass
 `workarea` to name another. It returns the workarea's `path` and `status`, the child
 workareas the key can read, and `my_effective_verbs`: the verbs the key's grants allow
-there, such as `remember` or `recall`. The answer is about the key behind the connection
-you call, and a verb missing from the list is refused in that workarea.
+there, such as `remember` or `recall`. A verb missing from the list is refused in that
+workarea: with `access.verb_ceiling` when the key's role can never call it,
+`access.grant_refused` when the key can read the workarea but holds no grant for the verb,
+and `access.not_found` when it cannot read the workarea at all.
 
 ## Recall before you act
 
 Call `oml_recall` with a short query when earlier work might already answer the question.
-Recall returns only approved memories, never held ones, including your own. Rows under
-`steering` are standing instructions from the crew. They come before the hits and are not
-ranked, so read them first.
+Recall returns approved memories. Rows under `steering` are standing instructions from the
+crew. They come before the hits and are not ranked, so read them first.
+
+Pass `include_own_held: true` to search your own held writes as well. They come back among
+the hits with `state: "held"` and `tip: false`, and a held revision is listed beside the
+approved version it would replace. Recall never returns another key's held writes, and
+your own held steering and retirements are not in force until approved, so recall leaves
+them out; read them with `oml_my_work` and `oml_get`.
+
+Pass `max_tokens` to bound the answer. Every item carries its `tokens`, the server's count
+of one token per four bytes of text, rounded up, which is not your model's count. Steering
+is never cut. The hits served are the longest run from the top of the ranking that fits,
+and `budget` reports the cut: `truncated`, `hits_omitted` and `next_hit_tokens`, the size of
+the first hit left out. The same request on the same memories cuts the same way.
 
 The server matches words exactly, without stemming: `quote` does not find `quoted`. Use
 the words the memory most likely contains, and try a second query before you conclude
