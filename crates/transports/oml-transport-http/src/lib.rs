@@ -490,6 +490,14 @@ where
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
         let req: KeyIssueBody = parse_json(headers, body)?;
+        // Issued keys do not expire yet: a requested expiry is refused by
+        // name, since minting the key without it would leave the key its
+        // access past the issuer's date (ADR-0025 d2, d16).
+        if req.expiry.is_some() {
+            return Err(ApiError::validation(
+                "expiry on key issuance is not built: an issued key does not expire, so the field is refused, never dropped",
+            ));
+        }
         if req.tenant_id.is_some() {
             return Err(ApiError::validation(
                 "tenant_id on key issuance (operator first-admin-key path) is outside the PoC slice",
@@ -824,11 +832,8 @@ struct KeyIssueBody {
     grants: Vec<GrantBody>,
     label: Option<String>,
     principal: Option<String>,
+    /// Parsed only to be refused while key expiry is unbuilt (ADR-0025 d16).
     #[serde(default)]
-    #[allow(
-        dead_code,
-        reason = "key expiry is outside the PoC slice; issued keys do not expire"
-    )]
     expiry: Option<String>,
     held_by: Option<String>,
     default_workarea_id: Option<Uuid>,
