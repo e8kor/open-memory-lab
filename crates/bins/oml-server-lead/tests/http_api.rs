@@ -1201,6 +1201,36 @@ async fn an_unknown_issuance_field_is_request_validation() {
 }
 
 #[tokio::test]
+async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let head = head_seq(&rig, tenant).await;
+
+    // Issued keys do not expire yet, so a requested expiry is refused by
+    // name: a key minted without the expiry its issuer set would hold its
+    // access longer than meant (ADR-0025 d2, d16).
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("expiring").body(json!({
+            "role": "writer",
+            "grants": [{ "workarea_node_id": crew, "role": "writer" }],
+            "expiry": "2027-01-01T00:00:00Z",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_envelope(&refused, "request.validation");
+    let message = refused["error"]["message"].as_str().expect("message");
+    assert!(message.contains("expiry"), "{refused}");
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
 async fn access_refusals_carry_their_recovery_details() {
     let rig = fresh_rig().await;
     let router = &rig.router;
