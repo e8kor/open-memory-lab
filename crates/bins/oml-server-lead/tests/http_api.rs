@@ -808,7 +808,8 @@ async fn full_happy_path_over_http() {
     assert_eq!(successor["claim_key"], "supplier-quote-am-7741");
     assert_ne!(successor["artifact_id"], accepted["artifact_id"]);
 
-    // The old tip flipped in the same journalled act.
+    // The old tip flipped in the same journalled act; supersession adds no
+    // state, so the replaced version reads promoted (ADR-0025 d10).
     let (status, _, body) = send(
         router,
         "GET",
@@ -817,7 +818,7 @@ async fn full_happy_path_over_http() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["state"], "superseded");
+    assert_eq!(body["state"], "promoted");
     assert_eq!(body["tip"], false);
 
     // A second supersession of the same target: not the current tip.
@@ -854,6 +855,24 @@ async fn full_happy_path_over_http() {
     .await;
     assert_eq!(status, StatusCode::OK, "{verdict}");
     assert_eq!(verdict["state"], "promoted");
+
+    // The ratified successor is the claim's one hit; the version it replaced
+    // is never a hit (retrieval.md; ADR-0025 d8).
+    let (status, _, recall) = send(
+        router,
+        "POST",
+        "/v1/memories/recall",
+        Call::auth(&reader).body(json!({"query": "Accra Metals", "k": 8})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    let hits: Vec<&Value> = recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| &h["memory"]["artifact_id"])
+        .collect();
+    assert_eq!(hits, vec![&successor["artifact_id"]], "{recall}");
 
     // X-OML-Workarea: the explicit per-request override (ADR-0022 d4).
     let (status, _, body) = send(

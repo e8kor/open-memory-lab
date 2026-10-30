@@ -53,8 +53,9 @@ pub enum MetadataFold {
     MemoryRejected {
         memory_id: Uuid,
     },
-    /// The old tip transitions to superseded; the successor enters held and
-    /// is queued for review like any write.
+    /// The old tip stays promoted and stops being the tip (its
+    /// `superseded_by` names the successor, ADR-0025 d10); the successor
+    /// enters held and is queued for review like any write.
     MemorySuperseded {
         superseded: Uuid,
         successor: MemoryRecord,

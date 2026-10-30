@@ -164,7 +164,6 @@ fn status_from_str(s: &str) -> Result<MemoryStatus, StoreError> {
         "held" => Ok(MemoryStatus::Held),
         "promoted" => Ok(MemoryStatus::Promoted),
         "rejected" => Ok(MemoryStatus::Rejected),
-        "superseded" => Ok(MemoryStatus::Superseded),
         other => Err(StoreError::Backend(format!(
             "unknown memory status {other:?}"
         ))),
@@ -431,11 +430,13 @@ async fn apply_fold(
             successor,
         } => {
             // Successor first: the target's superseded_by FK points at it.
+            // The replaced version stays 'promoted'; only the tip moves
+            // (ADR-0025 d10).
             let successor_id = successor.memory_id;
             insert_memory(tx, event_id, &successor).await?;
             enqueue_review(tx, tenant_id, successor_id).await?;
             sqlx::query(
-                "UPDATE memories SET status = 'superseded', superseded_by = $3 \
+                "UPDATE memories SET superseded_by = $3 \
                  WHERE tenant_id = $1 AND id = $2",
             )
             .bind(tenant_id)
@@ -670,11 +671,13 @@ impl JournalStore for PgStore {
         let k = i64::try_from(k).unwrap_or(i64::MAX);
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // Promoted only (retrieval.md R3 at the store); the 'simple'
-        // configuration matches 0001's GIN expression index.
+        // Promoted tips only (retrieval.md R3 at the store; a replaced
+        // version is never a hit, ADR-0025 d8); the 'simple' configuration
+        // matches 0001's GIN expression index.
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m \
              WHERE m.tenant_id = $1 AND m.status = 'promoted' \
+               AND m.superseded_by IS NULL \
                AND ($2::uuid IS NULL OR m.workarea_id = $2) \
                AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
              ORDER BY ts_rank(to_tsvector('simple', m.claim), \
