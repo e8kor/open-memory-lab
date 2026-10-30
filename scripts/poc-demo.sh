@@ -121,9 +121,12 @@ step "create a child workarea under the root ($ROOT_WA)" 0 \
     "$OML" --json workareas create "$ROOT_WA" poc-metals
 WA="$(jqf .id)"
 
-step "issue a writer key (held by an agent)" 0 \
+# Each key carries only grant roles its key role admits (the admissibility
+# table, ADR-0025 d1): writer admits reader and writer, dreamer admits reader
+# and dreamer, reader admits reader.
+step "issue the agent's writer key with a writer and a reader grant (one key writes and recalls)" 0 \
     "$OML" --json keys issue --role writer --held-by agent \
-    --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:writer"
+    --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:writer" --grant "$WA:reader"
 WRITER="$(jqf .value)"
 
 step "issue a dreamer key (held by a human reviewer)" 0 \
@@ -131,7 +134,7 @@ step "issue a dreamer key (held by a human reviewer)" 0 \
     --principal crew/maya --default-workarea "$WA" --grant "$WA:dreamer"
 DREAMER="$(jqf .value)"
 
-step "issue a reader key (recall and the audit tail are reader-scope; roles never nest)" 0 \
+step "issue a reader key for a second identity that only reads (a reader key admits reader grants only)" 0 \
     "$OML" --json keys issue --role reader --held-by service \
     --principal crew/recall-bot --default-workarea "$WA" --grant "$WA:reader"
 READER="$(jqf .value)"
@@ -161,6 +164,10 @@ step "recall after promotion: the claim is served" 0 \
     "$OML" --key "$READER" --json recall --query "Accra Metals"
 [ "$(jqf '.hits | length')" -ge 1 ] || fail "promoted row missing from recall"
 jqf '.hits[0].memory.artifact_id' | grep -q "$ARTIFACT" || fail "recall hit is not the promoted artifact"
+
+step "recall after promotion with the agent's own writer key (its reader grant serves recall)" 0 \
+    "$OML" --key "$WRITER" --json recall --query "Accra Metals"
+jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the writer key's reader grant did not serve recall"
 
 # --- R2: the reviewer is never the author ------------------------------------
 step "issue a dreamer key to the AUTHOR's principal (crew/agent-blue also reviews?)" 0 \
