@@ -22,7 +22,7 @@ use crate::ports::{
 };
 use crate::types::{
     ClaimKeyState, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, WorkareaRecord,
+    ListingPosition, ListingScope, MemoryRecord, RecallCandidate, WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -48,6 +48,31 @@ fn words(text: &str) -> BTreeSet<String> {
         .filter(|w| !w.is_empty())
         .map(str::to_lowercase)
         .collect()
+}
+
+/// The rows that match `query`, as candidates in the total order of hits,
+/// at most `k`: this store's score is the count of distinct query terms
+/// matched (retrieval.md, the recall-ordering contract; ADR-0025 d8).
+fn ranked<'a>(
+    rows: impl Iterator<Item = &'a MemoryRecord>,
+    query: &str,
+    k: usize,
+) -> Vec<RecallCandidate> {
+    let terms = words(query);
+    let mut hits: Vec<RecallCandidate> = rows
+        .filter_map(|m| {
+            let body = words(&m.body);
+            let matched = terms.iter().filter(|t| body.contains(*t)).count();
+            (matched > 0).then_some(RecallCandidate {
+                memory_id: m.memory_id,
+                body_bytes: m.body_bytes,
+                score: matched as f32,
+            })
+        })
+        .collect();
+    hit_order(&mut hits, |c| (c.score, c.memory_id));
+    hits.truncate(k);
+    hits
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +466,21 @@ impl JournalStore for MemStore {
         Ok(state.memories.get(&memory_id).cloned())
     }
 
+    async fn memories(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(memory_ids
+            .iter()
+            .filter_map(|id| state.memories.get(id).cloned())
+            .collect())
+    }
+
     async fn recall_fts(
         &self,
         tenant_id: Uuid,
@@ -448,28 +488,49 @@ impl JournalStore for MemStore {
         query: &str,
         kinds: &[MemoryKind],
         k: usize,
-    ) -> Result<Vec<(MemoryRecord, f32)>, StoreError> {
+    ) -> Result<Vec<RecallCandidate>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
-        let terms = words(query);
-        let mut hits: Vec<(MemoryRecord, f32)> = state
-            .memories
-            .values()
-            .filter(|m| served_tip(m) && HIT_KINDS.contains(&m.kind) && kinds.contains(&m.kind))
-            .filter(|m| readable.contains(&m.workarea_id))
-            .filter_map(|m| {
-                // This store's score is the count of distinct query terms
-                // matched (retrieval.md, the recall-ordering contract).
-                let body = words(&m.body);
-                let matched = terms.iter().filter(|t| body.contains(*t)).count();
-                (matched > 0).then(|| (m.clone(), matched as f32))
-            })
-            .collect();
-        hit_order(&mut hits, |(m, score)| (*score, m.memory_id));
-        hits.truncate(k);
-        Ok(hits)
+        Ok(ranked(
+            state
+                .memories
+                .values()
+                .filter(|m| served_tip(m) && HIT_KINDS.contains(&m.kind) && kinds.contains(&m.kind))
+                .filter(|m| readable.contains(&m.workarea_id)),
+            query,
+            k,
+        ))
+    }
+
+    async fn recall_own_held(
+        &self,
+        tenant_id: Uuid,
+        author_key_ids: &[Uuid],
+        readable: &[Uuid],
+        query: &str,
+        kinds: &[MemoryKind],
+        k: usize,
+    ) -> Result<Vec<RecallCandidate>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        // The state and the author predicate are this read's own, never the
+        // caller's to forget (ADR-0025 d5).
+        Ok(ranked(
+            state
+                .memories
+                .values()
+                .filter(|m| {
+                    m.status == MemoryStatus::Held && author_key_ids.contains(&m.author_key_id)
+                })
+                .filter(|m| !m.retirement && HIT_KINDS.contains(&m.kind) && kinds.contains(&m.kind))
+                .filter(|m| readable.contains(&m.workarea_id)),
+            query,
+            k,
+        ))
     }
 
     async fn steering_in_force(

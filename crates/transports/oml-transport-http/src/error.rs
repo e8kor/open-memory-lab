@@ -276,6 +276,9 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::DefaultUncovered { workarea_id } => ApiError::validation(format!(
             "default_workarea_id {workarea_id} is covered by no grant of the key"
         )),
+        AppError::BudgetWithoutBodies => ApiError::validation(
+            "max_tokens is refused with include_bodies false: a budget counts bodies that would not be sent",
+        ),
         AppError::WorkareaUnresolved => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "request.workarea_unresolved",

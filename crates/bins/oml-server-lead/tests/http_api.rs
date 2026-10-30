@@ -1882,6 +1882,637 @@ async fn terms_on_recall_is_refused_by_name_until_built() {
 }
 
 // ---------------------------------------------------------------------------
+// Own held rows in recall and the max_tokens budget (ADR-0025 d4, d5, d6,
+// d7, d9)
+// ---------------------------------------------------------------------------
+
+/// Budget tokens of `text`, an NFC literal: ⌈UTF-8 bytes ÷ 4⌉ under counter
+/// `oml-tc/1` (retrieval.md token budgets).
+fn tokens(text: &str) -> u64 {
+    (text.len() as u64).div_ceil(4)
+}
+
+/// A crew and its supersession keys: (rig, admin, crew, agent, dreamer,
+/// reader), the agent a writer key holding writer and reader.
+async fn own_held_rig() -> (Rig, String, Uuid, String, String, String) {
+    let rig = fresh_rig().await;
+    let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
+    let (agent, dreamer, reader) = supersession_keys(&rig.router, &admin, crew).await;
+    (rig, admin, crew, agent, dreamer, reader)
+}
+
+/// One recall over HTTP at the key's default scope, answered 200.
+async fn recall_ok(router: &Router, token: &str, body: Value) -> Value {
+    let (status, recall) = recall_over_http(router, token, None, body).await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    recall
+}
+
+/// The `(state, tip)` of each hit, in order.
+fn hit_states(recall: &Value) -> Vec<(Value, Value)> {
+    recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| (h["memory"]["state"].clone(), h["memory"]["tip"].clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
+    let (rig, admin, crew, agent, _dreamer, reader) = own_held_rig().await;
+    let router = &rig.router;
+    let row = remember(
+        router,
+        &agent,
+        "accra",
+        "Accra Metals aluminium price is 412 USD/t.",
+        None,
+    )
+    .await;
+
+    let query = json!({"query": "aluminium price", "include_own_held": true});
+    let recall = recall_ok(router, &agent, query.clone()).await;
+    assert_eq!(hit_ids(&recall), vec![json!(row)], "{recall}");
+    assert_eq!(hit_states(&recall), vec![(json!("held"), json!(false))]);
+    let off = recall_ok(router, &agent, json!({"query": "aluminium price"})).await;
+    assert_eq!(off["hits"], json!([]), "the flag defaults off: {off}");
+
+    // Own is the authoring key, never the principal (roles-and-keys.md#own).
+    let value = |body: Value| body["value"].as_str().expect("value").to_owned();
+    let same_reader = issue_key(router, &admin, "reader", "crew/agent-7", crew).await;
+    let same_dreamer = value(
+        issue_key_with(
+            router,
+            &admin,
+            "dreamer",
+            "crew/agent-7",
+            json!([
+                { "workarea_node_id": crew, "role": "dreamer" },
+                { "workarea_node_id": crew, "role": "reader" },
+            ]),
+        )
+        .await,
+    );
+    for key in [&same_reader, &same_dreamer, &reader] {
+        let recall = recall_ok(router, key, query.clone()).await;
+        assert_eq!(recall["hits"], json!([]), "{recall}");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
+    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let router = &rig.router;
+    // ts_rank grows with the occurrences of the one query term.
+    let best = promoted_over_http(router, &agent, &dreamer, "p1", "canary canary canary").await;
+    let worst = promoted_over_http(router, &agent, &dreamer, "p2", "canary").await;
+    let row = remember(router, &agent, "h1", "canary canary", None).await;
+
+    let recall = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "include_own_held": true}),
+    )
+    .await;
+    assert_eq!(
+        hit_ids(&recall),
+        vec![json!(best), json!(row), json!(worst)],
+        "one total order across states: {recall}"
+    );
+    assert_eq!(
+        hit_states(&recall),
+        vec![
+            (json!("promoted"), json!(true)),
+            (json!("held"), json!(false)),
+            (json!("promoted"), json!(true)),
+        ]
+    );
+    let scores: Vec<f64> = recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| h["score"].as_f64().expect("score"))
+        .collect();
+    assert!(scores.windows(2).all(|w| w[0] > w[1]), "{scores:?}");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn own_held_rows_count_against_k_and_the_budget() {
+    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let router = &rig.router;
+    let (two_text, held_text) = ("canary canary", "canary canary canary");
+    let two = promoted_over_http(router, &agent, &dreamer, "p1", two_text).await;
+    let one = promoted_over_http(router, &agent, &dreamer, "p2", "canary").await;
+    let row = remember(router, &agent, "h1", held_text, None).await;
+
+    let with = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "k": 2, "include_own_held": true}),
+    )
+    .await;
+    assert_eq!(hit_ids(&with), vec![json!(row), json!(two)], "{with}");
+    let without = recall_ok(router, &agent, json!({"query": "canary", "k": 2})).await;
+    assert_eq!(hit_ids(&without), vec![json!(two), json!(one)], "{without}");
+
+    let filled = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "include_own_held": true, "max_tokens": tokens(held_text)}),
+    )
+    .await;
+    assert_eq!(hit_ids(&filled), vec![json!(row)], "{filled}");
+    assert_eq!(
+        filled["budget"],
+        json!({
+            "max_tokens": tokens(held_text),
+            "counter": "oml-tc/1",
+            "steering_tokens": 0,
+            "used_tokens": tokens(held_text),
+            "truncated": true,
+            "hits_omitted": 2,
+            "next_hit_tokens": tokens(two_text),
+        })
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn own_held_steering_and_retirement_rows_never_enter_recall() {
+    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let router = &rig.router;
+    let target = promoted_over_http(router, &agent, &dreamer, "claim", "the canary claim").await;
+    let (status, _, steering) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&agent).idem("s-held").body(json!({
+            "verb": "remember", "claim_key": "steer", "kind": "steering",
+            "body": "canary steering, held",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{steering}");
+    let (status, _, retirement) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{target}/supersede"),
+        Call::auth(&agent).idem("ret-1").body(json!({
+            "body": "retired: the canary lapsed",
+            "retirement": true,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{retirement}");
+
+    // Neither is in force, so neither is recalled; the promoted tip stays.
+    let recall = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "include_own_held": true}),
+    )
+    .await;
+    assert_eq!(hit_ids(&recall), vec![json!(target)], "{recall}");
+    assert_eq!(recall["steering"], json!([]), "{recall}");
+    // Get reaches both: they are the key's own (ADR-0025 d3).
+    for row in [&steering, &retirement] {
+        let id = row["artifact_id"].as_str().expect("id");
+        let (status, _, got) = send(
+            router,
+            "GET",
+            &format!("/v1/memories/{id}"),
+            Call::auth(&agent),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{got}");
+        assert_eq!(got["state"], "held", "{got}");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn include_own_held_never_widens_the_workareas_served() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let quotes = create_workarea(router, &admin, crew, "quotes").await;
+    let freight = create_workarea(router, &admin, crew, "freight").await;
+    let quarantine = create_workarea(router, &admin, quotes, "quarantine").await;
+    // The key writes the whole crew but reads only quotes, and a global
+    // denial masks quarantine beneath it.
+    let (agent, key_id) = key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "issue-agent",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": quotes, "role": "reader" },
+        ]),
+    )
+    .await;
+    let mut rows = Vec::new();
+    for (claim_key, wa) in [
+        ("q", quotes),
+        ("f", freight),
+        ("c", crew),
+        ("x", quarantine),
+    ] {
+        rows.push(remember(router, &agent, claim_key, "the canary held", Some(wa)).await);
+    }
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        &format!("/v2/keys/{key_id}/denials"),
+        Call::auth(&admin)
+            .idem("d-1")
+            .body(json!({ "workarea_node_id": quarantine })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    let query = json!({"query": "canary", "include_own_held": true});
+    let (status, recall) = recall_over_http(router, &agent, Some(quotes), query.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(
+        hit_ids(&recall),
+        vec![json!(rows[0])],
+        "subtree(scope) within reader access, minus global denials: {recall}"
+    );
+    // The recall ceiling is unchanged: reader on the scope, own rows or not.
+    for scope in [crew, freight] {
+        let (status, refused) = recall_over_http(router, &agent, Some(scope), query.clone()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+        assert_envelope(&refused, "access.not_found");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
+    let (rig, _admin, _crew, agent, dreamer, reader) = own_held_rig().await;
+    let router = &rig.router;
+    let target = promoted_over_http(
+        router,
+        &agent,
+        &dreamer,
+        "quote",
+        "the canary quote is 412 USD/t",
+    )
+    .await;
+    let (status, _, proposal) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{target}/supersede"),
+        Call::auth(&agent)
+            .idem("sup-1")
+            .body(json!({ "body": "the canary quote is 409 USD/t" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+    let successor = proposal["artifact_id"].clone();
+
+    let query = json!({"query": "canary quote", "include_own_held": true});
+    let recall = recall_ok(router, &agent, query.clone()).await;
+    let hits = recall["hits"].as_array().expect("hits");
+    assert_eq!(hits.len(), 2, "never deduplicated: {recall}");
+    let hit = |id: &Value| {
+        &hits
+            .iter()
+            .find(|h| &h["memory"]["artifact_id"] == id)
+            .expect("served")["memory"]
+    };
+    let held = hit(&successor);
+    assert_eq!(
+        (&held["state"], &held["tip"]),
+        (&json!("held"), &json!(false))
+    );
+    assert_eq!(
+        held["replaces"],
+        json!({"artifact_id": target, "version": 1}),
+        "{held}"
+    );
+    let tip = hit(&json!(target));
+    assert_eq!(
+        (&tip["state"], &tip["tip"]),
+        (&json!("promoted"), &json!(true))
+    );
+
+    // Every other key recalls the target alone until ratification.
+    let other = recall_ok(router, &reader, query).await;
+    assert_eq!(hit_ids(&other), vec![json!(target)], "{other}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A crew with one promoted steering row and three promoted memories that
+/// rank by their `canary` count, 3, 2 and 1, the second the largest body:
+/// (rig, reader, steering id, hit ids in rank order, steering tokens, hit
+/// tokens in rank order).
+async fn budget_rig() -> (Rig, String, Value, Vec<Value>, u64, Vec<u64>) {
+    let (rig, _admin, crew, agent, dreamer, reader) = own_held_rig().await;
+    let steering_text = "Quote every price in USD/t.";
+    let texts = [
+        "canary canary canary",
+        "canary canary, then wait out the whole quarter before anyone settles it",
+        "canary",
+    ];
+    let steering = promote_over_http(
+        &rig.router,
+        &agent,
+        &dreamer,
+        crew,
+        ("units", "steering", steering_text),
+    )
+    .await;
+    let mut hits = Vec::new();
+    for (n, text) in texts.iter().enumerate() {
+        let claim_key = format!("m{n}");
+        hits.push(
+            promote_over_http(
+                &rig.router,
+                &agent,
+                &dreamer,
+                crew,
+                (&claim_key, "memory", text),
+            )
+            .await,
+        );
+    }
+    let counts = texts.iter().map(|t| tokens(t)).collect();
+    (rig, reader, steering, hits, tokens(steering_text), counts)
+}
+
+#[tokio::test]
+async fn max_tokens_keeps_the_longest_rank_prefix_and_reports_the_budget() {
+    let (rig, reader, steering, hits, s, t) = budget_rig().await;
+    let router = &rig.router;
+    assert!(t[1] > t[2], "the third hit fits where the second does not");
+
+    // After steering and the first hit, what remains fits the third hit but
+    // not the second: the first that does not fit ends the list.
+    let max = s + t[0] + t[2];
+    let recall = recall_ok(
+        router,
+        &reader,
+        json!({"query": "canary", "max_tokens": max}),
+    )
+    .await;
+    assert_eq!(steering_ids(&recall), vec![steering], "{recall}");
+    assert_eq!(
+        hit_ids(&recall),
+        vec![hits[0].clone()],
+        "no skip-ahead: {recall}"
+    );
+    assert_eq!(
+        recall["budget"],
+        json!({
+            "max_tokens": max,
+            "counter": "oml-tc/1",
+            "steering_tokens": s,
+            "used_tokens": s + t[0],
+            "truncated": true,
+            "hits_omitted": 2,
+            "next_hit_tokens": t[1],
+        })
+    );
+
+    // A budget every candidate fits cuts nothing.
+    let all = s + t.iter().sum::<u64>();
+    let recall = recall_ok(
+        router,
+        &reader,
+        json!({"query": "canary", "max_tokens": all}),
+    )
+    .await;
+    assert_eq!(hit_ids(&recall), hits, "{recall}");
+    assert_eq!(recall["budget"]["truncated"], false);
+    assert_eq!(recall["budget"]["hits_omitted"], 0);
+    assert_eq!(recall["budget"]["next_hit_tokens"], Value::Null);
+    assert_eq!(recall["budget"]["used_tokens"], all);
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn steering_past_the_budget_is_served_whole_with_no_hits_and_truncated() {
+    let (rig, reader, steering, _hits, s, t) = budget_rig().await;
+    let recall = recall_ok(
+        &rig.router,
+        &reader,
+        json!({"query": "canary", "max_tokens": s - 1}),
+    )
+    .await;
+    assert_eq!(steering_ids(&recall), vec![steering], "{recall}");
+    assert_eq!(
+        recall["steering"][0]["body"], "Quote every price in USD/t.",
+        "served whole"
+    );
+    assert_eq!(recall["hits"], json!([]), "{recall}");
+    assert_eq!(
+        recall["budget"],
+        json!({
+            "max_tokens": s - 1,
+            "counter": "oml-tc/1",
+            "steering_tokens": s,
+            "used_tokens": s,
+            "truncated": true,
+            "hits_omitted": 3,
+            "next_hit_tokens": t[0],
+        })
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn every_steering_item_and_hit_carries_its_tokens() {
+    let (rig, _admin, crew, agent, dreamer, _reader) = own_held_rig().await;
+    let router = &rig.router;
+    // Each text is sent decomposed; its count is its NFC text's, which here
+    // is one budget token fewer (retrieval.md token budgets; ADR-0025 d6).
+    let [steering_text, hit_text, held_text] =
+        ["café canary", "the café canary", "own café canary"];
+    let decomposed = |text: &str| text.replace('é', "e\u{301}");
+    for text in [steering_text, hit_text, held_text] {
+        assert_ne!(tokens(text), tokens(&decomposed(text)), "{text}");
+    }
+    let steering = promote_over_http(
+        router,
+        &agent,
+        &dreamer,
+        crew,
+        ("units", "steering", &decomposed(steering_text)),
+    )
+    .await;
+    let hit = promote_over_http(
+        router,
+        &agent,
+        &dreamer,
+        crew,
+        ("cafe", "memory", &decomposed(hit_text)),
+    )
+    .await;
+    let row = remember(router, &agent, "own", &decomposed(held_text), None).await;
+    let expected = [
+        (steering, tokens(steering_text)),
+        (hit, tokens(hit_text)),
+        (json!(row), tokens(held_text)),
+    ];
+
+    // With and without a budget, with and without bodies.
+    for body in [
+        json!({"query": "canary", "include_own_held": true}),
+        json!({"query": "canary", "include_own_held": true, "include_bodies": false}),
+        json!({"query": "canary", "include_own_held": true, "max_tokens": 100}),
+    ] {
+        let recall = recall_ok(router, &agent, body).await;
+        let served: Vec<(Value, Value)> = recall["steering"]
+            .as_array()
+            .expect("steering")
+            .iter()
+            .chain(
+                recall["hits"]
+                    .as_array()
+                    .expect("hits")
+                    .iter()
+                    .map(|h| &h["memory"]),
+            )
+            .map(|m| (m["artifact_id"].clone(), m["tokens"].clone()))
+            .collect();
+        assert_eq!(served.len(), 3, "{recall}");
+        for (id, count) in &expected {
+            assert!(
+                served.contains(&(id.clone(), json!(count))),
+                "{id}: {recall}"
+            );
+        }
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn the_same_budgeted_recall_answers_identically_twice() {
+    let (rig, reader, _steering, hits, s, t) = budget_rig().await;
+    let body = json!({"query": "canary", "max_tokens": s + t[0] + t[2]});
+    let first = recall_ok(&rig.router, &reader, body.clone()).await;
+    let second = recall_ok(&rig.router, &reader, body).await;
+    assert_eq!(hit_ids(&first), vec![hits[0].clone()], "{first}");
+    assert_eq!(first["budget"]["truncated"], true);
+    assert_eq!(first, second, "the cut is deterministic");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_recall_without_max_tokens_carries_no_budget_object() {
+    let (rig, reader, _steering, hits, _s, _t) = budget_rig().await;
+    let recall = recall_ok(&rig.router, &reader, json!({"query": "canary"})).await;
+    assert!(recall.get("budget").is_none(), "{recall}");
+    assert_eq!(hit_ids(&recall), hits, "nothing is cut: {recall}");
+    let budgeted = recall_ok(
+        &rig.router,
+        &reader,
+        json!({"query": "canary", "max_tokens": 10_000}),
+    )
+    .await;
+    assert!(budgeted["budget"].is_object(), "{budgeted}");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn max_tokens_with_include_bodies_false_is_request_validation() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+
+    for body in [
+        json!({"query": "canary", "max_tokens": 500, "include_bodies": false}),
+        // max_tokens is an integer ≥ 1 that RFC 8785 digests exactly.
+        json!({"query": "canary", "max_tokens": 0}),
+        json!({"query": "canary", "max_tokens": 9_007_199_254_740_992_u64}),
+        json!({"query": "canary", "max_tokens": -1}),
+        json!({"query": "canary", "max_tokens": "500"}),
+        json!({"query": "canary", "include_own_held": "yes"}),
+    ] {
+        let (status, refused) = recall_over_http(router, &reader, None, body.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+    // Either alone is a recall.
+    for body in [
+        json!({"query": "canary", "include_bodies": false}),
+        json!({"query": "canary", "max_tokens": 500}),
+        json!({"query": "canary", "max_tokens": 9_007_199_254_740_991_u64}),
+    ] {
+        recall_ok(router, &reader, body).await;
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let digest = |body: Value| {
+        let reader = reader.clone();
+        async move { recall_ok(router, &reader, body).await["query_digest"].clone() }
+    };
+
+    // Every member is present with its default applied, the scope the
+    // resolved node (retrieval.md, the read log; ADR-0025 d9).
+    let base = digest(json!({"query": "canary"})).await;
+    let canonical = format!(
+        "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
+         \"k\":8,\"kinds\":[],\"max_tokens\":null,\"query\":\"canary\",\
+         \"scope\":\"{crew}\",\"terms\":[]}}"
+    );
+    assert_eq!(base, json!(sha256_digest_string(canonical.as_bytes())));
+    assert_eq!(
+        digest(
+            json!({"query": "canary", "k": 8, "include_bodies": true, "include_own_held": false})
+        )
+        .await,
+        base,
+        "a default sent is the default applied"
+    );
+
+    let budget = digest(json!({"query": "canary", "max_tokens": 500})).await;
+    assert_ne!(budget, base, "max_tokens is digested");
+    assert_ne!(
+        digest(json!({"query": "canary", "max_tokens": 501})).await,
+        budget
+    );
+    assert_ne!(
+        digest(json!({"query": "canary", "include_own_held": true})).await,
+        base,
+        "include_own_held is digested"
+    );
+    assert_eq!(
+        digest(json!({"query": "canary", "kinds": ["memory", "derived_fact"]})).await,
+        digest(json!({"query": "canary", "kinds": ["derived_fact", "memory", "memory"]})).await,
+        "only the order and repetition of kinds never matter"
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
 // The claim item's real fields (ADR-0025 d6, d10, d12)
 // ---------------------------------------------------------------------------
 
