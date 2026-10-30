@@ -830,10 +830,12 @@ pub async fn a_grant_epoch_is_its_event_seq<S: JournalStore>(store: &S) {
     );
 }
 
-/// A grant or denial the schema refuses — an unknown key or node, or a
-/// grant role outside reader, writer and dreamer — fails its commit whole:
-/// no event, no row (postgres-schema.md grants CHECK and foreign keys;
-/// ADR-0002 one-transaction commit).
+/// A grant or denial the schema refuses — an unknown key or node, a key or
+/// node another tenant holds, or a grant role outside reader, writer and
+/// dreamer — fails its commit whole: no event, no row (postgres-schema.md
+/// grants CHECK and tenant-scoped foreign keys; ADR-0002 one-transaction
+/// commit). Each case carries its own id, so one wrongly accepted row cannot
+/// make a later case fail on a duplicate id instead.
 pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(12);
     rig.seed_chain(store, 0).await;
@@ -843,61 +845,80 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
         .await;
     let key = key_record(t, Uuid::from_u128(0xD30), Role::Writer, None);
     rig.issue_key(store, key.clone()).await;
+    let mut other = ChainRig::new(20);
+    other.seed_chain(store, 0).await;
+    let foreign_node = Uuid::from_u128(0xB31);
+    other
+        .create_workarea(
+            store,
+            workarea_record(other.tenant_id, foreign_node, None, "universe"),
+        )
+        .await;
+    let foreign_key = key_record(other.tenant_id, Uuid::from_u128(0xD31), Role::Writer, None);
+    other.issue_key(store, foreign_key.clone()).await;
     let head = store.chain_head(t).await.expect("head");
     let unknown = Uuid::from_u128(0xBFF);
-    let grant = |node, role| Grant {
-        grant_id: Uuid::from_u128(0xF30),
+    let grant = |id, node, role| Grant {
+        grant_id: Uuid::from_u128(id),
         node,
         role,
         deny: Vec::new(),
+    };
+    let denial = |id, node| KeyDenial {
+        denial_id: Uuid::from_u128(id),
+        node,
     };
 
     let refusals = [
         (
             "a grant on an unknown key",
-            rig.issue_grant(store, unknown, grant(node, Role::Reader))
+            rig.issue_grant(store, unknown, grant(0xF30, node, Role::Reader))
                 .await,
         ),
         (
             "a grant on an unknown node",
-            rig.issue_grant(store, key.key_id, grant(unknown, Role::Reader))
+            rig.issue_grant(store, key.key_id, grant(0xF31, unknown, Role::Reader))
+                .await,
+        ),
+        (
+            "a grant on another tenant's key",
+            rig.issue_grant(store, foreign_key.key_id, grant(0xF32, node, Role::Reader))
+                .await,
+        ),
+        (
+            "a grant on another tenant's node",
+            rig.issue_grant(store, key.key_id, grant(0xF33, foreign_node, Role::Reader))
                 .await,
         ),
         (
             "an admin grant",
-            rig.issue_grant(store, key.key_id, grant(node, Role::Admin))
+            rig.issue_grant(store, key.key_id, grant(0xF34, node, Role::Admin))
                 .await,
         ),
         (
             "an operator grant",
-            rig.issue_grant(store, key.key_id, grant(node, Role::Operator))
+            rig.issue_grant(store, key.key_id, grant(0xF35, node, Role::Operator))
                 .await,
         ),
         (
             "a denial on an unknown key",
-            rig.deny_key(
-                store,
-                unknown,
-                KeyDenial {
-                    denial_id: Uuid::from_u128(0xF31),
-                    node,
-                },
-                key.key_id,
-            )
-            .await,
+            rig.deny_key(store, unknown, denial(0xF36, node), key.key_id)
+                .await,
         ),
         (
             "a denial on an unknown node",
-            rig.deny_key(
-                store,
-                key.key_id,
-                KeyDenial {
-                    denial_id: Uuid::from_u128(0xF31),
-                    node: unknown,
-                },
-                key.key_id,
-            )
-            .await,
+            rig.deny_key(store, key.key_id, denial(0xF37, unknown), key.key_id)
+                .await,
+        ),
+        (
+            "a denial on another tenant's key",
+            rig.deny_key(store, foreign_key.key_id, denial(0xF38, node), key.key_id)
+                .await,
+        ),
+        (
+            "a denial on another tenant's node",
+            rig.deny_key(store, key.key_id, denial(0xF39, foreign_node), key.key_id)
+                .await,
         ),
     ];
     for (case, result) in refusals {
@@ -911,14 +932,23 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
         head,
         "a refused fold journals nothing"
     );
+    let untouched = Some(KeyAccess {
+        issued_seq: 3,
+        grants: Vec::new(),
+        denials: Vec::new(),
+    });
     assert_eq!(
         store.key_access(t, key.key_id).await.expect("read"),
-        Some(KeyAccess {
-            issued_seq: 3,
-            grants: Vec::new(),
-            denials: Vec::new(),
-        }),
+        untouched,
         "a refused fold writes no row"
+    );
+    assert_eq!(
+        store
+            .key_access(other.tenant_id, foreign_key.key_id)
+            .await
+            .expect("read"),
+        untouched,
+        "nor any row on the other tenant's key"
     );
 }
 

@@ -84,8 +84,9 @@ impl MemStore {
     }
 }
 
-/// The rows a grant or denial names must be held, as the schema's foreign
-/// keys require (postgres-schema.md `grants`, `key_denials`).
+/// The rows a grant or denial names must be held by its own tenant, as the
+/// schema's tenant-scoped foreign keys require (postgres-schema.md `grants`,
+/// `key_denials`).
 fn require_held(state: &TenantState, key_id: Uuid, node: Uuid) -> Result<(), StoreError> {
     if !state.access.contains_key(&key_id) {
         return Err(StoreError::Backend(format!(

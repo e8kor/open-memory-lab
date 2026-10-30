@@ -233,7 +233,8 @@ CREATE TABLE workareas (
     status     text        NOT NULL
         CHECK (status IN ('development', 'committed', 'validated')),
     crew       jsonb,                  -- {name, charter_uri, external_manager}
-    created_at timestamptz NOT NULL
+    created_at timestamptz NOT NULL,
+    UNIQUE (tenant_id, id)             -- target of the tenant-scoped grant and denial references
 );
 
 -- exactly one universe root per tenant; it is permanently 'committed'.
@@ -301,30 +302,35 @@ CREATE TABLE api_keys (
                                           -- key.rotated that minted it; the floor of its
                                           -- permission epoch (ADR-0025 d14)
     expiry     timestamptz,
-    revoked_at timestamptz
+    revoked_at timestamptz,
+    UNIQUE (tenant_id, id)                -- target of the tenant-scoped grant and denial references
 );
 
 CREATE TABLE grants (
     id               uuid   PRIMARY KEY,
     tenant_id        uuid   NOT NULL,
-    key_id           uuid   NOT NULL REFERENCES api_keys (id),
+    key_id           uuid   NOT NULL,
     role             text   NOT NULL
         CHECK (role IN ('reader', 'writer', 'dreamer')),  -- admissible per key role:
                                           -- roles-and-keys Grant admissibility (ADR-0025 d1)
-    workarea_node_id uuid   NOT NULL REFERENCES workareas (id),  -- node id, never a path
+    workarea_node_id uuid   NOT NULL,               -- node id, never a path
     deny             jsonb  NOT NULL DEFAULT '[]',  -- subtree masks inside THIS grant only
-    epoch            bigint NOT NULL                -- journal seq of this grant's grant.issued,
+    epoch            bigint NOT NULL,               -- journal seq of this grant's grant.issued,
                                                     -- or of the key.rotated that reproduced it
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id)
 );
 
 CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all grants
     id               uuid        PRIMARY KEY,
     tenant_id        uuid        NOT NULL,
-    key_id           uuid        NOT NULL REFERENCES api_keys (id),
-    workarea_node_id uuid        NOT NULL REFERENCES workareas (id),
+    key_id           uuid        NOT NULL,
+    workarea_node_id uuid        NOT NULL,
     epoch            bigint      NOT NULL,   -- journal seq of this denial's key.denied
     created_by       uuid        NOT NULL,
-    created_at       timestamptz NOT NULL
+    created_at       timestamptz NOT NULL,
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id)
 );
 
 CREATE TABLE bans (
@@ -348,6 +354,13 @@ attenuated by its own `deny` entries, then masked by any `key_denials` row. The 
 the journal seq of the event that wrote the row, which makes every historical computation
 reproducible from journalled grants ([workareas](../architecture/workareas.md) owns the
 permission-epoch semantics).
+A grant's and a denial's key and node references carry the row's `tenant_id`. In PostgreSQL,
+"referential integrity checks, such as unique or primary key constraints and foreign key
+references, always bypass row security"
+([Row Security Policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html), fetched
+2026-10-30), so a reference on `id` alone would accept a row naming another tenant's key or node.
+A provider-level key (`tenant_id` NULL) matches no such reference, and carries no grant
+([grant admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before it is imposed.
 
 ## vocabularies (ADR-0021)

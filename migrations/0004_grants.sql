@@ -54,6 +54,18 @@ ALTER TABLE api_keys ALTER COLUMN issued_seq SET NOT NULL;
 ALTER TABLE workareas ADD COLUMN crew jsonb;   -- {name, charter_uri, external_manager}
 
 ------------------------------------------------------------------------------
+-- (tenant_id, id) on api_keys and workareas — the targets of the
+-- tenant-scoped foreign keys of grants and key_denials. PostgreSQL runs a
+-- foreign-key check without row-level security, so a reference on id alone
+-- would accept a row naming another tenant's key or node; a reference that
+-- names the tenant too refuses it. A provider-level key (tenant_id NULL)
+-- matches no such reference, and carries no grant (roles-and-keys Grant
+-- admissibility).
+------------------------------------------------------------------------------
+ALTER TABLE api_keys  ADD CONSTRAINT api_keys_tenant_id_id  UNIQUE (tenant_id, id);
+ALTER TABLE workareas ADD CONSTRAINT workareas_tenant_id_id UNIQUE (tenant_id, id);
+
+------------------------------------------------------------------------------
 -- grants — one role over the subtree of one workarea node, folded from
 -- grant.issued. The node is an id, never a path; deny holds the subtrees
 -- masked inside this grant only, as grant.issued spells them
@@ -62,14 +74,17 @@ ALTER TABLE workareas ADD COLUMN crew jsonb;   -- {name, charter_uri, external_m
 CREATE TABLE grants (
     id               uuid   PRIMARY KEY,
     tenant_id        uuid   NOT NULL REFERENCES tenants (id),
-    key_id           uuid   NOT NULL REFERENCES api_keys (id),
+    key_id           uuid   NOT NULL,
     role             text   NOT NULL
         CHECK (role IN ('reader', 'writer', 'dreamer')),  -- admissible per key role:
                                           -- roles-and-keys Grant admissibility (ADR-0025 d1)
-    workarea_node_id uuid   NOT NULL REFERENCES workareas (id),  -- node id, never a path
+    workarea_node_id uuid   NOT NULL,               -- node id, never a path
     deny             jsonb  NOT NULL DEFAULT '[]',  -- subtree masks inside THIS grant only
-    epoch            bigint NOT NULL                -- journal seq of this grant's grant.issued,
+    epoch            bigint NOT NULL,               -- journal seq of this grant's grant.issued,
                                                     -- or of the key.rotated that reproduced it
+    -- tenant-scoped: a key and a node of this grant's own tenant only
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id)
 );
 
 -- Effective access reads a key's grants on every request (ADR-0025 d1).
@@ -86,11 +101,14 @@ COMMENT ON TABLE grants IS
 CREATE TABLE key_denials (
     id               uuid           PRIMARY KEY,
     tenant_id        uuid           NOT NULL REFERENCES tenants (id),
-    key_id           uuid           NOT NULL REFERENCES api_keys (id),
-    workarea_node_id uuid           NOT NULL REFERENCES workareas (id),
+    key_id           uuid           NOT NULL,
+    workarea_node_id uuid           NOT NULL,
     epoch            bigint         NOT NULL,   -- journal seq of this denial's key.denied
     created_by       uuid           NOT NULL,
-    created_at       timestamptz(6) NOT NULL DEFAULT now()
+    created_at       timestamptz(6) NOT NULL DEFAULT now(),
+    -- tenant-scoped: a key and a node of this denial's own tenant only
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id)
 );
 
 CREATE INDEX key_denials_key ON key_denials (tenant_id, key_id);

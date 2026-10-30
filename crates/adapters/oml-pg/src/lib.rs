@@ -496,8 +496,12 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
-        // The schema's foreign keys and role CHECK refuse a grant or denial
-        // on a row the tenant does not hold; the error aborts the commit.
+        // The schema's role CHECK and its foreign keys refuse a grant or
+        // denial on a key or node the tenant does not hold; the error aborts
+        // the commit. The keys name the tenant with the id, (tenant_id,
+        // key_id) and (tenant_id, workarea_node_id), because PostgreSQL runs
+        // a foreign-key check without row-level security: a reference on id
+        // alone would accept another tenant's key or node (0004_grants.sql).
         MetadataFold::GrantIssued { key_id, grant } => {
             sqlx::query(
                 "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, deny, epoch) \
