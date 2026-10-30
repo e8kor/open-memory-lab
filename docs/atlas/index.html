@@ -4,14 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>OML Live Atlas</title>
-<meta name="description" content="Interactive 3D visualization of how crew harnesses work memory through Open Memory Lab: recall from production areas, remember into their own, supersede with pulled evidence, and integrate once validated. Mocked data.">
+<meta name="description" content="Interactive 3D visualization of how crew harnesses work memory through Open Memory Lab: grant-scoped recall, remember into their own area, non-author review, supersession, ladder ceremonies and the signed journal chain. Mocked data.">
 <style>
   :root{
     --bg:#05070f; --bg-raise:#0c111f; --bg-panel:#101730;
     --fg:#e8ecf8; --fg-dim:#97a0bd; --fg-faint:#5c6480;
     --line:#232c4a; --accent:#7aa2ff; --accent-2:#53e0c4;
     --held:#f5b84d; --promoted:#4ade80; --rejected:#f87171;
-    --superseded:#64748b; --sim:#c084fc; --recall:#53e0c4; --remember:#f5b84d;
+    --superseded:#64748b; --demoted:#4f8f78; --sim:#c084fc;
+    --recall:#53e0c4; --remember:#f5b84d; --gold:#ffd166;
+    --lad-dev:#9fb0d8; --lad-com:#7aa2ff; --lad-val:#dbe9ff;
     color-scheme:dark;
   }
   *{box-sizing:border-box}
@@ -38,12 +40,13 @@
   main{position:relative;flex:1;min-height:0}
   canvas#gl{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
   canvas#gl:active{cursor:grabbing}
+  canvas#gl.hover{cursor:pointer}
   #labels{position:absolute;inset:0;overflow:hidden;pointer-events:none}
   .lbl{position:absolute;transform:translate(-50%,-130%);white-space:nowrap;
-    font:600 11px/1.3 system-ui,sans-serif;color:var(--fg);text-shadow:0 1px 6px #000c;
-    opacity:.92}
+    font:600 11px/1.3 system-ui,sans-serif;color:var(--fg);text-shadow:0 1px 6px #000c;opacity:.92}
   .lbl small{display:block;font:500 9.5px/1.3 system-ui,sans-serif;color:var(--fg-dim);letter-spacing:.04em}
   .lbl .st{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;vertical-align:1px}
+  .lbl.minor{font-size:9.5px;opacity:.8}
   .hud{position:absolute;top:10px;left:max(12px,env(safe-area-inset-left,0px));right:max(12px,env(safe-area-inset-right,0px));
     display:flex;gap:8px;flex-wrap:wrap;align-items:center;pointer-events:none}
   .hud>*{pointer-events:auto}
@@ -54,30 +57,34 @@
   .hint{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;
     font-size:12px;color:var(--fg-dim);background:color-mix(in srgb,var(--bg) 70%,transparent);
     border:1px solid var(--line);border-radius:999px;padding:6px 14px;pointer-events:none;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
-  .panel{position:absolute;right:max(12px,env(safe-area-inset-right,0px));top:54px;width:min(282px,80%);
+  .panel{position:absolute;right:max(12px,env(safe-area-inset-right,0px));top:54px;width:min(288px,82%);
     background:color-mix(in srgb,var(--bg-panel) 90%,transparent);backdrop-filter:blur(6px);
     border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:12.5px;color:var(--fg-dim)}
   .panel h4{margin:0 0 2px;font:700 13px/1.3 system-ui,sans-serif;color:var(--fg)}
   .panel .crew{font-size:11px;color:var(--accent-2);margin:0 0 8px}
   .panel table{width:100%;border-collapse:collapse}
-  .panel td{padding:2.5px 0}
+  .panel td{padding:2.5px 0;vertical-align:top}
   .panel td:last-child{text-align:right;color:var(--fg)}
-  .panel .bar{height:5px;border-radius:4px;background:var(--line);margin:8px 0 2px;overflow:hidden}
-  .panel .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--held),var(--promoted))}
+  .panel .docsrow{margin-top:9px;font-size:11px;color:var(--fg-faint)}
   .panel .go{margin-top:10px;width:100%}
-  .steps{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:54px;width:min(250px,72%);
+  .steps{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:54px;width:min(258px,74%);
     background:color-mix(in srgb,var(--bg-panel) 90%,transparent);backdrop-filter:blur(6px);
     border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--fg-dim)}
-  .steps h4{margin:0 0 6px;font:700 12px/1.3 system-ui,sans-serif;color:var(--fg)}
+  .steps h4{margin:0 0 6px;font:700 12px/1.3 system-ui,sans-serif;color:var(--fg);cursor:pointer}
+  .steps h4::after{content:"";float:right;color:var(--fg-faint)}
   .steps ol{margin:0;padding-left:18px}
   .steps li{padding:1.5px 0;transition:color .2s}
   .steps li.on{color:var(--accent-2)}
   .steps li.bad{color:var(--rejected)}
   .steps .src{margin-top:8px;font-size:10.5px;color:var(--fg-faint)}
+  .steps.collapsed ol,.steps.collapsed .src{display:none}
+  .steps.collapsed h4::after{content:"▸"}
   .legend{display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:12px;color:var(--fg-dim);
     padding:8px max(16px,env(safe-area-inset-right,0px)) 8px max(16px,env(safe-area-inset-left,0px));
     border-top:1px solid var(--line);background:var(--bg-raise)}
-  .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+  .legend .one{color:var(--fg);font-weight:600;margin-right:4px}
+  .legend .one i{color:var(--accent-2);font-style:normal}
+  .legend i.sw{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
   .ticker{height:58px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;
     padding:4px max(16px,env(safe-area-inset-right,0px)) 6px max(16px,env(safe-area-inset-left,0px));
     border-top:1px solid var(--line);background:var(--bg);
@@ -89,10 +96,9 @@
   .fade{position:absolute;inset:0;background:var(--bg);opacity:0;pointer-events:none;transition:opacity .22s}
   .fade.on{opacity:1}
   @media (max-width:640px){
-    .steps{display:none}
     .ticker{height:46px}
     header{gap:8px}
-    .lbl small{display:none}
+    .steps{width:min(230px,70%)}
   }
   noscript{display:block;padding:24px}
 </style>
@@ -103,14 +109,14 @@
   <nav class="crumb" aria-label="mode">
     <b>Live Atlas</b><span>·</span><span id="crumbMode">universe</span>
   </nav>
-  <span class="badge" title="Every event is generated client-side in the shapes of data/event-catalog.md. Nothing calls a server.">mocked data</span>
+  <span class="badge" title="Every journal line is generated client-side using the exact event types of data/event-catalog.md. Nothing calls a server; OML itself is a design with an M1 proof-of-concept.">mocked data</span>
   <span class="spacer"></span>
   <button id="btnBack" hidden>← universe</button>
   <button id="btnLive" aria-pressed="true">live traffic</button>
 </header>
 
 <main id="main">
-  <canvas id="gl" aria-label="Interactive 3D visualization: crew harnesses recalling from production workareas and remembering into their own"></canvas>
+  <canvas id="gl" aria-label="Interactive 3D visualization: crew harnesses recalling along their grants and remembering into their own workareas"></canvas>
   <div id="labels"></div>
   <div class="hud" id="hud"></div>
   <div class="panel" id="panel" hidden></div>
@@ -130,24 +136,25 @@
 'use strict';
 if (!window.THREE) { document.getElementById('hint').textContent = '3D library failed to load — three.min.js missing.'; return; }
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const CLR = {held:0xf5b84d, prom:0x4ade80, rej:0xf87171, sup:0x64748b, sim:0xc084fc,
-             agent:0x7aa2ff, human:0xffffff, line:0x2b3763, chain:0x7aa2ff,
-             recall:0x53e0c4, remember:0xf5b84d, integrate:0xffd166};
-const LADDER = {development:0xf5b84d, committed:0x7aa2ff, 'validated/frozen':0x53e0c4};
+const CLR = {held:0xf5b84d, prom:0x4ade80, rej:0xf87171, sup:0x64748b, dem:0x4f8f78, ers:0x2a3350,
+             sim:0xc084fc, agent:0x7aa2ff, human:0xffffff, line:0x2b3763, chain:0x7aa2ff,
+             recall:0x53e0c4, remember:0xf5b84d, gold:0xffd166};
+const LADDER = {development:0x9fb0d8, committed:0x7aa2ff, 'validated/frozen':0xdbe9ff};
 const CLAIMS = ['accra-metals-price-anchor','supplier-quote-am-7741','port-dwell-time-tema','smelter-capacity-q3',
   'fx-usd-ghs-hedge-note','rail-slot-allocation','assay-report-lot-118','warehouse-receipt-554'];
+const TERMS = ['mtl:copper-cathode','mtl:port-dwell-time','geo:tema-port','fin:usd-per-tonne'];
 const rnd=(a,b)=>a+Math.random()*(b-a);
 const pick=a=>a[(Math.random()*a.length)|0];
 const hex8=()=>((Math.random()*0xffffffff)>>>0).toString(16).padStart(8,'0');
 
-/* ── mock journal: one generator, event-catalog.md envelope shapes ─────── */
+/* ── mock journal: exact event types from data/event-catalog.md ─────────── */
 const journal = {
   seq: 14, tenant: 'acme-metals',
   emit(event_type, detail, readPath=false){
     if(!readPath) this.seq++;
     const el=document.getElementById('ticker');
     const d=document.createElement('div');
-    if(readPath){ d.className='r'; d.innerHTML=`read-log · <span class="k">${event_type}</span> · ${detail}`; }
+    if(readPath){ d.className='r'; d.innerHTML=`<span class="k">${event_type}</span> · ${detail}`; }
     else d.innerHTML=`seq ${this.seq} · <span class="k">${event_type}</span> · ${detail}`;
     el.appendChild(d); while(el.children.length>3) el.removeChild(el.firstChild);
   }
@@ -155,15 +162,25 @@ const journal = {
 let LIVE=true;
 document.getElementById('btnLive').onclick=e=>{LIVE=!LIVE;e.currentTarget.setAttribute('aria-pressed',LIVE);};
 
-/* ── workareas + their assigned crew harnesses (one crew ↔ one workarea) ── */
+/* ── workareas: one crew per area; READS FOLLOW GRANTS, never status ─────
+   grants[] = reader grants this crew's keys hold on OTHER subtrees
+   (its own subtree carries writer+reader; roles-and-keys.md).            */
 const WAS = [
-  {name:'metals-crew',     crew:'harness:metals-pricing',  r:10, speed:.085,ladder:'committed',        n:26, sim:false, y:0.6,  k:1, human:false},
-  {name:'supplier-quotes', crew:'harness:quote-scouts',    r:15, speed:.062,ladder:'development',      n:30, sim:false, y:-1.4, k:1, human:true},
-  {name:'logistics-sim',   crew:'harness:route-dreamers',  r:20, speed:.048,ladder:'development',      n:22, sim:true,  y:2.0,  k:1, human:false},
-  {name:'ontology-lab',    crew:'harness:term-curators',   r:25, speed:.036,ladder:'committed',        n:18, sim:false, y:-0.7, k:2, human:true},
-  {name:'frozen-archive',  crew:'harness:archivists',      r:30, speed:.026,ladder:'validated/frozen', n:30, sim:false, y:1.0,  k:1, human:false},
+  {name:'metals-crew',     crew:'harness:metals-pricing', r:10, speed:.085, ladder:'committed',        n:26, y:0.6,  k:1, human:false,
+   grants:['frozen-archive','ontology-lab'], child:'spot-quotes'},
+  {name:'supplier-quotes', crew:'harness:quote-scouts',   r:16, speed:.06,  ladder:'development',      n:30, y:-1.4, k:1, human:true,
+   grants:['metals-crew','frozen-archive'], sim:{id:'sim_01JB2Z…', audience:2}},
+  {name:'ontology-lab',    crew:'harness:term-curators',  r:23, speed:.038, ladder:'committed',        n:18, y:-0.7, k:2, human:true,
+   grants:['frozen-archive'], vocab:true},
+  {name:'frozen-archive',  crew:'harness:archivists',     r:29, speed:.027, ladder:'validated/frozen', n:30, y:1.0,  k:1, human:false,
+   grants:[]},
 ];
-const productionAreas = ()=>WAS.filter(w=>w.ladder!=='development' && !w.sim);
+const byName = n=>WAS.find(w=>w.name===n);
+/* ratified related edges — zero access, labels from the closed set (workareas.md) */
+const RELATED = [
+  {src:'metals-crew', dst:'supplier-quotes', label:'derived_from'},
+  {src:'ontology-lab', dst:'frozen-archive', label:'mirrors'},
+];
 
 /* ── renderer + camera rig ─────────────────────────────────────────────── */
 const canvas=document.getElementById('gl');
@@ -172,6 +189,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setClearColor(0x05070f,1);
 const camera=new THREE.PerspectiveCamera(50,2,0.1,600);
 const st={theta:.6,phi:1.02,radius:34,min:8,max:90,target:new THREE.Vector3()};
+const tween={on:false,t:0,dur:.55,from:null,to:null,cb:null};
 function applyCam(){
   st.phi=Math.max(.15,Math.min(Math.PI-.15,st.phi));
   st.radius=Math.max(st.min,Math.min(st.max,st.radius));
@@ -181,6 +199,21 @@ function applyCam(){
     st.target.z+st.radius*Math.sin(st.phi)*Math.cos(st.theta));
   camera.lookAt(st.target);
 }
+function flyTo(targetPos,radius,cb){
+  if(REDUCED){ if(cb)cb(); return; }
+  tween.on=true;tween.t=0;tween.cb=cb;
+  tween.from={target:st.target.clone(),radius:st.radius};
+  tween.to={target:targetPos.clone(),radius};
+}
+function tweenFrame(dt){
+  if(!tween.on)return;
+  tween.t+=dt/tween.dur;
+  const k=Math.min(1,tween.t), e=1-Math.pow(1-k,3);
+  st.target.lerpVectors(tween.from.target,tween.to.target,e);
+  st.radius=tween.from.radius+(tween.to.radius-tween.from.radius)*e;
+  applyCam();
+  if(k>=1){tween.on=false;const cb=tween.cb;tween.cb=null;if(cb)cb();}
+}
 let lastW=0,lastH=0;
 function resize(){
   const w=canvas.clientWidth,h=canvas.clientHeight;
@@ -189,6 +222,7 @@ function resize(){
 const ptrs=new Map(); let pinch=0,dragged=false,down=[0,0];
 canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);down=[e.clientX,e.clientY];dragged=false;});
 canvas.addEventListener('pointermove',e=>{
+  hoverXY=[e.clientX,e.clientY];
   if(!ptrs.has(e.pointerId))return;
   const prev=ptrs.get(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);
   const ps=[...ptrs.values()];
@@ -200,8 +234,9 @@ const lift=e=>{ptrs.delete(e.pointerId);pinch=0;};
 canvas.addEventListener('pointerup',lift);canvas.addEventListener('pointercancel',lift);
 canvas.addEventListener('wheel',e=>{e.preventDefault();st.radius*=1+Math.sign(e.deltaY)*.08;applyCam();},{passive:false});
 applyCam();
+let hoverXY=null;
 
-/* ── visual vocabulary: soft sprites, glows, flow pulses ───────────────── */
+/* ── visual vocabulary ─────────────────────────────────────────────────── */
 function discTexture(stops){
   const c=document.createElement('canvas');c.width=c.height=128;
   const g=c.getContext('2d');const grad=g.createRadialGradient(64,64,0,64,64,64);
@@ -219,7 +254,7 @@ function ringLine(r,color,opacity=.5,y=0,seg=128){
   const pts=[];for(let i=0;i<=seg;i++){const a=i/seg*Math.PI*2;pts.push(new THREE.Vector3(Math.cos(a)*r,y,Math.sin(a)*r));}
   return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color,transparent:true,opacity}));
 }
-function softPoints(n,fill){ /* fill(i)->{p:[x,y,z], c:THREE.Color} */
+function softPoints(n,fill){
   const pos=new Float32Array(n*3),col=new Float32Array(n*3);
   for(let i=0;i<n;i++){const {p,c}=fill(i);pos.set(p,i*3);col.set([c.r,c.g,c.b],i*3);}
   const g=new THREE.BufferGeometry();
@@ -230,32 +265,40 @@ function softPoints(n,fill){ /* fill(i)->{p:[x,y,z], c:THREE.Color} */
 }
 function disposeGroup(g){g.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});}
 
-/* flow pulses: knowledge moving between places */
+/* flow pulses that HOME onto moving destinations */
 function FlowField(group){
   const flows=[],bursts=[];
   return {
-    send(from,to,color,{arc=5,dur=1.6,onArrive}={}){
-      const mid=from.clone().add(to).multiplyScalar(.5);mid.y+=arc;
-      const curve=new THREE.QuadraticBezierCurve3(from.clone(),mid,to.clone());
-      const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(36)),
-        new THREE.LineBasicMaterial({color,transparent:true,opacity:.0}));
+    send(from,toGetter,color,{arc=5,dur=1.6,onArrive}={}){
+      const src=from.clone();
+      const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+        new Array(25).fill(0).map(()=>src.clone())),
+        new THREE.LineBasicMaterial({color,transparent:true,opacity:0}));
       const head=glow(color,2.2,1);const tail=glow(color,1.1,.6);
       group.add(line,head,tail);
-      flows.push({curve,t:0,dur,head,tail,line,onArrive,color});
+      flows.push({src,toGetter,t:0,dur,head,tail,line,onArrive,color,arc});
     },
     burst(pos,color,s=3){const g=glow(color,s,1,HALO);g.position.copy(pos);group.add(g);bursts.push({g,t:0});},
     frame(dt){
+      const tmp=new THREE.Vector3();
       for(let i=flows.length-1;i>=0;i--){const f=flows[i];f.t+=dt/f.dur;
+        const dst=f.toGetter();           // live destination: pulses land on the hub, not where it was
+        const mid=f.src.clone().add(dst).multiplyScalar(.5);mid.y+=f.arc;
+        const curve=new THREE.QuadraticBezierCurve3(f.src,mid,dst);
         const k=Math.min(f.t,1);
-        f.head.position.copy(f.curve.getPoint(k));
-        f.tail.position.copy(f.curve.getPoint(Math.max(0,k-.07)));
+        f.head.position.copy(curve.getPoint(k));
+        f.tail.position.copy(curve.getPoint(Math.max(0,k-.07)));
+        const attr=f.line.geometry.attributes.position;
+        for(let j=0;j<25;j++){curve.getPoint(j/24,tmp);attr.setXYZ(j,tmp.x,tmp.y,tmp.z);}
+        attr.needsUpdate=true;
         f.line.material.opacity=.3*Math.sin(Math.PI*k);
-        if(f.t>=1){group.remove(f.head,f.tail,f.line);f.line.geometry.dispose();
-          this.burst(f.curve.getPoint(1),f.color,2.4);
+        if(f.t>=1){group.remove(f.head,f.tail,f.line);f.line.geometry.dispose();f.line.material.dispose();
+          f.head.material.dispose();f.tail.material.dispose();
+          this.burst(dst,f.color,2.4);
           if(f.onArrive)f.onArrive();flows.splice(i,1);}}
       for(let i=bursts.length-1;i>=0;i--){const b=bursts[i];b.t+=dt*2.2;
         b.g.scale.setScalar(b.g.scale.x*(1+dt*3));b.g.material.opacity=Math.max(0,1-b.t);
-        if(b.t>=1){group.remove(b.g);bursts.splice(i,1);}}
+        if(b.t>=1){group.remove(b.g);b.g.material.dispose();bursts.splice(i,1);}}
     }
   };
 }
@@ -266,14 +309,14 @@ const hud=document.getElementById('hud'),legend=document.getElementById('legend'
       hint=document.getElementById('hint'),fade=document.getElementById('fade'),
       crumb=document.getElementById('crumbMode'),btnBack=document.getElementById('btnBack'),
       labelsEl=document.getElementById('labels');
-function setLegend(items){legend.innerHTML=items.map(([c,t])=>`<span><i style="background:${c}"></i>${t}</span>`).join('');}
+const ONE_LINER='<span class="one">OML<i> — every agent memory is a claim: held → reviewed by a non-author → visible.</i></span>';
+function setLegend(items){legend.innerHTML=ONE_LINER+items.map(([c,t])=>`<span><i class="sw" style="background:${c}"></i>${t}</span>`).join('');}
 function setHud(html){hud.innerHTML=html;}
 function clearLabels(){labelsEl.innerHTML='';}
 
 /* ── scene + mode manager ──────────────────────────────────────────────── */
 const scene=new THREE.Scene();
 scene.fog=new THREE.FogExp2(0x05070f,.0085);
-/* starfield + nebula backdrop (shared) */
 { const n=420,p=new Float32Array(n*3);for(let i=0;i<n;i++)p.set([rnd(-110,110),rnd(-60,60),rnd(-110,110)],i*3);
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));
   scene.add(new THREE.Points(g,new THREE.PointsMaterial({size:.3,map:SOFT,color:0x5d6ca0,transparent:true,opacity:.7,depthWrite:false})));
@@ -282,26 +325,28 @@ scene.fog=new THREE.FogExp2(0x05070f,.0085);
       nb.position.set(x,y,z);nb.scale.setScalar(s);scene.add(nb);}); }
 
 let mode=null,modeName='';
-function switchMode(name,arg){
-  fade.classList.add('on');
-  setTimeout(()=>{
-    if(mode){mode.exit();disposeGroup(mode.group);scene.remove(mode.group);}
-    panel.hidden=true;stepsEl.hidden=true;clearLabels();
-    mode=MODES[name](arg);modeName=name;
-    crumb.textContent=name==='universe'?'universe'
-      :name==='reactor'?`universe ▸ ${arg.name} · admission`
-      :'universe ▸ tenant chain · ledger';
-    btnBack.hidden=name==='universe';
-    scene.add(mode.group);
-    Object.assign(st,mode.cam);applyCam();
-    setTimeout(()=>fade.classList.remove('on'),60);
-  },220);
+function switchMode(name,arg,flyFrom){
+  const doSwap=()=>{
+    fade.classList.add('on');
+    setTimeout(()=>{
+      if(mode){mode.exit();disposeGroup(mode.group);scene.remove(mode.group);}
+      panel.hidden=true;stepsEl.hidden=true;clearLabels();
+      mode=MODES[name](arg);modeName=name;
+      crumb.textContent=name==='universe'?'universe'
+        :name==='reactor'?`universe ▸ ${arg.name} · admission`
+        :'universe ▸ journal · chain ledger';
+      btnBack.hidden=name==='universe';
+      scene.add(mode.group);
+      Object.assign(st,mode.cam);applyCam();
+      setTimeout(()=>fade.classList.remove('on'),60);
+    },220);
+  };
+  if(flyFrom){ flyTo(flyFrom, Math.max(st.min,10), doSwap); } else doSwap();
 }
 btnBack.onclick=()=>switchMode('universe');
 addEventListener('keydown',e=>{if(e.key==='Escape'&&modeName!=='universe')switchMode('universe');});
 
 const ray=new THREE.Raycaster(),mvec=new THREE.Vector2();
-ray.params.Points.threshold=1.2;
 canvas.addEventListener('click',e=>{
   if(dragged||!mode||!mode.onClick)return;
   const b=canvas.getBoundingClientRect();
@@ -309,151 +354,252 @@ canvas.addEventListener('click',e=>{
   ray.setFromCamera(mvec,camera);
   mode.onClick(ray);
 });
+/* hover affordance: pointer cursor + halo boost over clickable hubs */
+function hoverCheck(){
+  if(!hoverXY||!mode||!mode.hoverables)return;
+  const b=canvas.getBoundingClientRect();
+  mvec.set(((hoverXY[0]-b.left)/b.width)*2-1,-((hoverXY[1]-b.top)/b.height)*2+1);
+  ray.setFromCamera(mvec,camera);
+  const hit=ray.intersectObjects(mode.hoverables());
+  canvas.classList.toggle('hover',hit.length>0);
+  if(mode.onHover)mode.onHover(hit.length?hit[0].object:null);
+}
 
 /* ════════════════════════ MODE: universe ═══════════════════════════════ */
 function Universe(){
   const group=new THREE.Group();
   const flow=FlowField(group);
 
-  /* tenant core: layered glow */
+  /* universe root (a workarea: permanently committed, no direct claim writes)
+     + the journal, a separate affordance on the same core */
   const core=new THREE.Group();
   const coreHit=new THREE.Mesh(new THREE.SphereGeometry(2.2,12,10),new THREE.MeshBasicMaterial({visible:false}));
   core.add(coreHit, glow(0xffffff,3.2,.95), glow(0x7aa2ff,7,.4,HALO), glow(0x53e0c4,11,.14,HALO));
   group.add(core);
 
   WAS.forEach(w=>{
-    w.ring=ringLine(w.r,w.sim?CLR.sim:LADDER[w.ladder],w.sim?.4:.33,w.y);
+    w.ring=ringLine(w.r,LADDER[w.ladder],.33,w.y);
     group.add(w.ring);
     w.group=new THREE.Group();w.angle=w.angle??rnd(0,Math.PI*2);
-    /* hub: invisible hit sphere + glow stack */
     w.hub=new THREE.Mesh(new THREE.SphereGeometry(1.6,12,10),new THREE.MeshBasicMaterial({visible:false}));
-    w.glowMain=glow(w.sim?CLR.sim:LADDER[w.ladder],2.6,.95);
-    w.glowHalo=glow(w.sim?CLR.sim:LADDER[w.ladder],5.5,.3,HALO);
+    w.glowMain=glow(LADDER[w.ladder],2.6,.95);
+    w.glowHalo=glow(LADDER[w.ladder],5.5,.3,HALO);
     w.group.add(w.hub,w.glowMain,w.glowHalo);
     if(w.ladder==='validated/frozen') w.cage=makeCage(w);
-    if(w.sim){const fence=new THREE.Mesh(new THREE.SphereGeometry(3.6,20,16),
-      new THREE.MeshBasicMaterial({color:CLR.sim,transparent:true,opacity:.09,side:THREE.DoubleSide}));
-      w.group.add(fence);}
-    /* memories: soft additive points */
+    /* memories */
     w.statuses=[];
-    w.pts=softPoints(w.n,i=>{
+    w.pts=softPoints(w.n,()=> {
       const a=rnd(0,Math.PI*2),rr=rnd(1.4,3.0),yy=rnd(-.9,.9);
-      const s=w.sim?'sim':(Math.random()<.6?'prom':Math.random()<.55?'held':'sup');
+      const s=Math.random()<.6?'prom':Math.random()<.55?'held':'sup';
       w.statuses.push(s);
       return {p:[Math.cos(a)*rr,yy,Math.sin(a)*rr],c:new THREE.Color(CLR[s])};
     });
     w.group.add(w.pts);
-    /* crew: three harness agents orbiting their OWN workarea — crews never leave */
+    /* the crew: three harness agents orbiting their own area — crews never leave */
     w.agents=[];
     for(let i=0;i<3;i++){const a=glow(CLR.agent,.9,.95);a._a=i/3*Math.PI*2;a._r=rnd(2.1,2.6);w.group.add(a);w.agents.push(a);}
-    /* progress toward ladder transitions (mock) */
-    w.promotions=0; w.ladderBurst=0;
+    /* child workarea (subtree): orbits inside the parent group */
+    if(w.child){
+      w.childGroup=new THREE.Group();
+      w.childGroup.add(glow(LADDER.development,1.3,.9), glow(LADDER.development,2.6,.25,HALO));
+      w.childPts=softPoints(8,()=> {
+        const a=rnd(0,Math.PI*2),rr=rnd(.5,1.1);
+        return {p:[Math.cos(a)*rr,rnd(-.3,.3),Math.sin(a)*rr],c:new THREE.Color(Math.random()<.5?CLR.prom:CLR.held)};
+      });
+      w.childGroup.add(w.childPts);
+      w.group.add(w.childGroup);
+      w.childLbl=document.createElement('div');w.childLbl.className='lbl minor';
+      w.childLbl.innerHTML=`${w.child}<small>child · development</small>`;
+      labelsEl.appendChild(w.childLbl);
+    }
+    /* simulation channel: a fenced provenance overlay, NOT a workarea */
+    if(w.sim){
+      w.simGroup=new THREE.Group();
+      const fence=new THREE.Mesh(new THREE.SphereGeometry(1.7,18,14),
+        new THREE.MeshBasicMaterial({color:CLR.sim,transparent:true,opacity:.12,side:THREE.DoubleSide}));
+      w.simGroup.add(fence, glow(CLR.sim,2.2,.5,HALO));
+      w.simPts=softPoints(9,()=> {
+        const a=rnd(0,Math.PI*2),rr=rnd(.3,1.1);
+        return {p:[Math.cos(a)*rr,rnd(-.4,.4),Math.sin(a)*rr],c:new THREE.Color(CLR.sim)};
+      });
+      w.simGroup.add(w.simPts);
+      for(let i=0;i<w.sim.audience;i++){const kg=glow(CLR.human,.5,.9);kg._a=i/w.sim.audience*Math.PI*2;w.simGroup.add(kg);
+        (w.simKeys=w.simKeys||[]).push(kg);}
+      w.group.add(w.simGroup);
+      w.simLbl=document.createElement('div');w.simLbl.className='lbl minor';
+      w.simLbl.innerHTML=`simulation ${w.sim.id}<small>fenced channel · audience ${w.sim.audience} keys</small>`;
+      labelsEl.appendChild(w.simLbl);
+    }
+    w.promotions=0; w.pendingSupersede=null; w.ceremony=null;
     group.add(w.group);
-    /* html label */
     w.lbl=document.createElement('div');w.lbl.className='lbl';
     labelsEl.appendChild(w.lbl);updateLbl(w);
   });
   function makeCage(w){
     const cage=new THREE.Mesh(new THREE.SphereGeometry(1.5,10,8),
-      new THREE.MeshBasicMaterial({color:0x53e0c4,wireframe:true,transparent:true,opacity:.5}));
+      new THREE.MeshBasicMaterial({color:0xdbe9ff,wireframe:true,transparent:true,opacity:.45}));
     w.group.add(cage);return cage;
   }
   function updateLbl(w){
-    const dotColor='#'+new THREE.Color(w.sim?CLR.sim:LADDER[w.ladder]).getHexString();
+    const dotColor='#'+new THREE.Color(LADDER[w.ladder]).getHexString();
     w.lbl.innerHTML=`<span class="st" style="background:${dotColor}"></span>${w.name}<small>${w.crew} · ${w.ladder}</small>`;
   }
   const coreLbl=document.createElement('div');coreLbl.className='lbl';
-  coreLbl.innerHTML=`universe<small>tenant ${journal.tenant} · signed chain</small>`;labelsEl.appendChild(coreLbl);
+  coreLbl.innerHTML=`universe root<small>permanently committed · no claims live here<br>journal: per-tenant signed chain — click to verify</small>`;
+  labelsEl.appendChild(coreLbl);
 
-  /* integration lattice between production areas (committed + frozen) */
-  const lattice=new THREE.Group();group.add(lattice);
-  function drawLattice(){
-    lattice.children.forEach(l=>l.geometry.dispose());
-    lattice.clear();
-    const prod=productionAreas();
-    for(let i=0;i<prod.length;i++)for(let j=i+1;j<prod.length;j++){
-      const a=prod[i].group.position,b=prod[j].group.position;
-      const g=new THREE.BufferGeometry().setFromPoints([a.clone(),a.clone().add(b).multiplyScalar(.5).setY((a.y+b.y)/2+2.5),b.clone()]);
-      lattice.add(new THREE.Line(g,new THREE.LineBasicMaterial({color:CLR.integrate,transparent:true,opacity:.14})));
-    }
+  /* ratified related edges — zero access, from the closed label set */
+  const edgeLines=RELATED.map(e=>{
+    const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+      new Array(13).fill(0).map(()=>new THREE.Vector3())),
+      new THREE.LineBasicMaterial({color:CLR.gold,transparent:true,opacity:.16}));
+    group.add(l);return {e,l};
+  });
+  const tmpV=new THREE.Vector3();
+  function updateEdges(){
+    edgeLines.forEach(({e,l})=>{
+      const a=byName(e.src).group.position,b=byName(e.dst).group.position;
+      const mid=a.clone().add(b).multiplyScalar(.5);mid.y+=2.5;
+      const curve=new THREE.QuadraticBezierCurve3(a,mid,b);
+      const attr=l.geometry.attributes.position;
+      for(let j=0;j<13;j++){curve.getPoint(j/12,tmpV);attr.setXYZ(j,tmpV.x,tmpV.y,tmpV.z);}
+      attr.needsUpdate=true;
+    });
   }
 
-  setHud(`<span class="tag">tenant <b>${journal.tenant}</b> · /v2 lab ring · chain head <b id="hudSeq">${journal.seq}</b></span>
-          <span class="tag" id="hudStory">crews recall from production, remember into their own area</span>`);
-  setLegend([['var(--recall)','recall (read from production)'],['var(--remember)','remember (write into own area)'],
-             ['var(--held)','held'],['var(--promoted)','promoted'],['var(--superseded)','superseded'],
-             ['var(--sim)','simulation (tainted)'],['#ffd166','integration lattice (production areas)']]);
+  setHud(`<span class="tag">tenant <b>${journal.tenant}</b> · writes ride <b>/v1</b>, ceremonies ride <b>/v2</b> · chain head <b id="hudSeq">${journal.seq}</b></span>
+          <span class="tag" id="hudStory">crews recall where their grants reach; remember into their own area</span>`);
+  setLegend([['var(--recall)','recall (read, along grants)'],['var(--remember)','remember → held'],
+             ['var(--promoted)','promoted'],['var(--superseded)','superseded'],['var(--demoted)','demoted'],
+             ['var(--sim)','simulation rows (fenced)'],['var(--gold)','related edge (ratified, zero access)'],
+             ['var(--lad-dev)','ladder: development'],['var(--lad-com)','committed'],['var(--lad-val)','validated/frozen']]);
   hint.textContent='drag to orbit · scroll to zoom · click a workarea or the core';
 
-  /* ── the choreography: what a crew harness actually does ──────────────
-     recall  : pulse FROM a production area TO the crew's area (read path)
-     remember: agent pulse INTO own hub, a new held particle appears
-     supersede: recall first, then a promoted particle goes grey and a new
-                held one appears — modified with pulled evidence
-     promote : a held particle turns green (reviewed elsewhere: reactor mode)
-     ladder  : enough promotions → committed → validated/frozen → the area
-               joins the integration lattice with a golden handshake      */
   function setParticle(w,i,status){
     w.statuses[i]=status;const c=new THREE.Color(CLR[status]);
     w.pts.geometry.attributes.color.set([c.r,c.g,c.b],i*3);
     w.pts.geometry.attributes.color.needsUpdate=true;
   }
   function addParticle(w,status){
-    /* reuse a superseded slot if any, else recolor a random one (mock keeps n fixed) */
-    let i=w.statuses.indexOf('sup');if(i<0)i=(Math.random()*w.n)|0;
+    let i=w.statuses.indexOf('ers');if(i<0)i=w.statuses.indexOf('sup');if(i<0)i=(Math.random()*w.n)|0;
     setParticle(w,i,status);return i;
   }
+  const activeAreas=()=>WAS.filter(x=>x.ladder!=='validated/frozen');
+  const grantedSources=w=>w.grants.map(byName).filter(Boolean);
+
+  /* ── choreography ──────────────────────────────────────────────────────
+     recall    : read-log line; pulse FROM a granted area INTO the crew's
+     remember  : submission.remember → a held particle (same-colored: remember creates held)
+     supersede : optional evidence recall, then a HELD successor; the tip
+                 flips only when a later promotion ratifies it (two beats)
+     promote   : lifecycle.promote; resolves a pending supersession first
+     ladder    : threshold only PACES the mock — the transition itself is a
+                 propose + ratify ceremony by two different principals
+     demote/erase: rare lifecycle.demote / lifecycle.erase beats            */
   function act(){
-    const w=pick(WAS.filter(x=>x.ladder==='development'||x.name==='metals-crew'));
-    const prod=productionAreas().filter(p=>p!==w);
+    const w=pick(activeAreas());
+    const src=grantedSources(w).length?pick(grantedSources(w)):null;
     const roll=Math.random();
-    if(roll<.4 && prod.length){ /* recall */
-      const src=pick(prod);
-      flow.send(src.group.position.clone(),w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:1.5});
-      journal.emit('recall',`${w.crew} ← wa:${src.name} · q:"${pick(CLAIMS)}"`,true);
-    } else if(roll<.68){ /* remember */
+    if(roll<.34 && src){
+      flow.send(src.group.position,()=>w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:1.5});
+      journal.emit('recall',`${w.crew} ← wa:${src.name} · steering 2 → hits ${2+(Math.random()*7|0)} · q sha256:${hex8()}…`,true);
+    } else if(roll<.40 && src){
+      journal.emit('submission.remember',`idempotent replay — stored receipt returned, no new event`,true);
+    } else if(roll<.62){
       const a=pick(w.agents);
-      flow.send(w.group.position.clone().add(a.position),w.group.position.clone(),CLR.remember,{arc:1.6,dur:1,
-        onArrive:()=>{addParticle(w,'held');journal.emit('submission.remember',`${pick(CLAIMS)} · wa:${w.name} · by ${w.crew}`);}});
-    } else if(roll<.84 && prod.length){ /* supersede with pulled evidence */
-      const src=pick(prod);
-      flow.send(src.group.position.clone(),w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:1.4,
+      flow.send(w.group.position.clone().add(a.position),()=>w.group.position.clone(),CLR.remember,{arc:1.6,dur:1,
+        onArrive:()=>{addParticle(w,'held');
+          journal.emit('submission.remember',`${pick(CLAIMS)} · wa:${w.name} · by ${w.crew}`);}});
+    } else if(roll<.74 && src && !w.pendingSupersede){
+      flow.send(src.group.position,()=>w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:1.4,
         onArrive:()=>{
-          const i=w.statuses.indexOf('prom');
-          if(i>=0){setParticle(w,i,'sup');addParticle(w,'held');
-            journal.emit('memory.superseded',`${pick(CLAIMS)} · evidence ← wa:${src.name} · successor held for review`);}
+          const pred=w.statuses.indexOf('prom');
+          if(pred>=0){const succ=addParticle(w,'held');
+            w.pendingSupersede={pred,succ};
+            journal.emit('submission.remember',`supersede proposal · derives_from art_${hex8()} · evidence ← wa:${src.name} · successor held`);}
         }});
-    } else { /* promotion lands (the reactor's output, seen from orbit) */
-      const i=w.statuses.indexOf('held');
-      if(i>=0){setParticle(w,i,'prom');flow.burst(w.group.position.clone(),CLR.prom,3);
-        journal.emit('memory.promoted',`${pick(CLAIMS)} · wa:${w.name} · k=${w.k}`);
-        if(w.ladder==='development'){w.promotions++;checkLadder(w);}}
+    } else if(roll<.92){
+      promoteBeat(w);
+    } else {
+      /* demote, and rarely erase — removal is journalled, never silent */
+      const i=w.statuses.indexOf('prom');
+      if(i>=0 && Math.random()<.7){setParticle(w,i,'dem');journal.emit('lifecycle.demote',`${pick(CLAIMS)} · wa:${w.name} · bytes kept`);}
+      else { const f=byName('frozen-archive'); const j=f.statuses.indexOf('dem')>=0?f.statuses.indexOf('dem'):f.statuses.indexOf('prom');
+        if(j>=0){f.statuses[j]='ers';const c=new THREE.Color(CLR.ers);
+          f.pts.geometry.attributes.color.set([c.r,c.g,c.b],j*3);f.pts.geometry.attributes.color.needsUpdate=true;
+          journal.emit('lifecycle.erase',`${pick(CLAIMS)} · wa:frozen-archive · DEK destroyed · digests + signature intact`);} }
     }
     const el=document.getElementById('hudSeq');if(el)el.textContent=journal.seq;
   }
-  function checkLadder(w){
-    if(w.ladder==='development'&&w.promotions>=6){
-      w.ladder='committed';transitionArea(w,'development → committed');
-    } else if(w.ladder==='committed'&&w.promotions>=11&&w.name==='supplier-quotes'){
-      w.ladder='validated/frozen';transitionArea(w,'committed → validated/frozen');
-      w.cage=makeCage(w);
-      /* integration handshake: golden pulses to every other production area */
-      productionAreas().filter(p=>p!==w).forEach((p,i)=>{
-        setTimeout(()=>flow.send(w.group.position.clone(),p.group.position.clone(),CLR.integrate,{arc:7,dur:1.8}),i*350);
-      });
-      journal.emit('workarea.transition',`wa:${w.name} integrated into the production lattice`);
-      const story=document.getElementById('hudStory');
-      if(story)story.innerHTML=`<b>${w.name}</b> is production now — other crews can recall from it`;
+  function promoteBeat(w){
+    if(w.pendingSupersede){
+      const {pred,succ}=w.pendingSupersede;w.pendingSupersede=null;
+      setParticle(w,succ,'prom');setParticle(w,pred,'sup');
+      flow.burst(w.group.position.clone(),CLR.prom,3);
+      journal.emit('lifecycle.promote',`successor ratified · wa:${w.name} · k=${w.k}`);
+      journal.emit('lifecycle.supersede',`tip moved to successor · ratification_event_id ev_${hex8()}`);
+    } else {
+      const i=w.statuses.indexOf('held');
+      if(i<0)return;
+      setParticle(w,i,'prom');flow.burst(w.group.position.clone(),CLR.prom,3);
+      const detail=w.vocab?`term ${pick(TERMS)} · wa:${w.name} · k=${w.k}`:`${pick(CLAIMS)} · wa:${w.name} · k=${w.k}`;
+      journal.emit('lifecycle.promote',detail);
+      if(w.vocab&&Math.random()<.25){
+        const d=w.statuses.indexOf('prom');
+        if(d>=0){setParticle(w,d,'sup');
+          journal.emit('lifecycle.supersede',`term deprecated · oml:replaced_by → ${pick(TERMS)}-v2`);}
+      }
     }
+    w.promotions++;maybeCeremony(w);
   }
-  function transitionArea(w,detail){
-    const c=LADDER[w.ladder];
+  /* ladder transitions: a propose + ratify ceremony by two principals.
+     The promotion count only paces the mock — it is NOT a spec input.   */
+  function maybeCeremony(w){
+    if(w.ceremony)return;
+    const next=w.ladder==='development'&&w.promotions>=6?'committed'
+             :w.ladder==='committed'&&w.promotions>=12&&w.name==='supplier-quotes'?'validated/frozen':null;
+    if(!next)return;
+    if(next==='validated/frozen'&&w.child){
+      journal.emit('workarea.status_proposed',`wa:${w.name} → validated · REFUSED: child ${w.child} not validated`,true);
+      return;
+    }
+    w.ceremony=next;
+    const [a,b2]=[w.agents[0],w.agents[1]];
+    flow.send(w.group.position.clone().add(a.position),()=>w.group.position.clone(),CLR.human,{arc:2.2,dur:1.1,
+      onArrive:()=>{
+        journal.emit('workarea.status_proposed',`wa:${w.name} · ${w.ladder} → ${next} · proposer key_${hex8().slice(0,6)}`);
+        flow.send(w.group.position.clone().add(b2.position),()=>w.group.position.clone(),CLR.gold,{arc:2.6,dur:1.2,
+          onArrive:()=>{
+            journal.emit('workarea.status_transition',`wa:${w.name} · ${w.ladder} → ${next} · ratifier ≠ proposer (R2) · policy snapshot pinned`);
+            transitionArea(w,next);
+            w.ceremony=null;
+          }});
+      }});
+  }
+  function transitionArea(w,next){
+    w.ladder=next;w.promotions=0;
+    const c=LADDER[next];
     w.glowMain.material.color.set(c);w.glowHalo.material.color.set(c);
-    group.remove(w.ring);w.ring.geometry.dispose();
+    group.remove(w.ring);w.ring.geometry.dispose();w.ring.material.dispose();
     w.ring=ringLine(w.r,c,.33,w.y);group.add(w.ring);
     flow.burst(w.group.position.clone(),c,6);
     updateLbl(w);
-    journal.emit('workarea.transition',`wa:${w.name} · ${detail}`);
+    if(next==='validated/frozen'){
+      w.cage=makeCage(w);
+      /* integration with production = GRANTS, not magic: the tenant issues
+         reader grants on the frozen area; other crews' recalls follow them */
+      WAS.filter(p=>p!==w&&p.ladder!=='validated/frozen').forEach((p,i)=>{
+        setTimeout(()=>{
+          p.grants.push(w.name);
+          journal.emit('grant.issued',`reader on wa:${w.name} → ${p.crew}`);
+          flow.send(w.group.position,()=>p.group.position.clone(),CLR.gold,{arc:7,dur:1.8});
+        },i*450);
+      });
+      const story=document.getElementById('hudStory');
+      if(story)story.innerHTML=`<b>${w.name}</b> froze: new writes refuse, reads serve; crews gained reader grants on it`;
+      /* one refused write, so frozen ≠ readable-only-by-magic is visible */
+      setTimeout(()=>journal.emit('submission.remember',`wa:${w.name} · REFUSED workarea.frozen — frozen areas serve reads, never writes`,true),2600);
+    }
   }
 
   const v=new THREE.Vector3();
@@ -468,6 +614,10 @@ function Universe(){
   let acc=0;
   return {
     group,cam:{theta:.6,phi:1.02,radius:34,min:10,max:90,target:new THREE.Vector3()},
+    hoverables(){return [coreHit,...WAS.map(w=>w.hub)];},
+    onHover(obj){
+      WAS.forEach(w=>{w.glowHalo.material.opacity=(obj===w.hub)?.6:.3;});
+    },
     exit(){clearLabels();},
     frame(t,dt){
       WAS.forEach(w=>{
@@ -476,39 +626,50 @@ function Universe(){
         w.pts.rotation.y=t*.14;
         w.agents.forEach((a,i)=>{a._a+=dt*(.7+i*.13);
           a.position.set(Math.cos(a._a)*a._r,Math.sin(a._a*1.7)*.5,Math.sin(a._a)*a._r);});
-        w.glowHalo.material.opacity=.26+Math.sin(t*1.3+w.r)*.06;
+        if(w.childGroup){const ca=t*.35;w.childGroup.position.set(Math.cos(ca)*4.6,.9,Math.sin(ca)*4.6);
+          placeLabel(w.childLbl,w.group.position.clone().add(w.childGroup.position));}
+        if(w.simGroup){const sa=t*.28+2;w.simGroup.position.set(Math.cos(sa)*4.9,-1.1,Math.sin(sa)*4.9);
+          w.simKeys.forEach((kg,i)=>{kg.position.set(Math.cos(t*.8+kg._a)*2.1,0,Math.sin(t*.8+kg._a)*2.1);});
+          placeLabel(w.simLbl,w.group.position.clone().add(w.simGroup.position));}
+        w.glowHalo.material.opacity=Math.max(w.glowHalo.material.opacity,.26+Math.sin(t*1.3+w.r)*.06);
         placeLabel(w.lbl,w.group.position);
       });
       placeLabel(coreLbl,core.position);
-      drawLattice();
+      updateEdges();
       flow.frame(dt);
       core.rotation.y=t*.15;
-      if(LIVE&&(acc+=dt)>(REDUCED?3.4:1.9)){acc=0;act();}
+      if(LIVE&&(acc+=dt)>(REDUCED?3.4:1.9)){acc=0;act();
+        /* the simulation channel writes on its own clock */
+        const sq=byName('supplier-quotes');
+        if(sq.simGroup&&Math.random()<.3)
+          journal.emit('simulation.write',`${sq.sim.id} · provenance: simulation · served only to the audience`);
+      }
     },
     onClick(ray){
-      const hitCore=ray.intersectObject(coreHit);
+      const hitCore=ray.intersectObject(coreHit,true);
       const hit=ray.intersectObjects(WAS.map(w=>w.hub));
       if(hit.length){
         const w=WAS.find(x=>x.hub===hit[0].object);
-        const c={held:0,prom:0,sup:0,sim:0};w.statuses.forEach(s=>c[s]++);
-        const prog=w.ladder==='development'?Math.min(100,w.promotions/6*100)
-                  :w.ladder==='committed'?Math.min(100,Math.max(0,(w.promotions-6))/5*100):100;
-        panel.innerHTML=`<h4>${w.name}</h4><p class="crew">${w.crew} — 3 agents, writer + dreamer keys, scoped to this workarea</p>
+        const c={held:0,prom:0,sup:0,dem:0,ers:0};w.statuses.forEach(s=>c[s]=(c[s]||0)+1);
+        panel.innerHTML=`<h4>${w.name}</h4>
+          <p class="crew">${w.crew} — writer keys with reader grants, plus dreamer keys</p>
           <table>
           <tr><td>status ladder</td><td>${w.ladder}</td></tr>
+          ${w.child?`<tr><td>children</td><td>${w.child} (development)</td></tr>`:''}
           <tr><td>memories</td><td>${w.n}</td></tr>
-          <tr><td>promoted</td><td>${c.prom}</td></tr><tr><td>held</td><td>${c.held}</td></tr>
-          <tr><td>superseded</td><td>${c.sup}</td></tr>
-          ${w.sim?`<tr><td>tainted (sim)</td><td>${c.sim}</td></tr>`:''}
-          <tr><td>review policy</td><td>k=${w.k}${w.human?' · human gate':''}</td></tr>
-          <tr><td>reads</td><td>own + production areas</td></tr>
-          <tr><td>writes</td><td>own area only</td></tr></table>
-          <div class="bar"><i style="width:${prog}%"></i></div>
-          <small>${w.ladder==='validated/frozen'?'integrated — other crews recall from here':'progress toward next ladder stage (mock)'}</small>
+          <tr><td>promoted / held</td><td>${c.prom} / ${c.held}</td></tr>
+          <tr><td>superseded · demoted</td><td>${c.sup} · ${c.dem}</td></tr>
+          ${w.sim?`<tr><td>simulation</td><td>${w.sim.id} · audience ${w.sim.audience}</td></tr>`:''}
+          <tr><td>review policy</td><td>k=${w.k}${w.human?' · human gate (vocab.*)':''}</td></tr>
+          <tr><td>reads</td><td>own subtree + grants:<br>${w.grants.join(', ')||'—'}</td></tr>
+          <tr><td>writes</td><td>own subtree (writer grant)</td></tr></table>
+          ${w.ladder==='validated/frozen'?'<div class="docsrow">frozen: serves reads; refuses new writes; demote/erase stay journalled</div>'
+            :w.child&&w.ladder==='committed'?`<div class="docsrow">validate blocked while child ${w.child} is development (child-status rule)</div>`:''}
+          <div class="docsrow">docs: <a href="../architecture/workareas/">workareas</a> · <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></div>
           <button class="go" id="goReactor">enter admission reactor →</button>`;
         panel.hidden=false;
-        document.getElementById('goReactor').onclick=()=>switchMode('reactor',w);
-      } else if(hitCore.length){ switchMode('ledger'); }
+        document.getElementById('goReactor').onclick=()=>switchMode('reactor',w,w.group.position.clone());
+      } else if(hitCore.length){ switchMode('ledger',null,core.position.clone()); }
       else panel.hidden=true;
     }
   };
@@ -517,8 +678,7 @@ function Universe(){
 /* ════════════════════════ MODE: reactor (per workarea) ═════════════════ */
 function Reactor(w){
   const group=new THREE.Group();
-  const flow=FlowField(group);
-  const lane=new THREE.Mesh(new THREE.BoxGeometry(46,.18,10),new THREE.MeshBasicMaterial({color:0x10172f}));
+  const lane=new THREE.Mesh(new THREE.BoxGeometry(46,.18,12),new THREE.MeshBasicMaterial({color:0x10172f}));
   lane.position.y=-2.4;group.add(lane);
   const scanWall=new THREE.Mesh(new THREE.PlaneGeometry(9,7),
     new THREE.MeshBasicMaterial({color:CLR.agent,transparent:true,opacity:.13,side:THREE.DoubleSide}));
@@ -531,63 +691,95 @@ function Reactor(w){
     new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:.22})));
   const dreamers=[];for(let i=0;i<3;i++){const d=glow(CLR.agent,1.2,.95);d._a=i/3*Math.PI*2;group.add(d);dreamers.push(d);}
   const shelf=new THREE.Group();shelf.position.set(20,-1.9,0);group.add(shelf);let shelfN=0;
+  const rejShelf=new THREE.Group();rejShelf.position.set(10,-1.9,-5);group.add(rejShelf);let rejN=0;
   const claims=new Set();
   let humanOn=w.human,kNeed=w.k;
   const counts={held:0,prom:0,rej:0};
 
-  setHud(`<span class="tag">workarea <b>${w.name}</b> · ${w.crew}</span>
+  setHud(`<span class="tag">workarea <b>${w.name}</b> · ${w.crew} · writes <b>/v1</b>, verdicts <b>/v2</b></span>
     <span class="tag">held <b id="rHeld">0</b> · promoted <b id="rProm">0</b> · rejected <b id="rRej">0</b></span>
-    <button id="rHuman" aria-pressed="${humanOn}">human_required: secret.*</button>
-    <button id="rK" aria-pressed="${kNeed===2}">k = 2 reviews</button>`);
+    <button id="rHuman" aria-pressed="${humanOn}">human_required: vocab.*</button>
+    <button id="rK" aria-pressed="${kNeed===2}">k = 2 reviews</button>
+    <span class="tag">docs: <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></span>`);
   document.getElementById('rHuman').onclick=e=>{humanOn=!humanOn;e.currentTarget.setAttribute('aria-pressed',humanOn);};
   document.getElementById('rK').onclick=e=>{kNeed=kNeed===2?1:2;e.currentTarget.setAttribute('aria-pressed',kNeed===2);};
-  setLegend([['var(--held)','claim (held)'],['var(--promoted)','promoted'],['var(--rejected)','scan veto / reject'],
-             ['var(--accent)','dreamer'],['#fff','human reviewer']]);
-  hint.textContent=`the write path of ${w.name} · R4: rejects are journalled, never vanished · Esc to go back`;
+  setLegend([['var(--held)','claim (held)'],['var(--promoted)','promoted'],['var(--rejected)','scan veto / rejected (journalled, kept)'],
+             ['var(--accent)','dreamer'],['#fff','human reviewer'],['var(--lad-dev)','attachment']]);
+  hint.textContent=`write path of ${w.name} · a veto or reject is journalled, never vanished (admission; R4 = no silent deletion) · Esc to go back`;
 
   const els={held:document.getElementById('rHeld'),prom:document.getElementById('rProm'),rej:document.getElementById('rRej')};
   function spawn(){
     const c=glow(CLR.held,1.1,.98);c._phase='intake';c._t=0;c._name=pick(CLAIMS);
-    c._secret=Math.random()<.18;c._veto=Math.random()<.12;c._reviews=0;
+    c._author=(Math.random()*3)|0;
+    c._secret=Math.random()<.12;                    // dies at the scan wall: secret.* is a veto class
+    c._veto=!c._secret&&Math.random()<.06;          // a format.* veto
+    c._vocab=!c._secret&&!c._veto&&Math.random()<.15; // vocab.* annotate → human gate
+    c._reviews=0;c._served=false;
+    if(Math.random()<.2){const att=glow(LADDER.development,.5,.9);att.position.set(.5,.5,0);c.add(att);c._att=true;}
     c.position.set(-22,0,rnd(-3,3));group.add(c);claims.add(c);
-    if(LIVE)journal.emit('submission.remember',`${c._name} · wa:${w.name} · by ${w.crew}${c._secret?' · finding secret.token':''}`);
+    if(LIVE){journal.emit('submission.remember',`${c._name} · wa:${w.name} · by ${w.crew}${c._vocab?' · finding vocab.deprecation_replaced_by':''}`);
+      if(c._att)journal.emit('submission.attach',`${c._name} · attachment sha256:${hex8()}… · 1 of 1`);}
+  }
+  function reject(c,why){
+    c._phase='rejected';c.material.color.set(CLR.rej);
+    counts.held--;counts.rej++;els.held.textContent=counts.held;els.rej.textContent=counts.rej;
+    if(LIVE)journal.emit('review.reject',`${c._name} · ${why} · journalled, bytes kept`);
   }
   let spawnAcc=0;
   return {
     group,cam:{theta:0,phi:1.25,radius:30,min:12,max:60,target:new THREE.Vector3(0,0,0)},
+    hoverables(){return [];},
     exit(){},
     frame(t,dt){
       dreamers.forEach(d=>{d._a+=1.2*dt;d.position.set(10+Math.cos(d._a)*3.2,.2,Math.sin(d._a)*3.2);});
       humanGate.position.y=6+Math.sin(t*1.4)*.15;
-      flow.frame(dt);
       if((spawnAcc+=dt)>(REDUCED?4:1.6)){spawnAcc=0;if(claims.size<26)spawn();}
       claims.forEach(c=>{
         c._t+=dt;
         switch(c._phase){
           case 'intake': c.position.x+=5.6*dt;if(c.position.x>=-8){
-              if(c._veto){c._phase='drop';c.material.color.set(CLR.rej);counts.rej++;els.rej.textContent=counts.rej;
-                if(LIVE)journal.emit('review.verdict',`${c._name} · submission.scan_veto`);}
+              if(c._secret||c._veto){
+                /* a veto is journalled and KEPT — it joins the rejected shelf, never the void */
+                c._phase='rejected';c._t=0;c.material.color.set(CLR.rej);counts.rej++;els.rej.textContent=counts.rej;
+                if(LIVE)journal.emit('review.reject',`${c._name} · submission.scan_veto · finding ${c._secret?'secret.api_token':'format.encoding'} · same call, deterministic`);}
               else{c._phase='held';c._a=rnd(0,Math.PI*2);counts.held++;els.held.textContent=counts.held;}}break;
           case 'held': c._a+=1.5*dt;c.position.set(Math.cos(c._a)*3.4,0,Math.sin(c._a)*3.4);
               if(c._t>rnd(4,7)){c._phase='review';c._t=0;}break;
           case 'review':{const tx=10+Math.cos(c._a)*2.2,tz=Math.sin(c._a)*2.2;
               c.position.x+=(tx-c.position.x)*.06;c.position.z+=(tz-c.position.z)*.06;
-              if(c._t>1.8){c._reviews++;
+              if(!c._served){c._served=true;
+                if(LIVE)journal.emit('review.serve',`${c._name} → dreamer · served_digests pinned${c._att?' · attachment served':''}`);}
+              if(c._t>1.8){
+                const reviewer=(Math.random()*3)|0;
+                if(reviewer===c._author){           // R2: the author's key cannot verdict its own lineage
+                  if(LIVE)journal.emit('verdict',`${c._name} · REFUSED review.author_in_lineage (reviewer = author)`,true);
+                  c._t=.9;break;
+                }
+                c._reviews++;
                 if(c._reviews<kNeed){c._t=0;break;}
-                if(c._secret&&humanOn){c._phase='human';c._t=0;}
+                if(Math.random()<.15){reject(c,`dreamer ${reviewer} verdict: reject`);break;}
+                if(c._vocab&&humanOn){c._phase='human';c._t=0;}
                 else{c._phase='out';c.material.color.set(CLR.prom);counts.held--;counts.prom++;
                   els.held.textContent=counts.held;els.prom.textContent=counts.prom;
-                  if(LIVE)journal.emit('memory.promoted',`${c._name} · k=${kNeed} · wa:${w.name}`);}}break;}
+                  if(LIVE){journal.emit('review.approve',`${c._name} · dreamer ${reviewer} · k=${kNeed}`);
+                    journal.emit('lifecycle.promote',`${c._name} · wa:${w.name}`);}}}break;}
           case 'human': c.position.y+=(5.6-c.position.y)*.08;
-              if(c._t>2.2){c._phase='out';c.material.color.set(CLR.prom);counts.held--;counts.prom++;
+              if(c._t>2.2){
+                if(Math.random()<.15){c.position.y=0;reject(c,'held_by:human verdict: reject');break;}
+                c._phase='out';c.material.color.set(CLR.prom);counts.held--;counts.prom++;
                 els.held.textContent=counts.held;els.prom.textContent=counts.prom;
-                if(LIVE)journal.emit('review.verdict',`${c._name} · held_by:human approve`);}break;
+                if(LIVE){journal.emit('review.approve',`${c._name} · held_by:human · finding vocab.deprecation_replaced_by`);
+                  journal.emit('lifecycle.promote',`${c._name} · wa:${w.name}`);}}break;
+          case 'rejected':{const tx=10,tz=-5;
+              c.position.x+=(tx-c.position.x)*.08;c.position.z+=(tz-c.position.z)*.08;c.position.y*=.9;
+              if(c._t>2.5){claims.delete(c);group.remove(c);
+                const s=glow(CLR.rej,.8,.75);s.position.set(rnd(-1,1),.3+(rejN%4)*.7,rnd(-1,1));
+                rejShelf.add(s);if(++rejN>18)rejShelf.remove(rejShelf.children[0]);
+                if(LIVE&&Math.random()<.25)setTimeout(()=>{if(LIVE)journal.emit('review.reopen',`a non-author reopens a rejected claim · back to held`);},800);}break;}
           case 'out': c.position.x+=7.5*dt;c.position.y*=.92;
               if(c.position.x>=20){claims.delete(c);group.remove(c);
                 const s=glow(CLR.prom,.9,.9);s.position.set(rnd(-1.4,1.4),.4+(shelfN%5)*.85,rnd(-2.4,2.4));
                 shelf.add(s);if(++shelfN>42)shelf.remove(shelf.children[0]);}break;
-          case 'drop': c.position.y-=7*dt;c.material.opacity=Math.max(0,1-c._t*.5);
-              if(c.position.y<-6){claims.delete(c);group.remove(c);}break;
         }
       });
     },
@@ -596,17 +788,24 @@ function Reactor(w){
 }
 
 /* ════════════════════════ MODE: ledger ═════════════════════════════════ */
+/* chain-format.md "Verification", the nine steps in spec order */
 const VERIFY_STEPS=[
-  'genesis: prev_hash is 32 zero bytes','seq is contiguous from 1','canonical form (RFC 8785) rebuilds',
-  'prev_hash links to the prior hash','hash = SHA-256(signed_bytes)','Ed25519 signature verifies',
-  'signing key is in the trusted set','provider-chain reference (if any)','stored head matches the last event'];
+  'seq starts at 1, increments by one',
+  'event 1 is tenant.genesis; prev_hash = 32 zero bytes',
+  'Ed25519 verifies signed_bytes against the key set',
+  'SHA-256(signed_bytes) equals the stored hash',
+  'prev_hash equals the previous recomputed hash',
+  'signed_bytes is RFC 8785 canonical',
+  'parsed fields match the served envelope',
+  'genesis references the provider chain (non-provider tenant)',
+  'stated head matches the last event; head signature verifies'];
 function Ledger(){
   const group=new THREE.Group();
   const HELIX_R=7,STEP=1.15,TURN=.62;
   let blocks=[],links=[],broken=-1,erased=false,growAcc=0;
   const KINDS=[['tenant.genesis',0xffffff],['workarea.create',CLR.agent],['key.issued',CLR.agent],
-    ['submission.remember',CLR.held],['review.verdict',CLR.sim],['memory.promoted',CLR.prom],
-    ['memory.superseded',CLR.sup],['submission.remember',CLR.held],['memory.promoted',CLR.prom]];
+    ['submission.remember',CLR.held],['review.approve',CLR.sim],['lifecycle.promote',CLR.prom],
+    ['lifecycle.supersede',CLR.sup],['submission.remember',CLR.held],['lifecycle.promote',CLR.prom]];
   const posAt=i=>{const a=i*TURN;return new THREE.Vector3(Math.cos(a)*HELIX_R,i*STEP-8,Math.sin(a)*HELIX_R);};
   const helix=new THREE.Group();group.add(helix);
   function addBlock(kind,color){
@@ -618,6 +817,7 @@ function Ledger(){
     if(i>0){const g=new THREE.BufferGeometry().setFromPoints([posAt(i-1),posAt(i)]);
       const l=new THREE.Line(g,new THREE.LineBasicMaterial({color:CLR.prom,transparent:true,opacity:.85}));
       helix.add(l);links.push(l);}
+    return b;
   }
   function thread(i,j){
     const a=posAt(i),b=posAt(j),mid=a.clone().add(b).multiplyScalar(.5).setLength(HELIX_R*1.9);
@@ -626,7 +826,7 @@ function Ledger(){
       new THREE.LineBasicMaterial({color:CLR.held,transparent:true,opacity:.6})));
   }
   function build(){
-    helix.traverse(o=>{if(o.geometry)o.geometry.dispose();});
+    helix.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});
     helix.clear();blocks=[];links=[];broken=-1;erased=false;
     KINDS.forEach(([k,c])=>addBlock(k,c));
     thread(3,5);thread(5,6);
@@ -635,19 +835,21 @@ function Ledger(){
   function setVerdict(ok,atSeq){
     const el=document.getElementById('lVerdict');
     if(el)el.innerHTML=ok?'chain <b style="color:var(--promoted)">verified</b>'
-      :`chain <b style="color:var(--rejected)">broken at seq ${atSeq}</b>`;
-    [...stepsEl.querySelectorAll('li')].forEach((li,i)=>li.classList.toggle('bad',!ok&&i===3));
+      :`chain <b style="color:var(--rejected)">broken · step 5 (prev_hash) at seq ${atSeq}</b>`;
+    [...stepsEl.querySelectorAll('li')].forEach((li,i)=>li.classList.toggle('bad',!ok&&i===4));
   }
   setHud(`<span class="tag" id="lVerdict">chain <b style="color:var(--promoted)">verified</b></span>
     <button id="lTamper">tamper seq 7</button>
     <button id="lErase">erase artifact</button>
     <button id="lHeal">restore</button>`);
-  stepsEl.innerHTML=`<h4>verifier sweep</h4><ol>${VERIFY_STEPS.map(s=>`<li>${s}</li>`).join('')}</ol>
-    <div class="src">paraphrased — the normative procedure is <a href="../data/chain-format/">chain-format.md</a></div>`;
+  stepsEl.innerHTML=`<h4>verifier — the nine steps</h4><ol>${VERIFY_STEPS.map(s=>`<li>${s}</li>`).join('')}</ol>
+    <div class="src">paraphrased one-to-one from <a href="../data/chain-format/">chain-format.md §Verification</a></div>`;
   stepsEl.hidden=false;
+  if(matchMedia('(max-width:640px)').matches)stepsEl.classList.add('collapsed');
+  stepsEl.querySelector('h4').onclick=()=>stepsEl.classList.toggle('collapsed');
   setLegend([['var(--accent)','journal event'],['var(--promoted)','verified link'],['var(--rejected)','broken link'],
-             ['var(--superseded)','erased payload (chain intact)'],['var(--held)','lineage thread']]);
-  hint.textContent='412 → 399 USD/t lineage hangs off the helix · Esc to go back';
+             ['var(--superseded)','body erased (event + digests intact)'],['var(--held)','lineage thread']]);
+  hint.textContent='412 → 399 USD/t lineage hangs off the helix · verification is a read, not an event · Esc to go back';
   build();
   document.getElementById('lTamper').onclick=()=>{
     if(broken>=0)return;
@@ -656,20 +858,23 @@ function Ledger(){
     blocks.forEach((b,i)=>{if(i>broken){b.material.color.offsetHSL(0,0,-.18);b._halo.material.opacity=.15;}});
     blocks[broken].material.color.set(CLR.rej);blocks[broken]._halo.material.color.set(CLR.rej);
     setVerdict(false,broken+1);
-    journal.emit('audit.verify',`FAIL — recomputed hash ≠ prev_hash at seq ${broken+1}; refusing ${broken+1}..head`);
+    journal.emit('verify-chain',`oml audit verify-chain → FAIL: step 5 at seq ${broken+1} — refusing ${broken+1}..head`,true);
   };
   document.getElementById('lErase').onclick=()=>{
     if(erased)return;erased=true;
     const b=blocks[3];b.material.transparent=true;b.material.opacity=.22;b.material.color.set(CLR.sup);
     b._halo.material.opacity=.1;
-    const haloBox=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2),new THREE.MeshBasicMaterial({color:CLR.sup,wireframe:true}));
-    haloBox.position.copy(b.position);helix.add(haloBox);
-    journal.emit('lifecycle.erase','accra-metals-price-anchor · DEK destroyed · digests + signature intact');
+    const wire=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2),new THREE.MeshBasicMaterial({color:CLR.sup,wireframe:true}));
+    wire.position.copy(b.position);helix.add(wire);
+    if(broken<0){const nb=addBlock('lifecycle.erase',CLR.sup);
+      journal.emit('lifecycle.erase',`accra-metals-price-anchor · DEK destroyed · digests + signature intact · seq ${blocks.length} appended`);}
+    else journal.emit('lifecycle.erase',`accra-metals-price-anchor · DEK destroyed · digests + signature intact`);
     if(broken<0)setVerdict(true);
   };
   document.getElementById('lHeal').onclick=build;
   return {
     group,cam:{theta:.9,phi:1.15,radius:26,min:10,max:55,target:new THREE.Vector3(0,0,0)},
+    hoverables(){return [];},
     exit(){stepsEl.hidden=true;},
     frame(t,dt){
       helix.rotation.y=t*(REDUCED?.02:.07);
@@ -696,6 +901,8 @@ let prev=performance.now();
   requestAnimationFrame(loop);
   const dt=Math.min(.05,(now-prev)/1000);prev=now;
   resize();
+  tweenFrame(dt);
+  hoverCheck();
   if(mode)mode.frame(now/1000,dt);
   renderer.render(scene,camera);
 })(prev);
