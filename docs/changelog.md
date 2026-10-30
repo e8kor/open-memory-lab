@@ -103,6 +103,39 @@ so the release workflow passes the commit and its time as build arguments, and
 set, fixes the reported build time so a pinned build stays reproducible. The stated cost: an
 unauthenticated probe now discloses the exact build.
 
+### 2026-10-30 — The key tool: `oml keys issue-agent`, the default reader grant, the `oml-admin` plugin (ADR-0028)
+
+[ADR-0028](adr/ADR-0028-agent-key-issuance.md) (proposed) decides, and this change builds, the
+key tool the maintainer chose to ship in v0.2.1, before names. Its three decisions were drafted as
+d12–d14 of the proposed ADR-0026 (names are keys), which with the proposed ADR-0027 sits on its
+own branch; this record takes the next number after both. It proposes amending ADR-0015 (d1), whose
+Status line gains the back-pointer when ADR-0028 is accepted.
+
+- **Decided and built:** `oml keys issue-agent --principal <principal> --workarea <workarea-id>`,
+  one `POST /v2/keys` for a writer key with writer and reader grants on the workarea and that
+  workarea as its default, printing exactly the `OML_URL` and `OML_API_KEY` export lines; with
+  `--out <path>`, the value written once to a new 0600 file created before anything is sent, an
+  existing path, a path with a quote or a newline, and `--out` with `--json` refused; the reader
+  grant `oml keys issue` and `issue-agent` add beside every writer grant unless `--write-only`,
+  while HTTP issuance still takes exactly the grants it is sent (ADR-0025 d2); the `oml-admin`
+  Claude Code plugin, one skill that runs `issue-agent` only with `--out` and never with `--json`,
+  and no MCP server.
+- **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` drives the verbs against the real lead behind
+  a request recorder; `scripts/check_plugin.py` now also fails if the marketplace stops listing
+  `oml-admin` with a manifest, if `oml-admin` gains an `.mcp.json`, or if its skill runs
+  `issue-agent` without `--out` or with `--json`.
+- **Not built:** the positional key name (ADR-0026 d1), key revocation, which a write failure
+  after issuance names as the remedy, and `oml context show` and `oml keys show`, which the skill
+  would otherwise check with.
+- **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
+  stays `0.2.0-design`, and no package version moves until the release.
+- **Pages touched:** [ADR-0028](adr/ADR-0028-agent-key-issuance.md), the
+  [decision register](adr/index.md) (row and the D14 cell), `mkdocs.yml`, [llms.txt](llms.txt),
+  [CLI reference](cli/reference.md), [roles and keys](architecture/roles-and-keys.md) (the key
+  format rule names the `--out` file) and this page; outside `docs/`,
+  `.claude-plugin/marketplace.json`, `plugins/oml-admin/`, `plugins/oml/README.md` and
+  `scripts/check_plugin.py`.
+
 ### 2026-10-30 — The release image for linux/amd64 and linux/arm64 (implementation)
 
 An implementation milestone; no decision changes. `.github/workflows/release.yml` now builds the

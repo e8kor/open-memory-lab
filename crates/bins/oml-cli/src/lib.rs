@@ -6,4 +6,5 @@
 
 pub mod client;
 pub mod creds;
+pub mod issue;
 pub mod verify;

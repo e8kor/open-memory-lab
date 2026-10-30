@@ -2,7 +2,7 @@
 id: cli/reference
 tier: engineering
 status: design draft for review · decided, not built
-answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own
+answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; oml keys issue-agent and its --out key file; the oml-admin plugin
 -->
 
 # CLI reference
@@ -94,17 +94,68 @@ shows the whole ceremony.
 
 Key lifecycle rules — issuer ceiling, expiry, the bootstrap ceremony — are declared in
 [roles and keys](../architecture/roles-and-keys.md). The CLI adds the **show-once ceremony**: a key
-value is printed exactly once, at issuance, and the journal records the issuance
+value is printed exactly once, at issuance — or, with `oml keys issue-agent --out`, written exactly
+once to a new owner-only file and printed nowhere — and the journal records the issuance
 *without the value*. The server stores only the key hash; a lost value is unrecoverable by design, and the remedy is
 revoke-and-reissue.
 
+**The reader grant beside a writer grant.** This paragraph is the single declaration site of the
+CLI's issuance default ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d2). `oml keys issue` and
+`oml keys issue-agent` send, beside every writer grant they are asked for, a reader grant on the
+same workarea, unless the request already names that reader grant or `--write-only` is passed.
+The default is the CLI's alone: `POST /v2/keys` takes exactly the grants it is sent
+([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)), so the
+added grant is an ordinary grant in the request body, journalled as its own `grant.issued` and
+echoed in the `201` like any other; without `--json`, `oml keys issue` names each grant it adds on
+stderr. `--write-only` sends the writer grants alone, for a crew whose writers must not read one
+another's promoted work; such a key still reads its own work, in every state, with no grant at all
+([own](../architecture/roles-and-keys.md#own)). `oml grants add` is not an issuing verb and sends
+exactly the grant it names.
+
 | Verb | Does |
 |---|---|
-| `oml keys issue --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <node>] [--expires <duration>] [--label <text>]` | Issue a key. Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, so one writer key with `--grant <wa>:writer --grant <wa>:reader` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key id ever again. |
+| `oml keys issue --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <node>] [--write-only] [--expires <duration>] [--label <text>]` | Issue a key. Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key id ever again. |
+| `oml keys issue-agent --principal <principal> --workarea <workarea-id> [--held-by agent\|human] [--write-only] [--out <path>]` | The one key the [agent plugin](../api/mcp-plugin.md) needs, in one call: a `POST /v2/keys` with role `writer`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea-id>` and its reader grant unless `--write-only` (above), and `default_workarea_id` set to `<workarea-id>`. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file and neither line carries it ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The key's name, as the positional argument, arrives with names. |
 | `oml keys revoke <key-id>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
 | `oml keys rotate <key-id> [--grace <duration>]` | Mint a successor key — new key id, linked by `rotated_from`, grants reproduced from the journalled grant records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `oml keys list [--role …] [--expiring <duration>]` | Key ids, roles, labels, expiries. Never values. |
 | `oml keys show <key-id>` | One key: grants, denials, epoch, issuance and revocation events. |
+
+**`oml keys issue-agent` output.** On success the verb prints exactly two lines on stdout, the ones
+the `oml` plugin reads, and every other line on stderr:
+
+```console
+export OML_URL='https://oml.example.com'
+export OML_API_KEY='oml_…'
+```
+
+`OML_URL` is the server the CLI resolved (`--server`, `OML_CLI_SERVER` or the stored credentials),
+without `/mcp`; `OML_API_KEY` is the key value, printed this once and never again (the show-once
+ceremony). Both are single-quoted for a POSIX shell, so `eval "$(oml keys issue-agent --principal
+crew/agent-7 --workarea <workarea-id>)"` puts both into the shell that will start the agent
+without the value entering shell history. With `--json` the verb prints the `201` body instead,
+as every verb does, and no export lines.
+
+**`--out <path>`** writes the value to a file instead of printing it. Before it sends anything the
+CLI creates `<path>` exclusively, with mode 0600; a path that already exists is refused (exit `2`)
+and nothing is sent, so no file is ever overwritten. After the `201` the CLI writes the value and
+one newline to the file and prints only, with the path made absolute:
+
+```console
+export OML_URL='https://oml.example.com'
+export OML_API_KEY="$(cat '/home/op/.config/oml/keys/crew-agent-7')"
+```
+
+No key value reaches stdout, stderr or the terminal; the second line reads it from the file when
+the operator's shell runs it. A refused issuance removes the empty file the CLI created. If the
+value cannot be written once the key is issued, the value is lost: the CLI removes the partial
+file, names the key's id on stderr, says to revoke it, and exits `2`; until key revocation is
+built, `oml deny set <key-id> <root workarea id>` keeps the key from every workarea. A path
+containing a quote or a newline is refused (exit `2`) before anything is sent, so the printed line
+is always safe to run, and `--out` with `--json` is refused (exit `2`), because the `201` body
+carries the value. The file is the one place the
+[key format rule](../architecture/roles-and-keys.md#key-format) lets a value rest outside the
+show-once response; the operator deletes it once the key is in the environment that needs it.
 
 ## `oml grants`, `oml deny`, `oml bans` — scope and refusal
 
@@ -235,6 +286,35 @@ what to do next. Both emit the same four named signals — the contract that
 |---|---|
 | `oml status` | The four signals, one screen, plus chain-head seq and last reconciler run per tenant. |
 | `oml doctor` | Each signal against its threshold with a verdict (`ok`/`warn`/`fail`) and the next action — the named command or the runbook anchor. Exit `1` on any `fail`, so probes and CI can consume it. |
+
+## The `oml-admin` plugin
+
+A Claude Code plugin that wraps this CLI for an operator working inside Claude Code. This section
+is its single declaration site ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d3). It is listed
+beside the agent-facing `oml` plugin in the repository's marketplace and is installed separately:
+an agent that installs `oml` gains no admin instruction, and the `oml` plugin cannot issue keys,
+since its tools are the agent-safe subset ([agent plugin](../api/mcp-plugin.md); ADR-0014 d2).
+
+- **Contents.** One skill, `issue-agent-key`, and no MCP server entry, so the plugin adds no tool
+  to any tool list. Every act goes through the `oml` CLI on the operator's `PATH`, under the
+  server and admin key the CLI resolves.
+- **What the skill does**, in order: asks for the principal and the workarea id when the operator
+  has not given them; picks the key file — `~/.config/oml/keys/<principal>` with each `/` of the
+  principal written as `-`, unless the operator names another path outside any repository — and
+  creates its directory owner-only if it is missing; states the reader grant it adds
+  ([above](#oml-keys-issuance-revocation-rotation)); runs `oml keys issue-agent --principal
+  <principal> --workarea <workarea-id> --out <path>` itself, with `--held-by human` or
+  `--write-only` when the operator asks for them; hands the operator the two printed lines, which
+  carry a path and no value, to run in the shell that will start the agent, together with the key
+  id the CLI printed on stderr; and tells the operator to delete the key file once the key is in
+  that environment.
+- **What it never does.** It runs `oml keys issue-agent` only with `--out`, and never with
+  `--json`. It never runs any other verb whose output carries a key value — `keys issue`,
+  `bootstrap claim` — never reads the key file, and never runs the printed lines in its own shell,
+  because a value in a command's output or in its own environment would enter the session
+  transcript or the model's context, places the show-once ceremony
+  ([ADR-0015](../adr/ADR-0015-cli-administration.md) d1) and the
+  [key format rule](../architecture/roles-and-keys.md#key-format) forbid.
 
 ## Verbs that do not exist
 

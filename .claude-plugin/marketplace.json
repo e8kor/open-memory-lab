@@ -12,6 +12,12 @@
       "source": "./plugins/oml",
       "description": "Remember and recall through an Open Memory Lab server over MCP. Writes are held until a different identity ratifies them.",
       "category": "memory"
+    },
+    {
+      "name": "oml-admin",
+      "source": "./plugins/oml-admin",
+      "description": "Issue an Open Memory Lab agent key from Claude Code. The key value goes to an owner-only file and never into the conversation.",
+      "category": "memory"
     }
   ]
 }
