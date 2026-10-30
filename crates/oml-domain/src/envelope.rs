@@ -19,6 +19,11 @@ pub mod event_types {
     pub const WORKAREA_CREATE: &str = "workarea.create";
     /// Key issuance without its value (show-once ceremony).
     pub const KEY_ISSUED: &str = "key.issued";
+    /// One grant on an issued key; its seq is the grant's epoch (ADR-0025 d2).
+    pub const GRANT_ISSUED: &str = "grant.issued";
+    /// A global per-key denial, deny-wins; its seq is the denial's epoch
+    /// (ADR-0025 d2).
+    pub const KEY_DENIED: &str = "key.denied";
     /// A writer submits a memory; held on arrival.
     pub const SUBMISSION_REMEMBER: &str = "submission.remember";
     /// Approving verdict from a valid serve.

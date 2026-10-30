@@ -6,8 +6,10 @@ use std::collections::BTreeSet;
 
 use uuid::Uuid;
 
-/// The five roles (ADR-0010, admission.md).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The five roles (ADR-0010, admission.md). The order is the tables' listing
+/// order — it sorts a role set (`crate::access::effective_roles`) — never a
+/// privilege order: roles do not imply one another (roles-and-keys.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Role {
     Reader,
     Writer,
