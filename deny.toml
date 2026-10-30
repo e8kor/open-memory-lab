@@ -1,0 +1,25 @@
+# Minimal cargo-deny policy per docs/engineering/ci-and-toolchain.md.
+# Advisories warn for now; the full four-check gate tightens when the CI
+# pipeline lands (an M1 critical-path item).
+
+[advisories]
+vulnerability = "warn"
+unmaintained = "warn"
+yanked = "warn"
+notice = "warn"
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -11,7 +11,8 @@ answers: where the transactional commit point is; how the per-tenant signed hash
 
 This page is the single declaration site for the transactional commit point and
 per-tenant hash chain (D1), the derived Delta lakehouse and the outbox protocol
-that feeds it (D2), and attachment storage (D3). The tables named here are
+that feeds it (D2, with the pure-Rust delta-rs writer as D5), and attachment
+storage (D3). The tables named here are
 specified column-by-column in [data/postgres-schema.md](../data/postgres-schema.md)
 and [data/delta-tables.md](../data/delta-tables.md); journal event payload shapes
 are in [data/event-catalog.md](../data/event-catalog.md). Erasure and the
@@ -155,7 +156,7 @@ clock at commit, informational and possibly non-monotonic across failover;
 order is proven by `seq` alone
 ([audit-and-lineage.md](audit-and-lineage.md)).
 
-## The lake and the outbox protocol (D2)
+## The lake and the outbox protocol (D2, D5)
 
 Delta Lake is the derived body lakehouse. Its purpose is narrowed and named:
 **reconciliation, lineage, metadata analytics, and future journalled

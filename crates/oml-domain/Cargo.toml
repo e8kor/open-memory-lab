@@ -1,0 +1,21 @@
+[package]
+name = "oml-domain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pure domain core: signed envelope, per-tenant hash chain, constitution invariants. No I/O."
+
+[dependencies]
+ed25519-dalek.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

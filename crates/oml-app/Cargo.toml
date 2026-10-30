@@ -1,0 +1,21 @@
+[package]
+name = "oml-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Port traits and use-cases driving the domain; the constitution is enforced here, never in adapters (ADR-0019 d1)."
+
+[dependencies]
+oml-domain.workspace = true
+ed25519-dalek.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

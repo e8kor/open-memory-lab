@@ -70,3 +70,47 @@ security-relevant findings.
 
 The repository and any future code are licensed under [Apache-2.0](LICENSE). The documentation
 under [`docs/`](docs/) is additionally licensed under [CC-BY-4.0](LICENSE-docs).
+
+## Running the PoC
+
+The repository now carries a proof-of-concept implementation of the design's M1 slice: the
+standalone lead server (`oml-server-lead`) and the thin administration CLI (`oml`), composed
+per [docs/engineering/workspace-plan.md](docs/engineering/workspace-plan.md).
+
+**Prerequisites**
+
+- Rust (stable, via rustup) — `cargo build --release` builds both binaries.
+- A local PostgreSQL with a role that can create databases, e.g.
+  `postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev` (or start one with
+  `docker compose up -d postgres`). Migrations are embedded and apply on server boot;
+  there is no separate migrate step.
+- `jq` and `psql` for the demo script.
+
+**Three commands**
+
+```sh
+# 1. Build, then boot the lead (migrates on start, mints the keyring, prints the
+#    one-time enrollment token on stdout and the signing public key in the boot log):
+cargo build --release
+OML_POSTGRES__URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev ./target/release/oml-server-lead
+
+# 2. Or let the demo script drive the whole story against a throwaway database —
+#    bootstrap, keys, submit, review, the R2 refusal, supersede, audit, shutdown:
+bash scripts/poc-demo.sh
+
+# 3. Verify the signed journal chain independently (the public key is operator
+#    input, confirmed out of band — the server logs it at boot):
+./target/release/oml audit verify-chain --genesis --signing-key <64-hex ed25519 public key>
+```
+
+CLI verbs, exit codes and transcripts are specified in [docs/cli/reference.md](docs/cli/reference.md).
+
+**Honest status.** The PoC is the M1 slice of the
+[critical path](docs/product/critical-path.md): one standalone lead, one tenant
+(bootstrap-claimed), held-by-default admission with a deterministic marker scanner, the
+dreamer review ceremony with R2 enforced against the lineage closure, supersede, substring
+recall, and the signed per-tenant hash chain with an independent CLI verifier. **Not
+implemented yet:** attachments and the object lake, erasure ceremonies, the MCP/agent plugin
+surface, follower servers and read scaling, simulations, embedding-based retrieval, and the
+operator tier — see the [critical path](docs/product/critical-path.md) for the order in
+which they land.
