@@ -509,3 +509,33 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
 
     drop_db(&db).await;
 }
+
+#[tokio::test]
+async fn oml_get_answers_not_built_yet_and_so_does_oml_supersede() {
+    let (router, db) = fresh_router().await;
+    let (writer, _, _, _) = crew(&router).await;
+
+    // ADR-0025 d12 adds both tools to the catalog; until they are served
+    // they are named, not unknown, and never listed.
+    for (id, name) in [(1, "oml_get"), (2, "oml_supersede")] {
+        let body = rpc(
+            &router,
+            &writer,
+            id,
+            "tools/call",
+            json!({"name": name, "arguments": {}}),
+        )
+        .await;
+        assert_eq!(body["error"]["code"], -32602, "{body}");
+        let message = body["error"]["message"].as_str().expect("message");
+        assert!(message.contains("not built yet"), "{body}");
+        assert!(!message.contains("(R1)"), "{body}");
+    }
+    let listed = rpc(&router, &writer, 3, "tools/list", json!({})).await;
+    for tool in listed["result"]["tools"].as_array().expect("tools") {
+        assert_ne!(tool["name"], "oml_get");
+        assert_ne!(tool["name"], "oml_supersede");
+    }
+
+    drop_db(&db).await;
+}
