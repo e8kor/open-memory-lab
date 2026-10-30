@@ -153,7 +153,8 @@ issuance and at every grant amendment. An admin who must write or recall
 holds a separate writer-role key ([Admin verbs](#admin-verbs)).
 
 **Issuance validation order.** `POST /v2/keys` ([http-api](../api/http-api.md#keys-grants-denials))
-validates in this order, and the first failure answers:
+first checks that `tenant_id` is present if and only if the issuer is an operator key — else
+`request.validation` (step 0) — and then validates in this order, and the first failure answers:
 
 1. `access.role_exclusive`;
 2. the [issuer ceiling](#issuer-ceiling) on the key role — `access.issuer_ceiling`, including an
@@ -253,8 +254,14 @@ the calling key and its journalled `rotated_from` chain — never against one ke
 
 Own-work reads admit every tenant role except operator and need no grant, but a global per-key
 denial covering the row's workarea still masks the row — deny-wins, as everywhere else
-([workareas](workareas.md)). R2 is unaffected: a reviewer is still excluded by both key id and
-principal ([lineage-closure exclusion](#the-dreamer-split)).
+([workareas](workareas.md)). An own row that is a simulation row or sim-derived is read only while
+the calling key is in that simulation's audience; outside it the row is absent
+(`access.not_found`), like any fenced row
+([the simulation read predicate](retrieval.md#the-simulation-read-predicate)). Both conditions
+hold on get, the own-work listing, `include_own_held` and the
+[events tail's](../api/http-api.md#events-tail) author clause. R2 is unaffected: a reviewer is
+still excluded by both key id and principal
+([lineage-closure exclusion](#the-dreamer-split)).
 
 **Naming a node.** An own row can sit on a node where the calling key holds no role — an admin's
 reassignment can move it there. A response names a claim's node to a key only where
@@ -313,6 +320,17 @@ reviewing key or its principal appears anywhere in that closure. "I edited an an
 claim" disqualifies a reviewer exactly as "I wrote this claim" does. Because the closure includes
 pending edges, a dreamer cannot launder authorship by proposing an edit and reviewing the result
 before the edit is ratified. A dreamer's own proposals always need another reviewer.
+
+**Rival successors.** While a successor is held, the reviewer-exclusion set of every other held
+successor of the same target (same workarea, `claim_key` and `replaces`) also contains its
+author's key and principal; review next never serves such a row to that key, and a verdict from
+it answers `review.author_in_lineage`
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). Competing successors of one
+tip are decided by the tip compare-and-set
+([audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)), so a rival's
+author judging the other successor would be deciding its own row's fate. A row's
+**reviewer-exclusion set** is therefore the keys and principals in its lineage closure plus, for a
+held successor, the authors of its held rivals.
 
 The honest boundary: **undeclared derivation is not detectable.** If a writer reconstructs
 someone's content without declaring `derives_from`, the service has no way to know; lineage
