@@ -12,7 +12,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use oml_domain::access::{Grant, KeyDenial};
-use oml_domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope, key_fingerprint};
+use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{ClaimKeyState, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord};
 
@@ -178,18 +178,36 @@ pub trait JournalStore: Send + Sync {
         memory_id: Uuid,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
-    /// Full-text recall over promoted tips only (retrieval.md: reads return
-    /// promoted rows only; a replaced version is never a hit, ADR-0025 d8)
-    /// over exactly the `readable` workarea nodes — subtree(scope)
-    /// ∩ the nodes where reader is effective, computed by the use-case. An
-    /// empty set searches nothing: there is no tenant-wide fallback
-    /// (ADR-0025 d1).
+    /// Full-text recall: each matched hit with its score, at most `k`, in
+    /// the total order of hits — score descending, then `artifact_id`
+    /// ascending (retrieval.md, the recall-ordering contract; ADR-0025 d8).
+    /// Hits are served tips (tip and state promoted) of kind `memory` or
+    /// `derived_fact` that `kinds` names, never retirement versions, so
+    /// neither a replaced version nor any version of a retired claim is a
+    /// hit; steering never is, whatever `kinds` names. The search covers
+    /// exactly the `readable` workarea nodes — subtree(scope) ∩ the nodes
+    /// where reader is effective, computed by the use-case. An empty set
+    /// searches nothing: there is no tenant-wide fallback (ADR-0025 d1).
     fn recall_fts(
         &self,
         tenant_id: Uuid,
         readable: &[Uuid],
         query: &str,
+        kinds: &[MemoryKind],
         k: usize,
+    ) -> impl Future<Output = Result<Vec<(MemoryRecord, f32)>, StoreError>> + Send;
+
+    /// Applicable steering over `nodes`, the scope's ancestors the key reads,
+    /// listed from the `universe` root down: every promoted served tip of
+    /// kind `steering` whose workarea is one of them, never a retirement
+    /// version, so a retired claim serves none. It is ordered structurally,
+    /// never by a query: by its node's position in `nodes` — its depth —
+    /// then `promoted_at` ascending, then `artifact_id` ascending
+    /// (retrieval.md, the recall-ordering contract; ADR-0025 d8).
+    fn steering_in_force(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// The greatest version of `claim_key` in the workarea in any state, and

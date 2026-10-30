@@ -12,7 +12,7 @@ use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen}
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
     AppError, BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, IssuedKey,
-    RecallRequest, SubmitRequest, SupersedeRequest, Verdict, VersionRef,
+    RecallRequest, RecallResult, SubmitRequest, SupersedeRequest, Verdict, VersionRef,
 };
 use uuid::Uuid;
 
@@ -144,6 +144,7 @@ fn recall_req(query: &str) -> RecallRequest {
         query: query.to_owned(),
         k: 10,
         workarea_id: None,
+        kinds: Vec::new(),
     }
 }
 
@@ -1515,6 +1516,262 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
         served_lineage(&app, &reader.value, derived, "fleet").await,
         vec![held]
     );
+}
+
+// ---------------------------------------------------------------------------
+// Recall: the steering segment and the hit order (ADR-0025 d8)
+// ---------------------------------------------------------------------------
+
+/// A first version of `kind` in `workarea_id`.
+fn submit_kind(idem: &str, kind: MemoryKind, body: &str, workarea_id: Uuid) -> SubmitRequest {
+    SubmitRequest {
+        kind,
+        ..submit_into(idem, body, workarea_id)
+    }
+}
+
+/// The steering ids a recall served, in order.
+fn steering_ids(recall: &RecallResult) -> Vec<Uuid> {
+    recall.steering.iter().map(|m| m.memory.memory_id).collect()
+}
+
+/// The hit ids a recall served, in order.
+fn hit_ids(recall: &RecallResult) -> Vec<Uuid> {
+    recall.hits.iter().map(|h| h.memory.memory_id).collect()
+}
+
+/// A recall of `query` at `scope`.
+fn recall_at(query: &str, scope: Uuid) -> RecallRequest {
+    RecallRequest {
+        workarea_id: Some(scope),
+        ..recall_req(query)
+    }
+}
+
+#[tokio::test]
+async fn a_promoted_steering_row_precedes_hits_unranked() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let promote = |req: SubmitRequest| {
+        let (writer, dreamer) = (writer.value.clone(), dreamer.value.clone());
+        let app = &app;
+        async move { promoted(app, &writer, &dreamer, &req).await }
+    };
+
+    // One steering row misses the query and the other matches it twice:
+    // steering applies by scope and is ordered by promotion, never by the
+    // query (retrieval.md, the recall-ordering contract).
+    let quiet = promote(submit_kind(
+        "s1",
+        MemoryKind::Steering,
+        "Quote validity dates are mandatory.",
+        crew,
+    ))
+    .await;
+    let loud = promote(submit_kind(
+        "s2",
+        MemoryKind::Steering,
+        "canary drain: drain the canary first",
+        crew,
+    ))
+    .await;
+    let weaker = promote(submit_req("m1", "the canary drained")).await;
+    let stronger = promote(submit_req("m2", "canary drain, then settle")).await;
+    let equal = promote(submit_req("m3", "drain the canary slowly")).await;
+
+    let recall = app
+        .recall(&reader.value, &recall_req("canary drain"))
+        .await
+        .expect("recall");
+    assert_eq!(steering_ids(&recall), vec![quiet, loud]);
+    assert!(
+        recall
+            .steering
+            .iter()
+            .all(|m| m.memory.kind == MemoryKind::Steering),
+        "steering is never a hit"
+    );
+    assert_eq!(
+        hit_ids(&recall),
+        vec![stronger, equal, weaker],
+        "score descending, then artifact_id ascending"
+    );
+    let scores: Vec<f32> = recall.hits.iter().map(|h| h.score).collect();
+    assert!(
+        scores[0] > scores[2],
+        "the score is the store's rank: {scores:?}"
+    );
+    assert!(
+        (scores[0] - scores[1]).abs() < f32::EPSILON,
+        "two terms each: {scores:?}"
+    );
+}
+
+#[tokio::test]
+async fn ancestor_steering_applies_to_a_child_scope() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quotes = workarea(&app, admin, "quotes", crew).await;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+
+    // The child's row is promoted first: depth from the root orders the
+    // segment before promotion time does.
+    let local = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quotes are in USD/t.", quotes),
+    )
+    .await;
+    let standing = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_kind(
+            "s2",
+            MemoryKind::Steering,
+            "Treat undated quotes as expired.",
+            crew,
+        ),
+    )
+    .await;
+
+    let recall = app
+        .recall(&reader.value, &recall_at("anything", quotes))
+        .await
+        .expect("recall");
+    assert_eq!(steering_ids(&recall), vec![standing, local]);
+    assert!(recall.hits.is_empty(), "steering is never a hit");
+}
+
+#[tokio::test]
+async fn child_steering_does_not_apply_to_the_parent() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quotes = workarea(&app, admin, "quotes", crew).await;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    for (idem, kind, body) in [
+        ("s1", MemoryKind::Steering, "Quote the canary in USD/t."),
+        ("m1", MemoryKind::Memory, "the canary quote is 412 USD/t"),
+    ] {
+        promoted(
+            &app,
+            &writer.value,
+            &dreamer.value,
+            &submit_kind(idem, kind, body, quotes),
+        )
+        .await;
+    }
+
+    // The child is searched for hits at the parent; its steering belongs to
+    // another crew and does not apply there.
+    let recall = app
+        .recall(&reader.value, &recall_req("canary"))
+        .await
+        .expect("recall");
+    assert!(recall.steering.is_empty(), "{:?}", steering_ids(&recall));
+    assert_eq!(recall.hits.len(), 1, "the subtree is searched");
+}
+
+#[tokio::test]
+async fn steering_on_an_unreadable_ancestor_is_not_served() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quotes = workarea(&app, admin, "quotes", crew).await;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let standing = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_kind(
+            "s1",
+            MemoryKind::Steering,
+            "Treat undated quotes as expired.",
+            crew,
+        ),
+    )
+    .await;
+
+    // Steering is bounded by read access: a key that reads only the child
+    // is served none of the parent's, and a key that reads the parent is.
+    let narrow = issue(&app, admin, Role::Reader, "rhea", quotes).await;
+    let recall = app
+        .recall(&narrow.value, &recall_req("anything"))
+        .await
+        .expect("recall");
+    assert!(recall.steering.is_empty(), "{:?}", steering_ids(&recall));
+    let wide = issue(&app, admin, Role::Reader, "rhea-wide", crew).await;
+    let recall = app
+        .recall(&wide.value, &recall_at("anything", quotes))
+        .await
+        .expect("recall");
+    assert_eq!(steering_ids(&recall), vec![standing]);
+}
+
+#[tokio::test]
+async fn kinds_filters_hits_only() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let mut ids = Vec::new();
+    for (idem, kind, body) in [
+        (
+            "s1",
+            MemoryKind::Steering,
+            "Drain the canary before any quote.",
+        ),
+        ("m1", MemoryKind::Memory, "the canary drained at noon"),
+        (
+            "d1",
+            MemoryKind::DerivedFact,
+            "the canary drains in an hour",
+        ),
+    ] {
+        ids.push(
+            promoted(
+                &app,
+                &writer.value,
+                &dreamer.value,
+                &submit_kind(idem, kind, body, crew),
+            )
+            .await,
+        );
+    }
+    let [steering, memory, derived] = ids.try_into().expect("three rows");
+
+    for (kinds, hits) in [
+        (vec![MemoryKind::DerivedFact], vec![derived]),
+        (vec![MemoryKind::Memory], vec![memory]),
+        (Vec::new(), vec![memory, derived]),
+    ] {
+        let recall = app
+            .recall(
+                &reader.value,
+                &RecallRequest {
+                    kinds: kinds.clone(),
+                    ..recall_req("canary")
+                },
+            )
+            .await
+            .expect("recall");
+        assert_eq!(steering_ids(&recall), vec![steering], "kinds {kinds:?}");
+        assert_eq!(hit_ids(&recall), hits, "kinds {kinds:?}");
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -740,7 +740,8 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "promoted");
 
-    // Recall: reader ceiling, promoted rows only, steering first and empty.
+    // Recall: reader ceiling, promoted rows only; no steering is promoted,
+    // so the segment is empty.
     let (status, _, recall) = send(
         router,
         "POST",
@@ -759,7 +760,12 @@ async fn full_happy_path_over_http() {
         "recall finds the promoted row: {recall}"
     );
     assert!(hits.iter().all(|h| h["memory"]["state"] == "promoted"));
-    assert!(hits.iter().all(|h| h["score"].is_number()));
+    // The score is the store's ts_rank, never a fixed 0.0 (ADR-0025 d8).
+    assert!(
+        hits.iter()
+            .all(|h| h["score"].as_f64().is_some_and(|s| s > 0.0)),
+        "{recall}"
+    );
     assert!(
         recall["query_digest"]
             .as_str()
@@ -1407,6 +1413,400 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
     let (status, _, body) = recall().await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
+
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// Recall: the steering segment, the hit order and the strict body (ADR-0025
+// d8, d16)
+// ---------------------------------------------------------------------------
+
+/// Submits a first version into `workarea` as `writer` and has `dreamer`
+/// ratify it over the review ring; returns its artifact id.
+async fn promote_over_http(
+    router: &Router,
+    writer: &str,
+    dreamer: &str,
+    workarea: Uuid,
+    (claim_key, kind, body): (&str, &str, &str),
+) -> Value {
+    let (status, _, accepted) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(writer)
+            .idem(&format!("s-{claim_key}"))
+            .workarea(&workarea.to_string())
+            .body(json!({
+                "verb": "remember", "claim_key": claim_key, "kind": kind, "body": body,
+            })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(dreamer)
+            .idem(&format!("r-{claim_key}"))
+            .body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    assert_eq!(serve["item"]["artifact_id"], accepted["artifact_id"]);
+    let (status, _, verdict) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Call::auth(dreamer)
+            .idem(&format!("v-{claim_key}"))
+            .body(json!({"serve_id": serve["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    accepted["artifact_id"].clone()
+}
+
+/// One recall over HTTP, at `scope` when one is named.
+async fn recall_over_http(
+    router: &Router,
+    token: &str,
+    scope: Option<Uuid>,
+    body: Value,
+) -> (StatusCode, Value) {
+    let mut call = Call::auth(token).body(body);
+    if let Some(scope) = scope {
+        call = call.workarea(&scope.to_string());
+    }
+    let (status, _, value) = send(router, "POST", "/v1/memories/recall", call).await;
+    (status, value)
+}
+
+/// The artifact ids of a recall's steering items, in order.
+fn steering_ids(recall: &Value) -> Vec<Value> {
+    recall["steering"]
+        .as_array()
+        .expect("steering")
+        .iter()
+        .map(|m| m["artifact_id"].clone())
+        .collect()
+}
+
+/// The artifact ids of a recall's hits, in order.
+fn hit_ids(recall: &Value) -> Vec<Value> {
+    recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| h["memory"]["artifact_id"].clone())
+        .collect()
+}
+
+/// A crew, its child `quotes`, and a writer and a dreamer on the crew:
+/// (rig, admin, crew, quotes, writer, dreamer).
+async fn steering_rig() -> (Rig, String, Uuid, Uuid, String, String) {
+    let rig = fresh_rig().await;
+    let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
+    let quotes = create_workarea(&rig.router, &admin, crew, "quotes").await;
+    let writer = issue_key(&rig.router, &admin, "writer", "crew/agent-7", crew).await;
+    let dreamer = issue_key(&rig.router, &admin, "dreamer", "crew/reviewer-3", crew).await;
+    (rig, admin, crew, quotes, writer, dreamer)
+}
+
+#[tokio::test]
+async fn a_promoted_steering_row_precedes_hits_unranked() {
+    let (rig, admin, crew, _quotes, writer, dreamer) = steering_rig().await;
+    let router = &rig.router;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let promote = |row| promote_over_http(router, &writer, &dreamer, crew, row);
+
+    // One steering row misses the query and the other matches it best:
+    // steering applies by scope and is ordered by promotion, never by the
+    // query (retrieval.md, the recall-ordering contract).
+    let quiet = promote((
+        "validity",
+        "steering",
+        "Treat any supplier quote without an explicit validity date as expired.",
+    ))
+    .await;
+    let loud = promote((
+        "units",
+        "steering",
+        "Quote every aluminium price in USD/t; an aluminium price without units is no aluminium price.",
+    ))
+    .await;
+    let accra = promote((
+        "accra",
+        "memory",
+        "Accra Metals aluminium price is 412 USD/t.",
+    ))
+    .await;
+    let tema = promote((
+        "tema",
+        "memory",
+        "Tema Alloys aluminium price is 409 USD/t, the lowest aluminium price this quarter.",
+    ))
+    .await;
+
+    let (status, recall) =
+        recall_over_http(router, &reader, None, json!({"query": "aluminium price"})).await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(steering_ids(&recall), vec![quiet, loud], "{recall}");
+    for item in recall["steering"].as_array().expect("steering") {
+        assert_eq!(item["kind"], "steering", "{item}");
+        assert!(item.get("score").is_none(), "steering is unranked: {item}");
+        assert!(item["body"].is_string(), "{item}");
+    }
+    let mut served = hit_ids(&recall);
+    served.sort_by_key(ToString::to_string);
+    let mut expected = vec![accra, tema];
+    expected.sort_by_key(ToString::to_string);
+    assert_eq!(served, expected, "steering is never a hit: {recall}");
+    let ranked: Vec<(f64, Uuid)> = recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| {
+            let id = h["memory"]["artifact_id"].as_str().expect("id");
+            (
+                h["score"].as_f64().expect("a numeric score"),
+                Uuid::parse_str(id).expect("uuid"),
+            )
+        })
+        .collect();
+    assert!(
+        ranked.iter().all(|(score, _)| *score > 0.0),
+        "the score is the store's ts_rank, never a fixed 0.0: {recall}"
+    );
+    assert!(
+        ranked
+            .windows(2)
+            .all(|w| w[0].0 > w[1].0 || (w[0].0 == w[1].0 && w[0].1 < w[1].1)),
+        "score descending, then artifact_id ascending: {recall}"
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn ancestor_steering_applies_to_a_child_scope() {
+    let (rig, admin, crew, quotes, writer, dreamer) = steering_rig().await;
+    let router = &rig.router;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+
+    // The child's row is promoted first: depth from the root orders the
+    // segment before promotion time does.
+    let local = promote_over_http(
+        router,
+        &writer,
+        &dreamer,
+        quotes,
+        ("units", "steering", "Quotes are in USD/t."),
+    )
+    .await;
+    let standing = promote_over_http(
+        router,
+        &writer,
+        &dreamer,
+        crew,
+        ("validity", "steering", "Treat undated quotes as expired."),
+    )
+    .await;
+
+    let (status, recall) =
+        recall_over_http(router, &reader, Some(quotes), json!({"query": "anything"})).await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(steering_ids(&recall), vec![standing, local], "{recall}");
+    assert_eq!(recall["hits"], json!([]));
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn child_steering_does_not_apply_to_the_parent() {
+    let (rig, admin, crew, quotes, writer, dreamer) = steering_rig().await;
+    let router = &rig.router;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    promote_over_http(
+        router,
+        &writer,
+        &dreamer,
+        quotes,
+        ("units", "steering", "Quote the aluminium price in USD/t."),
+    )
+    .await;
+    let quote = promote_over_http(
+        router,
+        &writer,
+        &dreamer,
+        quotes,
+        (
+            "accra",
+            "memory",
+            "Accra Metals aluminium price is 412 USD/t.",
+        ),
+    )
+    .await;
+
+    // The child is searched for hits at the parent; its steering belongs to
+    // another crew and does not apply there.
+    let (status, recall) = recall_over_http(
+        router,
+        &reader,
+        Some(crew),
+        json!({"query": "aluminium price"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(recall["steering"], json!([]), "{recall}");
+    assert_eq!(hit_ids(&recall), vec![quote], "the subtree is searched");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn steering_on_an_unreadable_ancestor_is_not_served() {
+    let (rig, admin, crew, quotes, writer, dreamer) = steering_rig().await;
+    let router = &rig.router;
+    let standing = promote_over_http(
+        router,
+        &writer,
+        &dreamer,
+        crew,
+        ("validity", "steering", "Treat undated quotes as expired."),
+    )
+    .await;
+
+    // Steering is bounded by read access: a key that reads only the child
+    // is served none of the parent's, and a key that reads the parent is.
+    let narrow = issue_key(router, &admin, "reader", "crew/agent-narrow", quotes).await;
+    let (status, recall) =
+        recall_over_http(router, &narrow, None, json!({"query": "anything"})).await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(recall["steering"], json!([]), "{recall}");
+    let wide = issue_key(router, &admin, "reader", "crew/agent-wide", crew).await;
+    let (status, recall) =
+        recall_over_http(router, &wide, Some(quotes), json!({"query": "anything"})).await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(steering_ids(&recall), vec![standing], "{recall}");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn kinds_filters_hits_only() {
+    let (rig, admin, crew, _quotes, writer, dreamer) = steering_rig().await;
+    let router = &rig.router;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let promote = |row| promote_over_http(router, &writer, &dreamer, crew, row);
+    let steering = promote((
+        "validity",
+        "steering",
+        "Check the aluminium price validity date first.",
+    ))
+    .await;
+    let memory = promote((
+        "accra",
+        "memory",
+        "Accra Metals aluminium price is 412 USD/t.",
+    ))
+    .await;
+    let derived = promote((
+        "anchor",
+        "derived_fact",
+        "Accra Metals sets the aluminium price anchor.",
+    ))
+    .await;
+
+    for (kinds, hits) in [
+        (json!(["derived_fact"]), vec![derived.clone()]),
+        (json!(["memory"]), vec![memory.clone()]),
+    ] {
+        let (status, recall) = recall_over_http(
+            router,
+            &reader,
+            None,
+            json!({"query": "aluminium price", "kinds": kinds}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{recall}");
+        assert_eq!(steering_ids(&recall), vec![steering.clone()], "{recall}");
+        assert_eq!(hit_ids(&recall), hits, "{recall}");
+    }
+
+    // An empty filter, a steering filter and a vocabulary kind are refused,
+    // never read as no filter (openapi.yaml RecallRequest.kinds).
+    for kinds in [
+        json!([]),
+        json!(["steering"]),
+        json!(["term"]),
+        json!(["bogus"]),
+    ] {
+        let (status, refused) = recall_over_http(
+            router,
+            &reader,
+            None,
+            json!({"query": "aluminium price", "kinds": kinds.clone()}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{kinds}: {refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_unknown_recall_field_is_request_validation() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+
+    // A field the body does not declare is refused, never dropped (ADR-0025
+    // d16).
+    let (status, refused) = recall_over_http(
+        router,
+        &reader,
+        None,
+        json!({"query": "aluminium price", "rerank": "by_recency"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_envelope(&refused, "request.validation");
+    let message = refused["error"]["message"].as_str().expect("message");
+    assert!(message.contains("rerank"), "{refused}");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn terms_on_recall_is_refused_by_name_until_built() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+
+    // The vocabulary filter is unbuilt, so it is refused by name rather than
+    // answered unfiltered (retrieval.md; ADR-0025 d16).
+    for (field, body) in [
+        (
+            "terms",
+            json!({"query": "aluminium price", "terms": ["proc:alloy"]}),
+        ),
+        ("terms", json!({"query": "aluminium price", "terms": []})),
+        (
+            "expand_terms",
+            json!({"query": "aluminium price", "expand_terms": "descendants"}),
+        ),
+    ] {
+        let (status, refused) = recall_over_http(router, &reader, None, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_envelope(&refused, "request.validation");
+        let message = refused["error"]["message"].as_str().expect("message");
+        assert!(message.contains(field), "{field}: {refused}");
+    }
 
     drop_db(&rig.db_name).await;
 }
