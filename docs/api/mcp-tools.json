@@ -7,8 +7,7 @@
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
       "oml_remember": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_learn": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_events_tail": "ADR-0025 d15: the scope input (the ring's workarea_id, defaulting to the key's default workarea, request.workarea_unresolved for a key with none); per-family visibility; next_after_seq; the subject and workarea output fields; idle; request.validation for an after_seq beyond head_seq."
+      "oml_learn": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet."
     }
   },
   "tools": [
@@ -364,19 +363,24 @@
     },
     {
       "name": "oml_events_tail",
-      "description": "Poll the journalled event stream for the key's scope, from the last journal sequence the client processed. The stateless substitute for push: the server remembers nothing between calls. Gaps in a filtered tail are normal - they are the events this key may not see. Rides GET /v2/events.",
+      "description": "Poll the journalled event stream for the key's scope, from the resume point the client holds. The stateless substitute for push: the server remembers nothing between calls. A key sees its own submissions, the lifecycle events of claims it can read or authored, and the workarea events of nodes it reads; never another key's submission, a review event or key administration. Gaps in a filtered tail are normal - they are the events this key may not see. Each event is {seq, event_type, at, subject, workarea}; the page carries head_seq, next_after_seq and idle. Rides GET /v2/events.",
       "inputSchema": {
         "type": "object",
         "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Optional workarea node id: the tail is filtered to its subtree within the key's reader effective access, and a node outside that access is refused (access.not_found). Omitted: the key's journalled default workarea; a key with none is refused (request.workarea_unresolved)."
+          },
           "after_seq": {
             "type": "integer",
             "minimum": 0,
-            "description": "The last per-tenant journal sequence the client processed; events after it are returned, seq ascending. Omit to start from the beginning (0), as on the ring; pass the head_seq of a first call to start from now. A malformed value is a typed request.validation refusal, never a silent restart from zero."
+            "description": "The resume point: the next_after_seq of the previous call, passed back verbatim; events after it are returned, seq ascending. Omit to start from the beginning (0), as on the ring; pass the head_seq of a first call to start from now. A value beyond head_seq, or a malformed one, is a typed request.validation refusal, never a silent restart from zero."
           },
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Page size."
+            "maximum": 200,
+            "description": "How many journal events one call scans. A page may hold fewer events than this, or none, while next_after_seq still advances."
           }
         },
         "required": [],

@@ -285,6 +285,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "The target workarea comes from the token (ADR-0022 d4); a key with neither a default nor the X-OML-Workarea header is refused, never guessed for.",
             "the key has no default_workarea and the request names none",
         ),
+        AppError::AfterSeqBeyondHead {
+            after_seq,
+            head_seq,
+        } => ApiError::validation(format!(
+            "after_seq {after_seq} is beyond head_seq {head_seq}: pass back a next_after_seq this tail served"
+        )),
         AppError::NotFound => ApiError::not_found(),
         AppError::LineageUnknown(id) => ApiError::not_found().with_details(json!({
             // derives_from targets fail closed as absence, like CURIE

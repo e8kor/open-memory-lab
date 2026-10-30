@@ -11,14 +11,13 @@
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
-use ed25519_dalek::VerifyingKey;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use oml_cli::client::{CallOpts, CliError, Client};
 use oml_cli::creds::{self, Credentials};
-use oml_cli::verify::{TailEvent, parse_verifying_key, verify_chain};
+use oml_cli::verify::parse_verifying_key;
 
 #[derive(Parser)]
 #[command(
@@ -229,15 +228,14 @@ struct SupersedeArgs {
 
 #[derive(Subcommand)]
 enum AuditCommand {
-    /// Pull the events tail and verify the chain per chain-format.md.
+    /// Verify the chain per chain-format.md from the chain export; refused
+    /// while the server serves none (the events tail is a filtered feed).
     VerifyChain(VerifyChainArgs),
 }
 
 #[derive(Args)]
 struct VerifyChainArgs {
-    /// Run the full-history verification from genesis. The PoC tail always
-    /// serves from seq 1, so this names the intent; both modes verify all
-    /// served events.
+    /// Run the full-history verification from genesis.
     #[arg(long)]
     genesis: bool,
     /// A deployment signing public key: 64 hex chars (the 32 raw ed25519
@@ -675,14 +673,18 @@ fn print_json(v: &Value) {
 // oml audit verify-chain
 // ---------------------------------------------------------------------------
 
-const EVENTS_PAGE: usize = 200; // the server's api.page_limit_max
-
+/// Live verification reads the chain export (`kind: chain`), the one
+/// surface that serves the whole per-tenant chain: the events tail is a
+/// filtered feed whose omitted events and nulled identities break
+/// recomputation (http-api.md events tail; ADR-0025 d15). This server serves
+/// no chain export yet, so after the local checks the verb refuses by name
+/// instead of reporting breaks it did not find.
 fn run_verify_chain(
     cli: &Cli,
     stored: &Credentials,
     args: &VerifyChainArgs,
 ) -> Result<ExitCode, CliError> {
-    let client = resolve(cli, stored)?;
+    resolve(cli, stored)?;
     let tenant = args
         .tenant
         .map(|t| t.to_string())
@@ -700,87 +702,15 @@ fn run_verify_chain(
              (chain-format.md, \"How the public key reaches an export recipient\")",
         ));
     }
-    let keys: Vec<VerifyingKey> = args
-        .signing_keys
-        .iter()
-        .map(|s| parse_verifying_key(s).map_err(CliError::Local))
-        .collect::<Result<_, _>>()?;
-
-    // Pull the whole tail, seq ascending (GET /v2/events pages by after_seq).
-    let mut events: Vec<TailEvent> = Vec::new();
-    let mut head_seq = 0_u64;
-    loop {
-        let after = events.last().map_or(0, |e| e.seq);
-        let (_, page) = client.get(&format!("/v2/events?after_seq={after}&limit={EVENTS_PAGE}"))?;
-        head_seq = page["head_seq"].as_u64().unwrap_or(head_seq);
-        let items = page["items"].as_array().cloned().unwrap_or_default();
-        let n = items.len();
-        for item in &items {
-            events.push(TailEvent::from_value(item).map_err(CliError::Local)?);
-        }
-        if n < EVENTS_PAGE {
-            break;
-        }
+    for key in &args.signing_keys {
+        parse_verifying_key(key).map_err(CliError::Local)?;
     }
-
-    let report = verify_chain(&tenant, &events, head_seq, &keys);
-    if cli.json {
-        print_json(&json!({
-            "tenant_id": report.tenant_id,
-            "events": report.events,
-            "head_seq": report.head_seq,
-            "head_hash": format!("sha256:{}", report.head_hash),
-            "verified": report.verified(),
-            "breaks": report.breaks,
-            "notes": report.notes,
-            "signing_keys": report
-                .key_events
-                .iter()
-                .map(|(fp, n)| json!({ "fingerprint": fp, "events_verified": n }))
-                .collect::<Vec<_>>(),
-        }));
-    } else {
-        let mode = if args.genesis {
-            "from genesis (full history)"
-        } else {
-            "from genesis"
-        };
-        println!("verifying tenant {tenant} {mode}…");
-        println!(
-            "  signing key set ({} key(s), fingerprints to confirm out of band):",
-            report.key_events.len()
-        );
-        for (fp, n) in &report.key_events {
-            println!("    {fp} — verified {n} event(s)");
-        }
-        for note in &report.notes {
-            println!("  note: {note}");
-        }
-        if report.verified() {
-            println!(
-                "  seq 1..{}: prev_hash links ok, sha-256 hashes ok, ed25519 signatures ok",
-                report.events
-            );
-            println!(
-                "chain verified. head: seq {}, hash sha256:{}",
-                report.head_seq, report.head_hash
-            );
-        } else {
-            for b in &report.breaks {
-                println!("  BREAK: {b}");
-            }
-            println!(
-                "chain verification FAILED — {} break(s) over {} event(s).",
-                report.breaks.len(),
-                report.events
-            );
-        }
-    }
-    Ok(if report.verified() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    })
+    let mode = if args.genesis { " from genesis" } else { "" };
+    Err(CliError::local(format!(
+        "live verification of tenant {tenant}{mode} reads the chain export (kind: chain), which \
+         this server does not serve yet; the events tail is a filtered feed, not a verification \
+         surface (http-api.md events tail)"
+    )))
 }
 
 // ---------------------------------------------------------------------------
