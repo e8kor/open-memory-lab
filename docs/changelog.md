@@ -29,6 +29,19 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-30 — The release image for linux/amd64 and linux/arm64 (implementation)
+
+An implementation milestone; no decision changes. `.github/workflows/release.yml` now builds the
+image as [CI and toolchain](engineering/ci-and-toolchain.md) decides: one leg per platform on a
+native runner (`ubuntu-24.04`, `ubuntu-24.04-arm`), each pushed by digest with its own SBOM and
+provenance, then a merge job that assembles one index with `docker buildx imagetools create`,
+asserts both platforms are in it, and signs the index digest with `cosign sign --recursive`. The
+binary tarballs stay `x86_64-linux`, and the release notes say so. `ci.yml` gains an `image` job
+that builds the image for both platforms on every pull request and runs its `oml --version` on
+each, and `scripts/check_release.py` fails the pull request if `release.yml` stops building both
+platforms, assembling the index or signing its digest. No tag has run the new pipeline yet; the
+`v0.1.0` image is `linux/amd64` alone.
+
 ### 2026-10-30 — the agent-only memory surface (ADR-0025)
 
 [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) (proposed) decides the surface
