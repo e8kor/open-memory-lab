@@ -6,8 +6,8 @@
     "design_spec_version": "0.2.0-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
-      "oml_remember": "ADR-0025 d10: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_learn": "ADR-0025 d10: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
+      "oml_remember": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
+      "oml_learn": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
       "oml_recall": "ADR-0025 d4, d7, d8, d12, d16: include_own_held and max_tokens inputs; the caller's own held rows among the hits; steering never among the hits; the claim-item output with tokens; the budget object; refusal of unknown and unbuilt fields by name.",
       "oml_events_tail": "ADR-0025 d15: the scope input (the ring's workarea_id, defaulting to the key's default workarea, request.workarea_unresolved for a key with none); per-family visibility; next_after_seq; the subject and workarea output fields; idle; request.validation for an after_seq beyond head_seq."
     }

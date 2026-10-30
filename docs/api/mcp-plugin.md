@@ -1093,7 +1093,7 @@ none is refused with `request.workarea_unresolved`), and the tail is filtered
 to the events the key may see under the per-family visibility rule declared on
 [http-api.md](http-api.md#events-tail). R3 applies to the stream exactly as to
 reads: another writer's held submission never appears here — a key sees only
-its own `submission.*` events — and no review or key-administration event
+its own `submission.*` and `simulation.write` events — and no review or key-administration event
 appears at all, so the tail cannot be used to watch the review queue from
 outside.
 
@@ -1141,14 +1141,17 @@ types and payload shapes are owned by the
 `next_after_seq` is the resume point declared on
 [http-api.md](http-api.md#events-tail); pass it back verbatim as `after_seq`.
 `idle` is true when it has reached `head_seq`. Each event carries `subject` —
-`{artifact_id, claim_key, version}` for `lifecycle.*` and `submission.*` (for
-`lifecycle.supersede` the new version, for `lifecycle.tip_override` the
-version that becomes the tip), `{edge_id, from, to}` for `workarea.relate_*`,
-`{workarea_id}` for every other `workarea.*` — and `workarea`, always present,
-naming the in-scope workarea: the subject's workarea; for `workarea.relate_*`,
-the edge's `from` endpoint when it lies within the scope's subtree, else its
-`to` endpoint; for `lifecycle.reassign`, `to_workarea_id` when
-`re_enters_held` is false and it lies within the scope's subtree, else
+`{artifact_id, claim_key, version}` for `lifecycle.*`, `submission.*` and
+`simulation.write` (for `lifecycle.supersede` the new version, for
+`lifecycle.tip_override` the version that becomes the tip), `{edge_id, from,
+to}` for `workarea.relate_*`, `{workarea_id}` for every other `workarea.*` —
+and `workarea`, always present, naming the in-scope workarea: the subject's
+workarea; for `workarea.relate_*`, the edge's `from` endpoint when it lies
+within the scope's subtree, else its `to` endpoint; for `lifecycle.reassign`,
+`to_workarea_id` when `re_enters_held` is false and that workarea satisfies a
+clause that makes the event visible (the reader clause, with reader on it
+within the scope's subtree, or the author clause, with it within the scope's
+subtree minus global denials), else
 `from_workarea_id`. Any node the
 [naming rule](../architecture/roles-and-keys.md#own) withholds from the key is
 null, so an author-only event on a version an admin moved where the key holds
@@ -1157,8 +1160,8 @@ identity are dropped. Sequence numbers are the per-tenant journal sequence (D1):
 filtered tail are normal — they are the events this key may not see — and
 order is the chain's order, so two keys with equal access see the same
 `lifecycle.*` and `workarea.*` events in the same order; each additionally
-sees only its own `submission.*` events and, under the author clause, the
-`lifecycle.*` events of its own versions. `seq` and `head_seq` count every
+sees only its own `submission.*` and `simulation.write` events and, under the
+author clause, the `lifecycle.*` events of its own versions. `seq` and `head_seq` count every
 event in the tenant's journal, so the gaps tell a key how many events it
 cannot see occurred, and when — a count, never content
 ([FR-31](../product/roadmap.md)). The cost of poll-over-push is stated above under

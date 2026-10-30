@@ -170,22 +170,30 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   stated residual: it tells any writer on the workarea that a held version, or a promoted or
   demoted one the writer cannot read, holds that `claim_key` — a name, never content
   ([FR-31](../product/roadmap.md); [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
-  d10).
+  d18).
 - **Supersession targets the current served tip, and only ratification moves the tip.** A
   supersession is a held successor that names the version it replaces; the replaced version
   stays the served tip, and stays in every reader's recall, until a non-author ratifies the
   successor. Several held successors of one tip may coexist — an author's revision beside a
-  dreamer's edit-as-proposal, say — and none blocks another. Ratification compare-and-sets that
-  the target is still the promoted tip and journals one `lifecycle.supersede`, which promotes the
-  successor and flips the tip in the same commit, so the compare-and-set decides between
-  competing successors: once one is ratified, a verdict that would ratify another is refused
-  with `submission.tip_conflict`, nothing is journalled, its serve is not consumed, and that
-  successor stays held until a reviewer rejects it; its author may propose afresh against the new
-  tip, and the fresh proposal leaves the stale one held. The tip never changes except by a
-  ratified promotion, so readers never see a version nobody reviewed ahead of a reviewed one.
-  The compare-and-set runs inside the commit's data-modifying statement, never before `BEGIN`
-  ([postgres-schema](../data/postgres-schema.md#memories)). For a tainted successor (provenance
-  `simulation` or sim-derived) the ratification compare-and-sets the same target and journals
+  dreamer's edit-as-proposal, say — and none blocks another, though the authors of rival held
+  successors are kept off each other's review
+  ([roles and keys](roles-and-keys.md#the-dreamer-split)). Ratification compare-and-sets that
+  the target is still the promoted tip under the successor's own `workarea_id` and `claim_key`,
+  and journals one `lifecycle.supersede`, which promotes the successor and flips the tip in the
+  same commit, so the compare-and-set decides between competing successors: once one is
+  ratified, a verdict that would ratify another is refused with `submission.tip_conflict`,
+  nothing is journalled, its serve is not consumed, and that successor stays held until a
+  reviewer rejects it; its author may propose afresh against the new tip, and the fresh proposal
+  leaves the stale one held. A target moved to another workarea or re-keyed after the successor
+  was captured fails the compare-and-set, and so does a successor moved or re-keyed away from its
+  target: the verdict answers `submission.tip_conflict`, nothing is journalled, and the successor
+  stays held until a reviewer rejects it. So a verdict in one workarea never retires another
+  workarea's tip, and the one `workarea_id` of a `lifecycle.supersede` names both versions. The
+  tip never changes except by a ratified promotion, so readers never see a version nobody
+  reviewed ahead of a reviewed one. The compare-and-set runs inside the commit's data-modifying
+  statement, never before `BEGIN` ([postgres-schema](../data/postgres-schema.md#memories)). For a
+  tainted successor (provenance `simulation` or sim-derived) the ratification compare-and-sets
+  the same target under the same predicate and journals
   `lifecycle.supersede`, but it sets the audience overlay tip (`memories_overlay_tip`) and never
   the default tip: a target that is the default tip is compared without being flipped, so it
   stays the default tip for every key, and only an overlay target is flipped. Tainted and untainted successors of one tip do not compete under the
@@ -209,7 +217,7 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   replacement would take reviewed content away from every recall and listing scoped above the
   workarea with no second identity
   ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5;
-  [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
+  [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d17).
 - **A retirement version as tip makes a retired claim.** A ratified supersession carrying
   `retirement: true` takes the tip; recall then serves nothing of the claim — neither hits nor
   steering ([retrieval](retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked))
@@ -332,6 +340,8 @@ and a chain that still verifies.
 - The journal's own decisions (system of record, per-tenant chains) are ADR-0002, owned by
   [storage](storage.md); the read log's are ADR-0013, owned by [retrieval](retrieval.md).
 - [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) — the tip moves only at
-  ratification, by compare-and-set; distinct version ordinals; retirement as a supersession; the
-  self-signed tip rule; the `claim_key` release after a never-promoted rejection and the reopen
-  that would collide with it; the `held_fts` table, `tsvector` entries in the inventory.
+  ratification, by a compare-and-set bound to the successor's workarea and `claim_key`; distinct
+  version ordinals; rival successors' authors kept off each other's review; retirement as a
+  supersession; the self-signed tip rule; the `claim_key` release after a never-promoted rejection
+  and the reopen that would collide with it; the `held_fts` table, `tsvector` entries in the
+  inventory.

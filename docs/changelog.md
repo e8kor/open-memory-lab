@@ -34,7 +34,7 @@ implementation milestone where it changes what the repository holds.
 [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) (proposed) decides the surface
 FR-10 and FR-11 need and the access model it rests on. It proposes amending ADR-0001 (d5),
 ADR-0008 (d4, d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2),
-ADR-0018 (d4) and ADR-0022 (d4); each of those records' Status lines gains the back-pointer
+ADR-0018 (d4) and ADR-0022 (d4, d6); each of those records' Status lines gains the back-pointer
 when ADR-0025 is accepted.
 
 - **Decided:** grant admissibility per key role and one four-step refusal order, so one
@@ -43,38 +43,44 @@ when ADR-0025 is accepted.
   authoring key; `include_own_held` on recall, with held text matched only through an
   author-fenced index; the budget token (counter `oml-tc/1`) and the `max_tokens` cut with a
   `budget` object; applicable steering and a total hit order; a recall logs the ids served and a
-  digest of the whole request; supersession moves the tip only at ratification, by
-  compare-and-set, as one `lifecycle.supersede`; the author's retire-proposal as a supersession
-  carrying `retirement: true`, open to the same keys as any supersession; distinct version
-  ordinals, so competing held successors coexist and the tip compare-and-set decides between
-  them; own read on the target version; a self-signed version never replacing a reviewed tip;
-  `oml_get` and `oml_supersede` and one claim-item shape; the own-work
-  listing across every workarea the key wrote to; the workarea read with the caller's children,
-  effective verbs and permission epoch; per-family visibility on the events tail with a bounded
-  scan and `next_after_seq`, where a `lifecycle.*` event reaches readers only while the version's
-  latest move between held and promoted is a promotion, reaches its author in any case, and names
-  no reviewer, admin or claim workarea the key holds nothing on; a request digest over method,
-  route, path parameters and body, with supersede's idempotency record scoped to the key alone,
-  looked up before the target's readability so a committed supersession always replays, and
+  digest of the whole request; supersession moves the tip only at ratification, by a
+  compare-and-set bound to the successor's workarea and `claim_key`, as one `lifecycle.supersede`,
+  with the authors of rival held successors kept off each other's review; the author's
+  retire-proposal as a supersession carrying `retirement: true`, open to the same keys as any
+  supersession; distinct version ordinals, so competing held successors coexist and the tip
+  compare-and-set decides between them; own read on the target version; a self-signed version
+  never replacing a reviewed tip (d17); the `claim_key` release after a never-promoted rejection
+  and the refusal of a reopen that would collide (d18); `simulation.write` journalling
+  `body_bytes`, `replaces` and `retirement` like every submission event; own simulation rows read
+  only inside the simulation's audience; `oml_get` and `oml_supersede` and one claim-item shape;
+  the own-work listing across every workarea the key wrote to; the workarea read with the caller's
+  children, effective verbs and permission epoch; per-family visibility on the events tail with a
+  bounded scan and `next_after_seq`, where a `lifecycle.*` event reaches readers only while the
+  version's latest move between held and promoted is a promotion, reaches its author in any case,
+  and names no reviewer, admin or claim workarea the key holds nothing on; a request digest over
+  method, route, path parameters and body, with supersede's idempotency record scoped to the key
+  alone, looked up before the target's readability so a committed supersession always replays, and
   claimed only once the target is known readable, every target-dependent refusal ordered after
   that; a `held_by: service` key refused every review-class verb; `derives_from` and `replaces`
-  served only as far as the caller can read; a successor's kind changing only within its class, and nothing but
-  its kind inherited from the target; a row-count check on every `held_fts` removal; effective
-  access computed on every request with no cache, so a revocation applies to the key's next
-  request served by the lead, and on follower-served reads after replication lag (proposing to
-  amend ADR-0008 d4 and d6); request bodies that refuse unknown fields.
+  served only as far as the caller can read; a successor's kind changing only within its class,
+  and nothing but its kind inherited from the target; a row-count check on every `held_fts`
+  removal; effective access computed on every request with no cache, so a revocation applies to
+  the key's next request served by the lead, and on follower-served reads after replication lag
+  (proposing to amend ADR-0008 d4 and d6); request bodies that refuse unknown fields.
 - **`info.version` 0.1.0-design → 0.2.0-design**, because `/v1` request and response shapes
   change. No operation, error code, event type or claim state is added: the taxonomy and the
   operation set are unchanged. The MCP catalog goes from ten tools to twelve.
 - **Roadmap:** FR-30 (the budget-token count against model tokenizers, unmeasured), FR-31 (the
   `claim_key` collision, the version ordinal, the tenant-wide journal positions and the lineage
-  read's redacted ids as residual existence and count signals) and RS-17 (revising one's own claim
-  before its review) are opened. FR-10 and FR-11 stay open until the
-  agent-only-memory scenario passes in CI.
+  read's redacted ids as residual existence and count signals), FR-32 (a service key's grant
+  confers every verb of its role, not only the one act its job needs) and RS-17 (revising one's
+  own claim before its review) are opened. FR-10's exit criterion is reworded to the
+  retire-proposal ADR-0025 d11 decides, a supersession of the claim rather than a verb of its
+  own. FR-10 and FR-11 stay open until the agent-only-memory scenario passes in CI.
 - **The release image** is decided as one index for `linux/amd64` and `linux/arm64`, signed on the
   index digest; a page edit, no decision change.
-- **Pages touched:** the [decision register](adr/index.md) (register row; D7, D9, D11, D12 and
-  D13 cells), `mkdocs.yml`, [llms.txt](llms.txt), [openapi.yaml](api/openapi.yaml),
+- **Pages touched:** the [decision register](adr/index.md) (register row; D4, D6, D7, D9, D11,
+  D12, D13 and D14 cells), `mkdocs.yml`, [llms.txt](llms.txt), [openapi.yaml](api/openapi.yaml),
   [HTTP API](api/http-api.md), [errors](api/errors.md), [the agent plugin](api/mcp-plugin.md),
   [mcp-tools.json](api/mcp-tools.json) (the two new tools, `oml_my_work`, `oml_workarea_info` and
   `_meta`, with `_meta.pending_design` naming what the served `oml_recall` and `oml_events_tail`
@@ -86,7 +92,9 @@ when ADR-0025 is accepted.
   [event catalog](data/event-catalog.md), [Postgres schema](data/postgres-schema.md),
   [roadmap](product/roadmap.md), [CLI reference](cli/reference.md),
   [CI and toolchain](engineering/ci-and-toolchain.md), [upgrades](operations/upgrades.md),
-  [security](architecture/security.md), [configuration](operations/configuration.md),
+  [security](architecture/security.md), [configuration](operations/configuration.md)
+  (`auth.epoch_cache_bound` removed with the effective-access cache it bounded, which ADR-0025
+  rejects),
   [commitments](product/commitments.md), [compliance](product/compliance.md),
   [concepts](concepts.md), [the overview](index.md) and this page; outside `docs/`, `CONTRIBUTING.md`, `README.md` and
   `plugins/oml/README.md` (version and tool counts).

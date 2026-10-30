@@ -253,6 +253,8 @@ are:
 - of kind `memory` or `derived_fact`, and not retirement versions;
 - in a workarea within subtree(scope) ∩ the key's reader effective access,
   minus its global denials;
+- when a simulation row or sim-derived, only while the key is in that
+  simulation's audience ([own](roles-and-keys.md#own));
 - matched by the query;
 - admitted by the request's `kinds` filter when one is sent, as promoted hits
   are.
@@ -279,9 +281,13 @@ server, over a fixed candidate list, the same request always serves the same
 rows. Across servers they agree only where the scores agree, since fusion is
 an implementation choice. In the PoC both scores are to be
 `ts_rank` under the same `simple` configuration and `plainto_tsquery`, so they
-compare directly. Whether a held row ranks where it would once promoted is
-retrieval quality, unmeasured ([FR-4](../product/roadmap.md)). In cluster mode
-the request is an own-held read ([reads in cluster mode](#reads-in-cluster-mode)).
+compare directly. Because a held row has no vector term, under any fusion in
+which an absent list contributes nothing and a vector match never lowers a
+score, it scores no higher than it would once promoted, so own held rows rank
+at or below their promoted rank; this affects only the author's own result,
+and how far below is unmeasured ([FR-4](../product/roadmap.md)). In cluster
+mode the request is an own-held read
+([reads in cluster mode](#reads-in-cluster-mode)).
 
 ## Held text containment
 
@@ -337,7 +343,9 @@ This section is the single declaration site for recall budgets
 **The budget token.** The recall budget unit is the **budget token** under
 counter `oml-tc/1`: tokens(row) = ⌈`body_bytes` ÷ 4⌉, where `body_bytes` is the
 UTF-8 octet length of the row's NFC-normalized body — the clear integer the
-submission event journals ([event catalog](../data/event-catalog.md#submission-family)).
+submission event journals: `submission.remember`, `submission.learn`, or
+`simulation.write` for a simulation row
+([event catalog](../data/event-catalog.md#submission-family)).
 Only the body text is counted, never ids, paths or metadata. The divisor 4 is a
 convention, not a measured ratio, and the count is not any model's tokenizer
 count; how far the two differ for real text is unmeasured —
@@ -450,16 +458,17 @@ digesting:
 |---|---|
 | `query` | the NFC-normalized string |
 | `k` | the integer, default 8 applied |
-| `kinds` | sorted ascending, deduplicated; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
+| `kinds` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
 | `include_bodies` | the boolean, default `true` applied |
 | `include_own_held` | the boolean, default `false` applied |
 | `max_tokens` | the integer, `null` when absent |
-| `terms` | sorted ascending, deduplicated; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
+| `terms` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
 | `expand_terms` | the string, default `"none"` applied |
 | `scope` | the resolved node id |
 
-So two different requests never share a digest, and one request gets one
-digest on every server; the served ids, logged beside it, record what each read
+So two requests share a digest only when they differ solely in the order or
+repetition of `kinds` or `terms` entries, and one request gets one digest on
+every server; the served ids, logged beside it, record what each read
 returned ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d9).
 Design commitments:
 

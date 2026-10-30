@@ -308,16 +308,18 @@ declared in [audit-and-lineage](../architecture/audit-and-lineage.md) (D4).
 }
 ```
 
-Journalled at ratification, after the compare-and-set that the replaced version is still the tip:
-it promotes the successor and flips the tip in one event, so the tip flip is a single journalled
-fact rather than a demote/promote pair to correlate. `self_signed` carries the successor's mark
-exactly as `lifecycle.promote` carries a first version's
+Journalled at ratification, after the compare-and-set that the replaced version is still the tip
+under the successor's own `workarea_id` and `claim_key`, so the one `workarea_id` names both
+versions: it promotes the successor and flips the tip in one event, so the tip flip is a single
+journalled fact rather than a demote/promote pair to correlate. `self_signed` carries the
+successor's mark exactly as `lifecycle.promote` carries a first version's
 ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5): it is the promotion event of the version it
 names, so the mark reaches the journal, the `memories.self_signed` fold and the
-[events tail](../api/http-api.md#events-tail) from this event alone. Several held successors of one tip may
-coexist; the first ratified takes the tip, and a lost compare-and-set refuses the verdict and
+[events tail](../api/http-api.md#events-tail) from this event alone. Several held successors of one tip
+may coexist; the first ratified takes the tip, and a lost compare-and-set refuses the verdict and
 journals nothing. With `retirement: true` the successor is a retirement version and the claim
-becomes a retired claim ([audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
+becomes a retired claim
+([audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
 For a tainted successor (a simulation row or sim-derived) the same event sets that simulation's
 audience overlay tip instead, and the default tip does not move (same section).
 
@@ -644,12 +646,14 @@ from the journal. Removal takes effect on the next read; past reads stand in the
 {
   "artifact_id": "…", "workarea_id": "…", "claim_key": "…",
   "version": 1, "kind": "memory",
-  "plaintext_digest": "sha256:…",
+  "plaintext_digest": "sha256:…", "body_bytes": 2048,
   "ciphertext_digest": "sha256:…",
   "derives_from": ["…"],
   "provenance": "simulation",
   "simulation_id": "…",
   "simulated_time": "1944-06-06T06:30:00Z",
+  "replaces": null,
+  "retirement": false,
   "scan": {"result": "pass", "scanner_version": "…"}
 }
 ```
@@ -657,7 +661,13 @@ from the journal. Removal takes effect on the next read; past reads stand in the
 The submission envelope with `provenance: simulation` and `simulation_id` mandatory and indelible —
 the event gets a real chain timestamp (`at` in the envelope) and the declared `simulated_time` is
 data, never backdating; a submission whose `derives_from` touches a simulation row is
-server-forced to carry that row's `simulation_id`.
+server-forced to carry that row's `simulation_id`. It is a simulation row's submission event and
+carries every field `submission.remember` carries: `body_bytes`, the clear integer the recall
+budget counts ([retrieval](../architecture/retrieval.md#token-budgets)); `replaces`, naming the
+version a simulation successor replaces; and `retirement`, marking a proposal to retire the claim
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d6, d10, d11). Its visibility on
+the events tail is declared beside the `submission.*` family's
+([HTTP API](../api/http-api.md#events-tail)).
 
 ### simulation.ended
 

@@ -97,6 +97,9 @@ paths:
                 claim_key: supplier-quote-am-7741
                 version: 1
                 state: held
+                workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                retirement: false
+                replaces: null
                 plaintext_digest: sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310
                 scan:
                   result: pass
@@ -1384,7 +1387,7 @@ paths:
       tags: [review]
       operationId: postVerdict
       summary: Verdict against a valid serve; the journalled verdict records the served digests.
-      description: 'Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row''s workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.'
+      description: 'Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row''s workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor''s own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1419,7 +1422,7 @@ paths:
       tags: [review]
       operationId: reopenRejection
       summary: Non-author reopen of a rejection — a journalled verb, not a resubmission.
-      description: 'Requires: dreamer(review); the original author is refused (review.author_in_lineage). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
+      description: 'Requires: dreamer(review); the original author is refused (review.author_in_lineage). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). A reopen that would put a second live version under one claim_key and ordinal is refused with 409 submission.claim_key_conflict (docs/architecture/audit-and-lineage.md, Supersession chains, claim_key and the tip; ADR-0025 d18).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1443,6 +1446,7 @@ paths:
                 dry_run: false
               schema: { $ref: '#/components/schemas/ActResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -1468,6 +1472,8 @@ paths:
                 - key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
                   role: dreamer
                   principal: crew-review/agent-3
+                  default_workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                  held_by: agent
                   label: metals review agent
                   expiry: null
                   revoked_at: null
@@ -1515,6 +1521,8 @@ paths:
                 key_id: key_01JB2WR4A6C8E1G3J5L7N9QSUW
                 role: writer
                 principal: crew-procure/agent-7
+                default_workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                held_by: agent
                 label: procure agent 7
                 expiry: null
                 revoked_at: null
@@ -1554,6 +1562,8 @@ paths:
                 key_id: key_01JB2W1A3C5E7G9J2L4N6Q8SUW
                 role: dreamer
                 principal: crew-review/agent-3
+                default_workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                held_by: agent
                 label: metals review agent
                 expiry: null
                 revoked_at: null
@@ -1633,6 +1643,8 @@ paths:
                 key_id: key_01JB2WX8D1F3H5K7M9P2R4TVXZ
                 role: writer
                 principal: crew-procure/agent-7
+                default_workarea_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
+                held_by: agent
                 label: procure agent 7
                 expiry: null
                 revoked_at: null
@@ -2025,6 +2037,8 @@ paths:
                 key_id: key_01JB2WZ9E2G4J6L8N1Q3S5UWYA
                 role: operator
                 principal: platform-team/bootstrap
+                default_workarea_id: null
+                held_by: null
                 label: root operator key
                 expiry: null
                 revoked_at: null
@@ -2692,7 +2706,7 @@ components:
 
     SubmitAccepted:
       type: object
-      required: [artifact_id, claim_key, version, state]
+      required: [artifact_id, claim_key, version, state, workarea_id, retirement, replaces]
       properties:
         artifact_id: { type: string }
         claim_key: { type: string }
@@ -2723,7 +2737,7 @@ components:
 
     MemorySummary:
       type: object
-      required: [artifact_id, claim_key, version, tip, workarea_id, kind, state, tokens, retirement, replaces, held_expires_at, created_at, promoted_at]
+      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, tokens, retirement, replaces, held_expires_at, created_at, promoted_at]
       properties:
         artifact_id: { type: string }
         claim_key: { type: string }
@@ -3381,11 +3395,13 @@ components:
 
     Key:
       type: object
-      required: [key_id, role]
+      required: [key_id, role, default_workarea_id, held_by]
       properties:
         key_id: { type: string }
         role: { $ref: '#/components/schemas/Role' }
         principal: { type: string }
+        default_workarea_id: { type: [string, 'null'], description: "The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when no X-OML-Workarea is sent (ADR-0022 d4)." }
+        held_by: { type: [string, 'null'], enum: [agent, human, service, null], description: "The issuing admin's attestation; for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2)." }
         label: { type: string }
         expiry: { type: [string, 'null'], format: date-time }
         revoked_at: { type: [string, 'null'], format: date-time }

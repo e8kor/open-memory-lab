@@ -256,12 +256,12 @@ credentials, and the distinction is deliberate:
       therefore a journal event attributed to the reconciler's own key, which is the property the
       privileged-services section above leans on. A grant carries a role, not a verb list, so
       nothing narrows that grant to the re-enqueue: it also confers every other dreamer verb
-      ([effective verbs](roles-and-keys.md#effective-verbs)). That is a stated residual. A
-      `held_by: service` key is refused every review-class verb — review next, verdict, reopen,
-      claim-edge and workarea-edge ratify — and status-transition ratify, before any lookup
+      ([effective verbs](roles-and-keys.md#effective-verbs)). A `held_by: service` key is refused
+      every review-class verb and every ratification, before any lookup
       ([the role each verb needs](roles-and-keys.md#grant-admissibility-and-refusal-order)), so a
       stolen reconciler key can still propose within its grants, which only returns work to
-      non-author review under other keys.
+      non-author review under other keys. That is a stated residual
+      ([FR-32](../product/roadmap.md)); residual risk 8 below.
     - **A forwarding follower** holds a reader-role service key with no grants: it authenticates
       the forwarding hop to the lead and authorizes nothing. The client's own bearer key travels
       with the forwarded request, the lead resolves authorization against the *client's* key, and
@@ -474,6 +474,13 @@ rounded up to a guarantee.
    unreadable ancestor of a version the key can read as a redacted bare id, so a reader of a promoted version
    derived from its author's held row learns that the held row exists and its id. Each is a
    count, a name or an id, never content; together they are [FR-31](../product/roadmap.md).
+8. **A service key's grant is broader than its job.** The reconciler's dreamer-role service key
+   needs only the repair re-enqueue, but a grant carries a role, not a verb list, so it confers
+   every dreamer verb. A stolen reconciler key can therefore propose edits and connections inside
+   the nodes it is granted; it can never review or ratify one, so every such proposal still waits
+   for non-author review under other keys
+   ([transport and internal authentication](#transport-and-internal-authentication)). Its
+   resolution is [FR-32](../product/roadmap.md).
 
 Everything on this page is decided, not built; no control here has been penetration-tested,
 load-tested or measured, and the roadmap rows named above are where each open edge is tracked to an
