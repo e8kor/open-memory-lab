@@ -183,23 +183,33 @@ pub struct SupersedeOutcome {
 pub enum AppError {
     #[error("unknown api key (reads fail closed — http-api.md authentication)")]
     Unauthorized,
-    #[error("{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)")]
+    #[error(
+        "{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)"
+    )]
     VerbCeiling { role: Role, verb: &'static str },
     #[error("a {issuer:?} key cannot issue a {requested:?} key (roles-and-keys.md issuer ceiling)")]
     IssuerCeiling { issuer: Role, requested: Role },
-    #[error("no workarea: the key has no default and the request names none (http-api.md request.workarea_unresolved)")]
+    #[error(
+        "no workarea: the key has no default and the request names none (http-api.md request.workarea_unresolved)"
+    )]
     WorkareaUnresolved,
-    #[error("not found — absence and no-access are indistinguishable (http-api.md access.not_found)")]
+    #[error(
+        "not found — absence and no-access are indistinguishable (http-api.md access.not_found)"
+    )]
     NotFound,
     #[error("a writer may supersede only its own claims (http-api.md access.author_only)")]
     AuthorOnly,
-    #[error("the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)")]
+    #[error(
+        "the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)"
+    )]
     TipConflict,
     #[error("deterministic scan veto: {0} (admission.md — the rejection is journalled)")]
     ScanVeto(String),
     #[error("derives_from names unknown artifact {0} (fail closed)")]
     LineageUnknown(Uuid),
-    #[error("idempotency key reused with a different request (http-api.md idempotency.digest_mismatch)")]
+    #[error(
+        "idempotency key reused with a different request (http-api.md idempotency.digest_mismatch)"
+    )]
     IdempotencyDigestMismatch,
     #[error("stored idempotent response is unreadable: {0}")]
     StoredResponse(String),
