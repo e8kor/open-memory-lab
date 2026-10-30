@@ -12,14 +12,14 @@ use std::sync::{Arc, Mutex};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use uuid::Uuid;
 
-use oml_domain::{ChainHead, EventTime, MemoryStatus};
+use oml_domain::{ChainHead, EventTime, MemoryStatus, Role};
 
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyRecord,
     IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
     ScanOutcome, Scanner, Signer, StoreError,
 };
-use crate::types::{KeyRecord, MemoryRecord, WorkareaRecord};
+use crate::types::{DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord};
 
 // ---------------------------------------------------------------------------
 // Journal store
@@ -37,6 +37,8 @@ struct TenantState {
     memories: BTreeMap<Uuid, MemoryRecord>,
     workareas: BTreeMap<Uuid, WorkareaRecord>,
     keys_by_hash: BTreeMap<String, KeyRecord>,
+    /// Per key id, in commit order — which is epoch order.
+    access: BTreeMap<Uuid, KeyAccess>,
     queue: Vec<QueueEntry>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
@@ -82,14 +84,68 @@ impl MemStore {
     }
 }
 
-fn apply_fold(state: &mut TenantState, fold: MetadataFold) {
+/// The rows a grant or denial names must be held, as the schema's foreign
+/// keys require (postgres-schema.md `grants`, `key_denials`).
+fn require_held(state: &TenantState, key_id: Uuid, node: Uuid) -> Result<(), StoreError> {
+    if !state.access.contains_key(&key_id) {
+        return Err(StoreError::Backend(format!(
+            "key {key_id} is not held by this tenant"
+        )));
+    }
+    if !state.workareas.contains_key(&node) {
+        return Err(StoreError::Backend(format!(
+            "workarea {node} is not held by this tenant"
+        )));
+    }
+    Ok(())
+}
+
+/// Applies one fold, or refuses it before changing anything — what the
+/// schema refuses, the double refuses, so the commit stays all or nothing.
+/// `seq` is the commit's event seq: a key's `issued_seq` and a grant's or
+/// denial's epoch.
+fn apply_fold(state: &mut TenantState, fold: MetadataFold, seq: u64) -> Result<(), StoreError> {
     match fold {
         MetadataFold::TenantGenesis | MetadataFold::VerdictRecorded { .. } => {}
         MetadataFold::WorkareaCreated(workarea) => {
             state.workareas.insert(workarea.workarea_id, workarea);
         }
         MetadataFold::KeyIssued(key) => {
+            state.access.insert(
+                key.key_id,
+                KeyAccess {
+                    issued_seq: seq,
+                    grants: Vec::new(),
+                    denials: Vec::new(),
+                },
+            );
             state.keys_by_hash.insert(key.key_hash.clone(), key);
+        }
+        MetadataFold::GrantIssued { key_id, grant } => {
+            require_held(state, key_id, grant.node)?;
+            if !matches!(grant.role, Role::Reader | Role::Writer | Role::Dreamer) {
+                return Err(StoreError::Backend(format!(
+                    "a grant role is reader, writer or dreamer, never {}",
+                    grant.role.as_str()
+                )));
+            }
+            if let Some(access) = state.access.get_mut(&key_id) {
+                access.grants.push(GrantRecord { grant, epoch: seq });
+            }
+        }
+        MetadataFold::KeyDenied {
+            key_id,
+            denial,
+            created_by,
+        } => {
+            require_held(state, key_id, denial.node)?;
+            if let Some(access) = state.access.get_mut(&key_id) {
+                access.denials.push(DenialRecord {
+                    denial,
+                    created_by,
+                    epoch: seq,
+                });
+            }
         }
         MetadataFold::MemoryHeld { memory, enqueue } => {
             if enqueue {
@@ -128,6 +184,7 @@ fn apply_fold(state: &mut TenantState, fold: MetadataFold) {
             state.memories.insert(successor.memory_id, successor);
         }
     }
+    Ok(())
 }
 
 impl JournalStore for MemStore {
@@ -148,7 +205,7 @@ impl JournalStore for MemStore {
         {
             return Err(StoreError::PrevHashConflict { seq: expected_seq });
         }
-        apply_fold(&mut state, req.fold);
+        apply_fold(&mut state, req.fold, expected_seq)?;
         if let Some(put) = req.idempotency {
             state.idempotency.insert(
                 (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key),
@@ -285,6 +342,110 @@ impl JournalStore for MemStore {
             }
         }
         Ok(None)
+    }
+
+    async fn key_access(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Option<KeyAccess>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.access.get(&key_id).cloned())
+    }
+
+    async fn workarea(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Option<WorkareaRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.workareas.get(&workarea_id).cloned())
+    }
+
+    async fn workarea_ancestry(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Option<Vec<WorkareaRecord>>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let Some(node) = state.workareas.get(&workarea_id) else {
+            return Ok(None);
+        };
+        let mut ancestry = vec![node.clone()];
+        let mut parent = node.parent_id;
+        while let Some(parent_id) = parent {
+            // A walk that leaves the tenant before the root would drop
+            // ancestors' grants and denials; refuse it instead.
+            let Some(next) = state.workareas.get(&parent_id) else {
+                return Err(StoreError::Backend(format!(
+                    "the ancestry of {workarea_id} names parent {parent_id}, \
+                     which this tenant does not hold"
+                )));
+            };
+            ancestry.push(next.clone());
+            parent = next.parent_id;
+        }
+        Ok(Some(ancestry))
+    }
+
+    async fn workarea_subtree(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let Some(node) = state.workareas.get(&workarea_id) else {
+            return Ok(Vec::new());
+        };
+        let mut subtree = vec![node.clone()];
+        let mut depth = vec![workarea_id];
+        while !depth.is_empty() {
+            // The map iterates in id order, so each depth comes out in id
+            // order.
+            let next: Vec<WorkareaRecord> = state
+                .workareas
+                .values()
+                .filter(|w| w.parent_id.is_some_and(|p| depth.contains(&p)))
+                .cloned()
+                .collect();
+            depth = next.iter().map(|w| w.workarea_id).collect();
+            subtree.extend(next);
+        }
+        Ok(subtree)
+    }
+
+    async fn workarea_children(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut children: Vec<WorkareaRecord> = state
+            .workareas
+            .values()
+            .filter(|w| w.parent_id == Some(workarea_id))
+            .cloned()
+            .collect();
+        // `str` orders by its bytes.
+        children.sort_by(|a, b| {
+            (a.name.as_str(), a.workarea_id).cmp(&(b.name.as_str(), b.workarea_id))
+        });
+        Ok(children)
     }
 
     async fn idempotency_get(
