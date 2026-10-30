@@ -5,6 +5,7 @@
 
 use oml_app::App;
 use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
+use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::{
     HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types, sha256_digest_string,
 };
@@ -146,6 +147,9 @@ fn recall_req(query: &str) -> RecallRequest {
         k: 10,
         workarea_id: None,
         kinds: Vec::new(),
+        include_bodies: true,
+        include_own_held: false,
+        max_tokens: None,
     }
 }
 
@@ -3547,4 +3551,704 @@ async fn a_rival_successors_author_is_kept_off_the_others_review() {
         .expect("review next")
         .expect("the revision waits");
     assert_eq!(served.memory.memory_id, revision);
+}
+
+// ---------------------------------------------------------------------------
+// Own held rows in recall and the max_tokens budget (ADR-0025 d4, d5, d6,
+// d7, d9)
+// ---------------------------------------------------------------------------
+
+/// Budget tokens of `text`, an NFC literal: ⌈UTF-8 bytes ÷ 4⌉ under counter
+/// `oml-tc/1` (retrieval.md token budgets).
+fn tokens(text: &str) -> u64 {
+    (text.len() as u64).div_ceil(4)
+}
+
+/// A recall of `query` that takes the calling key's own held rows too.
+fn own_held(query: &str) -> RecallRequest {
+    RecallRequest {
+        include_own_held: true,
+        ..recall_req(query)
+    }
+}
+
+/// A recall of `query` under a budget of `max_tokens`.
+fn budgeted(query: &str, max_tokens: u64) -> RecallRequest {
+    RecallRequest {
+        max_tokens: Some(max_tokens),
+        ..recall_req(query)
+    }
+}
+
+/// Submits `req` as `key`, leaving it held: its id.
+async fn held(app: &TestApp, key: &str, req: &SubmitRequest) -> Uuid {
+    app.submit_memory(key, req)
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id
+}
+
+/// Everything a recall answered, comparable: steering, each hit with its
+/// score's bits, the budget, the served ids and the digest.
+fn answer(recall: &RecallResult) -> impl PartialEq + std::fmt::Debug {
+    (
+        recall.steering.clone(),
+        recall
+            .hits
+            .iter()
+            .map(|h| (h.served.clone(), h.score.to_bits()))
+            .collect::<Vec<_>>(),
+        recall.budget,
+        recall.served_ids.clone(),
+        recall.query_digest.clone(),
+    )
+}
+
+#[tokio::test]
+async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let author = agent(&app, admin, "wanda", crew).await;
+    let row = held(&app, &author.value, &submit_req("h1", "the canary held")).await;
+
+    let recall = app
+        .recall(&author.value, &own_held("canary"))
+        .await
+        .expect("recall");
+    assert_eq!(hit_ids_of(&recall), vec![row]);
+    let hit = &recall.hits[0];
+    assert_eq!(hit.memory.status, MemoryStatus::Held);
+    assert!(!hit.memory.is_tip);
+    assert!(hit.score > 0.0, "a held row is scored like any hit");
+    let off = app
+        .recall(&author.value, &recall_req("canary"))
+        .await
+        .expect("recall");
+    assert!(off.hits.is_empty(), "the flag defaults off");
+
+    // Own is the authoring key, never the principal: another reader key and
+    // a dreamer key of the same principal see nothing of it
+    // (roles-and-keys.md#own; ADR-0025 d4).
+    let same_reader = issue(&app, admin, Role::Reader, "wanda", crew).await;
+    let same_dreamer = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "wanda",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let stranger = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    for key in [&same_reader, &same_dreamer, &stranger] {
+        let recall = app
+            .recall(&key.value, &own_held("canary"))
+            .await
+            .expect("recall");
+        assert!(
+            recall.hits.is_empty(),
+            "{:?} key of {}: {:?}",
+            key.role,
+            key.principal,
+            hit_ids_of(&recall)
+        );
+    }
+}
+
+#[tokio::test]
+async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (author, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    // This store scores by distinct query terms matched: 3, 2 and 1.
+    let best = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &submit_req("p1", "canary drain settle"),
+    )
+    .await;
+    let row = held(&app, &author.value, &submit_req("h1", "canary drain")).await;
+    let worst = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &submit_req("p2", "canary"),
+    )
+    .await;
+
+    let recall = app
+        .recall(&author.value, &own_held("canary drain settle"))
+        .await
+        .expect("recall");
+    assert_eq!(
+        hit_ids_of(&recall),
+        vec![best, row, worst],
+        "one total order across states"
+    );
+    let flagged: Vec<(MemoryStatus, bool)> = recall
+        .hits
+        .iter()
+        .map(|h| (h.memory.status, h.memory.is_tip))
+        .collect();
+    assert_eq!(
+        flagged,
+        vec![
+            (MemoryStatus::Promoted, true),
+            (MemoryStatus::Held, false),
+            (MemoryStatus::Promoted, true),
+        ]
+    );
+    assert!(
+        recall.hits.windows(2).all(|w| w[0].score > w[1].score),
+        "score descending"
+    );
+}
+
+#[tokio::test]
+async fn own_held_rows_count_against_k_and_the_budget() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (author, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (two_text, held_text) = ("canary drain", "canary drain settle");
+    let two = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &submit_req("p1", two_text),
+    )
+    .await;
+    let one = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &submit_req("p2", "canary"),
+    )
+    .await;
+    let row = held(&app, &author.value, &submit_req("h1", held_text)).await;
+    let query = "canary drain settle";
+
+    let k2 = |req: RecallRequest| RecallRequest { k: 2, ..req };
+    let with = app
+        .recall(&author.value, &k2(own_held(query)))
+        .await
+        .expect("recall");
+    assert_eq!(
+        hit_ids_of(&with),
+        vec![row, two],
+        "the held row takes a k slot"
+    );
+    let without = app
+        .recall(&author.value, &k2(recall_req(query)))
+        .await
+        .expect("recall");
+    assert_eq!(hit_ids_of(&without), vec![two, one]);
+
+    let filled = app
+        .recall(
+            &author.value,
+            &RecallRequest {
+                max_tokens: Some(tokens(held_text)),
+                ..own_held(query)
+            },
+        )
+        .await
+        .expect("recall");
+    assert_eq!(
+        hit_ids_of(&filled),
+        vec![row],
+        "the held row spends the budget"
+    );
+    assert_eq!(
+        filled.budget,
+        Some(Budget {
+            max_tokens: tokens(held_text),
+            steering_tokens: 0,
+            used_tokens: tokens(held_text),
+            truncated: true,
+            hits_served: 1,
+            hits_omitted: 2,
+            next_hit_tokens: Some(tokens(two_text)),
+        })
+    );
+}
+
+#[tokio::test]
+async fn own_held_steering_and_retirement_rows_never_enter_recall() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (author, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let steering = held(
+        &app,
+        &author.value,
+        &submit_kind("s1", MemoryKind::Steering, "canary steering held", crew),
+    )
+    .await;
+    let target = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &submit_req("m1", "the canary claim"),
+    )
+    .await;
+    let retirement = app
+        .supersede(
+            &author.value,
+            &retire_req("r1", target, "retired: the canary lapsed"),
+        )
+        .await
+        .expect("retire-proposal")
+        .receipt
+        .memory_id;
+
+    // Neither is in force, so neither is recalled; the promoted tip stays.
+    let recall = app
+        .recall(
+            &author.value,
+            &own_held("canary steering held retired lapsed claim"),
+        )
+        .await
+        .expect("recall");
+    assert_eq!(hit_ids_of(&recall), vec![target]);
+    assert!(recall.steering.is_empty(), "{:?}", steering_ids(&recall));
+    // Get reaches both: they are the key's own (ADR-0025 d3).
+    for id in [steering, retirement] {
+        let got = app.get_memory(&author.value, id).await.expect("get");
+        assert_eq!(got.memory.status, MemoryStatus::Held);
+    }
+}
+
+#[tokio::test]
+async fn include_own_held_never_widens_the_workareas_served() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quotes = workarea(&app, admin, "quotes", crew).await;
+    let freight = workarea(&app, admin, "freight", crew).await;
+    let quarantine = workarea(&app, admin, "quarantine", quotes).await;
+    // The key writes the whole crew but reads only quotes, and a global
+    // denial masks quarantine beneath it.
+    let author = issue_with(
+        &app,
+        admin,
+        Role::Writer,
+        "wanda",
+        vec![grant(crew, Role::Writer), grant(quotes, Role::Reader)],
+    )
+    .await;
+    let mut rows = Vec::new();
+    for (idem, wa) in [
+        ("q", quotes),
+        ("f", freight),
+        ("c", crew),
+        ("x", quarantine),
+    ] {
+        rows.push(
+            held(
+                &app,
+                &author.value,
+                &submit_into(idem, "the canary held", wa),
+            )
+            .await,
+        );
+    }
+    app.deny_key(admin, author.key_id, quarantine)
+        .await
+        .expect("deny");
+
+    let recall = app
+        .recall(
+            &author.value,
+            &RecallRequest {
+                workarea_id: Some(quotes),
+                ..own_held("canary")
+            },
+        )
+        .await
+        .expect("recall");
+    assert_eq!(
+        hit_ids_of(&recall),
+        vec![rows[0]],
+        "subtree(scope) within reader access, minus global denials"
+    );
+    // The recall ceiling is unchanged: reader on the scope, own rows or not.
+    for scope in [crew, freight] {
+        let err = app
+            .recall(
+                &author.value,
+                &RecallRequest {
+                    workarea_id: Some(scope),
+                    ..own_held("canary")
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (author, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let target = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &submit_req("q1", "the canary quote is 412"),
+    )
+    .await;
+    let successor = app
+        .supersede(
+            &author.value,
+            &supersede_req("q2", target, "the canary quote is 409"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+
+    let recall = app
+        .recall(&author.value, &own_held("canary quote"))
+        .await
+        .expect("recall");
+    let mut served = hit_ids_of(&recall);
+    served.sort();
+    let mut both = vec![target, successor];
+    both.sort();
+    assert_eq!(served, both, "the two are never deduplicated");
+    let hit = |id: Uuid| {
+        recall
+            .hits
+            .iter()
+            .find(|h| h.memory.memory_id == id)
+            .expect("served")
+    };
+    let proposal = hit(successor);
+    assert_eq!(proposal.memory.status, MemoryStatus::Held);
+    assert!(!proposal.memory.is_tip);
+    assert_eq!(
+        proposal.replaces,
+        Some(VersionRef {
+            artifact_id: target,
+            version: 1
+        })
+    );
+    let tip = hit(target);
+    assert_eq!(tip.memory.status, MemoryStatus::Promoted);
+    assert!(tip.memory.is_tip);
+
+    // Every other key recalls the target alone until ratification.
+    let other = app
+        .recall(&reader.value, &own_held("canary quote"))
+        .await
+        .expect("recall");
+    assert_eq!(hit_ids_of(&other), vec![target]);
+}
+
+/// A crew with one promoted steering row and three promoted memories that
+/// match `canary drain settle` by 3, 2 and 1 terms, the second the largest:
+/// (app, reader, steering id, hit ids in rank order, steering tokens, hit
+/// tokens in rank order).
+async fn budget_fixture() -> (TestApp, IssuedKey, Uuid, Vec<Uuid>, u64, Vec<u64>) {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let steering_text = "Quote every price in USD/t.";
+    let texts = [
+        "canary drain settle",
+        "canary drain, then wait out the whole quarter before anyone settles it",
+        "canary",
+    ];
+    let steering = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_kind("s1", MemoryKind::Steering, steering_text, crew),
+    )
+    .await;
+    let mut hits = Vec::new();
+    for (n, text) in texts.iter().enumerate() {
+        hits.push(
+            promoted(
+                &app,
+                &writer.value,
+                &dreamer.value,
+                &submit_req(&format!("m{n}"), text),
+            )
+            .await,
+        );
+    }
+    let counts = texts.iter().map(|t| tokens(t)).collect();
+    (app, reader, steering, hits, tokens(steering_text), counts)
+}
+
+#[tokio::test]
+async fn max_tokens_keeps_the_longest_rank_prefix_and_reports_the_budget() {
+    let (app, reader, steering, hits, s, t) = budget_fixture().await;
+    assert!(t[1] > t[2], "the third hit fits where the second does not");
+
+    // After steering and the first hit, what remains fits the third hit but
+    // not the second: the first that does not fit ends the list.
+    let max = s + t[0] + t[2];
+    let recall = app
+        .recall(&reader.value, &budgeted("canary drain settle", max))
+        .await
+        .expect("recall");
+    assert_eq!(steering_ids(&recall), vec![steering]);
+    assert_eq!(hit_ids_of(&recall), vec![hits[0]], "no skip-ahead");
+    assert_eq!(
+        recall.budget,
+        Some(Budget {
+            max_tokens: max,
+            steering_tokens: s,
+            used_tokens: s + t[0],
+            truncated: true,
+            hits_served: 1,
+            hits_omitted: 2,
+            next_hit_tokens: Some(t[1]),
+        })
+    );
+    assert_eq!(
+        recall.served_ids,
+        vec![steering, hits[0]],
+        "the ids served after the cuts, never the candidates"
+    );
+
+    // A budget every candidate fits cuts nothing.
+    let all = s + t.iter().sum::<u64>();
+    let recall = app
+        .recall(&reader.value, &budgeted("canary drain settle", all))
+        .await
+        .expect("recall");
+    assert_eq!(hit_ids_of(&recall), hits);
+    assert_eq!(
+        recall.budget,
+        Some(Budget {
+            max_tokens: all,
+            steering_tokens: s,
+            used_tokens: all,
+            truncated: false,
+            hits_served: 3,
+            hits_omitted: 0,
+            next_hit_tokens: None,
+        })
+    );
+}
+
+#[tokio::test]
+async fn steering_past_the_budget_is_served_whole_with_no_hits_and_truncated() {
+    let (app, reader, steering, _hits, s, t) = budget_fixture().await;
+    let recall = app
+        .recall(&reader.value, &budgeted("canary drain settle", s - 1))
+        .await
+        .expect("recall");
+    assert_eq!(
+        steering_ids(&recall),
+        vec![steering],
+        "steering is never cut"
+    );
+    assert!(recall.hits.is_empty());
+    let budget = recall.budget.expect("a budget object");
+    assert_eq!(
+        budget,
+        Budget {
+            max_tokens: s - 1,
+            steering_tokens: s,
+            used_tokens: s,
+            truncated: true,
+            hits_served: 0,
+            hits_omitted: 3,
+            next_hit_tokens: Some(t[0]),
+        }
+    );
+    assert!(
+        budget.used_tokens > budget.max_tokens,
+        "the overrun is visible"
+    );
+}
+
+#[tokio::test]
+async fn every_steering_item_and_hit_carries_its_tokens() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (author, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    // Each text is sent decomposed; its count is its NFC text's, which here
+    // is one budget token fewer (retrieval.md token budgets; ADR-0025 d6).
+    let [steering_text, hit_text, held_text] =
+        ["café canary", "the café canary", "own café canary"];
+    let decomposed = |text: &str| text.replace('é', "e\u{301}");
+    for text in [steering_text, hit_text, held_text] {
+        assert_ne!(tokens(text), tokens(&decomposed(text)), "{text}");
+    }
+    let steering = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &submit_kind("s1", MemoryKind::Steering, &decomposed(steering_text), crew),
+    )
+    .await;
+    let hit = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &submit_req("m1", &decomposed(hit_text)),
+    )
+    .await;
+    let row = held(
+        &app,
+        &author.value,
+        &submit_req("h1", &decomposed(held_text)),
+    )
+    .await;
+
+    let recall = app
+        .recall(&author.value, &own_held("canary"))
+        .await
+        .expect("recall");
+    let expected = [(steering, steering_text), (hit, hit_text), (row, held_text)];
+    let served: Vec<(Uuid, u64)> = recall
+        .steering
+        .iter()
+        .chain(recall.hits.iter().map(|h| &h.served))
+        .map(|m| (m.memory.memory_id, budget_tokens(m.memory.body_bytes)))
+        .collect();
+    assert_eq!(served.len(), 3, "{served:?}");
+    for (id, text) in expected {
+        assert!(served.contains(&(id, tokens(text))), "{text}: {served:?}");
+    }
+}
+
+#[tokio::test]
+async fn the_same_budgeted_recall_answers_identically_twice() {
+    let (app, reader, _steering, hits, s, t) = budget_fixture().await;
+    let req = budgeted("canary drain settle", s + t[0] + t[2]);
+    let first = app.recall(&reader.value, &req).await.expect("recall");
+    let second = app.recall(&reader.value, &req).await.expect("recall");
+    assert_eq!(hit_ids_of(&first), vec![hits[0]]);
+    assert!(first.budget.is_some_and(|b| b.truncated));
+    assert_eq!(answer(&first), answer(&second));
+}
+
+#[tokio::test]
+async fn a_recall_without_max_tokens_carries_no_budget_object() {
+    let (app, reader, steering, hits, _s, _t) = budget_fixture().await;
+    let recall = app
+        .recall(&reader.value, &recall_req("canary drain settle"))
+        .await
+        .expect("recall");
+    assert_eq!(recall.budget, None);
+    assert_eq!(hit_ids_of(&recall), hits, "nothing is cut");
+    let mut served = vec![steering];
+    served.extend(&hits);
+    assert_eq!(recall.served_ids, served);
+}
+
+#[tokio::test]
+async fn max_tokens_with_include_bodies_false_is_request_validation() {
+    let (app, reader, _steering, _hits, _s, _t) = budget_fixture().await;
+    let bodiless = RecallRequest {
+        include_bodies: false,
+        ..recall_req("canary")
+    };
+    let err = app
+        .recall(
+            &reader.value,
+            &RecallRequest {
+                max_tokens: Some(500),
+                ..bodiless.clone()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::BudgetWithoutBodies), "{err:?}");
+    // Either alone is a recall.
+    app.recall(&reader.value, &bodiless)
+        .await
+        .expect("no bodies, no budget");
+    app.recall(&reader.value, &budgeted("canary", 500))
+        .await
+        .expect("a budget over bodies");
+}
+
+#[tokio::test]
+async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let digest = |req: RecallRequest| {
+        let (app, key) = (&app, reader.value.clone());
+        async move { app.recall(&key, &req).await.expect("recall").query_digest }
+    };
+
+    // Every member is present with its default applied, the scope the
+    // resolved node (retrieval.md, the read log; ADR-0025 d9).
+    let base = digest(recall_req("canary")).await;
+    let canonical = format!(
+        "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
+         \"k\":10,\"kinds\":[],\"max_tokens\":null,\"query\":\"canary\",\
+         \"scope\":\"{crew}\",\"terms\":[]}}"
+    );
+    assert_eq!(base, sha256_digest_string(canonical.as_bytes()));
+    assert_eq!(
+        digest(recall_req("canary")).await,
+        base,
+        "one request, one digest"
+    );
+    assert_eq!(
+        digest(RecallRequest {
+            workarea_id: Some(crew),
+            ..recall_req("canary")
+        })
+        .await,
+        base,
+        "the default named is the same scope"
+    );
+
+    let budget = digest(budgeted("canary", 500)).await;
+    assert_ne!(budget, base, "max_tokens is digested");
+    assert_ne!(digest(budgeted("canary", 501)).await, budget);
+    assert_ne!(
+        digest(own_held("canary")).await,
+        base,
+        "include_own_held is digested"
+    );
+    assert_ne!(
+        digest(RecallRequest {
+            include_bodies: false,
+            ..recall_req("canary")
+        })
+        .await,
+        base
+    );
+
+    // Only the order and repetition of kinds entries never matter, and the
+    // query digests as its NFC text.
+    let kinds = |kinds: Vec<MemoryKind>| RecallRequest {
+        kinds,
+        ..recall_req("canary")
+    };
+    assert_eq!(
+        digest(kinds(vec![MemoryKind::Memory, MemoryKind::DerivedFact])).await,
+        digest(kinds(vec![
+            MemoryKind::DerivedFact,
+            MemoryKind::Memory,
+            MemoryKind::Memory
+        ]))
+        .await
+    );
+    assert_ne!(digest(kinds(vec![MemoryKind::Memory])).await, base);
+    assert_eq!(
+        digest(recall_req("cafe\u{301}")).await,
+        digest(recall_req("café")).await
+    );
 }

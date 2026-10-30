@@ -16,6 +16,7 @@ use oml_domain::access::{
     AccessRefusal, Grant, IssuanceRefusal, KeyDenial, admissible_grant_roles, check_issuance,
     effective_roles, effective_verbs, resolve,
 };
+use oml_domain::budget::{budget_tokens, cut, hit_order};
 use oml_domain::{
     ChainHead, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
@@ -208,6 +209,31 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
             "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "reason": req.reason,
         },
+    });
+    Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// A recall's `query_digest`: SHA-256 over the RFC 8785 JSON of an object
+/// whose members are always present, defaults applied — `kinds` sorted by
+/// code point with duplicates removed, `max_tokens` null when absent, and
+/// `scope` the resolved node. `terms` and `expand_terms` digest as absent:
+/// the vocabulary filter is unbuilt, and a request that sends either is
+/// refused before it reaches a recall (retrieval.md, the read log; ADR-0025
+/// d9, d16).
+fn recall_query_digest(query: &str, req: &RecallRequest, scope: Uuid) -> Result<String, AppError> {
+    let mut kinds: Vec<&str> = req.kinds.iter().map(|kind| kind.as_str()).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let doc = json!({
+        "query": query,
+        "k": req.k,
+        "kinds": kinds,
+        "include_bodies": req.include_bodies,
+        "include_own_held": req.include_own_held,
+        "max_tokens": req.max_tokens,
+        "terms": [],
+        "expand_terms": "none",
+        "scope": scope.to_string(),
     });
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
@@ -1608,11 +1634,24 @@ where
     /// follow, over subtree(scope) ∩ the nodes where reader is effective, of
     /// the kinds the request admits, score descending then `artifact_id`
     /// ascending (retrieval.md, the recall-ordering contract; ADR-0025 d8).
+    /// With `include_own_held` the calling key's own held rows join the hit
+    /// candidates under that one order, flagged by state (d4). The merged
+    /// candidates are cut to `k`, then by `max_tokens` — steering never cut
+    /// and spent first, the hits the longest rank prefix that fits (d7) —
+    /// and only the rows served are hydrated, in one set-wise read. The
+    /// result names the served ids and the digest of the whole request, the
+    /// read log's two inputs (d9).
     pub async fn recall(
         &self,
         api_key: &str,
         req: &RecallRequest,
     ) -> Result<RecallResult, AppError> {
+        // A budget counts bodies, so it is refused with bodies off before
+        // anything is read, as the request's other shape refusals are
+        // (retrieval.md token budgets).
+        if req.max_tokens.is_some() && !req.include_bodies {
+            return Err(AppError::BudgetWithoutBodies);
+        }
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "recall")?;
@@ -1622,6 +1661,9 @@ where
             .ok_or(AppError::WorkareaUnresolved)?;
         self.require_access(&caller, scope, Role::Reader, "recall")
             .await?;
+        // The query is its NFC text, searched and digested alike (ADR-0025
+        // d9).
+        let query = nfc(&req.query);
 
         // The scope's ancestry runs node to root, so each ancestor's own
         // ancestry is its suffix; the store is handed the readable ones root
@@ -1632,54 +1674,114 @@ where
             .filter(|&i| caller.effective(&ancestry[i..]).contains(&Role::Reader))
             .map(|i| ancestry[i])
             .collect();
-        let mut steering = Vec::new();
-        for m in self
+        // R3 defense in depth, as for the hits below: only a readable served
+        // tip in force, never a retirement version (ADR-0025 d8, d11).
+        let steering: Vec<MemoryRecord> = self
             .journal
             .steering_in_force(key.tenant_id, &applicable)
             .await?
-        {
-            // R3 defense in depth, as for the hits below: only a readable
-            // served tip in force, never a retirement version (ADR-0025 d8,
-            // d11).
-            if m.kind == MemoryKind::Steering
-                && m.status == MemoryStatus::Promoted
-                && m.is_tip
-                && !m.retirement
-                && applicable.contains(&m.workarea_id)
-            {
-                steering.push(self.served(&caller, m).await?);
-            }
-        }
+            .into_iter()
+            .filter(|m| {
+                m.kind == MemoryKind::Steering
+                    && m.status == MemoryStatus::Promoted
+                    && m.is_tip
+                    && !m.retirement
+                    && applicable.contains(&m.workarea_id)
+            })
+            .collect();
 
         let readable = self.nodes_with(&caller, scope, Role::Reader).await?;
         let kinds: Vec<MemoryKind> = HIT_KINDS
             .into_iter()
             .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
             .collect();
-        let mut hits = Vec::new();
-        for (m, score) in self
+        let mut candidates = self
             .journal
-            .recall_fts(key.tenant_id, &readable, &req.query, &kinds, req.k)
+            .recall_fts(key.tenant_id, &readable, &query, &kinds, req.k)
+            .await?;
+        if req.include_own_held {
+            // The own key set is the calling key alone until rotation is
+            // built (roles-and-keys.md#own); the readable set already
+            // excludes the key's global denials.
+            candidates.extend(
+                self.journal
+                    .recall_own_held(
+                        key.tenant_id,
+                        &[key.key_id],
+                        &readable,
+                        &query,
+                        &kinds,
+                        req.k,
+                    )
+                    .await?,
+            );
+        }
+        // One total order over both lists, then the k cut, then the budget
+        // cut over the counts `body_bytes` gives without any body read.
+        hit_order(&mut candidates, |c| (c.score, c.memory_id));
+        candidates.truncate(req.k);
+        let steering_counts: Vec<u64> = steering
+            .iter()
+            .map(|m| budget_tokens(m.body_bytes))
+            .collect();
+        let hit_counts: Vec<u64> = candidates
+            .iter()
+            .map(|c| budget_tokens(c.body_bytes))
+            .collect();
+        let budget = cut(&steering_counts, &hit_counts, req.max_tokens);
+        if let Some(budget) = &budget {
+            candidates.truncate(budget.hits_served);
+        }
+
+        let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
+        let mut rows: BTreeMap<Uuid, MemoryRecord> = self
+            .journal
+            .memories(key.tenant_id, &ids)
             .await?
-        {
-            // R3 defense in depth: the gate changed visibility; nothing
-            // unpromoted or unreadable leaves the application layer, and a
-            // replaced version or any version of a retired claim is promoted
-            // history, never a hit (ADR-0025 d8). Each hit names only the
-            // ancestors the caller can read (d3).
-            if m.status == MemoryStatus::Promoted
-                && m.is_tip
+            .into_iter()
+            .map(|m| (m.memory_id, m))
+            .collect();
+        let mut served_ids: Vec<Uuid> = steering.iter().map(|m| m.memory_id).collect();
+        let mut served_steering = Vec::with_capacity(steering.len());
+        for m in steering {
+            served_steering.push(self.served(&caller, m).await?);
+        }
+        let mut hits = Vec::with_capacity(candidates.len());
+        for candidate in &candidates {
+            let Some(m) = rows.remove(&candidate.memory_id) else {
+                continue;
+            };
+            // R3 defense in depth: the gate changed visibility. Nothing
+            // unpromoted or unreadable leaves the application layer except
+            // the caller's own held rows when it asked for them; a replaced
+            // version or any version of a retired claim is promoted history,
+            // never a hit; a retirement version is never in force (ADR-0025
+            // d4, d8). Each hit names only the ancestors the caller can read
+            // (d3).
+            let admitted = match m.status {
+                MemoryStatus::Promoted => m.is_tip,
+                MemoryStatus::Held => req.include_own_held && m.author_key_id == key.key_id,
+                _ => false,
+            };
+            if admitted
                 && !m.retirement
                 && kinds.contains(&m.kind)
                 && readable.contains(&m.workarea_id)
             {
+                served_ids.push(m.memory_id);
                 hits.push(RecallHit {
                     served: self.served(&caller, m).await?,
-                    score,
+                    score: candidate.score,
                 });
             }
         }
-        Ok(RecallResult { steering, hits })
+        Ok(RecallResult {
+            steering: served_steering,
+            hits,
+            budget,
+            served_ids,
+            query_digest: recall_query_digest(&query, req, scope)?,
+        })
     }
 
     /// Get one memory: the authoring key sees its own rows in every state,

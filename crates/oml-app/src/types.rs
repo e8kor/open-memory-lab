@@ -1,6 +1,7 @@
 //! Application-layer records and use-case request/response shapes.
 
 use oml_domain::access::{Grant, KeyDenial};
+use oml_domain::budget::Budget;
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
     TransitionError, VerdictError, VerifyError,
@@ -368,6 +369,31 @@ pub struct RecallRequest {
     /// narrows the hits only, never the steering (retrieval.md, the
     /// recall-ordering contract; ADR-0025 d8).
     pub kinds: Vec<MemoryKind>,
+    /// Whether the served rows carry their bodies; a budget counts bodies,
+    /// so `max_tokens` without them is refused (retrieval.md token budgets;
+    /// ADR-0025 d7).
+    pub include_bodies: bool,
+    /// The calling key's own held rows join the ranked hits, flagged by
+    /// state (retrieval.md, own held rows in recall; ADR-0025 d4).
+    pub include_own_held: bool,
+    /// The budget in budget tokens under counter `oml-tc/1`; `None` is no
+    /// budget (retrieval.md token budgets; ADR-0025 d7).
+    pub max_tokens: Option<u64>,
+}
+
+/// One recall candidate as the store ranks it, before the `k` and budget
+/// cuts: its id, the clear `body_bytes` its budget-token count derives
+/// from, and the store's score. It carries no body, so a row the cuts drop
+/// is never hydrated; the served rows hydrate in one set-wise read
+/// (retrieval.md token budgets; ADR-0024 d4, ADR-0025 d7).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RecallCandidate {
+    pub memory_id: Uuid,
+    pub body_bytes: u64,
+    /// The store's rank: `ts_rank` in Postgres, the count of distinct query
+    /// terms matched in the in-memory store (retrieval.md, the
+    /// recall-ordering contract).
+    pub score: f32,
 }
 
 /// One recall hit: the row as the calling key is served it, and the store's
@@ -392,11 +418,24 @@ impl core::ops::Deref for RecallHit {
 
 /// Applicable steering, ordered structurally and never ranked, precedes the
 /// hits, ordered by score descending then `artifact_id` ascending
-/// (retrieval.md, the recall-ordering contract; ADR-0025 d8).
+/// (retrieval.md, the recall-ordering contract; ADR-0025 d8), cut to `k`
+/// and then to the budget (ADR-0025 d7).
 #[derive(Debug, Clone)]
 pub struct RecallResult {
     pub steering: Vec<ServedMemory>,
     pub hits: Vec<RecallHit>,
+    /// How the `max_tokens` cut was applied; `None` when no budget was sent,
+    /// and the response then carries no budget object (retrieval.md token
+    /// budgets).
+    pub budget: Option<Budget>,
+    /// The artifact ids served after the `k` and budget cuts, steering then
+    /// hits, own held rows included: what the read log records, never the
+    /// candidates before the cuts (retrieval.md, the read log; ADR-0025 d9).
+    pub served_ids: Vec<Uuid>,
+    /// SHA-256 over the RFC 8785 JSON of the whole request, every member
+    /// present with its default applied (retrieval.md, the read log;
+    /// ADR-0025 d9).
+    pub query_digest: String,
 }
 
 /// Whose rows a listing reads: the store's own predicate, so no page
@@ -566,6 +605,10 @@ pub enum AppError {
         "no workarea: the key has no default and the request names none (http-api.md request.workarea_unresolved)"
     )]
     WorkareaUnresolved,
+    #[error(
+        "max_tokens counts bodies that include_bodies false would not send (retrieval.md token budgets, request.validation)"
+    )]
+    BudgetWithoutBodies,
     #[error(
         "not found — absence and no-access are indistinguishable (http-api.md access.not_found)"
     )]

@@ -22,7 +22,7 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     ClaimKeyState, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, WorkareaRecord,
+    ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
@@ -273,6 +273,26 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
     })
+}
+
+/// A recall candidate from a row of `id`, `body_bytes` and `score`.
+fn candidate_from_row(row: &PgRow) -> Result<RecallCandidate, StoreError> {
+    Ok(RecallCandidate {
+        memory_id: row.try_get("id").map_err(backend)?,
+        body_bytes: unsigned(row, "body_bytes")?,
+        score: row.try_get("score").map_err(backend)?,
+    })
+}
+
+/// The kinds of `kinds` a recall serves as hits: steering and the
+/// vocabulary kinds never are, whatever the filter names (retrieval.md, the
+/// recall-ordering contract).
+fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
+    kinds
+        .iter()
+        .filter(|kind| HIT_KINDS.contains(kind))
+        .map(|kind| kind.as_str())
+        .collect()
 }
 
 /// The workarea columns every workarea read selects (unqualified: the
@@ -935,6 +955,30 @@ impl JournalStore for PgStore {
         row.as_ref().map(memory_from_row).transpose()
     }
 
+    async fn memories(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // One set-wise statement, in the order the ids are named (ADR-0024
+        // d4).
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m \
+             WHERE m.tenant_id = $1 AND m.id = ANY($2::uuid[]) \
+             ORDER BY array_position($2::uuid[], m.id)"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(memory_ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(memory_from_row).collect()
+    }
+
     async fn recall_fts(
         &self,
         tenant_id: Uuid,
@@ -942,15 +986,9 @@ impl JournalStore for PgStore {
         query: &str,
         kinds: &[MemoryKind],
         k: usize,
-    ) -> Result<Vec<(MemoryRecord, f32)>, StoreError> {
+    ) -> Result<Vec<RecallCandidate>, StoreError> {
         let k = i64::try_from(k).unwrap_or(i64::MAX);
-        // Steering and the vocabulary kinds are never hits here, whatever
-        // the filter names (retrieval.md, the recall-ordering contract).
-        let kinds: Vec<&str> = kinds
-            .iter()
-            .filter(|kind| HIT_KINDS.contains(kind))
-            .map(|kind| kind.as_str())
-            .collect();
+        let kinds = hit_kinds(kinds);
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // Served tips only, never a retirement version, so neither a
@@ -958,9 +996,9 @@ impl JournalStore for PgStore {
         // the store; ADR-0025 d8), within the readable set alone — an empty
         // array matches nothing (ADR-0025 d1); the 'simple' configuration
         // matches 0001's GIN expression index. The score is ts_rank with
-        // normalization 0 as float4, ties broken by id.
-        let sql = format!(
-            "SELECT {MEMORY_COLUMNS}, \
+        // normalization 0 as float4, ties broken by id. A candidate carries
+        // no body: the served rows hydrate after the cuts (ADR-0025 d7).
+        let sql = "SELECT m.id, m.body_bytes, \
                     ts_rank(to_tsvector('simple', m.claim), \
                             plainto_tsquery('simple', $3), 0) AS score \
              FROM memories m \
@@ -969,9 +1007,8 @@ impl JournalStore for PgStore {
                AND m.workarea_id = ANY($2::uuid[]) \
                AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
              ORDER BY score DESC, m.id ASC \
-             LIMIT $5"
-        );
-        let rows = sqlx::query(&sql)
+             LIMIT $5";
+        let rows = sqlx::query(sql)
             .bind(tenant_id)
             .bind(readable)
             .bind(query)
@@ -981,14 +1018,55 @@ impl JournalStore for PgStore {
             .await
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        rows.iter()
-            .map(|row| {
-                Ok((
-                    memory_from_row(row)?,
-                    row.try_get("score").map_err(backend)?,
-                ))
-            })
-            .collect()
+        rows.iter().map(candidate_from_row).collect()
+    }
+
+    async fn recall_own_held(
+        &self,
+        tenant_id: Uuid,
+        author_key_ids: &[Uuid],
+        readable: &[Uuid],
+        query: &str,
+        kinds: &[MemoryKind],
+        k: usize,
+    ) -> Result<Vec<RecallCandidate>, StoreError> {
+        let k = i64::try_from(k).unwrap_or(i64::MAX);
+        let kinds = hit_kinds(kinds);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The PoC form of held text containment: the statement hard-codes
+        // the held state and the author key set, so no other key's held text
+        // is matched whatever the query (retrieval.md; ADR-0025 d5). The
+        // designed form reads `held_fts`, rows that exist only while held,
+        // behind an RLS author policy over `oml.own_key_ids` set from the
+        // authenticated key and its rotation chain; that table is decided,
+        // not built, because the PoC stores bodies inline. Never a steering
+        // row or a retirement version, never off the readable nodes, and the
+        // score is the same ts_rank as recall_fts, so the two lists merge
+        // under one order (ADR-0025 d4).
+        let sql = "SELECT m.id, m.body_bytes, \
+                    ts_rank(to_tsvector('simple', m.claim), \
+                            plainto_tsquery('simple', $4), 0) AS score \
+             FROM memories m \
+             WHERE m.tenant_id = $1 AND m.status = 'held' \
+               AND m.author_key_id = ANY($2::uuid[]) \
+               AND NOT m.retirement AND m.kind = ANY($5::text[]) \
+               AND m.workarea_id = ANY($3::uuid[]) \
+               AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
+             ORDER BY score DESC, m.id ASC \
+             LIMIT $6";
+        let rows = sqlx::query(sql)
+            .bind(tenant_id)
+            .bind(author_key_ids)
+            .bind(readable)
+            .bind(query)
+            .bind(&kinds)
+            .bind(k)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(candidate_from_row).collect()
     }
 
     async fn steering_in_force(
