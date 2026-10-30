@@ -119,6 +119,7 @@ Status line gains the back-pointer when ADR-0028 is accepted.
   that gets no usable answer once it may have reached the server, which the CLI reports as a key
   that may have been issued, never as a refusal, and without echoing the body; the reader
   grant `oml keys issue` and `issue-agent` add beside every writer grant unless `--write-only`,
+  carrying the writer grant's deny masks (neither verb takes a mask yet, so none is sent),
   while HTTP issuance still takes exactly the grants it is sent (ADR-0025 d2); the `oml-admin`
   Claude Code plugin, one skill that runs `issue-agent` only with `--out` and never with `--json`,
   and no MCP server.

@@ -97,8 +97,11 @@ maintainer accepts it.
 
 - **d2 — `oml keys issue` and `oml keys issue-agent` add a reader grant on the same workarea
   beside every writer grant unless `--write-only` is passed.** For each writer grant the request
-  asks for, the CLI sends a reader grant on the same workarea, unless the request already names
-  that reader grant or `--write-only` is given. The default is the CLI's alone: HTTP issuance is
+  asks for, the CLI sends a reader grant on the same workarea with the same deny masks, unless
+  the request already names that reader grant or `--write-only` is given. `POST /v2/keys` takes a
+  mask on each grant (ADR-0025 d2), but neither verb takes one yet, so today both grants are sent
+  without one; the copy keeps the added grant from ever reading a subtree its writer grant is
+  denied, once an issuing verb takes a mask. The default is the CLI's alone: HTTP issuance is
   unchanged, the server takes exactly the grants it is sent (ADR-0025 d2), and the added grant is
   an ordinary grant in the request body, journalled as its own `grant.issued` and echoed in the
   `201` like any other. A write-only key still reads its own work, in every state, with no grant
@@ -174,6 +177,8 @@ maintainer accepts it.
 | **d2 — The HTTP issuance adds the reader grant** | It would amend ADR-0025 d2, under which the server takes exactly the grants it is sent. |
 | **d2 — A tenant-wide default read** | It voids per-workarea access. |
 | **d2 — No default** | Every issuer of the common key must remember the second grant, and the key that forgets it fails only at its first recall. |
+| **d2 — Add the reader grant without the writer grant's deny masks** | The key would read the subtrees its writer grant is denied, a hole that opens with nothing refusing it the day an issuing verb takes a per-grant mask. |
+| **d2 — Send no masks and refuse a mask on an issuing verb until the copy is decided** | It leaves the rule to whichever change adds the mask, and a key with masked grants could then not be issued in one call. |
 | **d3 — An admin MCP server or an `oml_issue_key` tool** | An admin verb on MCP breaks ADR-0014 d2 and R1: the facade serves the agent ceiling and nothing above it. |
 | **d3 — The skill runs `issue-agent` and relays the export lines** | The key value would sit in the transcript and the model's context, which ADR-0015 d1 and the key format rule forbid. |
 | **d3 — Hand the command to the operator to run in a terminal of their own** | It defeats the skill's purpose, running the ceremony for the operator, and moves the one error-prone step back to the operator. |
