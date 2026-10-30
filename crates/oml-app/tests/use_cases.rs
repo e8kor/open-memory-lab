@@ -165,6 +165,7 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         derives_from: Vec::new(),
         reason: None,
         workarea_id: None,
+        refuse_vocabulary_target: false,
     }
 }
 

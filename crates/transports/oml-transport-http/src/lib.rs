@@ -424,7 +424,8 @@ where
         let rid = new_request_id();
         finish(
             &rid,
-            Self::supersede_inner(&st, &artifact_id, &headers, &body).await,
+            // The ring supersedes a target of any kind (ADR-0025 d12).
+            Self::supersede_inner(&st, &artifact_id, &headers, &body, false).await,
         )
     }
 
@@ -432,11 +433,14 @@ where
     /// names what it replaces; the target stays the tip until ratification
     /// (http-api.md supersede; ADR-0025 d10, d11). The body is closed: a
     /// field the server does not serve is refused, never dropped (d16).
+    /// `refuse_vocabulary_target` is set by `oml_supersede`, whose input
+    /// carries no vocabulary fields (d12).
     async fn supersede_inner(
         st: &Self,
         artifact_id: &str,
         headers: &HeaderMap,
         body: &Bytes,
+        refuse_vocabulary_target: bool,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
@@ -473,6 +477,7 @@ where
             derives_from: req.derives_from,
             reason: req.reason,
             workarea_id: workarea_override(headers)?,
+            refuse_vocabulary_target,
         };
         let outcome = retry_chain(|| st.app.supersede(&token, &app_req))
             .await
