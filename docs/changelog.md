@@ -33,8 +33,8 @@ implementation milestone where it changes what the repository holds.
 
 [ADR-0026](adr/ADR-0026-names-are-keys.md) (proposed) gives workareas, crews, keys and tenants a
 name that is a unique, immutable key beside the id. It proposes amending ADR-0008 (d7), ADR-0010
-(d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4) and ADR-0025 (d2, d14); each of those records'
-Status lines gains the back-pointer when ADR-0026 is accepted.
+(d6, d7), ADR-0012 (d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0022 (d4) and ADR-0025 (d1, d2, d14);
+each of those records' Status lines gains the back-pointer when ADR-0026 is accepted.
 
 - **Decided:** one flat namespace per kind — the tenant for workareas, crews and keys (operator
   keys share the provider's), the deployment for tenants — with names never changed and never
@@ -51,10 +51,14 @@ Status lines gains the back-pointer when ADR-0026 is accepted.
   and failing closed where none is named; a key's name distinct from its principal and label, and
   a rotation's successor named afresh; the naming of rows that predate names by a deterministic
   rule journalled as `system.names_assigned`; `oml keys issue-agent`, one `POST /v2/keys` that
-  prints the `OML_URL` and `OML_API_KEY` lines the `oml` plugin reads; the CLI's reader grant
-  beside every writer grant, with `--write-only` to opt out, while the HTTP issuance takes exactly
-  the grants it is sent; and the `oml-admin` Claude Code plugin, one skill over the CLI that never
-  puts a key value in the model's context.
+  prints the `OML_URL` and `OML_API_KEY` lines the `oml` plugin reads, or with `--out <path>`
+  writes the value to a new 0600 file, refusing an existing one, and prints a line that reads it
+  from there; the CLI's reader grant beside every writer grant, with `--write-only` to opt out,
+  while the HTTP issuance takes exactly the grants it is sent; the `oml-admin` Claude Code plugin,
+  one skill that runs `issue-agent` only with `--out`, so the key value never enters the model's
+  context; and admin keys reading the structure of every workarea in their tenant without grants —
+  the workarea read, the lookup by path, the tree, edges and status — and never claim content,
+  declared in the roles-and-keys permission matrix (d15).
 - **Surface:** the `name` error family with `name.taken` (errors.md, the OpenAPI `ErrorCode`
   enum and http-api.md's tables together); `GET /v2/crews`, `POST /v2/crews`, `GET
   /v2/crews/{crew_id}` and `POST /v2/crews/{crew_id}/update`; the `crew.created`, `crew.updated`

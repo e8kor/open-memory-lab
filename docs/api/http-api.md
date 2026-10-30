@@ -368,7 +368,7 @@ join this table:
 | `GET /v2/claim-edges` | reader |
 | `POST /v2/claim-edges` | dreamer(propose) |
 | `POST /v2/claim-edges/{edge_id}/ratify` | dreamer(review); never the proposer (R2) |
-| `GET /v2/workareas` · `GET /v2/workareas/{id}` · `/tree` · `/edges` · `/status` | reader |
+| `GET /v2/workareas` · `GET /v2/workareas/{id}` · `/tree` · `/edges` · `/status` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) |
 | `POST /v2/workareas` | admin (key role) |
 | `POST /v2/workareas/{id}/reparent` | admin (key role) |
 | `POST /v2/workareas/{id}/crew` | admin (key role) |
@@ -673,14 +673,16 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
-Reads require reader effective access on the node; nodes outside scope are absent
-(`access.not_found`). The algebra — tree, universe, grants, denies — is owned by
+Reads require reader effective access on the node, and nodes outside scope are absent
+(`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
+tenant without grants and never claim content
+([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). The algebra — tree, universe, grants, denies — is owned by
 [workareas.md](../architecture/workareas.md); this page only carries the verbs.
 
 | Endpoint | Returns / does |
 |---|---|
 | `GET /v2/workareas?path=<ltree>` | Resolve a node by derived path. Grants bind to node ids, never paths, and no reference field accepts a path ([names](#names-and-ids)); this is the lookup that bridges the two. |
-| `GET /v2/workareas/{id}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. |
+| `GET /v2/workareas/{id}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. |
 | `GET /v2/workareas/{id}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
 | `GET /v2/workareas/{id}/edges` | Labelled `related` edges touching the node, `pending` and `ratified`, with proposer and ratifier. Edges confer zero access. |
 | `GET /v2/workareas/{id}/status` | Status, the review policy object in force, pending transitions. |

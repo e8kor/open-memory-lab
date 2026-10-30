@@ -2,7 +2,7 @@
 id: architecture/roles-and-keys
 tier: engineering
 status: design draft for review · decided, not built
-answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis
+answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants
 -->
 
 # Roles and keys
@@ -64,7 +64,7 @@ content verb — recall, read, graph read, workarea info, events tail, remember,
 supersession, steering, propose, review, status-transition propose and ratify, and dead-letter
 re-enqueue — a column names the grant role that effective access must confer on the workarea the
 verb touches, resolved in the [refusal order](#grant-admissibility-and-refusal-order) below; the
-admin column of the last three names the key's role. For a key-level verb — keys,
+admin column of workarea structure and of the last three names the key's role. For a key-level verb — keys,
 grants, denials, workarea create and re-parent, crews, reassignment, bans, demote, erase, exports,
 settings, tenants — a column names the key's role itself.
 
@@ -73,7 +73,8 @@ settings, tenants — a column names the key's role itself.
 | recall / search (FTS, vector) — logged | ✓ | — | — | — | — |
 | read body / fetch — logged | ✓ ⁵ | — | — | — | — |
 | graph and lineage read (serialize, don't compute) | ✓ | — | — | — | — |
-| workarea info / events tail | ✓ | — | — | — | — |
+| workarea structure: workarea info (the workarea read, the lookup by path), tree, workarea edges, status | ✓ | — | — | ✓ ⁶ | — |
+| events tail | ✓ | — | — | — | — |
 | own-work status (own submissions only) | ✓ | ✓ | ✓ | ✓ | — |
 | remember / learn (held on arrival) | — | ✓ | — | — ¹ | — |
 | attach (resumable upload session) | — | ✓ | — | — ¹ | — |
@@ -113,6 +114,21 @@ next section.
 [issuer ceiling](#issuer-ceiling)).
 ⁵ The calling key may fetch its [own](#own) rows in any state (own-work path); everyone else
 sees promoted rows only ([http-api](../api/http-api.md)).
+⁶ **Admin structure reads.** This footnote is the single declaration site of what an admin key
+reads without grants ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d15). An admin key reads the
+structure of every workarea in its tenant by its key role: the workarea read and the lookup by
+path, the tree, a node's workarea edges and its status read — names, ids, parents, paths,
+statuses, crew records, children, workarea edges, review policy objects, pending transitions —
+beside the crew records, keys, grants and denials its own rows of this matrix already let it read.
+No grant and no denial enters: denials attenuate grants, and an admin key holds none. On the
+workarea read it sees every child and every workarea edge of the node, `my_effective_verbs`
+empty, since that field lists grant-role verbs, and its own permission epoch. It never reads claim
+content: recall, read, graph and lineage reads, the events tail, vocabulary reads and attachment
+fetch need reader, which no admin key can carry ([admissibility](#grant-admissibility-and-refusal-order)),
+so each answers `access.verb_ceiling` at step 1 of the refusal order. The content ceiling of the
+two-key rule is therefore unchanged — an admin key carries no grant role, receives no serve,
+records no verdict and reads no claim's content — and "admin is never a reviewer" holds as
+before.
 
 Promote, sign and delete appear in no column: promotion is an effect of ratification inside the
 admission pipeline, signing is done by `oml-server` with the deployment key
@@ -208,7 +224,8 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
 - **writer** — submit and steering writes, on the resolved node, which must exist.
 - **reader** — recall, on the scope node (the search runs over subtree(scope) ∩ the nodes where
   reader is effective); get of a row that is not the caller's own, on the row's workarea; a listing
-  without `own`; the events tail; workarea info.
+  without `own`; the events tail; workarea info, which an admin key also reads by its key role
+  ([matrix](#permission-matrix), footnote 6).
 - **supersede, retirement included** — [own](#own) is read on the target version, the current
   tip, never on the claim's first version; the rule runs in this order:
 
@@ -506,8 +523,10 @@ logs or referrer headers.
 rule below); after that moment no component holds or reproduces it. The journal records
 `key.issued` as issued-without-value; log lines name keys by `key_id` only, never by value or
 hash ([observability](../operations/observability.md) owns the logging rules); journal payloads
-carry key ids, never key material. A key value found anywhere but the issuance terminal and the
-caller's `Authorization` header is a defect.
+carry key ids, never key material. A key value found anywhere but the issuance terminal, the
+one file `oml keys issue-agent --out` creates for it (owner-only, mode 0600, never overwritten;
+[CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)) and the caller's
+`Authorization` header is a defect.
 
 ## Key lifecycle
 
@@ -585,6 +604,7 @@ no threshold auto-demotes anything.
 This page's decisions are registered as ADR-0010 ([decision register](../adr/index.md)); grant
 admissibility, the refusal order, the issuance order, own and the effective verbs are
 [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14); key names and the
-key's crew are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9). One
+key's crew and the admin structure reads are the proposed
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9, d15). One
 adjacent decision is named elsewhere: programs hold keys, humans hold ceremonies, and OAuth for
 MCP clients remains a named roadmap trigger ([roadmap](../product/roadmap.md)).
