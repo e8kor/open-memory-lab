@@ -211,7 +211,7 @@ pub struct ClaimKeyState {
 
 /// A version a supersession replaces, as served: its id and its ordinal
 /// (openapi.yaml `MemorySummary.replaces`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionRef {
     pub artifact_id: Uuid,
     pub version: u32,
@@ -475,18 +475,48 @@ pub struct MemoryPage {
     pub next_cursor: Option<String>,
 }
 
+/// `POST /v1/memories/{artifact_id}/supersede` (http-api.md supersede;
+/// ADR-0025 d10, d11). The successor's `claim_key` and workarea are always
+/// the target's.
 #[derive(Debug, Clone)]
 pub struct SupersedeRequest {
+    pub idempotency_key: String,
     pub target_id: Uuid,
+    /// The successor's text as sent; capture normalizes it to NFC. With
+    /// `retirement`, why the claim is retired.
     pub body: String,
-    pub claim_key: Option<String>,
+    /// `None` takes the target's kind, the one field a successor inherits.
+    pub kind: Option<MemoryKind>,
+    /// A retire-proposal: ratified, the successor retires the claim.
+    pub retirement: bool,
+    /// Ancestors beside the target, which is always one.
+    pub derives_from: Vec<Uuid>,
+    /// Digested with the request, never journalled.
+    pub reason: Option<String>,
+    /// `X-OML-Workarea`: when sent, it must be the target's workarea.
+    pub workarea_id: Option<Uuid>,
+}
+
+/// The stored idempotent response of a supersession: a replay returns this
+/// byte for byte, naming only the caller's own successor (openapi.yaml
+/// `SubmitAccepted`; ADR-0025 d10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupersedeReceipt {
+    pub memory_id: Uuid,
+    pub claim_key: String,
+    pub version: u32,
+    pub workarea_id: Uuid,
+    pub state: String,
+    pub retirement: bool,
+    pub replaces: VersionRef,
+    pub journal_seq: u64,
+    pub body_digest: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct SupersedeOutcome {
-    pub superseded_id: Uuid,
-    pub successor_id: Uuid,
-    pub journal_seq: u64,
+    pub receipt: SupersedeReceipt,
+    pub replayed: bool,
 }
 
 /// A typed application refusal; every variant names the rule it enforces.
@@ -544,10 +574,28 @@ pub enum AppError {
         "a writer may supersede only the claims its own key authored (roles-and-keys.md#own, access.author_only)"
     )]
     AuthorOnly,
+    /// The target is not the current served tip, at supersede or at the
+    /// ratifying verdict; `current_tip` only when the caller can read it
+    /// (errors.md `submission.tip_conflict`; ADR-0025 d10, d16).
     #[error(
         "the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)"
     )]
-    TipConflict,
+    TipConflict { current_tip: Option<VersionRef> },
+    #[error(
+        "X-OML-Workarea names {workarea_id}, not the target's workarea: a supersession is captured in its target's (http-api.md supersede, request.validation)"
+    )]
+    WorkareaNotTarget { workarea_id: Uuid },
+    #[error(
+        "a {target:?} target admits no {sent:?} successor: a kind changes only within its class, and a retirement keeps the target's (audit-and-lineage.md, request.validation)"
+    )]
+    KindChangeRefused {
+        target: MemoryKind,
+        sent: MemoryKind,
+    },
+    #[error(
+        "a term is never retired: terms deprecate (ADR-0021 d3; ADR-0025 d11, request.validation)"
+    )]
+    TermRetirement,
     #[error(
         "a held, promoted or demoted version holds this claim_key in the workarea (audit-and-lineage.md, submission.claim_key_conflict)"
     )]

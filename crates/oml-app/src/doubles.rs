@@ -6,7 +6,7 @@
 //! every test chain is reproducible byte for byte.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
@@ -54,13 +54,13 @@ fn words(text: &str) -> BTreeSet<String> {
 // Journal store
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct QueueEntry {
     memory_id: Uuid,
     claimed_by: Option<Uuid>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct TenantState {
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
@@ -83,8 +83,11 @@ struct TenantState {
 #[derive(Debug, Default, Clone)]
 pub struct MemStore {
     tenants: Arc<Mutex<BTreeMap<Uuid, Arc<Mutex<TenantState>>>>>,
-    /// The event type whose next commit is refused, then forgotten.
-    refuse_next: Arc<Mutex<Option<&'static str>>>,
+    /// The event type whose next commit is refused, with the refusal, then
+    /// forgotten.
+    refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
+    /// The next idempotency lookup answers no record, then reads normally.
+    miss_next_lookup: Arc<AtomicBool>,
 }
 
 impl MemStore {
@@ -98,8 +101,29 @@ impl MemStore {
     /// a storage failure in the middle of a multi-commit use-case, on demand.
     #[must_use]
     pub fn refusing_next_commit_of(self, event_type: &'static str) -> Self {
-        *self.refuse_next.lock().expect("refusal lock") = Some(event_type);
+        self.refuse_next_commit_of(
+            event_type,
+            StoreError::Backend(format!(
+                "the double refused this {event_type} commit on request"
+            )),
+        );
         self
+    }
+
+    /// Refuses the next commit carrying an `event_type` event with `error`,
+    /// writing none of its events, then commits normally again: a refusal a
+    /// use-case cannot provoke through honest stores, such as a lost
+    /// compare-and-set, armed on any handle mid-test.
+    pub fn refuse_next_commit_of(&self, event_type: &'static str, error: StoreError) {
+        *self.refuse_next.lock().expect("refusal lock") = Some((event_type, error));
+    }
+
+    /// Answers the next idempotency lookup with no record, whatever is
+    /// stored, then reads normally again: the lookup of an attempt that ran
+    /// before a concurrent attempt under the same key committed, armed on
+    /// any handle after that commit.
+    pub fn miss_next_idempotency_lookup(&self) {
+        self.miss_next_lookup.store(true, Ordering::SeqCst);
     }
 
     fn tenant(&self, tenant_id: Uuid) -> Arc<Mutex<TenantState>> {
@@ -234,12 +258,10 @@ fn apply_fold(
         }
         MetadataFold::MemoryPromoted { memory_id } => {
             if let Some(promoted) = state.memories.get(&memory_id).cloned() {
-                // One served tip per claim: the replaced version gives the
-                // tip up, and any other tip refuses the commit, as
-                // `memories_served_tip` does (ADR-0025 d10).
+                // One served tip per claim: any other tip refuses the
+                // commit, as `memories_served_tip` does (ADR-0025 d10).
                 if state.memories.values().any(|m| {
                     m.memory_id != memory_id
-                        && Some(m.memory_id) != promoted.replaces
                         && m.workarea_id == promoted.workarea_id
                         && m.claim_key == promoted.claim_key
                         && m.is_tip
@@ -249,10 +271,6 @@ fn apply_fold(
                         "claim_key {:?} already has a served tip in this workarea",
                         promoted.claim_key
                     )));
-                }
-                if let Some(replaced) = promoted.replaces.and_then(|id| state.memories.get_mut(&id))
-                {
-                    replaced.is_tip = false;
                 }
                 if let Some(memory) = state.memories.get_mut(&memory_id) {
                     memory.status = MemoryStatus::Promoted;
@@ -268,67 +286,115 @@ fn apply_fold(
             }
             state.queue.retain(|e| e.memory_id != memory_id);
         }
-        MetadataFold::MemorySuperseded {
-            superseded,
+        MetadataFold::TipSuperseded {
             successor,
+            replaced,
         } => {
-            // The replaced version stays promoted; only the tip moves
-            // (ADR-0025 d10).
-            require_free_ordinal(state, &successor)?;
-            if let Some(memory) = state.memories.get_mut(&superseded) {
-                memory.is_tip = false;
+            // The compare-and-set: the successor is held and replaces
+            // `replaced`, which is still the promoted tip under the
+            // successor's own workarea and claim_key; anything else writes
+            // nothing (ADR-0025 d10).
+            let cas = match (
+                state.memories.get(&successor),
+                state.memories.get(&replaced),
+            ) {
+                (Some(s), Some(t)) => {
+                    s.status == MemoryStatus::Held
+                        && s.replaces == Some(replaced)
+                        && t.workarea_id == s.workarea_id
+                        && t.claim_key == s.claim_key
+                        && t.is_tip
+                        && t.status == MemoryStatus::Promoted
+                }
+                _ => false,
+            };
+            if !cas {
+                return Err(StoreError::TipMoved { replaced });
             }
-            state.queue.push(QueueEntry {
-                memory_id: successor.memory_id,
-                claimed_by: None,
-            });
-            state.memories.insert(successor.memory_id, successor);
+            if let Some(target) = state.memories.get_mut(&replaced) {
+                target.is_tip = false;
+            }
+            if let Some(memory) = state.memories.get_mut(&successor) {
+                memory.status = MemoryStatus::Promoted;
+                memory.is_tip = true;
+                memory.promoted_at = Some(at.clone());
+            }
+            state.queue.retain(|e| e.memory_id != successor);
         }
     }
     Ok(())
 }
 
+/// Appends one event to `state` if it extends the head, with its fold,
+/// idempotency record and outbox row, or refuses it.
+fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, StoreError> {
+    let expected_seq = state.events.len() as u64 + 1;
+    if req.event.envelope.seq != expected_seq {
+        return Err(StoreError::SeqConflict {
+            expected_seq,
+            found_seq: req.event.envelope.seq,
+        });
+    }
+    if let Some(last) = state.events.last()
+        && req.event.envelope.prev_hash != last.hash
+    {
+        return Err(StoreError::PrevHashConflict { seq: expected_seq });
+    }
+    apply_fold(state, req.fold, expected_seq, &req.event.envelope.at)?;
+    if let Some(put) = req.idempotency {
+        // One scope holds one record; the caller drops the staged state on
+        // a refusal, so the fold above is undone with it.
+        let scope = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
+        if state.idempotency.contains_key(&scope) {
+            return Err(StoreError::IdempotencyRecorded);
+        }
+        state.idempotency.insert(scope, put.record);
+    }
+    state.outbox.push(req.outbox);
+    let receipt = CommitReceipt {
+        seq: req.event.envelope.seq,
+        hash: req.event.hash,
+    };
+    state.events.push(req.event);
+    Ok(receipt)
+}
+
 impl JournalStore for MemStore {
-    async fn commit(&self, req: CommitRequest) -> Result<CommitReceipt, StoreError> {
+    async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
         {
             let mut refuse = self.refuse_next.lock().expect("refusal lock");
-            if *refuse == Some(req.event.envelope.event_type.as_str()) {
-                *refuse = None;
-                return Err(StoreError::Backend(format!(
-                    "the double refused this {} commit on request",
-                    req.event.envelope.event_type
-                )));
+            if refuse
+                .as_ref()
+                .is_some_and(|(t, _)| reqs.iter().any(|r| r.event.envelope.event_type == *t))
+                && let Some((_, error)) = refuse.take()
+            {
+                return Err(error);
             }
         }
-        let tenant = self.tenant(req.event.envelope.tenant_id);
-        // The per-tenant lock IS the serialization point the real adapter
-        // provides with a row lock on the chain head (ADR-0002).
-        let mut state = tenant.lock().expect("tenant lock");
-        let expected_seq = state.events.len() as u64 + 1;
-        if req.event.envelope.seq != expected_seq {
-            return Err(StoreError::SeqConflict {
-                expected_seq,
-                found_seq: req.event.envelope.seq,
-            });
-        }
-        if let Some(last) = state.events.last()
-            && req.event.envelope.prev_hash != last.hash
-        {
-            return Err(StoreError::PrevHashConflict { seq: expected_seq });
-        }
-        apply_fold(&mut state, req.fold, expected_seq, &req.event.envelope.at)?;
-        if let Some(put) = req.idempotency {
-            state.idempotency.insert(
-                (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key),
-                put.record,
-            );
-        }
-        state.outbox.push(req.outbox);
-        let receipt = CommitReceipt {
-            seq: req.event.envelope.seq,
-            hash: req.event.hash,
+        let mut reqs = reqs.into_iter();
+        let Some(first) = reqs.next() else {
+            return Err(StoreError::Backend(
+                "an empty chain commits nothing".to_owned(),
+            ));
         };
-        state.events.push(req.event);
+        let tenant_id = first.event.envelope.tenant_id;
+        let tenant = self.tenant(tenant_id);
+        // The per-tenant lock IS the serialization point the real adapter
+        // provides with a row lock on the chain head (ADR-0002). The links
+        // apply to a copy that replaces the state only once every one has
+        // applied, so a refused link leaves the earlier ones unwritten.
+        let mut state = tenant.lock().expect("tenant lock");
+        let mut staged = state.clone();
+        let mut receipt = append(&mut staged, first)?;
+        for req in reqs {
+            if req.event.envelope.tenant_id != tenant_id {
+                return Err(StoreError::Backend(
+                    "a chain commit names one tenant".to_owned(),
+                ));
+            }
+            receipt = append(&mut staged, req)?;
+        }
+        *state = staged;
         Ok(receipt)
     }
 
@@ -511,6 +577,49 @@ impl JournalStore for MemStore {
             }))
     }
 
+    async fn claim_tip(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+    ) -> Result<Option<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .find(|m| {
+                m.workarea_id == workarea_id
+                    && m.claim_key == claim_key
+                    && m.is_tip
+                    && m.status == MemoryStatus::Promoted
+            })
+            .cloned())
+    }
+
+    async fn held_successors(
+        &self,
+        tenant_id: Uuid,
+        replaced: Uuid,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut held: Vec<MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| m.status == MemoryStatus::Held && m.replaces == Some(replaced))
+            .cloned()
+            .collect();
+        held.sort_by(|a, b| {
+            (a.created_at.as_str(), a.memory_id).cmp(&(b.created_at.as_str(), b.memory_id))
+        });
+        Ok(held)
+    }
+
     async fn review_claim_next(
         &self,
         tenant_id: Uuid,
@@ -542,6 +651,22 @@ impl JournalStore for MemStore {
                 .iter()
                 .any(|p| p == reviewer_principal)
                 || memory.lineage_key_ids.contains(&reviewer_key_id)
+            {
+                continue;
+            }
+            // Nor a held successor whose target has a held rival this
+            // reviewer authored (roles-and-keys.md rival successors;
+            // ADR-0025 d10).
+            if memory.replaces.is_some()
+                && memories.values().any(|r| {
+                    r.memory_id != memory.memory_id
+                        && r.status == MemoryStatus::Held
+                        && r.replaces == memory.replaces
+                        && r.workarea_id == memory.workarea_id
+                        && r.claim_key == memory.claim_key
+                        && (r.author_key_id == reviewer_key_id
+                            || r.author_principal == reviewer_principal)
+                })
             {
                 continue;
             }
@@ -679,6 +804,9 @@ impl JournalStore for MemStore {
         &self,
         scope: &IdempotencyScope,
     ) -> Result<Option<IdempotencyRecord>, StoreError> {
+        if self.miss_next_lookup.swap(false, Ordering::SeqCst) {
+            return Ok(None);
+        }
         let Some(tenant) = self.tenant_existing(scope.tenant_id) else {
             return Ok(None);
         };

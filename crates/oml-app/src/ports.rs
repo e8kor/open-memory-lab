@@ -27,6 +27,16 @@ pub enum StoreError {
     SeqConflict { expected_seq: u64, found_seq: u64 },
     #[error("prev_hash does not match the stored head at seq {seq}")]
     PrevHashConflict { seq: u64 },
+    /// A ratification's compare-and-set found `replaced` no longer the
+    /// promoted tip under its successor's workarea and `claim_key`: the
+    /// commit wrote nothing (ADR-0025 d10).
+    #[error("version {replaced} is no longer the served tip its successor replaces")]
+    TipMoved { replaced: Uuid },
+    /// A commit's idempotency record found its scope already recorded: a
+    /// concurrent attempt under the same Idempotency-Key committed first,
+    /// and this commit wrote nothing (http-api.md idempotency).
+    #[error("an idempotency record already holds this scope")]
+    IdempotencyRecorded,
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -82,23 +92,26 @@ pub enum MetadataFold {
         memory_id: Uuid,
         reviewer_key_id: Uuid,
     },
-    /// Ratification: the version is promoted and becomes its claim's tip,
-    /// the version it replaces stops being the tip, and `promoted_at` is the
-    /// event's `at`. The store refuses a second promoted tip of one
-    /// `claim_key` in one workarea (postgres-schema.md
-    /// `memories_served_tip`; ADR-0025 d10).
+    /// Ratification of a claim's first version: it is promoted and becomes
+    /// the tip, and `promoted_at` is the event's `at`. The store refuses a
+    /// second promoted tip of one `claim_key` in one workarea
+    /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10).
     MemoryPromoted {
         memory_id: Uuid,
     },
     MemoryRejected {
         memory_id: Uuid,
     },
-    /// The old tip stays promoted and stops being the tip; the successor,
-    /// whose `replaces` names it, enters held and is queued for review like
-    /// any write (ADR-0025 d10).
-    MemorySuperseded {
-        superseded: Uuid,
-        successor: MemoryRecord,
+    /// `lifecycle.supersede`: the ratified successor takes the tip from the
+    /// version it replaces, which stays promoted. The store compare-and-sets
+    /// that `replaced` is still the promoted tip under the successor's own
+    /// workarea and `claim_key` and that the successor replaces it; on a
+    /// lost compare-and-set it writes nothing and refuses with
+    /// [`StoreError::TipMoved`]. `promoted_at` is the event's `at`
+    /// (audit-and-lineage.md supersession chains; ADR-0025 d10).
+    TipSuperseded {
+        successor: Uuid,
+        replaced: Uuid,
     },
 }
 
@@ -129,6 +142,18 @@ pub struct IdempotencyRecord {
     pub response: Value,
 }
 
+/// The record a commit writes inside its own transaction. The slice records
+/// at commit instead of claiming an `in_progress` record in a transaction of
+/// its own before any side effect (http-api.md idempotency): no use-case has
+/// a side effect before its commit, and a second record under one scope
+/// refuses the whole commit ([`StoreError::IdempotencyRecorded`]), so a
+/// request still commits once. `idempotency.in_progress` is never answered.
+/// A supersede that lost the race to another under the same key answers the
+/// winner's response as a replay: directly when its commit finds the record,
+/// or through the transport's retry when its commit was sealed on the head
+/// the winner moved. A submit does the same unless it read the `claim_key`
+/// after the winner committed; then it answers
+/// `submission.claim_key_conflict`, because the winner's version holds it.
 #[derive(Debug, Clone)]
 pub struct IdempotencyPut {
     pub scope: IdempotencyScope,
@@ -160,6 +185,21 @@ pub trait JournalStore: Send + Sync {
     fn commit(
         &self,
         req: CommitRequest,
+    ) -> impl Future<Output = Result<CommitReceipt, StoreError>> + Send {
+        self.commit_chain(vec![req])
+    }
+
+    /// Several events of one tenant as one transaction: the first extends
+    /// the current head and each next one extends the one before it. Any
+    /// refusal — a conflict on any link, or a fold the store refuses, a lost
+    /// compare-and-set included — writes none of them. An approving verdict
+    /// and the ratification it triggers commit this way, so a verdict that
+    /// loses the compare-and-set is never journalled (ADR-0002 d1; ADR-0025
+    /// d10). Returns the receipt of the last event, the new head; an empty
+    /// chain is refused.
+    fn commit_chain(
+        &self,
+        reqs: Vec<CommitRequest>,
     ) -> impl Future<Output = Result<CommitReceipt, StoreError>> + Send;
 
     fn chain_head(
@@ -238,13 +278,33 @@ pub trait JournalStore: Send + Sync {
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
 
+    /// The promoted served tip of `claim_key` in the workarea, if any
+    /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10).
+    fn claim_tip(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+    ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
+
+    /// Every held version whose `replaces` names `replaced`, in capture
+    /// order: the rival successors of one tip (roles-and-keys.md rival
+    /// successors; ADR-0025 d10).
+    fn held_successors(
+        &self,
+        tenant_id: Uuid,
+        replaced: Uuid,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
     /// Claim the next reviewable queue entry for this reviewer among the rows
     /// whose workarea is in `workareas`, the nodes where the reviewer's
     /// dreamer access is effective (ADR-0025 d1): entries claimed by another
-    /// key are skipped, and so is any row whose lineage closure contains the
-    /// reviewer — the store never serves what this key may not judge
-    /// (admission.md review; the R2 check proper still runs at verdict time
-    /// in the use-case). An empty set serves nothing.
+    /// key are skipped, and so is any row whose reviewer-exclusion set holds
+    /// the reviewer — its lineage closure, and for a held successor the
+    /// authors of the held rivals of its target (ADR-0025 d10) — so the
+    /// store never serves what this key may not judge (admission.md review;
+    /// the R2 check proper still runs at verdict time in the use-case). An
+    /// empty set serves nothing.
     fn review_claim_next(
         &self,
         tenant_id: Uuid,

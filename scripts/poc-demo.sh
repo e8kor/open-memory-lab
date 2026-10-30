@@ -178,14 +178,21 @@ step "supersede the promoted tip with the writer key (successor enters held)" 0 
     --claim "Supplier Accra Metals revised the Q1-2027 quote to 399 USD/t."
 SUCCESSOR="$(jqf .artifact_id)"
 [ "$(jqf .state)" = "held" ] || fail "successor is not held"
+[ "$(jqf .replaces.artifact_id)" = "$ARTIFACT" ] || fail "the successor does not name the version it replaces"
+
+step "recall before ratification still serves the old tip (the tip moves only at ratification)" 0 \
+    "$OML" --key "$READER" --json recall --query "Accra Metals"
+jq -r '.hits[].memory.body' "$OUT" | grep -q "412 USD/t" || fail "the old tip left recall before ratification"
+jq -r '.hits[].memory.body' "$OUT" | grep -q "399 USD/t" && fail "the held successor reached recall unreviewed"
 
 step "the successor rides the same review gate: dreamer approves it" 0 \
     "$OML" --key "$DREAMER" --json review verdict --memory "$SUCCESSOR" --approve
 [ "$(jqf .state)" = "promoted" ] || fail "successor did not promote"
 
-step "recall now serves the successor (the old tip is superseded)" 0 \
+step "recall now serves the ratified successor (the replaced version is history)" 0 \
     "$OML" --key "$READER" --json recall --query "Accra Metals"
 jq -r '.hits[].memory.body' "$OUT" | grep -q "399 USD/t" || fail "successor body missing from recall"
+jq -r '.hits[].memory.body' "$OUT" | grep -q "412 USD/t" && fail "the replaced version is still a recall hit"
 
 # --- evidence: verify the signed hash chain from genesis ---------------------
 step "audit verify-chain --genesis (reader key; the signing key set is operator input)" 0 \
