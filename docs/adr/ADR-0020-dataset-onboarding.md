@@ -165,7 +165,8 @@ partial loads and refusals are journalled, never silent.
   are counted and the failure report is stored as a manifest attachment under the ordinary
   attachment rules, its digest in the signed event. `max_failure_rate` is enforced at capture
   as a deterministic scan-class veto: above the threshold, the whole import is refused with a
-  typed error and a journalled rejection. Partial semantics are all-or-nothing at capture
+  typed error — and, as a scan-class veto, it journals nothing, the refusal reproducible from
+  the journalled rule-set pin (RS-16). Partial semantics are all-or-nothing at capture
   against the threshold; after ratification, `import.completed` attests actually-loaded against
   declared, and a shortfall is a reconciler `missing` finding.
 

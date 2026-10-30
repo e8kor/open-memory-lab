@@ -50,8 +50,8 @@ The lifecycle of one version, simplified (the normative state machine is in
 
 ```mermaid
 stateDiagram-v2
-    [*] --> held : write — scanned in the same call,<br/>visible only to its author
-    held --> rejected : scan veto or rejecting verdict<br/>(journalled, reopenable by a non-author)
+    [*] --> held : write — scanned in the same call<br/>(a scan veto refuses before capture,<br/>journalling nothing) · visible only to its author
+    held --> rejected : rejecting verdict<br/>(journalled, reopenable by a non-author)
     held --> promoted : ratified by a non-author —<br/>now visible to readers in scope
     promoted --> demoted : demote — journalled,<br/>off every read surface, bytes kept
     promoted --> erased : erase — journalled crypto-shred

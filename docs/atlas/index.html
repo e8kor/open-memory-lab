@@ -480,7 +480,10 @@ function Universe(){
           <span class="tag" id="hudStory">crews recall where their grants reach; remember into their own area</span>
           <button id="goPipe">admission pipeline ▸</button>
           <button id="goChain">journal chain ▸</button>`);
-  document.getElementById('goPipe').onclick=()=>{const w=byName('supplier-quotes');switchMode('reactor',w,w.group.position.clone());};
+  document.getElementById('goPipe').onclick=()=>{
+    const w=byName('ontology-lab').ladder!=='validated/frozen'?byName('ontology-lab')
+          :WAS.find(x=>x.ladder!=='validated/frozen')||WAS[0];
+    switchMode('reactor',w,w.group.position.clone());};
   document.getElementById('goChain').onclick=()=>switchMode('ledger',null,core.position.clone());
   setLegend([['var(--recall)','recall (read, along grants)'],['var(--remember)','remember → held'],
              ['var(--promoted)','promoted'],['var(--superseded)','superseded'],['var(--demoted)','demoted'],
@@ -582,6 +585,16 @@ function Universe(){
       w.promotions=8; // try again later; the refusal stays visible, the mock keeps moving
       return;
     }
+    if(next==='validated/frozen'&&w.sim){
+      /* workareas.md: the transition is refused while a simulation is fenced
+         on the subtree — the simulation must be ended, journalled, first    */
+      journal.emit('workarea.status_proposed',`wa:${w.name} → validated · a simulation is fenced on the subtree — end it first`,'refuse');
+      journal.emit('simulation.ended',`${w.sim.id} · tainted rows demoted · fence lifted`);
+      if(w.simGroup){disposeGroup(w.simGroup);w.group.remove(w.simGroup);w.simGroup=null;}
+      if(w.simLbl){w.simLbl.remove();w.simLbl=null;}
+      w.simKeys=null;w.sim=null;
+      return; // the next promotion re-proposes, now unobstructed
+    }
     w.ceremony=next;
     const [a,b2]=[w.agents[0],w.agents[1]];
     flow.send(w.group.position.clone().add(a.position),()=>w.group.position.clone(),CLR.human,{arc:2.2,dur:1.1,
@@ -596,14 +609,6 @@ function Universe(){
       }});
   }
   function transitionArea(w,next){
-    /* a simulation cannot outlive its area's freeze: taint never enters a
-       validated workarea — the channel ends, journalled, before the cage */
-    if(next==='validated/frozen'&&w.sim){
-      journal.emit('simulation.ended',`${w.sim.id} · tainted rows demoted · fence lifted`);
-      if(w.simGroup){disposeGroup(w.simGroup);w.group.remove(w.simGroup);w.simGroup=null;}
-      if(w.simLbl){w.simLbl.remove();w.simLbl=null;}
-      w.simKeys=null;w.sim=null;
-    }
     w.ladder=next;w.promotions=0;
     const c=LADDER[next];
     w.glowMain.material.color.set(c);w.glowHalo.material.color.set(c);
@@ -617,6 +622,7 @@ function Universe(){
          reader grants on the frozen area; other crews' recalls follow them */
       WAS.filter(p=>p!==w&&p.ladder!=='validated/frozen').forEach((p,i)=>{
         timers.push(setTimeout(()=>{
+          if(p.grants.includes(w.name))return;
           p.grants.push(w.name);
           journal.emit('grant.issued',`reader on wa:${w.name} → key_${hex8().slice(0,6)} (${p.crew})`);
           flow.send(w.group.position,()=>p.group.position.clone(),CLR.gold,{arc:7,dur:1.8});
@@ -687,15 +693,16 @@ function Universe(){
           <tr><td>promoted / held</td><td>${c.prom} / ${c.held}</td></tr>
           <tr><td>superseded · demoted</td><td>${c.sup} · ${c.dem}</td></tr>
           ${w.sim?`<tr><td>simulation</td><td>${w.sim.id} · audience ${w.sim.audience}</td></tr>`:''}
-          <tr><td>review policy</td><td>k=${w.k} (${w.k} approving verdict${w.k>1?'s':''})${w.human?'<br>· human gate (vocab.*)':''}</td></tr>
+          <tr><td>review policy</td><td>k=${w.k} (${w.k} approving verdict${w.k>1?'s':''})${w.vocab&&w.human?'<br>· human gate (vocab.*)':''}</td></tr>
           <tr><td>reads</td><td>own subtree + grants:<br>${w.grants.join(', ')||'—'}</td></tr>
           <tr><td>writes</td><td>own subtree (writer grant)</td></tr></table>
           ${w.ladder==='validated/frozen'?'<div class="docsrow">frozen: serves reads; refuses new writes; demote/erase stay journalled</div>'
             :w.child&&w.ladder==='committed'?`<div class="docsrow">validate blocked while child ${w.child} is development (child-status rule)</div>`:''}
           <div class="docsrow">docs: <a href="../architecture/workareas/">workareas</a> · <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></div>
-          <button class="go" id="goReactor">enter the admission pipeline →</button>`;
+          ${w.ladder!=='validated/frozen'?'<button class="go" id="goReactor">enter the admission pipeline →</button>':''}`;
         panel.hidden=false;
-        document.getElementById('goReactor').onclick=()=>switchMode('reactor',w,w.group.position.clone());
+        const go=document.getElementById('goReactor');
+        if(go)go.onclick=()=>switchMode('reactor',w,w.group.position.clone());
       } else if(hitCore.length){ switchMode('ledger',null,core.position.clone()); }
       else panel.hidden=true;
     }
@@ -731,9 +738,10 @@ function Reactor(w){
     <span class="tag">docs: <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></span>`);
   document.getElementById('rHuman').onclick=e=>{humanOn=!humanOn;e.currentTarget.setAttribute('aria-pressed',humanOn);};
   document.getElementById('rK').onclick=e=>{kNeed=kNeed===2?1:2;e.currentTarget.setAttribute('aria-pressed',kNeed===2);};
-  setLegend([['var(--held)','claim (held)'],['var(--promoted)','promoted'],['var(--rejected)','scan veto / rejected (journalled, kept)'],
+  setLegend([['var(--held)','claim (held)'],['var(--promoted)','promoted'],
+             ['var(--rejected)','rejected (journalled, kept) / scan veto (refused — not an event)'],
              ['var(--accent)','dreamer'],['#fff','human reviewer'],['var(--lad-dev)','attachment']]);
-  hint.textContent=`write path of ${w.name} · a veto or reject is journalled, never vanished (admission; R4 = no silent deletion) · Esc to go back`;
+  hint.textContent=`write path of ${w.name} · a reject is journalled, never vanished (R4); a scan veto refuses before capture · Esc to go back`;
 
   const els={held:document.getElementById('rHeld'),prom:document.getElementById('rProm'),rej:document.getElementById('rRej')};
   function spawn(){
@@ -741,7 +749,7 @@ function Reactor(w){
     c._author=(Math.random()*3)|0;
     c._secret=Math.random()<.12;                    // dies at the scan wall: secret.* is a veto class
     c._veto=!c._secret&&Math.random()<.06;          // a format.* veto
-    c._vocab=!c._secret&&!c._veto&&(w.vocab||w.human)&&Math.random()<.15; // vocab.* annotate → human gate (only where the policy names it)
+    c._vocab=!c._secret&&!c._veto&&w.vocab&&Math.random()<.15; // vocab.* fires only where vocabulary_policy names a vocabulary
     c._reviews=0;c._served=false;
     if(Math.random()<.2){const att=glow(LADDER.development,.5,.9);att.position.set(.5,.5,0);c.add(att);c._att=true;}
     c.position.set(-22,0,rnd(-3,3));group.add(c);claims.add(c);
@@ -787,10 +795,12 @@ function Reactor(w){
                 if(c._reviews===1&&reviewer===c._rev1){c._t=1.2;break;} // k=2 needs two DIFFERENT reviewers
                 c._rev1=c._reviews===0?reviewer:c._rev1;
                 c._reviews++;c._served=false;       // next verdict needs a fresh serve
-                if(LIVE&&!(Math.random()<.15&&c._reviews===kNeed))
+                /* one verdict, one outcome: a reviewer approves OR rejects, never both */
+                const willReject=c._reviews===kNeed&&Math.random()<.15;
+                if(LIVE&&!willReject)
                   journal.emit('review.approve',`${c._name} · dreamer ${reviewer} · verdict ${c._reviews} of ${kNeed}`);
+                if(willReject){reject(c,`dreamer ${reviewer} verdict: reject`);break;}
                 if(c._reviews<kNeed){c._t=0;break;}
-                if(Math.random()<.15){reject(c,`dreamer ${reviewer} verdict: reject`);break;}
                 if(c._vocab&&humanOn){c._phase='human';c._t=0;}
                 else{c._phase='out';c.material.color.set(CLR.prom);counts.held--;counts.prom++;
                   els.held.textContent=counts.held;els.prom.textContent=counts.prom;
@@ -807,6 +817,7 @@ function Reactor(w){
           case 'rejected':{const tx=10,tz=-5;
               c.position.x+=(tx-c.position.x)*.08;c.position.z+=(tz-c.position.z)*.08;c.position.y*=.9;
               if(c._t>2.5){claims.delete(c);group.remove(c);c.material.dispose();
+                c.children.forEach(ch=>{if(ch.material)ch.material.dispose();});
                 const s=glow(CLR.rej,.8,.75);s.position.set(rnd(-1,1),.3+(rejN%4)*.7,rnd(-1,1));
                 rejShelf.add(s);if(++rejN>18){const old=rejShelf.children[0];rejShelf.remove(old);old.material.dispose();}
                 /* only a journalled rejection can be reopened — a scan veto is
@@ -819,6 +830,7 @@ function Reactor(w){
                   counts.held++;els.held.textContent=counts.held;},800));}break;}
           case 'out': c.position.x+=7.5*dt;c.position.y*=.92;
               if(c.position.x>=20){claims.delete(c);group.remove(c);c.material.dispose();
+                c.children.forEach(ch=>{if(ch.material)ch.material.dispose();});
                 const s=glow(CLR.prom,.9,.9);s.position.set(rnd(-1.4,1.4),.4+(shelfN%5)*.85,rnd(-2.4,2.4));
                 shelf.add(s);if(++shelfN>42){const old=shelf.children[0];shelf.remove(old);old.material.dispose();}}break;
         }
@@ -870,7 +882,7 @@ function Ledger(){
     const a=posAt(i),b=posAt(j),mid=a.clone().add(b).multiplyScalar(.5).setLength(HELIX_R*1.9);
     const curve=new THREE.CatmullRomCurve3([a,mid,b]);
     helix.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(24)),
-      new THREE.LineBasicMaterial({color:CLR.held,transparent:true,opacity:.6})));
+      new THREE.LineBasicMaterial({color:CLR.gold,transparent:true,opacity:.6})));
   }
   function build(){
     helix.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});
@@ -899,8 +911,9 @@ function Ledger(){
   stepsEl.hidden=false;
   if(matchMedia('(max-width:640px)').matches)stepsEl.classList.add('collapsed');
   stepsEl.querySelector('h4').onclick=()=>stepsEl.classList.toggle('collapsed');
-  setLegend([['var(--accent)','journal event'],['var(--promoted)','verified link'],['var(--rejected)','broken link'],
-             ['var(--superseded)','body erased (event + digests intact)'],['var(--held)','lineage thread']]);
+  setLegend([['#fff','genesis'],['var(--held)','submission'],['#8bd5ff','review'],['var(--promoted)','promote / verified link'],
+             ['var(--superseded)','supersede / erased body'],['var(--accent)','workarea &amp; key events'],
+             ['var(--rejected)','broken link'],['var(--gold)','lineage thread']]);
   hint.textContent='amber threads = supersession lineage · verification is a read, not an event · Esc to go back';
   build();
   document.getElementById('lTamper').onclick=()=>{
