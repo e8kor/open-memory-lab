@@ -177,9 +177,15 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   successor and flips the tip in the same commit, so the compare-and-set decides between
   competing successors: once one is ratified, a verdict that would ratify another is refused
   with `submission.tip_conflict`, nothing is journalled, its serve is not consumed, and that
-  successor stays held until a reviewer rejects it or its author re-proposes against the new
-  tip. The tip never changes except by a ratified promotion, so readers never see a version
-  nobody reviewed ahead of a reviewed one.
+  successor stays held until a reviewer rejects it; its author may propose afresh against the new
+  tip, and the fresh proposal leaves the stale one held. The tip never changes except by a
+  ratified promotion, so readers never see a version nobody reviewed ahead of a reviewed one.
+- **A successor's kind changes only within its class.** A successor of a `memory`,
+  `derived_fact` or `steering` target may take any of those three kinds, so a revision can turn a
+  memory into a derived fact or a standing instruction under review; a successor of a `term`,
+  `term_mapping` or `vocab_release` target keeps the target's kind; a retirement successor keeps
+  the target's kind. Any other `kind` is `request.validation`, and an omitted `kind` is the
+  target's ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d11).
 - **A self-signed version takes the tip only from a self-signed tip.** In a `development`
   workarea whose policy permits self-signing, a `self_signed` version may take the tip only as a
   claim's first version or from a `self_signed` tip. A supersession or retirement whose target

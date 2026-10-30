@@ -112,7 +112,7 @@ paths:
       tags: [memories]
       operationId: searchMemories
       summary: Structured, paginated listing of memory summaries.
-      description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). Without own, the listing returns promoted served tips within reader effective access, defaulting to the token workarea''s subtree (ADR-0022 d4); others'' held rows are never returned (R3). workarea_id is a subtree filter. Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
+      description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true the listing resolves no workarea: workarea_id is its subtree filter, and an X-OML-Workarea header is refused (request.validation). Without own, the listing returns promoted served tips within reader effective access, defaulting to the token workarea''s subtree (ADR-0022 d4) — a retired claim''s tip, its retirement version, among them, flagged retirement true; others'' held rows are never returned (R3). workarea_id is a subtree filter. Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
       parameters:
         - { $ref: '#/components/parameters/XOMLWorkarea' }
         - { name: workarea_id, in: query, schema: { type: string }, description: A subtree filter. }
@@ -242,7 +242,7 @@ paths:
       tags: [memories]
       operationId: getMemory
       summary: One memory with body (decrypted on the serving path) and attachment descriptors.
-      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased.'
+      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased. Resolves no workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the caller can read, and workarea_id is null on an own row whose node the key holds no role on.'
       parameters: [{ $ref: '#/components/parameters/ArtifactId' }]
       responses:
         '200':
@@ -326,7 +326,7 @@ paths:
       tags: [memories]
       operationId: proposeSupersession
       summary: Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the target''s workarea (request.validation otherwise); Idempotency-Key is scoped to (key, target workarea). A tainted replacement can never take the default tip (simulation.tip_refused at promotion): it shadows the tip for its simulation audience only.'
+      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the target''s workarea (request.validation otherwise); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to (key, target workarea), and the record is claimed only after steps 1 and 2 of that rule pass. Omitted attachments and terms leave the successor with none; only kind is inherited. A tainted replacement can never take the default tip (simulation.tip_refused at promotion): it shadows the tip for its simulation audience only.'
       parameters:
         - { $ref: '#/components/parameters/ArtifactId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -780,7 +780,7 @@ paths:
       tags: [workareas]
       operationId: getWorkarea
       summary: One node — id, parent, derived path, status, crew record — with the calling key's view of it.
-      description: 'Requires: reader effective access (access.not_found otherwise). children, my_effective_verbs and permission_epoch are relative to the calling key: children outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key''s permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). One call carries all of it.'
+      description: 'Requires: reader effective access (access.not_found otherwise). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key''s permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). One call carries all of it.'
       parameters: [{ $ref: '#/components/parameters/WorkareaId' }]
       responses:
         '200':
@@ -804,8 +804,10 @@ paths:
                   path_leaf: q1-2027
                   status: development
                 edges:
-                - label: continues
+                - edge_id: we_01JB2Y6T8V1X3Z5B7D9FH2KM4P
+                  from: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
                   to: wa_01JB2V0B2D4F6H8K1M3P5R7TVX
+                  label: continues
                   state: ratified
                 my_effective_verbs: [recall, read, graph_read, events_tail, remember, learn, attach, supersede]
                 permission_epoch: 815
@@ -1128,7 +1130,7 @@ paths:
       tags: [events]
       operationId: tailEvents
       summary: The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
-      description: 'Requires: reader effective access on workarea_id (access.not_found otherwise); omitted, the key''s default workarea, and request.workarea_unresolved for a key with none. Which events a key sees, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15). One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.'
+      description: 'Requires: reader effective access on workarea_id (access.not_found otherwise); omitted, the key''s default workarea, and request.workarea_unresolved for a key with none. Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor''s own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key''s ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.'
       parameters:
         - { name: after_seq, in: query, schema: { type: integer, minimum: 0, default: 0 },
             description: "Resume point: events return in seq ascending order — the journal's order, not created_at descending. Pass back next_after_seq verbatim." }
@@ -1150,8 +1152,8 @@ paths:
                   prev_hash: 3f6c2a1e8b90d4757e1a2c0f5b68d3914ce7a20b85f1d6c43e9a0b7f2d851c6e
                   hash: 9a4d1f70c3e82b65a0d94c17f52e8b36d1c40a97e6f32b85c0d71e4a9b625f38
                   sig: kqXkzFI0E1q4m4c9T2Qy7Zx0VY5e3S1gW8uJbNvPzD6hR2tLaM0fXoCi9wEs5B7HnG4dK1mA8pUj3yQ2vTrZCg==
-                  principal: crew-review/agent-3
-                  api_key_id: key_01JB2WV7C9E2G4J6L8N1QS3UWZ
+                  principal: null
+                  api_key_id: null
                   at: '2026-10-27T14:11:08Z'
                   payload:
                     artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
@@ -1316,7 +1318,7 @@ paths:
       tags: [review]
       operationId: reviewNext
       summary: Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under an expiring serve_id.
-      description: 'Requires: dreamer(review). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).'
+      description: 'Requires: dreamer(review). Serves only rows within the key''s dreamer effective access on the row''s workarea; 204 when nothing in scope waits, and always to a held_by: service key (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: false
@@ -1381,7 +1383,7 @@ paths:
       tags: [review]
       operationId: postVerdict
       summary: Verdict against a valid serve; the journalled verdict records the served digests.
-      description: 'Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row''s workarea (access.not_found otherwise, ADR-0025 d1). An approve that would ratify a supersession whose target is no longer the tip is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.'
+      description: 'Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row''s workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1). An approve that would ratify a supersession whose target is no longer the tip is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1651,7 +1653,7 @@ paths:
       tags: [keys]
       operationId: addGrant
       summary: Bind the key to a workarea node id (never a path) with optional per-grant deny masks; epoch bump.
-      description: 'Requires: admin key role. A grant''s role must be admissible under the key''s role (the admissibility table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible} otherwise); a dreamer-class grant on an admin key is refused first (access.role_exclusive — the two-key rule). The grant''s epoch is its grant.issued journal seq.'
+      description: 'Requires: admin key role. A grant''s role must be admissible under the key''s role (the admissibility table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible} otherwise — one grant, so no grant_index); a dreamer-class grant on an admin key is refused first (access.role_exclusive — the two-key rule). The grant''s epoch is its grant.issued journal seq.'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -2417,7 +2419,9 @@ components:
         Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the
         provider ring the workarea component is the RESOLVED target — the key's default_workarea
         or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the
-        target's workarea (ADR-0025 d10). Replay of
+        target's workarea (ADR-0025 d10), claimed only after steps 1 and 2 of the supersede rule
+        pass. The request digest is SHA-256 over the RFC 8785 JSON of {method, route,
+        path_params, body} (docs/api/http-api.md, Idempotency). Replay of
         the same request returns the stored response with header Idempotency-Replay: true; the
         same key with a different request digest is refused (idempotency.digest_mismatch). A
         committed record is retained for at least 24 hours — the replay-window setting may only
@@ -2435,8 +2439,8 @@ components:
         never a secret. A provider-ring submit, recall or non-own listing from a key with neither
         a default nor this header is refused with 422 request.workarea_unresolved. Get, the
         own-work listing (own=true) and supersede never answer it: get and own=true resolve no
-        workarea, and supersede takes the target's workarea, which this header, if sent, must
-        equal.
+        workarea, so this header sent with either is request.validation, and supersede takes the
+        target's workarea, which this header, if sent, must equal.
     Limit:
       name: limit
       in: query
@@ -2640,7 +2644,8 @@ components:
       description: >-
         Names no workarea: the target resolves from the key's default_workarea or the
         X-OML-Workarea header (ADR-0022 d4); neither present is refused with
-        request.workarea_unresolved.
+        request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025 d16
+        closes the recall, supersede, key-issuance and grant bodies only.
       required: [verb, claim_key, kind, body]
       properties:
         verb: { type: string, enum: [remember, learn], description: learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. }
@@ -2691,7 +2696,7 @@ components:
         claim_key: { type: string }
         version: { type: integer, description: 'The ordinal within the claim_key; for a successor, 1 + the greatest version of the claim_key in any state, so it counts versions the key may not read — a stated residual, FR-31 (docs/architecture/audit-and-lineage.md).' }
         state: { type: string, const: held }
-        workarea_id: { type: string, description: The workarea the submission was captured in — the resolved target, or a supersession target's workarea. }
+        workarea_id: { type: string, description: "The workarea the submission was captured in — the resolved target, or a supersession target's workarea." }
         retirement: { type: boolean, default: false, description: True when the submission is a retirement version. }
         replaces:
           type: [object, 'null']
@@ -2721,9 +2726,9 @@ components:
         artifact_id: { type: string }
         claim_key: { type: string }
         version: { type: integer }
-        tip: { type: boolean, description: Whether this version is the served tip of its claim. A superseded version is state promoted, tip false. }
-        workarea_id: { type: string }
-        workarea_path: { type: string, description: Derived at read time; grants bind to node ids. }
+        tip: { type: boolean, description: "Whether this version is the served tip of its claim. A superseded version is state promoted, tip false." }
+        workarea_id: { type: [string, 'null'], description: "Null when the calling key holds no role on the node (naming a node, docs/architecture/roles-and-keys.md, Own) — possible only on an own row an admin moved there (ADR-0025 d3)." }
+        workarea_path: { type: [string, 'null'], description: "Derived at read time; grants bind to node ids. Null wherever workarea_id is." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
         state: { type: string, enum: [held, promoted, demoted, rejected, erased] }
         principal: { type: string }
@@ -2731,7 +2736,7 @@ components:
         simulation_id: { type: [string, 'null'] }
         self_signed: { type: boolean, description: Marked rows under the bounded development exception; never promote beyond their workarea. }
         plaintext_digest: { $ref: '#/components/schemas/Digest' }
-        derives_from: { type: array, items: { type: string } }
+        derives_from: { type: array, items: { type: string }, description: "On get, recall and every listing, only the ancestors the caller can read — its own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows the full closure, elided where unreadable." }
         attachments: { type: array, items: { $ref: '#/components/schemas/AttachmentDescriptor' } }
         tokens: { type: integer, minimum: 0, description: 'Budget tokens of the body (counter oml-tc/1): ceil(UTF-8 bytes of the NFC body / 4); not any model''s count (docs/architecture/retrieval.md, Token budgets).' }
         retirement: { type: boolean, default: false, description: 'True on a retirement version; a claim whose served tip is one is a retired claim, which recall does not serve.' }
@@ -2770,7 +2775,7 @@ components:
       properties:
         query: { type: string }
         k: { type: integer, minimum: 1, maximum: 100, default: 8 }
-        kinds: { type: array, items: { type: string, enum: [memory, derived_fact] }, description: 'Filters hits only. Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workarea''s journalled policy opts them in, they are hits only of a recall that omits kinds.' }
+        kinds: { type: array, minItems: 1, items: { type: string, enum: [memory, derived_fact] }, description: 'Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workarea''s journalled policy opts them in, they are hits only of a recall that omits kinds.' }
         include_bodies: { type: boolean, default: true }
         include_own_held:
           type: boolean
@@ -2790,8 +2795,9 @@ components:
             docs/architecture/retrieval.md, Token budgets.
         terms:
           type: array
+          minItems: 1
           items: { $ref: '#/components/schemas/Curie' }
-          description: Filter to rows whose terms annotation cites any of these CURIEs; an unreadable CURIE matches nothing (fail closed). Refused with request.validation where unbuilt.
+          description: Filter to rows whose terms annotation cites any of these CURIEs; an unreadable CURIE matches nothing (fail closed). An empty array is refused with request.validation, and so is the field where unbuilt.
         expand_terms:
           type: string
           enum: [none, descendants]
@@ -2883,14 +2889,15 @@ components:
       properties:
         body: { type: string, maxLength: 1048576, description: 'Claim text, at most 1 MiB (http-api.md Limits); with retirement true, why the claim is retired.' }
         retirement: { type: boolean, default: false, description: 'true proposes retiring the claim, and body states why. Refused with request.validation when the target''s kind is term (terms deprecate), or when a kind is sent that differs from the target''s.' }
-        kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release], description: 'Omitted, the successor takes the target''s kind.' }
-        attachments: { type: array, maxItems: 64, items: { $ref: '#/components/schemas/Digest' } }
+        kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release], description: 'Omitted, the successor takes the target''s kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target''s kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).' }
+        attachments: { type: array, maxItems: 64, items: { $ref: '#/components/schemas/Digest' }, description: 'Omitted, the successor has no attachments; nothing is inherited from the target.' }
         derives_from: { type: array, items: { type: string }, description: The superseded target is included implicitly. }
         reason: { type: string }
         simulation_id: { type: [string, 'null'], description: 'Required when the target or derives_from touches a simulation row (submission.simulation_id_required otherwise); the key must be in the audience. A tainted successor shadows the tip for its simulation audience only.' }
         simulated_time: { type: [string, 'null'], format: date-time, description: "Declared data, never backdating — the journal keeps the real timestamp." }
         mapping:
           type: object
+          additionalProperties: false
           required: [subject, object, predicate, justification]
           properties:
             subject: { $ref: '#/components/schemas/Curie' }
@@ -2899,12 +2906,13 @@ components:
             justification: { type: string, enum: [human-curated, lexical, logical] }
             note: { type: string }
           description: 'Successor of kind term_mapping only — required then, as on SubmitRequest. Structural payload fields (ADR-0021 d6).'
-        terms: { type: array, items: { $ref: '#/components/schemas/Curie' }, description: 'CURIE annotations (ADR-0021 d8).' }
+        terms: { type: array, items: { $ref: '#/components/schemas/Curie' }, description: 'CURIE annotations (ADR-0021 d8). Omitted, the successor has none; nothing is inherited from the target.' }
         term_status: { type: string, enum: [active, deprecated], description: 'kind=term only — a deprecation IS a supersession with term_status deprecated (ADR-0021 d3).' }
         successors:
           type: array
           items:
             type: object
+            additionalProperties: false
             required: [curie, relation]
             properties:
               curie: { $ref: '#/components/schemas/Curie' }
@@ -3038,8 +3046,10 @@ components:
           properties:
             children:
               type: array
+              description: The readable immediate children, ordered by path_leaf ascending in byte order, then id.
               items:
                 type: object
+                additionalProperties: false
                 required: [id, path_leaf, status]
                 properties:
                   id: { type: string }
@@ -3047,11 +3057,16 @@ components:
                   status: { type: string, enum: [development, committed, validated] }
             edges:
               type: array
+              description: The workarea edges touching the node whose other endpoint the key can read, in either direction, ordered by edge_id ascending; edge_id is the id the events tail reports.
               items:
                 type: object
+                additionalProperties: false
+                required: [edge_id, from, to, label, state]
                 properties:
-                  label: { type: string, enum: [relates_to, continues, derived_from, mirrors] }
+                  edge_id: { type: string }
+                  from: { type: string }
                   to: { type: string }
+                  label: { type: string, enum: [relates_to, continues, derived_from, mirrors] }
                   state: { type: string, enum: [pending, ratified] }
             my_effective_verbs:
               type: array
@@ -3156,8 +3171,8 @@ components:
         prev_hash: { type: string }
         hash: { type: string }
         sig: { type: string }
-        principal: { type: string }
-        api_key_id: { type: string }
+        principal: { type: [string, 'null'], description: "Null on the events tail for a key outside the actor's own key set (docs/api/http-api.md, Events tail)." }
+        api_key_id: { type: [string, 'null'], description: "The actor's key; null on the events tail for a key outside the actor's own key set, as is every payload field naming a key." }
         at: { type: string, format: date-time }
         payload: { type: object, additionalProperties: true }
 

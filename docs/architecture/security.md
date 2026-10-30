@@ -460,6 +460,14 @@ rounded up to a guarantee.
    bytes; who wrote what, when, where remains, in Postgres and in the lake, until the
    attribution-erasure FR lands ([audit-and-lineage.md](audit-and-lineage.md),
    [roadmap](../product/roadmap.md)).
+7. **Counts leak what reads hide.** A key that can read nothing of another author's held work
+   still counts it. `seq`, `head_seq`, `next_after_seq` and `permission_epoch` are tenant-wide
+   journal positions, so a key learns how many events it cannot see occurred between two it
+   can, and when ([events tail](../api/http-api.md#events-tail)); a successor's version ordinal
+   counts the versions of its claim the key cannot read; and the `claim_key` collision tells a
+   writer that a name is taken
+   ([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)). Each
+   is a count or a name, never content; together they are [FR-31](../product/roadmap.md).
 
 Everything on this page is decided, not built; no control here has been penetration-tested,
 load-tested or measured, and the roadmap rows named above are where each open edge is tracked to an

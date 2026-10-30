@@ -142,9 +142,10 @@ order in which a workarea-scoped verb is refused
 | `operator` | none |
 
 A grant role is never `admin` or `operator`. A grant whose role falls outside its key role's set
-is refused with `access.issuer_ceiling`, details `{role, admissible}`. A key of role `admin`
-carrying any dreamer grant is refused with `access.role_exclusive` — the two-key rule — and that
-check runs first, at issuance and at every grant amendment. An admin who must write or recall
+is refused with `access.issuer_ceiling`, details `{role, admissible}`, plus `grant_index` at
+issuance (step 3 of the issuance order below). A key of role `admin` carrying any dreamer grant
+is refused with `access.role_exclusive` — the two-key rule — and that check runs first, at
+issuance and at every grant amendment. An admin who must write or recall
 holds a separate writer-role key ([Admin verbs](#admin-verbs)).
 
 **Issuance validation order.** `POST /v2/keys` ([http-api](../api/http-api.md#keys-grants-denials))
@@ -152,8 +153,11 @@ validates in this order, and the first failure answers:
 
 1. `access.role_exclusive`;
 2. the [issuer ceiling](#issuer-ceiling) on the key role — `access.issuer_ceiling`, including an
-   admin minting an operator key;
-3. grant admissibility (the table above) — `access.issuer_ceiling`;
+   admin minting an operator key, with details `{role, admissible}`: `role` the requested key
+   role, `admissible` the key roles this issuer may issue;
+3. grant admissibility (the table above) — `access.issuer_ceiling`, with details `{role,
+   admissible, grant_index}`: `role` the first refused grant's role, `admissible` the key role's
+   admissible set, `grant_index` that grant's 0-based position in `grants`;
 4. every grant node and deny node exists in the tenant — else `access.not_found`;
 5. each deny node lies inside its own grant's subtree — else `request.validation`;
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
@@ -195,7 +199,17 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
     3. a writer key needs writer on the target's workarea when the target is its own, resolved by
        the refusal order; a readable target another key authored answers `access.author_only`;
     4. a dreamer key needs dreamer and reader on the target's workarea, resolved by the refusal
-       order, whoever authored the target, its own ratified edits included (edit-as-proposal).
+       order, whoever authored the target, its own ratified edits included (edit-as-proposal);
+    5. only then the refusals that depend on the target, in this order: an `X-OML-Workarea`
+       equal to the target's workarea, else `request.validation`; the target is the current
+       served tip, else `submission.tip_conflict`; the kind and retirement checks, and on
+       `oml_supersede` the vocabulary-kind check, else `request.validation`
+       ([kind changes](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); the
+       workarea is not `validated`, else `workarea.frozen`. The checks every submit runs follow.
+
+    No target-dependent refusal is answered before step 2, so none of them tells a caller that an
+    unreadable target exists, and the idempotency record is claimed only after step 2
+    ([http-api](../api/http-api.md#idempotency)).
 
     A claim whose tip another key authored is that key's to supersede: a writer whose version
     was superseded by another key's ratified version no longer owns the claim and answers
@@ -205,7 +219,9 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
   admin keys act on these verbs by their key role.
 - **review next and verdict** — dreamer on the row's workarea, in addition to the
   [lineage-closure exclusion](#the-dreamer-split): a row outside dreamer effective access is never
-  served, and a verdict on one is `access.not_found`. Review next serves a `held_by: service` key
+  served, and a verdict on one resolves by the refusal order like every other verb —
+  `access.grant_refused` with `needed_role: dreamer` where reader is effective on the row's
+  workarea, `access.not_found` otherwise. Review next serves a `held_by: service` key
   nothing (`204`), so such a key holds no serve and every verdict it sends is refused with
   `review.serve_invalid`: a service key's dreamer grant confers review like any dreamer grant,
   and this rule, not the grant, keeps it out of review
@@ -227,6 +243,15 @@ Own-work reads admit every tenant role except operator and need no grant, but a 
 denial covering the row's workarea still masks the row — deny-wins, as everywhere else
 ([workareas](workareas.md)). R2 is unaffected: a reviewer is still excluded by both key id and
 principal ([lineage-closure exclusion](#the-dreamer-split)).
+
+**Naming a node.** An own row can sit on a node where the calling key holds no role — an admin's
+reassignment can move it there. A response names a node to a key only where
+`effective_roles(node)` is not empty for that key, and serves null in its place elsewhere: the
+`workarea_id` and `workarea_path` of a get or a listing item, a workarea id in an
+[events-tail](../api/http-api.md#events-tail) payload, and `workarea` and `workarea_path` on the
+[agent plugin](../api/mcp-plugin.md#the-claim-item). A key therefore never learns the id or path
+of a node it holds nothing on, as the [workarea read](../api/http-api.md#workareas) already omits
+the children it cannot read ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3).
 
 ## Effective verbs
 

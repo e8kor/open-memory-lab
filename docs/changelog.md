@@ -22,18 +22,20 @@ implementation milestone where it changes what the repository holds.
   contract — paths, request or response shapes, the error taxonomy, idempotency or pagination
   semantics — bumps the version in `docs/api/openapi.yaml`, and this page records the bump
   alongside the change that forced it.
-- **The repo is tagged `spec-vX.Y` at each published revision**, starting with `spec-v0.1` at
-  implementation start, so an implementation can state exactly which revision of the design it
-  was built against.
+- **The repo is tagged `spec-vX.Y` at each published revision whose records are accepted**,
+  starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
+  revision of the design it was built against; a revision carrying a `proposed` record is
+  tagged when that record is accepted.
 
 ## 0.2.0-design
 
 ### 2026-10-30 — the agent-only memory surface (ADR-0025)
 
 [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) (proposed) decides the surface
-FR-10 and FR-11 need and the access model it rests on. It amends ADR-0001 (d5), ADR-0008 (d4,
-d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2) and ADR-0018 (d4);
-each of those records' Status lines gains the back-pointer when ADR-0025 is accepted.
+FR-10 and FR-11 need and the access model it rests on. It proposes amending ADR-0001 (d5),
+ADR-0008 (d4, d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2) and
+ADR-0018 (d4); each of those records' Status lines gains the back-pointer when ADR-0025 is
+accepted.
 
 - **Decided:** grant admissibility per key role and one four-step refusal order, so one
   writer-role key with writer and reader grants remembers and recalls; issuance that carries
@@ -49,24 +51,28 @@ each of those records' Status lines gains the back-pointer when ADR-0025 is acce
   `oml_get` and `oml_supersede` and one claim-item shape; the own-work
   listing across every workarea the key wrote to; the workarea read with the caller's children,
   effective verbs and permission epoch; per-family visibility on the events tail with a bounded
-  scan and `next_after_seq`, where a `lifecycle.*` event reaches readers only for a version the
-  read path would have served them; effective access computed on every request with no cache,
-  so a revocation applies to the key's next request served by the lead, and on follower-served
-  reads after replication lag (amending ADR-0008 d4 and d6); request bodies
-  that refuse unknown fields.
+  scan and `next_after_seq`, where a `lifecycle.*` event reaches readers only while the version's
+  latest move between held and promoted is a promotion, reaches its author in any case, and names
+  no reviewer, admin or node the key holds nothing on; a request digest over method, route, path
+  parameters and body, with supersede's idempotency record claimed only once its target is known
+  readable and every target-dependent refusal ordered after that; `derives_from` served only as
+  far as the caller can read; a successor's kind changing only within its class, and nothing but
+  its kind inherited from the target; a row-count check on every `held_fts` removal; effective
+  access computed on every request with no cache, so a revocation applies to the key's next
+  request served by the lead, and on follower-served reads after replication lag (proposing to
+  amend ADR-0008 d4 and d6); request bodies that refuse unknown fields.
 - **`info.version` 0.1.0-design → 0.2.0-design**, because `/v1` request and response shapes
   change. No operation, error code, event type or claim state is added: the taxonomy and the
   operation set are unchanged. The MCP catalog goes from ten tools to twelve.
 - **Roadmap:** FR-30 (the budget-token count against model tokenizers, unmeasured), FR-31 (the
-  `claim_key` collision as a residual existence signal) and RS-17 (revising one's own claim
+  `claim_key` collision, the version ordinal and the tenant-wide journal positions as residual
+  existence and count signals) and RS-17 (revising one's own claim
   before its review) are opened. FR-10 and FR-11 stay open until the
   agent-only-memory scenario passes in CI.
 - **The release image** is decided as one index for `linux/amd64` and `linux/arm64`, signed on the
   index digest; a page edit, no decision change.
 - **Pages touched:** the [decision register](adr/index.md) (register row; D7, D9, D11, D12 and
-  D13 cells), the Status lines of ADR-0001, ADR-0008, ADR-0010, ADR-0012, ADR-0013, ADR-0014
-  and ADR-0018,
-  `mkdocs.yml`, [llms.txt](llms.txt), [openapi.yaml](api/openapi.yaml),
+  D13 cells), `mkdocs.yml`, [llms.txt](llms.txt), [openapi.yaml](api/openapi.yaml),
   [HTTP API](api/http-api.md), [errors](api/errors.md), [the agent plugin](api/mcp-plugin.md),
   [mcp-tools.json](api/mcp-tools.json) (the two new tools, `oml_my_work`, `oml_workarea_info` and
   `_meta`, with `_meta.pending_design` naming what the served `oml_recall` and `oml_events_tail`

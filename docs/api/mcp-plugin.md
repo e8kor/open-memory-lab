@@ -230,8 +230,8 @@ nothing else.
 | `tip` | Whether it is the claim's served tip; a superseded version is `promoted` with `tip: false` |
 | `retirement` | True on a retirement version ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)) |
 | `replaces` | `{artifact_id, version}` of the version a supersession replaces; null for version 1 |
-| `workarea` | The workarea node id |
-| `workarea_path` | The derived path of that node |
+| `workarea` | The workarea node id; null when the calling key holds no role on the node, which only an own row an admin moved there can show ([naming a node](../architecture/roles-and-keys.md#own)) |
+| `workarea_path` | The derived path of that node; null wherever `workarea` is |
 | `tokens` | Budget tokens of the body under counter `oml-tc/1` — not any model's count ([retrieval](../architecture/retrieval.md#token-budgets)) |
 | `created_at` | When the version was written |
 | `promoted_at` | When it was ratified; null otherwise |
@@ -239,8 +239,10 @@ nothing else.
 Per tool, the item adds: `text` in [`oml_recall`](#oml_recall) and
 [`oml_get`](#oml_get); `score` on recall hits only; `held_expires_at` in
 [`oml_my_work`](#oml_my_work); `derives_from` and `attachments` in
-[`oml_get`](#oml_get). Recall steering items carry `text` and `tokens` like
-every other item, never a score.
+[`oml_get`](#oml_get). `derives_from` lists only the ancestors the calling
+key can read, as on the ring
+([http-api](http-api.md#get-get-v1memoriesartifact_id)). Recall steering
+items carry `text` and `tokens` like every other item, never a score.
 
 ---
 
@@ -604,7 +606,9 @@ and `attachments`:
 ```
 
 Superseded versions, and every version of a retired claim, stay readable as
-history (`state: promoted`, `tip: false`).
+history (`state: promoted`, `tip: false`). `derives_from` names only the
+ancestors this key can read: a promoted version derived from its author's
+held row does not reveal that row's id to its readers.
 
 **Refusals** — `access.not_found` for anything the key may not read, a held
 row of another key included: unknown and unreadable are indistinguishable;
@@ -647,10 +651,16 @@ retirement included; no proposer is then its reviewer (R2).
   and the refusals on [the HTTP API](http-api.md#supersede-post-v1memoriesartifact_idsupersede).
 - `kind`, `derives_from`, `reason` — **optional** pass-through to the
   supersede body; the target is in `derives_from` implicitly, and every named
-  id must be readable by the key. Omitted, `kind` is the target's. On this
-  tool `kind` is limited to `memory`, `derived_fact` and `steering`, and the
-  tool carries none of the vocabulary fields, which is why a vocabulary target
-  is refused.
+  id must be readable by the key. Omitted, `kind` is the target's; which kind
+  changes a successor may make is declared on
+  [audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
+  On this tool `kind` is limited to `memory`, `derived_fact` and `steering`,
+  and the tool carries none of the vocabulary fields, which is why a
+  vocabulary target is refused.
+- The tool takes no `attachments` or `terms`, and the successor inherits
+  neither from the target: only `kind` carries over, so a supersession made
+  here leaves the new version with no attachments and no CURIE annotations
+  ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)).
 - `idempotency_key` — scoped to (key, target workarea); a retry returns the
   stored response and writes once (D13).
 
@@ -674,8 +684,11 @@ another key authored — including a claim the key started whose tip another
 key's ratified version now holds; `access.not_found` for a target the key
 cannot read; `submission.tip_conflict` when the target is not the current tip, with
 `details.current_tip` when the key can read it — one hop to retry against;
-`workarea.frozen` on a `validated` workarea; `request.validation` for a kind
-mismatch, a `term` on retirement, or a target of a vocabulary kind. Example:
+`workarea.frozen` on a `validated` workarea; `request.validation` for a
+`kind` that differs from the target's with `retirement: true`, a `term` on
+retirement, or a target of a vocabulary kind. Every refusal that depends on
+the target comes only after the target is known to be readable, in the order
+of the supersede rule. Example:
 
 ```json
 {
@@ -956,7 +969,13 @@ same one call; a key with no default is refused with
     { "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3", "path_leaf": "q1-2027", "status": "development" }
   ],
   "edges": [
-    { "label": "continues", "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX", "state": "ratified" }
+    {
+      "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
+      "from": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX",
+      "label": "continues",
+      "state": "ratified"
+    }
   ],
   "my_effective_verbs": ["recall", "read", "graph_read", "events_tail", "remember", "learn", "attach", "supersede"],
   "permission_epoch": 815
@@ -974,8 +993,11 @@ answer — the union, over the grant roles effective on the node, of the
 reproducible from journalled grants at the stated permission epoch
 ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
 It states the access conferred, not what this server build serves;
-`tools/list` states that. Children and edges outside the key's read scope are
-absent, not marked.
+`tools/list` states that. Children are ordered by `path_leaf` ascending in
+byte order, then `id`; edges, in either direction, by `edge_id` ascending,
+and an edge's `edge_id` is the one [`oml_events_tail`](#oml_events_tail)
+reports. Children and edges outside the key's read scope are absent, not
+marked.
 
 **Refusals** — a node outside read scope, same `access.not_found` error as
 [`oml_recall`](#oml_recall), fail closed.
@@ -1106,13 +1128,19 @@ version that becomes the tip), `{edge_id, from, to}` for `workarea.relate_*`,
 `{workarea_id}` for every other `workarea.*` — and `workarea`, always present:
 the subject's workarea, an edge's `from` endpoint, or, for
 `lifecycle.reassign`, `to_workarea_id` when `re_enters_held` is false and the
-key can read it, else `from_workarea_id`. Hashes, signatures and payloads are
-dropped. Sequence numbers are the per-tenant journal sequence (D1): gaps in a
+key holds a role there, else `from_workarea_id`. Any node the
+[naming rule](../architecture/roles-and-keys.md#own) withholds from the key is
+null, so an author-only event on a version an admin moved where the key holds
+nothing carries `workarea: null`. Hashes, signatures, payloads and every
+identity are dropped. Sequence numbers are the per-tenant journal sequence (D1): gaps in a
 filtered tail are normal — they are the events this key may not see — and
 order is the chain's order, so two keys with equal access see the same
 `lifecycle.*` and `workarea.*` events in the same order; each additionally
-sees only its own `submission.*` events (and the author-only `lifecycle.*`
-events of its own versions). The cost of poll-over-push is stated above under
+sees only its own `submission.*` events and, under the author clause, the
+`lifecycle.*` events of its own versions. `seq` and `head_seq` count every
+event in the tenant's journal, so the gaps tell a key how many events it
+cannot see occurred, and when — a count, never content
+([FR-31](../product/roadmap.md)). The cost of poll-over-push is stated above under
 [transport](#transport-streamable-http-stateless): reaction latency is the
 polling interval, by design in v1.
 
@@ -1248,5 +1276,5 @@ token-derived target workarea that made the `workarea` arguments optional,
 are [ADR-0022](../adr/ADR-0022-two-ring-api.md)'s. `oml_get`,
 `oml_supersede`, the claim item, own held rows and budgets on recall, the
 own-work and workarea reads, and the events-tail visibility rule are
-[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s, which amends
-ADR-0014 d2.
+the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
+which would amend ADR-0014 d2.

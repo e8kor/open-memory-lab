@@ -199,8 +199,13 @@ Membership and order of both segments are fixed
   `memory` and `derived_fact`, as ADR-0021 d9 keeps it: a recall that sends it
   narrows the hits to those kinds, and one that omits it also receives
   opted-in vocabulary hits. The order is total: score descending,
-  then `artifact_id` ascending in byte order. A superseded version is never a
-  hit; it stays fetchable by id as history.
+  then `artifact_id` ascending in byte order. The score is the store's fused
+  score; where a store ranks by full text alone, as the PoC does, it is to be
+  `ts_rank(to_tsvector('simple', body), plainto_tsquery('simple', query))`
+  with normalization 0, compared as `float4`; in the in-memory test store it
+  is the count of distinct query terms matched. Equal order across stores is
+  not asserted. A superseded version is never a hit; it stays fetchable by id
+  as history.
 - **Determinism** holds over a fixed candidate list: the same candidates
   always come back in the same order. Whether approximate vector search fixes
   the candidate list for a given query is part of FR-4's measurement, not a
@@ -287,7 +292,14 @@ predicate fails toward invisibility.
   journalled `rotated_from` chain at the start of every transaction, never
   from the client, so a session reads only the held rows of its
   [own](roles-and-keys.md#own) keys and a rotated key still matches its
-  predecessor's. Its rows are `tsvector` entries, and the
+  predecessor's. Under that policy a row the setting does not match is
+  skipped silently, so a forgotten predicate fails toward invisibility on
+  reads but toward retention on removals. Every commit that moves a version
+  out of held, or reassigns a held version, therefore checks that its
+  `held_fts` DELETE or UPDATE affected exactly one row, and the capture insert
+  checks that it inserted one; any other count aborts the commit with
+  `system.internal`, so the transition fails rather than leaving held text
+  behind its held state. Its rows are `tsvector` entries, and the
   [erasure inventory](audit-and-lineage.md#the-erasure-inventory) lists the
   table on its own row.
   `memories_fts` and `memory_embeddings` stay promoted-only.
@@ -335,8 +347,8 @@ that are not sent gives the caller a meaningless budget.
 used_tokens: s + ΣH[0..j), truncated, hits_omitted: |H| − j, next_hit_tokens}`,
 where `next_hit_tokens` is tokens(H[j]), or null when nothing was cut.
 `used_tokens` exceeds `max_tokens` only when steering alone exceeds it, and the
-object shows that; steering past the budget is served whole with no hits,
-never refused.
+object shows that; steering past the budget is served whole, never refused,
+and only hits of 0 budget tokens — empty bodies — can follow it.
 
 **Worked example.** Steering [120], hits [300, 250, 90], M = 500: s = 120,
 remaining = 380; the first hit (300) fits, the second (250) does not, so the
@@ -418,11 +430,11 @@ digesting:
 |---|---|
 | `query` | the NFC-normalized string |
 | `k` | the integer, default 8 applied |
-| `kinds` | sorted ascending, deduplicated; `[]` when absent |
+| `kinds` | sorted ascending, deduplicated; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
 | `include_bodies` | the boolean, default `true` applied |
 | `include_own_held` | the boolean, default `false` applied |
 | `max_tokens` | the integer, `null` when absent |
-| `terms` | sorted ascending, deduplicated; `[]` when absent |
+| `terms` | sorted ascending, deduplicated; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
 | `expand_terms` | the string, default `"none"` applied |
 | `scope` | the resolved node id |
 
@@ -504,5 +516,5 @@ review, not as a quiet extension of recall.
 This page's decisions are registered as ADR-0013
 ([decision register](../adr/index.md)); own held rows in recall, held text
 containment, token budgets, the segment membership and order, and the read-log
-content are [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
-which amends ADR-0013 d1, d2 and d5.
+content are the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
+which would amend ADR-0013 d1, d2 and d5.
