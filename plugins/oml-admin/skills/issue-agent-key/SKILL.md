@@ -53,8 +53,9 @@ follows from that.
 
     On success stdout holds two `export` lines and stderr names the key id, its grants and its
     default workarea. Exit `1` is the server refusing the issuance, with the reason and the rule
-    it names; exit `2` is a local refusal, such as an existing file or no server configured, and
-    nothing was issued. Report either as printed and stop; never retry without `--out`.
+    it names, and nothing was issued. Exit `2` is a local failure: a refusal such as an existing
+    file or no server configured, where nothing was issued, or one of the two cases at the end of
+    this page. Report what the CLI printed and stop; never retry without `--out`.
 
 5. Give the operator the two printed lines exactly as the CLI printed them, to run in the shell
    that will start the agent, together with the key id from stderr. They look like this:
@@ -69,3 +70,7 @@ follows from that.
 
 If the CLI says the key was issued but its value could not be written, the value is lost and the
 key is live. Pass on the key id and the remedy the CLI prints, and issue a new key to a new file.
+
+If the CLI says a key for the principal may have been issued, because no usable answer came back,
+it cannot tell whether that key exists, and if it does its value is lost. Pass on what the CLI
+printed, and issue a new key to a new file: the operator holds no usable key either way.

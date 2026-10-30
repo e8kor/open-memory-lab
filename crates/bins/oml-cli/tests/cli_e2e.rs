@@ -433,15 +433,7 @@ impl Lab {
     /// `oml <args>` under the stored admin credentials, without `--json`;
     /// returns (exit code, stdout, stderr) as the operator's shell gets them.
     fn text(&self, args: &[&str]) -> (i32, String, String) {
-        let out = oml_command(&self.server, &self.creds, None)
-            .args(args)
-            .output()
-            .expect("the oml binary runs");
-        (
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        )
+        oml_text(&self.server, &self.creds, None, args)
     }
 
     /// A fresh child of the root.
@@ -470,6 +462,20 @@ impl Lab {
         let _ = std::fs::remove_dir_all(&self.dir);
         drop_db(&self.db_name).await;
     }
+}
+
+/// `oml <args>` without `--json`; returns (exit code, stdout, stderr) as the
+/// operator's shell gets them.
+fn oml_text(server: &str, creds: &Path, key: Option<&str>, args: &[&str]) -> (i32, String, String) {
+    let out = oml_command(server, creds, key)
+        .args(args)
+        .output()
+        .expect("the oml binary runs");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn routes(seen: &[Seen]) -> Vec<String> {
@@ -777,6 +783,112 @@ async fn issue_agent_out_refuses_a_path_with_a_quote_or_a_newline_and_sends_noth
     }
     assert!(lab.take_requests().is_empty(), "nothing was sent");
     lab.stop().await;
+}
+
+/// The value a stub's unreadable `201` carries, which must reach no stream.
+const STUB_VALUE: &str = "oml_stubvalue0123456789abcdefghijklmnopqrstuvw";
+
+/// A key file path under a fresh directory, for a verb run against a stub
+/// that needs no database; returns (the directory, the key file path).
+fn stub_paths(tag: &str) -> (PathBuf, PathBuf) {
+    let n = DB_N.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("oml-cli-{tag}-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("fixture directory");
+    let path = dir.join("crew-agent-7");
+    (dir, path)
+}
+
+/// `oml keys issue-agent … --out <path>` against `server`, which is no lab.
+fn issue_agent_to_stub(server: &str, dir: &Path, path: &Path) -> (i32, String, String) {
+    oml_text(
+        server,
+        &dir.join("credentials"),
+        Some("stub-admin-key"),
+        &[
+            "keys",
+            "issue-agent",
+            "--principal",
+            "crew/agent-7",
+            "--workarea",
+            "00000000-0000-4000-8000-000000000007",
+            "--out",
+            path.to_str().expect("a UTF-8 path"),
+        ],
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_agent_out_puts_no_key_value_on_stderr_when_the_201_body_is_not_json() {
+    // A 201 cut short: the key exists, and its value is in bytes the CLI
+    // cannot parse.
+    let router = axum::Router::new().route(
+        "/v2/keys",
+        axum::routing::post(|| async {
+            (
+                axum::http::StatusCode::CREATED,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                format!(r#"{{"key_id":"key_stub","value":"{STUB_VALUE}","grants":["#),
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("stub bind");
+    let server = format!("http://{}", listener.local_addr().expect("stub addr"));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("stub serve");
+    });
+    let (dir, path) = stub_paths("unparsed-201");
+
+    let (code, stdout, stderr) = issue_agent_to_stub(&server, &dir, &path);
+    assert_eq!(code, 2, "{stdout}{stderr}");
+    assert!(stdout.is_empty(), "no export line: {stdout}");
+    assert!(
+        !stderr.contains(STUB_VALUE) && !stderr.contains("oml_"),
+        "no key value on stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("may have been issued") && stderr.contains("crew/agent-7"),
+        "the operator learns a key for the principal may exist: {stderr}"
+    );
+    assert!(!path.exists(), "the empty key file is removed");
+
+    task.abort();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_agent_says_a_key_may_have_been_issued_when_the_connection_closes_unanswered() {
+    // A server that reads the whole issuance, as one that commits it would,
+    // then closes the connection without answering.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("stub bind");
+    let server = format!("http://{}", listener.local_addr().expect("stub addr"));
+    let stub = std::thread::spawn(move || {
+        use std::io::Read as _;
+        let (mut socket, _) = listener.accept().expect("one connection");
+        let mut seen = Vec::new();
+        let mut buf = [0_u8; 4096];
+        while let Ok(n) = socket.read(&mut buf) {
+            seen.extend_from_slice(&buf[..n]);
+            // The JSON body is the request's last byte.
+            if n == 0 || seen.ends_with(b"}") {
+                break;
+            }
+        }
+    });
+    let (dir, path) = stub_paths("unanswered");
+
+    let (code, stdout, stderr) = issue_agent_to_stub(&server, &dir, &path);
+    stub.join().expect("the stub read the request");
+    assert_eq!(code, 2, "{stdout}{stderr}");
+    assert!(stdout.is_empty(), "no export line: {stdout}");
+    assert!(
+        stderr.contains("may have been issued") && stderr.contains("crew/agent-7"),
+        "an unanswered issuance is not reported as a refusal: {stderr}"
+    );
+    assert!(!path.exists(), "the empty key file is removed");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
