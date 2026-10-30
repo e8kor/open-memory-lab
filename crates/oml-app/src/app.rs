@@ -257,6 +257,27 @@ where
             && caller.effective(&ancestry).contains(&Role::Reader))
     }
 
+    /// `memory` as served to the caller: `derives_from` keeps only the
+    /// ancestors `readable` accepts, so a promoted row derived from its
+    /// author's held row names that row to no other key (http-api.md get;
+    /// ADR-0025 d3).
+    async fn served(
+        &self,
+        caller: &Caller,
+        mut memory: MemoryRecord,
+    ) -> Result<MemoryRecord, AppError> {
+        let mut derives_from = Vec::with_capacity(memory.derives_from.len());
+        for ancestor in memory.derives_from {
+            if let Some(m) = self.journal.memory(caller.key.tenant_id, ancestor).await?
+                && self.readable(caller, &m).await?
+            {
+                derives_from.push(ancestor);
+            }
+        }
+        memory.derives_from = derives_from;
+        Ok(memory)
+    }
+
     /// The nodes of the subtree at `root` where `role` is effective for the
     /// caller, parent before child: subtree(root) ∩ effective access, each
     /// node judged by the whole formula (ADR-0025 d1).
@@ -1091,21 +1112,24 @@ where
         self.require_access(&caller, scope, Role::Reader, "recall")
             .await?;
         let readable = self.nodes_with(&caller, scope, Role::Reader).await?;
-        let hits = self
+        let mut hits = Vec::new();
+        for m in self
             .journal
             .recall_fts(key.tenant_id, &readable, &req.query, req.k)
             .await?
-            .into_iter()
+        {
             // R3 defense in depth: the gate changed visibility; nothing
             // unpromoted or unreadable leaves the application layer, and a
             // replaced version is promoted history, never a hit (ADR-0025
-            // d8).
-            .filter(|m| {
-                m.status == MemoryStatus::Promoted
-                    && m.superseded_by.is_none()
-                    && readable.contains(&m.workarea_id)
-            })
-            .collect();
+            // d8). Each hit names only the ancestors the caller can read
+            // (d3).
+            if m.status == MemoryStatus::Promoted
+                && m.superseded_by.is_none()
+                && readable.contains(&m.workarea_id)
+            {
+                hits.push(self.served(&caller, m).await?);
+            }
+        }
         Ok(RecallResult {
             steering: Vec::new(),
             hits,
@@ -1116,7 +1140,8 @@ where
     /// with no grant needed and global denials still masking them; everyone
     /// else sees promoted rows, replaced versions included, with reader
     /// effective access on the row's workarea; anything else is absence,
-    /// indistinguishable from no row (http-api.md; ADR-0025 d3).
+    /// indistinguishable from no row. `derives_from` names only the
+    /// ancestors the caller can read (http-api.md; ADR-0025 d3).
     pub async fn get_memory(
         &self,
         api_key: &str,
@@ -1129,7 +1154,7 @@ where
             .await?
             .ok_or(AppError::NotFound)?;
         if self.readable(&caller, &memory).await? {
-            Ok(memory)
+            self.served(&caller, memory).await
         } else {
             Err(AppError::NotFound)
         }
