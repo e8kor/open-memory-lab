@@ -1,6 +1,6 @@
 ---
 name: oml-memory
-description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_remember, oml_learn, oml_recall and oml_events_tail tools of an Open Memory Lab server, and why a write is not visible right away.
+description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_remember, oml_learn, oml_recall, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, and why a write is not visible right away.
 ---
 
 # Working with Open Memory Lab memory
@@ -14,10 +14,18 @@ than writing the same fact twice.
 
 The plugin connects twice. The `oml` connection uses the agent's writer key, so call
 `oml_remember` and `oml_learn` there. The `oml-recall` connection uses a reader key, so
-call `oml_recall` and `oml_events_tail` there. Each connection lists all four tools, and a
-tool called on the wrong connection is refused: `oml_remember` and `oml_learn` with
-`access.verb_ceiling` on the reader key, `oml_recall` and `oml_events_tail` with
+call `oml_recall`, `oml_workarea_info` and `oml_events_tail` there. Each connection lists
+all five tools, and a tool called on the wrong connection is refused: `oml_remember` and
+`oml_learn` with `access.verb_ceiling` on the reader key, and the three reads with
 `access.not_found` on a writer key that holds no reader grant.
+
+## Check what a workarea allows
+
+Call `oml_workarea_info` with no arguments to describe the key's default workarea, or pass
+`workarea` to name another. It returns the workarea's `path` and `status`, the child
+workareas the key can read, and `my_effective_verbs`: the verbs the key's grants allow
+there, such as `remember` or `recall`. The answer is about the key behind the connection
+you call, and a verb missing from the list is refused in that workarea.
 
 ## Recall before you act
 

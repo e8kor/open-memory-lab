@@ -98,6 +98,41 @@ pub struct WorkareaRecord {
     pub crew: Option<Crew>,
 }
 
+impl WorkareaRecord {
+    /// The node's rung on the status ladder (workareas.md the status
+    /// ladder). No status transition is built, so a node keeps the status it
+    /// was created with: the universe root is permanently `committed`, and
+    /// every other node is created in `development` (http-api.md workareas).
+    #[must_use]
+    pub fn status(&self) -> &'static str {
+        if self.parent_id.is_none() {
+            "committed"
+        } else {
+            "development"
+        }
+    }
+}
+
+/// One workarea as the calling key may see it (http-api.md workareas;
+/// ADR-0025 d14): the node, its path derived from the `parent_id` names
+/// from `universe`, the immediate children the key can read, the verbs its
+/// effective access confers there, and its permission epoch. No workarea
+/// edge can exist in this build, so the read serves no edges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkareaInfo {
+    pub workarea: WorkareaRecord,
+    pub path: String,
+    /// Ordered by name in byte order, then id; a child the key cannot read
+    /// is absent, not marked.
+    pub children: Vec<WorkareaRecord>,
+    /// The effective-verbs table of roles-and-keys.md over the roles
+    /// effective on the node, in table order.
+    pub my_effective_verbs: Vec<&'static str>,
+    /// The key's permission epoch as its access was read for this request
+    /// (workareas.md permission epoch).
+    pub permission_epoch: u64,
+}
+
 /// The metadata row of one memory version. The body lives here, never in the
 /// journal — journal payloads are digest-only (ADR-0002 d1, admission.md).
 /// The claim fields follow postgres-schema.md `memories` (ADR-0025 d6, d10,
