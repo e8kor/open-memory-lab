@@ -354,30 +354,27 @@ where
         let result =
             ring_outcome(Self::recall_inner(st, &headers, &Bytes::from(body.to_string())).await)
                 .await?;
+        // Steering items and hits are one claim-item shape; only a hit
+        // carries a score (mcp-plugin.md, the claim item; ADR-0025 d12).
+        let steering: Vec<Value> = result["steering"]
+            .as_array()
+            .map(|items| items.iter().map(recall_item).collect())
+            .unwrap_or_default();
         let hits: Vec<Value> = result["hits"]
             .as_array()
             .map(|hits| {
                 hits.iter()
                     .map(|hit| {
-                        let m = &hit["memory"];
-                        json!({
-                            "artifact_id": m["artifact_id"],
-                            "claim_key": m["claim_key"],
-                            "version": m["version"],
-                            "state": m["state"],
-                            "score": hit["score"],
-                            "text": m["body"],
-                            "workarea_id": m["workarea_id"],
-                            // The PoC derives no workarea paths (see create_workarea).
-                            "workarea_path": Value::Null,
-                            "promoted_at": m["promoted_at"],
-                            "attachments": m["attachments"],
-                        })
+                        let mut item = recall_item(&hit["memory"]);
+                        if let Some(obj) = item.as_object_mut() {
+                            obj.insert("score".to_owned(), hit["score"].clone());
+                        }
+                        item
                     })
                     .collect()
             })
             .unwrap_or_default();
-        Ok(json!({ "steering": result["steering"], "hits": hits }))
+        Ok(json!({ "steering": steering, "hits": hits }))
     }
 
     /// `oml_my_work`: one `GET /v1/memories?own=true`, the own-work
@@ -490,6 +487,23 @@ pub(crate) async fn mcp_get() -> Response {
         .headers_mut()
         .insert(header::ALLOW, HeaderValue::from_static("POST"));
     response
+}
+
+/// A ring `Memory` as an `oml_recall` claim item, `body` renamed `text`
+/// (mcp-plugin.md, the claim item; ADR-0025 d12).
+fn recall_item(m: &Value) -> Value {
+    json!({
+        "artifact_id": m["artifact_id"],
+        "claim_key": m["claim_key"],
+        "version": m["version"],
+        "state": m["state"],
+        "text": m["body"],
+        "workarea_id": m["workarea_id"],
+        // The PoC derives no workarea paths (see create_workarea).
+        "workarea_path": Value::Null,
+        "promoted_at": m["promoted_at"],
+        "attachments": m["attachments"],
+    })
 }
 
 fn ring_headers(token: &str) -> HeaderMap {

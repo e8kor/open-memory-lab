@@ -16,8 +16,9 @@ use oml_domain::access::{
     effective_roles, effective_verbs, resolve,
 };
 use oml_domain::{
-    ChainHead, EventDraft, HeldBy, KeySet, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
-    check_reviewer, event_types, next_envelope, nfc, sha256_digest_string, transition,
+    ChainHead, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
+    SignedEnvelope, check_reviewer, event_types, next_envelope, nfc, sha256_digest_string,
+    transition,
 };
 
 use crate::cursor::ListingCursor;
@@ -28,10 +29,11 @@ use crate::ports::{
 };
 use crate::types::{
     AppError, BootstrapRequest, BootstrapResult, CreatedWorkarea, Crew, DenialRecord, GrantRecord,
-    IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, ListRequest, ListingFilter, ListingPosition,
-    ListingScope, MemoryPage, MemoryRecord, PROVIDER_TENANT, RecallRequest, RecallResult,
-    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest,
-    Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    HIT_KINDS, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, ListRequest, ListingFilter,
+    ListingPosition, ListingScope, MemoryPage, MemoryRecord, PROVIDER_TENANT, RecallHit,
+    RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SupersedeOutcome, SupersedeRequest, Verdict, VerdictOutcome, VersionRef, WorkareaInfo,
+    WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -1388,11 +1390,13 @@ where
         }
     }
 
-    /// Recall: reader on the scope node by the refusal order, the search over
-    /// subtree(scope) ∩ the nodes where reader is effective, and no
-    /// tenant-wide fallback (ADR-0025 d1); promoted rows only, steering
-    /// segment ahead of hits (retrieval.md; the PoC serves FTS hits with an
-    /// empty steering segment).
+    /// Recall: reader on the scope node by the refusal order, and no
+    /// tenant-wide fallback (ADR-0025 d1). Segment 1 is the applicable
+    /// steering — the steering in force on the scope and each ancestor the
+    /// key reads, ordered structurally and never by the query; the hits
+    /// follow, over subtree(scope) ∩ the nodes where reader is effective, of
+    /// the kinds the request admits, score descending then `artifact_id`
+    /// ascending (retrieval.md, the recall-ordering contract; ADR-0025 d8).
     pub async fn recall(
         &self,
         api_key: &str,
@@ -1407,26 +1411,64 @@ where
             .ok_or(AppError::WorkareaUnresolved)?;
         self.require_access(&caller, scope, Role::Reader, "recall")
             .await?;
-        let readable = self.nodes_with(&caller, scope, Role::Reader).await?;
-        let mut hits = Vec::new();
+
+        // The scope's ancestry runs node to root, so each ancestor's own
+        // ancestry is its suffix; the store is handed the readable ones root
+        // first, the order of their depth.
+        let ancestry = self.ancestry(key.tenant_id, scope).await?;
+        let applicable: Vec<Uuid> = (0..ancestry.len())
+            .rev()
+            .filter(|&i| caller.effective(&ancestry[i..]).contains(&Role::Reader))
+            .map(|i| ancestry[i])
+            .collect();
+        let mut steering = Vec::new();
         for m in self
             .journal
-            .recall_fts(key.tenant_id, &readable, &req.query, req.k)
+            .steering_in_force(key.tenant_id, &applicable)
+            .await?
+        {
+            // R3 defense in depth, as for the hits below: only a readable
+            // served tip in force, never a retirement version (ADR-0025 d8,
+            // d11).
+            if m.kind == MemoryKind::Steering
+                && m.status == MemoryStatus::Promoted
+                && m.is_tip
+                && !m.retirement
+                && applicable.contains(&m.workarea_id)
+            {
+                steering.push(self.served(&caller, m).await?);
+            }
+        }
+
+        let readable = self.nodes_with(&caller, scope, Role::Reader).await?;
+        let kinds: Vec<MemoryKind> = HIT_KINDS
+            .into_iter()
+            .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
+            .collect();
+        let mut hits = Vec::new();
+        for (m, score) in self
+            .journal
+            .recall_fts(key.tenant_id, &readable, &req.query, &kinds, req.k)
             .await?
         {
             // R3 defense in depth: the gate changed visibility; nothing
             // unpromoted or unreadable leaves the application layer, and a
-            // replaced version is promoted history, never a hit (ADR-0025
-            // d8). Each hit names only the ancestors the caller can read
-            // (d3).
-            if m.status == MemoryStatus::Promoted && m.is_tip && readable.contains(&m.workarea_id) {
-                hits.push(self.served(&caller, m).await?);
+            // replaced version or any version of a retired claim is promoted
+            // history, never a hit (ADR-0025 d8). Each hit names only the
+            // ancestors the caller can read (d3).
+            if m.status == MemoryStatus::Promoted
+                && m.is_tip
+                && !m.retirement
+                && kinds.contains(&m.kind)
+                && readable.contains(&m.workarea_id)
+            {
+                hits.push(RecallHit {
+                    served: self.served(&caller, m).await?,
+                    score,
+                });
             }
         }
-        Ok(RecallResult {
-            steering: Vec::new(),
-            hits,
-        })
+        Ok(RecallResult { steering, hits })
     }
 
     /// Get one memory: the authoring key sees its own rows in every state,

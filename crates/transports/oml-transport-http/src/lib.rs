@@ -336,11 +336,26 @@ where
     ) -> Result<Response, ApiError> {
         // Read-shaped POST: no Idempotency-Key (http-api.md idempotency).
         let token = bearer(headers)?;
+        // The body is closed: a field the server does not serve is refused,
+        // never dropped (ADR-0025 d16).
         let req: RecallBody = parse_json(headers, body)?;
         let k = req.k.unwrap_or(8);
         if !(1..=100).contains(&k) {
             return Err(ApiError::validation("k must be between 1 and 100"));
         }
+        // The vocabulary filter is unbuilt: refused by name, never answered
+        // unfiltered (retrieval.md; ADR-0025 d16).
+        if req.terms.is_some() {
+            return Err(ApiError::validation(
+                "terms on recall is not built: the vocabulary filter is refused, never ignored",
+            ));
+        }
+        if req.expand_terms.is_some() {
+            return Err(ApiError::validation(
+                "expand_terms on recall is not built: the vocabulary filter is refused, never ignored",
+            ));
+        }
+        let kinds = parse_hit_kinds(req.kinds.as_deref())?;
         let include_bodies = req.include_bodies.unwrap_or(true);
         let workarea_id = workarea_override(headers)?;
         let result = st
@@ -351,26 +366,32 @@ where
                     query: req.query.clone(),
                     k,
                     workarea_id,
+                    kinds,
                 },
             )
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        // Steering items are unranked and carry no score; each hit carries
+        // the store's (retrieval.md, the recall-ordering contract).
+        let steering: Vec<Value> = result
+            .steering
+            .iter()
+            .map(|m| memory_json(m, include_bodies))
+            .collect();
         let hits: Vec<Value> = result
             .hits
             .iter()
-            .map(|m| {
+            .map(|hit| {
                 json!({
-                    "memory": memory_json(m, include_bodies),
-                    // The PoC store ranks (ts_rank order) but does not expose
-                    // the rank value; the score field is shape, not signal.
-                    "score": 0.0,
+                    "memory": memory_json(&hit.served, include_bodies),
+                    "score": hit.score,
                 })
             })
             .collect();
         Ok(json_response(
             StatusCode::OK,
             &json!({
-                "steering": [],
+                "steering": steering,
                 "hits": hits,
                 "query_digest": sha256_digest_string(req.query.as_bytes()),
             }),
@@ -873,14 +894,19 @@ struct SubmitBody {
     simulated_time: Option<String>,
 }
 
+/// openapi.yaml `RecallRequest`, closed (ADR-0025 d16).
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RecallBody {
     query: String,
     k: Option<usize>,
-    #[serde(default)]
-    #[allow(dead_code, reason = "kind filtering is outside the PoC recall slice")]
-    kinds: Vec<String>,
+    kinds: Option<Vec<String>>,
     include_bodies: Option<bool>,
+    /// Parsed only to be refused while the vocabulary filter is unbuilt
+    /// (ADR-0025 d16).
+    terms: Option<Vec<String>>,
+    /// Parsed only to be refused while the vocabulary filter is unbuilt.
+    expand_terms: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1243,6 +1269,30 @@ fn parse_state(state: &str) -> Result<MemoryStatus, ApiError> {
 /// d8); an unknown one is refused, never coerced to `memory`.
 fn parse_kind(kind: &str) -> Result<MemoryKind, ApiError> {
     MemoryKind::parse(kind).ok_or_else(|| ApiError::validation(format!("unknown kind {kind:?}")))
+}
+
+/// The recall `kinds` filter: absent is no filter, and a sent one names at
+/// least one of `memory` and `derived_fact`, the only kinds it filters —
+/// steering is never ranked and the vocabulary kinds are no filter value
+/// (openapi.yaml `RecallRequest.kinds`; ADR-0021 d9, ADR-0025 d16).
+fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError> {
+    let Some(kinds) = kinds else {
+        return Ok(Vec::new());
+    };
+    if kinds.is_empty() {
+        return Err(ApiError::validation(
+            "an empty kinds is refused: omit kinds for no filter",
+        ));
+    }
+    kinds
+        .iter()
+        .map(|name| match MemoryKind::parse(name) {
+            Some(kind @ (MemoryKind::Memory | MemoryKind::DerivedFact)) => Ok(kind),
+            _ => Err(ApiError::validation(format!(
+                "kinds names memory or derived_fact, not {name:?}"
+            ))),
+        })
+        .collect()
 }
 
 /// No upload sessions exist in the PoC, so every attachment digest fails the
