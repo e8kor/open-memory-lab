@@ -1,9 +1,10 @@
-//! The M1 domain model slice: roles, key holders, the memory status
-//! transition function, and the constitution's R2 reviewer check
-//! (ADR-0001 d2, admission.md).
+//! The M1 domain model slice: roles, key holders, the claim state set and
+//! its transition function, capture's NFC normalization, and the
+//! constitution's R2 reviewer check (ADR-0001 d2, admission.md).
 
 use std::collections::BTreeSet;
 
+use unicode_normalization::UnicodeNormalization as _;
 use uuid::Uuid;
 
 /// The five roles (ADR-0010, admission.md). The order is the tables' listing
@@ -51,13 +52,18 @@ impl HeldBy {
     }
 }
 
-/// Memory status for the M1 slice (admission.md lifecycle).
+/// A claim version's state: the design set of the `memories.state` column
+/// (admission.md lifecycle; postgres-schema.md). Supersession adds no state:
+/// a replaced version stays promoted and only stops being the tip
+/// (ADR-0025 d10). `Demoted` and `Erased` complete the set; demote and erase
+/// are unbuilt, so [`transition`] reaches neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemoryStatus {
     Held,
     Promoted,
+    Demoted,
     Rejected,
-    Superseded,
+    Erased,
 }
 
 impl MemoryStatus {
@@ -66,8 +72,9 @@ impl MemoryStatus {
         match self {
             MemoryStatus::Held => "held",
             MemoryStatus::Promoted => "promoted",
+            MemoryStatus::Demoted => "demoted",
             MemoryStatus::Rejected => "rejected",
-            MemoryStatus::Superseded => "superseded",
+            MemoryStatus::Erased => "erased",
         }
     }
 }
@@ -80,17 +87,27 @@ pub struct TransitionError {
     pub to: MemoryStatus,
 }
 
-/// The pure transition function for the M1 slice:
-/// held -> promoted | rejected; promoted -> superseded.
-/// Everything else is refused — the gate changes visibility exactly once
-/// (admission.md), and nothing leaves a terminal state.
+/// The pure transition function of the built lifecycle:
+/// held -> promoted | rejected. Everything else is refused — the gate changes
+/// visibility exactly once, at ratification (admission.md). The diagram's
+/// other edges (reopen, reassignment, dead letter, demote, erase) are
+/// unbuilt; a supersession is no edge, since the tip moves and the state
+/// does not (ADR-0025 d10).
 pub fn transition(from: MemoryStatus, to: MemoryStatus) -> Result<MemoryStatus, TransitionError> {
     match (from, to) {
         (MemoryStatus::Held, MemoryStatus::Promoted)
-        | (MemoryStatus::Held, MemoryStatus::Rejected)
-        | (MemoryStatus::Promoted, MemoryStatus::Superseded) => Ok(to),
+        | (MemoryStatus::Held, MemoryStatus::Rejected) => Ok(to),
         _ => Err(TransitionError { from, to }),
     }
+}
+
+/// Claim text in Unicode Normalization Form C. Capture normalizes before
+/// the plaintext digest, the scan and the `body_bytes` count, so all three
+/// see one canonical byte form (admission.md, capture; ADR-0025 d6). Text
+/// already in NFC comes back unchanged.
+#[must_use]
+pub fn nfc(text: &str) -> String {
+    text.nfc().collect()
 }
 
 /// The derivation lineage closure of a row — the author plus every declared

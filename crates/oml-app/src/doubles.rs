@@ -116,8 +116,9 @@ fn apply_fold(state: &mut TenantState, fold: MetadataFold) {
             superseded,
             successor,
         } => {
+            // The replaced version stays promoted; only the tip moves
+            // (ADR-0025 d10).
             if let Some(memory) = state.memories.get_mut(&superseded) {
-                memory.status = MemoryStatus::Superseded;
                 memory.superseded_by = Some(successor.memory_id);
             }
             state.queue.push(QueueEntry {
@@ -221,7 +222,7 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.status == MemoryStatus::Promoted)
+            .filter(|m| m.status == MemoryStatus::Promoted && m.superseded_by.is_none())
             .filter(|m| workarea_id.is_none_or(|w| m.workarea_id == w))
             .filter(|m| m.body.to_lowercase().contains(&needle))
             .take(k)

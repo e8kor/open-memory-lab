@@ -624,8 +624,9 @@ where
             .await?
             .into_iter()
             // R3 defense in depth: the gate changed visibility; nothing
-            // unpromoted leaves the application layer.
-            .filter(|m| m.status == MemoryStatus::Promoted)
+            // unpromoted leaves the application layer, and a replaced version
+            // is promoted history, never a hit (ADR-0025 d8).
+            .filter(|m| m.status == MemoryStatus::Promoted && m.superseded_by.is_none())
             .collect();
         Ok(RecallResult {
             steering: Vec::new(),
@@ -634,8 +635,8 @@ where
     }
 
     /// Get one memory: the author sees its own rows in every state; everyone
-    /// else sees promoted (and superseded) rows under the reader ceiling,
-    /// and absence is indistinguishable from no-access (http-api.md).
+    /// else sees promoted rows, replaced versions included, under the reader
+    /// ceiling, and absence is indistinguishable from no-access (http-api.md).
     pub async fn get_memory(
         &self,
         api_key: &str,
@@ -651,18 +652,20 @@ where
             return Ok(memory);
         }
         match memory.status {
-            MemoryStatus::Promoted | MemoryStatus::Superseded => {
-                require_role(&key, Role::Reader, "get")
-                    .map_err(|_| AppError::NotFound)
-                    .map(|()| memory)
-            }
-            MemoryStatus::Held | MemoryStatus::Rejected => Err(AppError::NotFound),
+            MemoryStatus::Promoted => require_role(&key, Role::Reader, "get")
+                .map_err(|_| AppError::NotFound)
+                .map(|()| memory),
+            MemoryStatus::Held
+            | MemoryStatus::Demoted
+            | MemoryStatus::Rejected
+            | MemoryStatus::Erased => Err(AppError::NotFound),
         }
     }
 
     /// Supersede the caller's own promoted claim: one journalled
-    /// `lifecycle.supersede` transitions the target and admits the successor
-    /// as a fresh held row queued for review.
+    /// `lifecycle.supersede` moves the tip off the target, which stays
+    /// promoted, and admits the successor as a fresh held row queued for
+    /// review.
     pub async fn supersede(
         &self,
         api_key: &str,
@@ -678,11 +681,11 @@ where
         if target.author_principal != key.principal {
             return Err(AppError::AuthorOnly);
         }
-        if target.superseded_by.is_some() {
+        // Only the promoted tip is a lawful target; supersession moves the
+        // tip and changes no state (ADR-0025 d10).
+        if target.status != MemoryStatus::Promoted || target.superseded_by.is_some() {
             return Err(AppError::TipConflict);
         }
-        // Promoted -> Superseded is the only lawful source state.
-        transition(target.status, MemoryStatus::Superseded)?;
 
         // The successor is a new submission: scanned like any write.
         if let ScanOutcome::Veto(reason) = self.scanner.scan(&AdmissionEnvelope {

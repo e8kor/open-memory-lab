@@ -150,7 +150,9 @@ async fn happy_path_end_to_end() {
         .get_memory(&reader.value, memory_id)
         .await
         .expect("get old tip");
-    assert_eq!(old.status, MemoryStatus::Superseded);
+    // Supersession adds no state: the replaced version stays promoted and
+    // only loses the tip (ADR-0025 d10).
+    assert_eq!(old.status, MemoryStatus::Promoted);
     assert_eq!(old.superseded_by, Some(superseded.successor_id));
     let successor = app
         .get_memory(&writer.value, superseded.successor_id)
@@ -179,6 +181,64 @@ async fn happy_path_end_to_end() {
         "digest-only payloads"
     );
     assert!(submit_event.payload.get("body_digest").is_some());
+}
+
+#[tokio::test]
+async fn a_ratified_successor_is_the_one_hit_and_the_version_it_replaced_stays_promoted() {
+    let app = app();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda").await;
+    let reader = issue(&app, admin, Role::Reader, "rita").await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana").await;
+
+    let first = app
+        .submit_memory(&writer.value, &submit_req("i1", "the canary drains first"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    app.post_verdict(&dreamer.value, first, Verdict::Approve, None)
+        .await
+        .expect("promote");
+    let second = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                target_id: first,
+                body: "the canary drains and settles first".to_owned(),
+                claim_key: None,
+            },
+        )
+        .await
+        .expect("supersede")
+        .successor_id;
+    app.post_verdict(&dreamer.value, second, Verdict::Approve, None)
+        .await
+        .expect("ratify the successor");
+
+    // A superseded version is never a hit (retrieval.md; ADR-0025 d8).
+    let recall = app
+        .recall(
+            &reader.value,
+            &RecallRequest {
+                query: "canary".to_owned(),
+                k: 10,
+                workarea_id: None,
+            },
+        )
+        .await
+        .expect("recall");
+    let hits: Vec<_> = recall.hits.iter().map(|m| m.memory_id).collect();
+    assert_eq!(hits, vec![second]);
+
+    // It stays fetchable by id as history, still promoted (ADR-0025 d10).
+    let old = app
+        .get_memory(&reader.value, first)
+        .await
+        .expect("get the replaced version");
+    assert_eq!(old.status, MemoryStatus::Promoted);
+    assert_eq!(old.superseded_by, Some(second));
 }
 
 #[tokio::test]
@@ -440,7 +500,7 @@ async fn supersede_is_author_only_and_tip_only() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::Transition(_)));
+    assert!(matches!(err, AppError::TipConflict));
 
     app.post_verdict(&dreamer.value, memory_id, Verdict::Approve, None)
         .await
