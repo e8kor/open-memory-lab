@@ -144,6 +144,20 @@ fn recall_req(query: &str) -> RecallRequest {
     }
 }
 
+/// The `derives_from` that get and the recall hit serve `key` for row `id`,
+/// asserted equal: the two reads apply one readability test (ADR-0025 d3).
+async fn served_lineage(app: &TestApp, key: &str, id: Uuid, query: &str) -> Vec<Uuid> {
+    let got = app.get_memory(key, id).await.expect("get");
+    let recall = app.recall(key, &recall_req(query)).await.expect("recall");
+    let hit = recall
+        .hits
+        .iter()
+        .find(|m| m.memory_id == id)
+        .expect("the row is a recall hit");
+    assert_eq!(got.derives_from, hit.derives_from, "get and recall agree");
+    got.derives_from
+}
+
 /// Submit as `writer` and have `dreamer` approve: the promoted row's id.
 async fn promoted(app: &TestApp, writer: &str, dreamer: &str, req: &SubmitRequest) -> Uuid {
     let id = app
@@ -1104,6 +1118,56 @@ async fn an_unreadable_derives_from_target_is_not_found() {
     assert!(
         matches!(err, AppError::LineageUnknown(id) if id == held),
         "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_key() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let author = agent(&app, admin, "crew/agent-7", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+
+    let held = app
+        .submit_memory(&author.value, &submit_req("i1", "the canary drains first"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let derived = promoted(
+        &app,
+        &author.value,
+        &dreamer.value,
+        &SubmitRequest {
+            claim_key: Some("fleet-order".to_owned()),
+            derives_from: vec![held],
+            ..submit_req("i2", "the fleet follows the canary")
+        },
+    )
+    .await;
+
+    // The reader cannot read the held ancestor, so neither get nor recall
+    // names it (ADR-0025 d3); its author still sees its own row there.
+    let err = app.get_memory(&reader.value, held).await.unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    assert_eq!(
+        served_lineage(&app, &reader.value, derived, "fleet").await,
+        Vec::<Uuid>::new()
+    );
+    assert_eq!(
+        served_lineage(&app, &author.value, derived, "fleet").await,
+        vec![held]
+    );
+
+    // Once the ancestor is promoted the reader can read it, and it is named.
+    app.post_verdict(&dreamer.value, held, Verdict::Approve, None)
+        .await
+        .expect("approve the ancestor");
+    assert_eq!(
+        served_lineage(&app, &reader.value, derived, "fleet").await,
+        vec![held]
     );
 }
 
