@@ -17,6 +17,7 @@ use sqlx::{Connection, Executor};
 use tower::ServiceExt as _;
 use uuid::Uuid;
 
+use oml_app::domain::sha256_digest_string;
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{IdGen as _, JournalStore};
 use oml_pg::PgStore;
@@ -1727,6 +1728,726 @@ async fn an_unreadable_workarea_is_not_found() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
     assert_envelope(&body, "auth.missing");
+
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// The own-work and scoped listings (ADR-0025 d3, d13)
+// ---------------------------------------------------------------------------
+
+/// Submits a memory under `token`, into `workarea` when one is named, else
+/// the key's default; returns its artifact id.
+async fn remember(
+    router: &Router,
+    token: &str,
+    claim_key: &str,
+    text: &str,
+    workarea: Option<Uuid>,
+) -> String {
+    let mut call = Call::auth(token)
+        .idem(&format!("remember-{claim_key}"))
+        .body(json!({
+            "verb": "remember", "claim_key": claim_key, "kind": "memory", "body": text,
+        }));
+    if let Some(workarea) = workarea {
+        call = call.workarea(&workarea.to_string());
+    }
+    let (status, _, accepted) = send(router, "POST", "/v1/memories", call).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    accepted["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned()
+}
+
+/// Serves the dreamer its next held item and records `verdict` on it;
+/// returns the item's artifact id.
+async fn review(router: &Router, dreamer: &str, verdict: &str) -> String {
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(dreamer)
+            .idem(&OsIds.new_id().to_string())
+            .body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Call::auth(dreamer)
+            .idem(&OsIds.new_id().to_string())
+            .body(json!({
+                "serve_id": serve["serve_id"],
+                "verdict": verdict,
+                "reason": "checked against the supplier's quote sheet",
+            })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    serve["item"]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned()
+}
+
+/// `GET /v1/memories?{query}` as `call` sends it.
+async fn list(router: &Router, call: Call, query: &str) -> (StatusCode, Value) {
+    let (status, _, body) = send(router, "GET", &format!("/v1/memories?{query}"), call).await;
+    (status, body)
+}
+
+/// The artifact ids of a listing page, in page order.
+fn listed(page: &Value) -> Vec<String> {
+    page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| {
+            item["artifact_id"]
+                .as_str()
+                .expect("artifact id")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// A key issued over HTTP with exactly `grants`; returns (value, key id).
+async fn key_with(
+    router: &Router,
+    admin: &str,
+    role: &str,
+    principal: &str,
+    idem: &str,
+    grants: Value,
+) -> (String, String) {
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(admin)
+            .idem(idem)
+            .body(json!({ "role": role, "principal": principal, "grants": grants })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    (
+        body["value"].as_str().expect("show-once value").to_owned(),
+        body["key_id"].as_str().expect("key id").to_owned(),
+    )
+}
+
+#[tokio::test]
+async fn own_true_lists_every_state_of_the_keys_own_rows_newest_first() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    // A writer-only key: the own-work listing needs no reader grant.
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let dreamer = issue_key(router, &admin, "dreamer", "crew/reviewer-3", crew).await;
+    let first = remember(
+        router,
+        &writer,
+        "quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let second = remember(
+        router,
+        &writer,
+        "quote-am-7742",
+        "Accra Metals quoted 415 USD/t.",
+        None,
+    )
+    .await;
+    let third = remember(
+        router,
+        &writer,
+        "quote-am-7743",
+        "Accra Metals quoted 409 USD/t.",
+        None,
+    )
+    .await;
+    assert_eq!(review(router, &dreamer, "approve").await, first);
+    assert_eq!(review(router, &dreamer, "reject").await, second);
+
+    let (status, page) = list(router, Call::auth(&writer), "own=true").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(listed(&page), vec![third.clone(), second.clone(), first]);
+    let states: Vec<&Value> = page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| &item["state"])
+        .collect();
+    assert_eq!(states, vec!["held", "rejected", "promoted"]);
+    for item in page["items"].as_array().expect("items") {
+        assert!(
+            item.get("body").is_none(),
+            "summaries carry no body: {item}"
+        );
+        assert_eq!(item["tokens"], 8, "{item}");
+        assert_eq!(item["workarea_id"], json!(crew), "{item}");
+        assert_eq!(item["workarea_path"], "universe.metals-crew", "{item}");
+        assert_eq!(item["held_expires_at"], Value::Null, "{item}");
+    }
+    assert_eq!(page["next_cursor"], Value::Null, "the listing is exhausted");
+
+    let (status, page) = list(router, Call::auth(&writer), "own=true&state=rejected").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(listed(&page), vec![second]);
+
+    // The own-work listing resolves no workarea, so the override is refused.
+    let (status, body) = list(
+        router,
+        Call::auth(&writer).workarea(&crew.to_string()),
+        "own=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn the_own_listing_covers_every_workarea_the_key_wrote_to() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "metals-crew").await;
+    let alloys = create_workarea(router, &admin, root, "alloys").await;
+    let writer = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": alloys, "role": "writer" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+    let quote = remember(
+        router,
+        &writer,
+        "quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let alloy = remember(
+        router,
+        &writer,
+        "alloy-6061",
+        "6061 tempers to T6 at 160 C.",
+        Some(alloys),
+    )
+    .await;
+
+    let (status, page) = list(router, Call::auth(&writer), "own=true").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(listed(&page), vec![alloy.clone(), quote]);
+    assert_eq!(page["items"][0]["workarea_id"], json!(alloys));
+    assert_eq!(page["items"][0]["workarea_path"], "universe.alloys");
+    assert_eq!(page["items"][1]["workarea_id"], json!(crew));
+    assert_eq!(page["items"][1]["workarea_path"], "universe.metals-crew");
+
+    // workarea_id narrows to a subtree the key holds a role on.
+    let (status, page) = list(
+        router,
+        Call::auth(&writer),
+        &format!("own=true&workarea_id={alloys}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(listed(&page), vec![alloy]);
+    // A node the key holds no role on, or none at all, is absent.
+    for node in [root, Uuid::from_u128(0xDEAD)] {
+        let (status, body) = list(
+            router,
+            Call::auth(&writer),
+            &format!("own=true&workarea_id={node}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_envelope(&body, "access.not_found");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn the_own_listing_never_shows_another_keys_row() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    // Two keys of one principal: principal equality never makes a row own.
+    let grants = json!([{ "workarea_node_id": crew, "role": "writer" }]);
+    let (one, _) = key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "k-1",
+        grants.clone(),
+    )
+    .await;
+    let (two, _) = key_with(router, &admin, "writer", "crew/agent-7", "k-2", grants).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let mine = remember(
+        router,
+        &one,
+        "quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let theirs = remember(
+        router,
+        &two,
+        "quote-am-7742",
+        "Accra Metals quoted 415 USD/t.",
+        None,
+    )
+    .await;
+
+    for (token, expected) in [
+        (&one, vec![mine]),
+        (&two, vec![theirs]),
+        (&reader, Vec::new()),
+    ] {
+        let (status, page) = list(router, Call::auth(token), "own=true").await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(listed(&page), expected);
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_global_denial_masks_own_rows_in_the_listing() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "metals-crew").await;
+    let alloys = create_workarea(router, &admin, root, "alloys").await;
+    let (writer, key_id) = key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "k-1",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": alloys, "role": "writer" },
+        ]),
+    )
+    .await;
+    let quote = remember(
+        router,
+        &writer,
+        "quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    remember(
+        router,
+        &writer,
+        "alloy-6061",
+        "6061 tempers to T6 at 160 C.",
+        Some(alloys),
+    )
+    .await;
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        &format!("/v2/keys/{key_id}/denials"),
+        Call::auth(&admin)
+            .idem("d-1")
+            .body(json!({ "workarea_node_id": alloys })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    // Deny-wins: the key's own row under the denial is masked.
+    let (status, page) = list(router, Call::auth(&writer), "own=true").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(listed(&page), vec![quote]);
+    // And the denied node is no longer one the key may name.
+    let (status, body) = list(
+        router,
+        Call::auth(&writer),
+        &format!("own=true&workarea_id={alloys}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "metals-crew").await;
+    let quotes = create_workarea(router, &admin, crew, "quotes").await;
+    let alloys = create_workarea(router, &admin, root, "alloys").await;
+    let writer = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": crew, "role": "reader" },
+            { "workarea_node_id": alloys, "role": "writer" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+    let dreamer = issue_key_with(
+        router,
+        &admin,
+        "dreamer",
+        "crew/reviewer-3",
+        json!([
+            { "workarea_node_id": crew, "role": "dreamer" },
+            { "workarea_node_id": alloys, "role": "dreamer" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+
+    let anchor = remember(
+        router,
+        &writer,
+        "price-anchor",
+        "Accra Metals anchors at 410 USD/t.",
+        None,
+    )
+    .await;
+    let quote = remember(
+        router,
+        &writer,
+        "quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        Some(quotes),
+    )
+    .await;
+    remember(
+        router,
+        &writer,
+        "alloy-6061",
+        "6061 tempers to T6 at 160 C.",
+        Some(alloys),
+    )
+    .await;
+    let replaced = remember(
+        router,
+        &writer,
+        "lead-time",
+        "Lead time is six weeks.",
+        None,
+    )
+    .await;
+    for _ in 0..4 {
+        review(router, &dreamer, "approve").await;
+    }
+    let (status, _, successor) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{replaced}/supersede"),
+        Call::auth(&writer)
+            .idem("sup-1")
+            .body(json!({ "body": "Lead time is eight weeks." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
+    let tip = successor["artifact_id"].as_str().expect("id").to_owned();
+    assert_eq!(review(router, &dreamer, "approve").await, tip);
+    remember(
+        router,
+        &writer,
+        "pending",
+        "Accra Metals may raise prices.",
+        None,
+    )
+    .await;
+
+    // The scope is the key's default workarea's subtree: promoted tips only —
+    // never a held row, the writer's own included, nor a replaced version, nor
+    // a row outside the scope.
+    for token in [&reader, &writer] {
+        let (status, page) = list(router, Call::auth(token), "").await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(
+            listed(&page),
+            vec![tip.clone(), quote.clone(), anchor.clone()]
+        );
+        for item in page["items"].as_array().expect("items") {
+            assert_eq!(item["state"], "promoted", "{item}");
+            assert_eq!(item["tip"], true, "{item}");
+        }
+    }
+    let (status, page) = list(router, Call::auth(&reader), "state=held").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        listed(&page),
+        Vec::<String>::new(),
+        "no filter reaches a held row"
+    );
+    // workarea_id intersects the scope's subtree; X-OML-Workarea moves it.
+    let (status, page) = list(
+        router,
+        Call::auth(&reader),
+        &format!("workarea_id={quotes}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(listed(&page), vec![quote.clone()]);
+    let (status, page) = list(
+        router,
+        Call::auth(&reader).workarea(&quotes.to_string()),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(listed(&page), vec![quote]);
+    // A node without reader effective access is absent.
+    let (status, body) = list(
+        router,
+        Call::auth(&reader),
+        &format!("workarea_id={alloys}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
+    // Without own, a key with neither a default nor the override is refused.
+    let unscoped =
+        issue_key_with(router, &admin, "reader", "crew/no-default", json!([])).await["value"]
+            .as_str()
+            .expect("show-once value")
+            .to_owned();
+    let (status, body) = list(router, Call::auth(&unscoped), "").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_envelope(&body, "request.workarea_unresolved");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_cursor_from_another_key_or_expired_is_request_validation() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let grants = json!([{ "workarea_node_id": crew, "role": "writer" }]);
+    let (writer, key_id) = key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "k-1",
+        grants.clone(),
+    )
+    .await;
+    let (other, _) = key_with(router, &admin, "writer", "crew/agent-8", "k-2", grants).await;
+    let mut written = Vec::new();
+    for n in 0..3 {
+        written.push(
+            remember(
+                router,
+                &writer,
+                &format!("quote-{n}"),
+                "Accra Metals quoted 412 USD/t.",
+                None,
+            )
+            .await,
+        );
+    }
+    written.reverse();
+
+    // A client-held cursor walks the listing, newest first, one position at
+    // a time.
+    let (status, first) = list(router, Call::auth(&writer), "own=true&limit=2").await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(listed(&first), written[..2]);
+    let cursor = first["next_cursor"]
+        .as_str()
+        .expect("a next page")
+        .to_owned();
+    let (status, second) = list(
+        router,
+        Call::auth(&writer),
+        &format!("own=true&limit=2&cursor={cursor}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(listed(&second), written[2..]);
+    assert_eq!(second["next_cursor"], Value::Null);
+
+    // The cursor answers its own key only, and only within api.cursor_ttl.
+    let decoded = oml_app::cursor::ListingCursor::decode(&cursor).expect("our cursor");
+    assert_eq!(decoded.key_id.to_string(), key_id);
+    let stale = oml_app::cursor::ListingCursor {
+        issued_at: oml_app::domain::EventTime::parse("2000-01-01T00:00:00.000000Z")
+            .expect("fixed width"),
+        ..decoded
+    }
+    .encode();
+    for (token, cursor) in [
+        (&other, cursor.as_str()),
+        (&writer, stale.as_str()),
+        (&writer, "not-a-cursor"),
+    ] {
+        let (status, body) = list(
+            router,
+            Call::auth(token),
+            &format!("own=true&cursor={cursor}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_envelope(&body, "request.validation");
+    }
+    for query in [
+        "own=true&limit=0",
+        "own=true&limit=201",
+        "own=yes",
+        "own=true&colour=red",
+    ] {
+        let (status, body) = list(router, Call::auth(&writer), query).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+        assert_envelope(&body, "request.validation");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    bootstrap(router).await;
+    // An operator key is a provider-level row (tenant_id NULL): no admin
+    // issues one, so the fixture writes the row as the table's owner would,
+    // with row-level security off for that one insert.
+    let operator = format!("oml_{}", "0".repeat(42) + "1");
+    let hash = sha256_digest_string(operator.as_bytes());
+    let mut conn = rig.store.pool().acquire().await.expect("connection");
+    sqlx::query("ALTER TABLE api_keys NO FORCE ROW LEVEL SECURITY")
+        .execute(&mut *conn)
+        .await
+        .expect("lift force");
+    sqlx::query(
+        "INSERT INTO api_keys (tenant_id, hash, role, principal, held_by, issued_seq) \
+         VALUES (NULL, decode($1, 'hex'), 'operator', 'provider/operator-1', 'human', 0)",
+    )
+    .bind(hash.trim_start_matches("sha256:"))
+    .execute(&mut *conn)
+    .await
+    .expect("provider-level operator key");
+    sqlx::query("ALTER TABLE api_keys FORCE ROW LEVEL SECURITY")
+        .execute(&mut *conn)
+        .await
+        .expect("restore force");
+    drop(conn);
+
+    // The operator never reads content: refused by its role, before any
+    // tenant is consulted, with or without own.
+    for query in ["own=true", ""] {
+        let (status, body) = list(router, Call::auth(&operator), query).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{query}: {body}");
+        assert_envelope(&body, "access.verb_ceiling");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn claim_key_filter_lists_one_claims_versions() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": crew, "role": "reader" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+    let dreamer = issue_key(router, &admin, "dreamer", "crew/reviewer-3", crew).await;
+    let first = remember(
+        router,
+        &writer,
+        "quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    remember(
+        router,
+        &writer,
+        "alloy-6061",
+        "6061 tempers to T6 at 160 C.",
+        None,
+    )
+    .await;
+    review(router, &dreamer, "approve").await;
+    review(router, &dreamer, "approve").await;
+    let (status, _, successor) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{first}/supersede"),
+        Call::auth(&writer)
+            .idem("sup-1")
+            .body(json!({ "body": "Accra Metals revised the quote to 408 USD/t." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
+    let second = successor["artifact_id"].as_str().expect("id").to_owned();
+
+    let (status, page) = list(
+        router,
+        Call::auth(&writer),
+        "own=true&claim_key=quote-am-7741",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(listed(&page), vec![second, first.clone()]);
+    let items = page["items"].as_array().expect("items");
+    assert_eq!(items[0]["version"], 2);
+    assert_eq!(items[0]["state"], "held");
+    assert_eq!(
+        items[0]["replaces"],
+        json!({ "artifact_id": first, "version": 1 })
+    );
+    assert_eq!(items[1]["version"], 1);
+    assert_eq!(items[1]["state"], "promoted");
+    for item in items {
+        assert_eq!(item["claim_key"], "quote-am-7741", "{item}");
+    }
 
     drop_db(&rig.db_name).await;
 }

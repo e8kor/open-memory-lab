@@ -337,6 +337,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::unavailable("chain head contention")
         }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
+        // A stale or foreign pagination cursor (errors.md request.validation).
+        AppError::Cursor(e) => ApiError::validation(e.to_string()),
         AppError::StoredResponse(e) => ApiError::internal(e),
         AppError::Chain(e) => ApiError::internal(e.to_string()),
         AppError::ChainVerify(e) => ApiError::internal(e.to_string()),

@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod cursor;
 pub mod doubles;
 pub mod ports;
 pub mod types;
