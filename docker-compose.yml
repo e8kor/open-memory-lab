@@ -36,6 +36,9 @@ services:
       retries: 10
 
   oml-server:
+    # The release image (.github/workflows/release.yml); `docker compose build`
+    # or `docker compose up --build` builds it from this checkout instead.
+    image: ghcr.io/e8kor/open-memory-lab:${OML_VERSION:-latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -43,16 +46,17 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # One configuration surface, file + env (docs/operations/configuration.md).
-      DATABASE_URL: postgres://oml:oml_dev_only@postgres:5432/oml
-      OML_SERVER__BIND: 0.0.0.0:8080
-      OML_KEYRING__PATH: /var/lib/oml/keyring
+      # One configuration surface, file + env (docs/operations/configuration.md);
+      # OML_ + the dotted key in SCREAMING_SNAKE, `__` for each dot.
+      OML_POSTGRES__URL: postgres://oml:oml_dev_only@postgres:5432/oml
+      OML_SERVER__LISTEN: 0.0.0.0:8080
+      OML_KMS__KEYRING_PATH: /var/lib/oml/keyring/signing.key
     volumes:
       # kms-file software keyring: oml-server is the only service that mounts it
       # (deployment.md — custody separation between containers).
       - oml-keyring:/var/lib/oml/keyring
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
 volumes:
   oml-pgdata:
