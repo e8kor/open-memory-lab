@@ -20,6 +20,52 @@ pub fn system_event_time_plus(offset_secs: u64) -> EventTime {
     event_time_from_unix(now.as_secs() + offset_secs, now.subsec_micros())
 }
 
+/// An RFC 3339 `date-time` (openapi.yaml `format: date-time`) as the
+/// fixed-width UTC instant it names: the offset applied and a fraction of
+/// up to six digits padded. Finer than a microsecond, or not RFC 3339, is
+/// `None`. An instant outside 1970-01-01 to 9999-12-31 is clamped to that
+/// range, which holds every stored row.
+#[must_use]
+pub fn parse_date_time(s: &str) -> Option<EventTime> {
+    let b = s.as_bytes();
+    if !s.is_ascii() || b.len() < 20 || !matches!(b[10], b'T' | b't') {
+        return None;
+    }
+    let digits = |from: usize| b[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let (fraction, zone) = if b[19] == b'.' {
+        let n = digits(20);
+        if n == 0 || n > 6 {
+            return None;
+        }
+        (&s[20..20 + n], &b[20 + n..])
+    } else {
+        ("", &b[19..])
+    };
+    let two = |hi: u8, lo: u8| i64::from(hi - b'0') * 10 + i64::from(lo - b'0');
+    let offset_secs = match zone {
+        [b'Z' | b'z'] => 0,
+        [sign @ (b'+' | b'-'), h1, h2, b':', m1, m2]
+            if [h1, h2, m1, m2].iter().all(|c| c.is_ascii_digit())
+                && two(*h1, *h2) <= 23
+                && two(*m1, *m2) <= 59 =>
+        {
+            let secs = (two(*h1, *h2) * 60 + two(*m1, *m2)) * 60;
+            if *sign == b'-' { -secs } else { secs }
+        }
+        _ => return None,
+    };
+    let local = EventTime::parse(&format!("{}T{}.{fraction:0<6}Z", &s[..10], &s[11..19])).ok()?;
+    let last = EventTime::parse("9999-12-31T23:59:59.999999Z")
+        .expect("the last fixed-width instant is well-formed")
+        .unix_micros();
+    let utc = u64::try_from((local.unix_micros() - offset_secs * 1_000_000).clamp(0, last))
+        .expect("clamped to a non-negative range");
+    Some(event_time_from_unix(
+        utc / 1_000_000,
+        u32::try_from(utc % 1_000_000).expect("below a million"),
+    ))
+}
+
 fn event_time_from_unix(secs: u64, micros: u32) -> EventTime {
     let days = i64::try_from(secs / 86_400).unwrap_or(i64::MAX / 2);
     let rem = secs % 86_400;
@@ -61,6 +107,46 @@ mod tests {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(19_357), (2022, 12, 31));
         assert_eq!(civil_from_days(20_756), (2026, 10, 30));
+    }
+
+    #[test]
+    fn a_date_time_parameter_names_its_utc_instant() {
+        let utc = |s: &str| parse_date_time(s).map(|t| t.as_str().to_owned());
+        assert_eq!(
+            utc("2026-10-27T13:58:20Z").as_deref(),
+            Some("2026-10-27T13:58:20.000000Z")
+        );
+        assert_eq!(
+            utc("2026-10-27t13:58:20.25z").as_deref(),
+            Some("2026-10-27T13:58:20.250000Z")
+        );
+        assert_eq!(
+            utc("2026-10-27T01:30:00.000001+02:00").as_deref(),
+            Some("2026-10-26T23:30:00.000001Z"),
+            "the offset is applied across midnight"
+        );
+        assert_eq!(
+            utc("2024-02-28T23:00:00-01:30").as_deref(),
+            Some("2024-02-29T00:30:00.000000Z"),
+            "a leap day"
+        );
+        assert_eq!(
+            utc("1969-12-31T23:59:59Z").as_deref(),
+            Some("1970-01-01T00:00:00.000000Z")
+        );
+        for bad in [
+            "2026-10-27",
+            "2026-10-27T13:58:20",
+            "2026-10-27T13:58:20.Z",
+            "2026-10-27T13:58:20.0000001Z",
+            "2026-10-27T13:58:20+2:00",
+            "2026-10-27T13:58:20+24:00",
+            "2026-13-27T13:58:20Z",
+            "2026-10-27 13:58:20Z",
+            "2026-10-27T13:58:20\u{e9}",
+        ] {
+            assert_eq!(utc(bad), None, "{bad}");
+        }
     }
 
     #[test]

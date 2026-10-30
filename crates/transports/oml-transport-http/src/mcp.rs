@@ -41,22 +41,22 @@ const ACCEPTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 
 /// The catalog tools whose ring endpoint exists in this slice.
-pub const SERVED_TOOLS: [&str; 5] = [
+pub const SERVED_TOOLS: [&str; 6] = [
     "oml_remember",
     "oml_learn",
     "oml_recall",
+    "oml_my_work",
     "oml_workarea_info",
     "oml_events_tail",
 ];
 
 /// Catalog tools whose ring endpoint is not built yet: named, not unknown.
 /// `oml_get` and `oml_supersede` joined the catalog with ADR-0025 d12.
-const UNBUILT_TOOLS: [&str; 7] = [
+const UNBUILT_TOOLS: [&str; 6] = [
     "oml_get",
     "oml_supersede",
     "oml_attach",
     "oml_relate_propose",
-    "oml_my_work",
     "oml_graph",
     "oml_vocab",
 ];
@@ -130,6 +130,16 @@ struct RecallArgs {
     query: String,
     scope: Option<String>,
     k: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MyWorkArgs {
+    workarea: Option<String>,
+    claim_key: Option<String>,
+    state: Option<String>,
+    limit: Option<u64>,
+    cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -254,6 +264,7 @@ where
             "oml_remember" => Self::tool_submit(st, token, "remember", args).await,
             "oml_learn" => Self::tool_submit(st, token, "learn", args).await,
             "oml_recall" => Self::tool_recall(st, token, args).await,
+            "oml_my_work" => Self::tool_my_work(st, token, args).await,
             "oml_workarea_info" => Self::tool_workarea_info(st, token, args).await,
             "oml_events_tail" => Self::tool_events_tail(st, token, args).await,
             _ if UNBUILT_TOOLS.contains(&name) => {
@@ -367,6 +378,56 @@ where
             })
             .unwrap_or_default();
         Ok(json!({ "steering": result["steering"], "hits": hits }))
+    }
+
+    /// `oml_my_work`: one `GET /v1/memories?own=true`, the own-work
+    /// listing. `workarea` is the ring's `workarea_id` subtree filter, and
+    /// `state`, `claim_key`, `limit` and the client-held `cursor` pass
+    /// through; each item is the claim item without `text`, plus
+    /// `held_expires_at` (mcp-plugin.md `oml_my_work`; ADR-0025 d12, d13).
+    async fn tool_my_work(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: MyWorkArgs = parse_args(args)?;
+        let mut params = vec![("own".to_owned(), "true".to_owned())];
+        for (name, value) in [
+            ("workarea_id", args.workarea),
+            ("claim_key", args.claim_key),
+            ("state", args.state),
+            ("limit", args.limit.map(|l| l.to_string())),
+            ("cursor", args.cursor),
+        ] {
+            if let Some(value) = value {
+                params.push((name.to_owned(), value));
+            }
+        }
+        let page = ring_outcome(Self::list_memories_inner(st, &params, &ring_headers(token)).await)
+            .await?;
+        let items: Vec<Value> = page["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|m| {
+                        json!({
+                            "artifact_id": m["artifact_id"],
+                            "claim_key": m["claim_key"],
+                            "version": m["version"],
+                            "kind": m["kind"],
+                            "state": m["state"],
+                            "tip": m["tip"],
+                            "retirement": m["retirement"],
+                            "replaces": m["replaces"],
+                            "workarea": m["workarea_id"],
+                            "workarea_path": m["workarea_path"],
+                            "tokens": m["tokens"],
+                            "created_at": m["created_at"],
+                            "promoted_at": m["promoted_at"],
+                            "held_expires_at": m["held_expires_at"],
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(json!({ "items": items, "next_cursor": page["next_cursor"] }))
     }
 
     /// `oml_workarea_info`: one `GET /v2/workareas/{id}`. An omitted

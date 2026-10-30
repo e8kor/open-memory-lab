@@ -149,6 +149,30 @@ impl EventTime {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Microseconds since the Unix epoch: the arithmetic an expiry check
+    /// needs, such as a listing cursor's `api.cursor_ttl` (http-api.md
+    /// pagination). The string stays the value signed and stored.
+    #[must_use]
+    pub fn unix_micros(&self) -> i64 {
+        let b = self.0.as_bytes();
+        let num = |from: usize, to: usize| {
+            b[from..to]
+                .iter()
+                .fold(0_i64, |acc, d| acc * 10 + i64::from(d - b'0'))
+        };
+        let (year, month, day) = (num(0, 4), num(5, 7), num(8, 10));
+        // Howard Hinnant's days_from_civil, exact over the proleptic
+        // Gregorian calendar.
+        let y = if month <= 2 { year - 1 } else { year };
+        let era = y.div_euclid(400);
+        let yoe = y - era * 400;
+        let doy = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        let days = era * 146_097 + doe - 719_468;
+        let secs = days * 86_400 + num(11, 13) * 3_600 + num(14, 16) * 60 + num(17, 19);
+        secs * 1_000_000 + num(20, 26)
+    }
 }
 
 impl std::fmt::Display for EventTime {

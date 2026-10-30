@@ -8,13 +8,21 @@ use oml_domain::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::cursor::CursorError;
 use crate::ports::StoreError;
+
+/// The tenant a provider-level key resolves under. Its row names no tenant
+/// (postgres-schema.md `api_keys.tenant_id` NULL), and no tenant holds the
+/// nil id, so every tenant-scoped read under it answers nothing and no
+/// grant or denial can name the key (ADR-0025 d13).
+pub const PROVIDER_TENANT: Uuid = Uuid::nil();
 
 /// A stored API key row: everything about a key is looked up by the value's
 /// hash; the value itself is never stored (roles-and-keys.md key format).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyRecord {
     pub key_id: Uuid,
+    /// The owning tenant; [`PROVIDER_TENANT`] for a provider-level key.
     pub tenant_id: Uuid,
     pub role: Role,
     pub principal: String,
@@ -362,6 +370,82 @@ pub struct RecallResult {
     pub hits: Vec<ServedMemory>,
 }
 
+/// Whose rows a listing reads: the store's own predicate, so no page
+/// reaches a row outside it (http-api.md search; ADR-0025 d13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListingScope {
+    /// The own-work listing: every row the key set authored, in every
+    /// state, except the rows on a `masked` node — the subtrees the key's
+    /// global per-key denials cover (roles-and-keys.md#own). The key set is
+    /// the calling key alone until rotation is built.
+    Own {
+        key_ids: Vec<Uuid>,
+        masked: Vec<Uuid>,
+    },
+    /// The scoped listing: the promoted served tips on exactly these nodes,
+    /// subtree(scope) ∩ reader effective access as the use-case computes
+    /// it; an empty set lists nothing (ADR-0025 d1, d13).
+    Tips { nodes: Vec<Uuid> },
+}
+
+/// A listing's predicates, re-applied on every page: a cursor carries a
+/// position only (http-api.md pagination; ADR-0025 d13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListingFilter {
+    pub scope: ListingScope,
+    /// Only rows on these nodes — the own-work listing's `workarea_id`
+    /// subtree; `None` narrows nothing.
+    pub subtree: Option<Vec<Uuid>>,
+    pub state: Option<MemoryStatus>,
+    pub kind: Option<MemoryKind>,
+    pub claim_key: Option<String>,
+    /// `created_at` at or after this instant.
+    pub since: Option<EventTime>,
+    /// `created_at` before this instant.
+    pub until: Option<EventTime>,
+}
+
+/// Where a listing page resumes: the `created_at` and id of the last row
+/// the previous page served, in the order `created_at` descending, then
+/// `artifact_id` descending (http-api.md search).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListingPosition {
+    pub created_at: EventTime,
+    pub artifact_id: Uuid,
+}
+
+/// `GET /v1/memories` as the use-case takes it (http-api.md search;
+/// ADR-0025 d13).
+#[derive(Debug, Clone)]
+pub struct ListRequest {
+    /// `own=true`: the own-work listing, which resolves no workarea, so it
+    /// reads no `scope` (the transport refuses an `X-OML-Workarea` sent
+    /// with it).
+    pub own: bool,
+    /// The scoped listing's scope node; `None` resolves to the key's
+    /// default workarea, and a key with neither is refused.
+    pub scope: Option<Uuid>,
+    /// The `workarea_id` subtree filter.
+    pub workarea_id: Option<Uuid>,
+    pub state: Option<MemoryStatus>,
+    pub kind: Option<MemoryKind>,
+    pub claim_key: Option<String>,
+    pub since: Option<EventTime>,
+    pub until: Option<EventTime>,
+    /// The page size, which the transport bounds by `api.page_limit_max`.
+    pub limit: usize,
+    /// The opaque cursor of the previous page.
+    pub cursor: Option<String>,
+}
+
+/// One listing page: summaries as the calling key is served them, and the
+/// cursor of the next page, `None` once the listing is exhausted.
+#[derive(Debug, Clone)]
+pub struct MemoryPage {
+    pub items: Vec<ServedMemory>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SupersedeRequest {
     pub target_id: Uuid,
@@ -451,6 +535,10 @@ pub enum AppError {
     IdempotencyDigestMismatch,
     #[error("stored idempotent response is unreadable: {0}")]
     StoredResponse(String),
+    /// A listing cursor this server will not resume from (http-api.md
+    /// pagination, request.validation).
+    #[error(transparent)]
+    Cursor(#[from] CursorError),
     #[error(transparent)]
     Verdict(#[from] VerdictError),
     #[error(transparent)]

@@ -4,7 +4,7 @@
 //! docs/api/errors.md, attached here at the edge and nowhere else
 //! (errors.md "Implementation mapping").
 //!
-//! The PoC slice: submit / get / recall / supersede on `/v1`; review next,
+//! The PoC slice: submit / list / get / recall / supersede on `/v1`; review next,
 //! verdicts, key issuance, global per-key denials, workarea creation, the
 //! workarea read, the events tail and the bootstrap claim on `/v2`;
 //! `/healthz` and `/readyz` unversioned and unauthenticated (http-api.md
@@ -17,7 +17,7 @@ pub mod error;
 pub mod mcp;
 pub mod time;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::{Body, Bytes};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
@@ -35,15 +36,17 @@ use uuid::Uuid;
 
 use oml_app::App;
 use oml_app::domain::budget::budget_tokens;
-use oml_app::domain::{HeldBy, MemoryKind, Role, SignedEnvelope, nfc, sha256_digest_string};
+use oml_app::domain::{
+    HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, nfc, sha256_digest_string,
+};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
-    AppError, BootstrapRequest, Crew, GrantRequest, IssueKeyRequest, IssuedKey, RecallRequest,
-    ServedMemory, SubmitRequest, SupersedeRequest, Verdict, WorkareaInfo,
+    AppError, BootstrapRequest, Crew, GrantRequest, IssueKeyRequest, IssuedKey, ListRequest,
+    RecallRequest, ServedMemory, SubmitRequest, SupersedeRequest, Verdict, WorkareaInfo,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
-use crate::time::{system_event_time, system_event_time_plus};
+use crate::time::{parse_date_time, system_event_time, system_event_time_plus};
 
 /// How many times a write retries after a chain-head conflict before giving
 /// up — the concurrent-submitter shape the oml-pg phase prescribed: re-read
@@ -115,7 +118,7 @@ where
         Router::new()
             .route("/healthz", get(healthz))
             .route("/readyz", get(Self::readyz))
-            .route("/v1/memories", post(Self::submit))
+            .route("/v1/memories", post(Self::submit).get(Self::list_memories))
             .route("/v1/memories/recall", post(Self::recall))
             .route("/v1/memories/{artifact_id}", get(Self::get_memory))
             .route(
@@ -244,6 +247,53 @@ where
                 .insert("idempotency-replay", HeaderValue::from_static("true"));
         }
         Ok(response)
+    }
+
+    async fn list_memories(
+        State(st): State<Self>,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        let result = match query {
+            Ok(Query(params)) => Self::list_memories_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v1/memories`: the own-work listing with `own=true`, else the
+    /// scoped listing, as memory summaries without bodies, newest first
+    /// (http-api.md search; ADR-0025 d13). The own-work listing resolves no
+    /// workarea, so an `X-OML-Workarea` sent with it is refused, not
+    /// ignored.
+    async fn list_memories_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let mut req = list_request(params)?;
+        req.scope = workarea_override(headers)?;
+        if req.own && req.scope.is_some() {
+            return Err(ApiError::validation(
+                "X-OML-Workarea is refused with own=true: the own-work listing resolves no workarea",
+            ));
+        }
+        let page = st
+            .app
+            .list_memories(&token, &req)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "items": page.items.iter().map(|m| memory_json(m, false)).collect::<Vec<_>>(),
+                "next_cursor": page.next_cursor,
+            }),
+        ))
     }
 
     async fn get_memory(
@@ -1103,6 +1153,90 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         // issued-without-value (D14).
         "value": issued.value,
     })
+}
+
+/// The listing's query parameters (openapi.yaml `searchMemories`): each
+/// at most once, and an unknown one refused rather than ignored, so a
+/// mistyped filter never widens a listing. The scope override is a header,
+/// read by the handler.
+fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
+    let mut req = ListRequest {
+        own: false,
+        scope: None,
+        workarea_id: None,
+        state: None,
+        kind: None,
+        claim_key: None,
+        since: None,
+        until: None,
+        limit: PAGE_LIMIT_DEFAULT,
+        cursor: None,
+    };
+    let mut seen = HashSet::new();
+    for (name, value) in params {
+        if !seen.insert(name.as_str()) {
+            return Err(ApiError::validation(format!(
+                "the query parameter {name} is given more than once"
+            )));
+        }
+        let date_time = || {
+            parse_date_time(value).ok_or_else(|| {
+                ApiError::validation(format!(
+                    "{name} must be an RFC 3339 date-time of at most microsecond precision"
+                ))
+            })
+        };
+        match name.as_str() {
+            "own" => {
+                req.own = match value.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(ApiError::validation("own must be true or false")),
+                };
+            }
+            "workarea_id" => {
+                req.workarea_id =
+                    Some(Uuid::parse_str(value).map_err(|_| {
+                        ApiError::validation("workarea_id must be a workarea node id")
+                    })?);
+            }
+            "claim_key" => req.claim_key = Some(value.clone()),
+            "state" => req.state = Some(parse_state(value)?),
+            "kind" => req.kind = Some(parse_kind(value)?),
+            "since" => req.since = Some(date_time()?),
+            "until" => req.until = Some(date_time()?),
+            "limit" => {
+                req.limit = value
+                    .parse()
+                    .ok()
+                    .filter(|l| (1..=PAGE_LIMIT_MAX).contains(l))
+                    .ok_or_else(|| {
+                        ApiError::validation(format!(
+                            "limit must be between 1 and {PAGE_LIMIT_MAX}"
+                        ))
+                    })?;
+            }
+            "cursor" => req.cursor = Some(value.clone()),
+            other => {
+                return Err(ApiError::validation(format!(
+                    "unknown query parameter {other:?}"
+                )));
+            }
+        }
+    }
+    Ok(req)
+}
+
+/// A listing's `state` filter (openapi.yaml `searchMemories`).
+fn parse_state(state: &str) -> Result<MemoryStatus, ApiError> {
+    match state {
+        "held" => Ok(MemoryStatus::Held),
+        "promoted" => Ok(MemoryStatus::Promoted),
+        "demoted" => Ok(MemoryStatus::Demoted),
+        "rejected" => Ok(MemoryStatus::Rejected),
+        "erased" => Ok(MemoryStatus::Erased),
+        other => Err(ApiError::validation(format!("unknown state {other:?}"))),
+    }
 }
 
 /// The submit body's kind, stored as sent (http-api.md submit; ADR-0025
