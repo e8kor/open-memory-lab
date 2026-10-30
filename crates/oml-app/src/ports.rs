@@ -14,7 +14,10 @@ use uuid::Uuid;
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope, key_fingerprint};
 
-use crate::types::{ClaimKeyState, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord};
+use crate::types::{
+    ClaimKeyState, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
+    WorkareaRecord,
+};
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
@@ -190,6 +193,20 @@ pub trait JournalStore: Send + Sync {
         readable: &[Uuid],
         query: &str,
         k: usize,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
+    /// One listing page (http-api.md search; ADR-0025 d13): the rows the
+    /// filter's scope admits — the own key set's rows in every state off the
+    /// masked nodes, or the promoted served tips on the given nodes — that
+    /// pass every other predicate, ordered `created_at` descending, then
+    /// `artifact_id` descending, strictly after `after` in that order, at
+    /// most `limit` of them.
+    fn list_memories(
+        &self,
+        tenant_id: Uuid,
+        filter: &ListingFilter,
+        after: Option<&ListingPosition>,
+        limit: usize,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// The greatest version of `claim_key` in the workarea in any state, and

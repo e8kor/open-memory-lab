@@ -77,6 +77,26 @@ fn at_is_fixed_width_six_fractional_digits_utc() {
     }
 }
 
+#[test]
+fn an_event_time_counts_microseconds_from_the_unix_epoch() {
+    let micros = |s: &str| EventTime::parse(s).expect("fixed width").unix_micros();
+    assert_eq!(micros("1970-01-01T00:00:00.000000Z"), 0);
+    assert_eq!(micros("1970-01-01T00:00:00.000001Z"), 1);
+    // 2026-10-30 is day 20 756 of the epoch, a leap day sits between.
+    assert_eq!(
+        micros("2026-10-30T00:00:00.000000Z"),
+        20_756 * 86_400 * 1_000_000
+    );
+    assert_eq!(
+        micros("2024-03-01T00:00:00.000000Z") - micros("2024-02-28T00:00:00.000000Z"),
+        2 * 86_400 * 1_000_000
+    );
+    assert_eq!(
+        micros("2026-10-29T14:03:17.250000Z") - micros("2026-10-29T13:03:17.000000Z"),
+        3_600 * 1_000_000 + 250_000
+    );
+}
+
 fn draft(event_type: &str) -> EventDraft {
     EventDraft {
         tenant_id: Uuid::from_u128(0xAA),

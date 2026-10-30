@@ -500,7 +500,7 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
         &writer,
         4,
         "tools/call",
-        json!({"name": "oml_my_work", "arguments": {}}),
+        json!({"name": "oml_graph", "arguments": {}}),
     )
     .await;
     assert_eq!(unbuilt["error"]["code"], -32602);
@@ -717,6 +717,134 @@ async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_
             "{refused}"
         );
     }
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_my_work_pages_with_a_client_held_cursor() {
+    let (router, db) = fresh_router().await;
+    let (writer, _, reader, crew) = crew(&router).await;
+    let mut written = Vec::new();
+    for n in 1..=3_u64 {
+        let held = call_tool(
+            &router,
+            &writer,
+            n,
+            "oml_remember",
+            json!({
+                "claim_key": format!("supplier-quote-am-774{n}"),
+                "text": format!("Supplier Accra Metals quoted 41{n} USD/t."),
+                "idempotency_key": format!("crew-procure/run-1/step-{n}"),
+            }),
+        )
+        .await;
+        assert_eq!(held["isError"], false, "{held}");
+        written.push(held["structuredContent"]["artifact_id"].clone());
+    }
+    written.reverse();
+
+    // The first page, newest first, and a cursor the client holds.
+    let first = call_tool(&router, &writer, 4, "oml_my_work", json!({"limit": 2})).await;
+    assert_eq!(first["isError"], false, "{first}");
+    let page = &first["structuredContent"];
+    let items = page["items"].as_array().expect("items");
+    assert_eq!(
+        items
+            .iter()
+            .map(|i| i["artifact_id"].clone())
+            .collect::<Vec<_>>(),
+        written[..2]
+    );
+    // Claim items without text, from the ring's memory summary (ADR-0025 d12).
+    let mut fields: Vec<&str> = items[0]
+        .as_object()
+        .expect("item")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        vec![
+            "artifact_id",
+            "claim_key",
+            "created_at",
+            "held_expires_at",
+            "kind",
+            "promoted_at",
+            "replaces",
+            "retirement",
+            "state",
+            "tip",
+            "tokens",
+            "version",
+            "workarea",
+            "workarea_path",
+        ]
+    );
+    assert_eq!(items[0]["state"], "held");
+    assert_eq!(items[0]["tip"], false);
+    assert_eq!(items[0]["workarea"], crew.to_string());
+    assert_eq!(items[0]["workarea_path"], "universe.metals-crew");
+    assert_eq!(items[0]["tokens"], 10);
+    let cursor = page["next_cursor"]
+        .as_str()
+        .expect("a next page")
+        .to_owned();
+
+    // The cursor resumes where the page ended; the last page holds none.
+    let second = call_tool(
+        &router,
+        &writer,
+        5,
+        "oml_my_work",
+        json!({"limit": 2, "cursor": cursor}),
+    )
+    .await;
+    assert_eq!(second["isError"], false, "{second}");
+    let items = second["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(
+        items
+            .iter()
+            .map(|i| i["artifact_id"].clone())
+            .collect::<Vec<_>>(),
+        written[2..]
+    );
+    assert_eq!(second["structuredContent"]["next_cursor"], Value::Null);
+
+    // The filters pass through to the ring.
+    let one = call_tool(
+        &router,
+        &writer,
+        6,
+        "oml_my_work",
+        json!({"workarea": crew, "state": "held", "claim_key": "supplier-quote-am-7742"}),
+    )
+    .await;
+    let items = one["structuredContent"]["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{one}");
+    assert_eq!(items[0]["claim_key"], "supplier-quote-am-7742");
+
+    // Own work is the calling key's alone, and its cursor answers no other.
+    let theirs = call_tool(&router, &reader, 7, "oml_my_work", json!({})).await;
+    assert_eq!(theirs["isError"], false, "{theirs}");
+    assert_eq!(theirs["structuredContent"]["items"], json!([]));
+    let foreign = call_tool(
+        &router,
+        &reader,
+        8,
+        "oml_my_work",
+        json!({"cursor": cursor}),
+    )
+    .await;
+    assert_eq!(foreign["isError"], true, "{foreign}");
+    assert_eq!(
+        foreign["structuredContent"]["error"]["code"],
+        "request.validation"
+    );
 
     drop_db(&db).await;
 }

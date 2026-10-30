@@ -20,7 +20,8 @@ use crate::ports::{
     ScanOutcome, Scanner, Signer, StoreError,
 };
 use crate::types::{
-    ClaimKeyState, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
+    ClaimKeyState, DenialRecord, GrantRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -377,6 +378,63 @@ impl JournalStore for MemStore {
             .take(k)
             .cloned()
             .collect())
+    }
+
+    async fn list_memories(
+        &self,
+        tenant_id: Uuid,
+        filter: &ListingFilter,
+        after: Option<&ListingPosition>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let in_scope = |m: &MemoryRecord| match &filter.scope {
+            ListingScope::Own { key_ids, masked } => {
+                key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
+            }
+            ListingScope::Tips { nodes } => {
+                m.status == MemoryStatus::Promoted && m.is_tip && nodes.contains(&m.workarea_id)
+            }
+        };
+        let position = |m: &MemoryRecord| (m.created_at.as_str().to_owned(), m.memory_id);
+        let mut rows: Vec<MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| in_scope(m))
+            .filter(|m| {
+                filter
+                    .subtree
+                    .as_ref()
+                    .is_none_or(|nodes| nodes.contains(&m.workarea_id))
+            })
+            .filter(|m| filter.state.is_none_or(|s| m.status == s))
+            .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
+            .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
+            .filter(|m| {
+                filter
+                    .since
+                    .as_ref()
+                    .is_none_or(|t| m.created_at.as_str() >= t.as_str())
+            })
+            .filter(|m| {
+                filter
+                    .until
+                    .as_ref()
+                    .is_none_or(|t| m.created_at.as_str() < t.as_str())
+            })
+            .filter(|m| {
+                after
+                    .is_none_or(|p| position(m) < (p.created_at.as_str().to_owned(), p.artifact_id))
+            })
+            .cloned()
+            .collect();
+        // The fixed-width timestamp orders as its string does; newest first.
+        rows.sort_by_key(|m| std::cmp::Reverse(position(m)));
+        rows.truncate(limit);
+        Ok(rows)
     }
 
     async fn claim_key_state(
