@@ -29,9 +29,8 @@ use uuid::Uuid;
 /// The committed test key seed — the hex of the doc PEM's last 32 bytes
 /// (docs/data/chain-format.md test vectors; oml-domain/tests/vectors.rs).
 pub const TEST_SEED: [u8; 32] = [
-    0x09, 0x87, 0x45, 0x94, 0xaf, 0xc9, 0x3c, 0x44, 0xaf, 0x9c, 0x48, 0x6d, 0x6d, 0xd4, 0x8b,
-    0x68, 0x51, 0x4b, 0x57, 0x36, 0xa7, 0xd6, 0x4c, 0xac, 0x72, 0xd9, 0x07, 0x2f, 0x98, 0xa6,
-    0x37, 0x1c,
+    0x09, 0x87, 0x45, 0x94, 0xaf, 0xc9, 0x3c, 0x44, 0xaf, 0x9c, 0x48, 0x6d, 0x6d, 0xd4, 0x8b, 0x68,
+    0x51, 0x4b, 0x57, 0x36, 0xa7, 0xd6, 0x4c, 0xac, 0x72, 0xd9, 0x07, 0x2f, 0x98, 0xa6, 0x37, 0x1c,
 ];
 
 #[must_use]
@@ -322,7 +321,10 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
         .expect("still there");
     assert_eq!(read.status, MemoryStatus::Promoted);
     assert_eq!(
-        store.memory(rig.tenant_id, Uuid::from_u128(0xFF)).await.expect("memory"),
+        store
+            .memory(rig.tenant_id, Uuid::from_u128(0xFF))
+            .await
+            .expect("memory"),
         None,
         "unknown ids are absent, not errors"
     );
@@ -373,7 +375,11 @@ pub async fn journal_recall_promoted_only<S: JournalStore>(store: &S) {
         .recall_fts(rig.tenant_id, Some(wa), "canary", 10)
         .await
         .expect("recall");
-    assert_eq!(hits.len(), 1, "promoted rows only — the held twin is invisible");
+    assert_eq!(
+        hits.len(),
+        1,
+        "promoted rows only — the held twin is invisible"
+    );
     assert_eq!(hits[0].memory_id, promoted_id);
     let other_wa = store
         .recall_fts(rig.tenant_id, Some(Uuid::from_u128(0xBF)), "canary", 10)
@@ -396,7 +402,10 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
     let m1 = Uuid::from_u128(0xC4);
     let m2 = Uuid::from_u128(0xC5);
     let author1_key = Uuid::from_u128(0xD2);
-    for (id, author, key) in [(m1, "alice", author1_key), (m2, "bob", Uuid::from_u128(0xD3))] {
+    for (id, author, key) in [
+        (m1, "alice", author1_key),
+        (m2, "bob", Uuid::from_u128(0xD3)),
+    ] {
         rig.commit(
             store,
             event_types::SUBMISSION_REMEMBER,
@@ -587,6 +596,9 @@ pub fn clock_and_idgen_contract<C: Clock, I: IdGen>(clock: &C, ids: &I) {
     let mut seen_secrets = std::collections::BTreeSet::new();
     for _ in 0..100 {
         assert!(seen_ids.insert(ids.new_id()), "ids never repeat");
-        assert!(seen_secrets.insert(ids.new_secret()), "secrets never repeat");
+        assert!(
+            seen_secrets.insert(ids.new_secret()),
+            "secrets never repeat"
+        );
     }
 }

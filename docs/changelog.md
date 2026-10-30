@@ -32,6 +32,21 @@ Reconstructed from the repository history; all dates 2026-10-29. The set was wri
 revised in one sustained effort, so the entries below group commits by what they decided
 rather than pretending a longer calendar.
 
+### 2026-10-30 — The agent plugin's first tools, CI and the release pipeline (implementation)
+
+An implementation milestone; no decision changes. The [agent plugin](api/mcp-plugin.md) is served
+at `/mcp` for four of its ten tools — `oml_remember`, `oml_learn`, `oml_recall`,
+`oml_events_tail` — as the stateless facade [ADR-0014](adr/ADR-0014-http-api-and-mcp-facade.md)
+decides, each tool running its ring endpoint's own handler. The pinned MCP revision is
+**2025-06-18**, checked against modelcontextprotocol.io (basic/transports, server/tools) on
+2026-10-30. The remaining six tools answer as not built. A PoC key carries one role, so the Claude
+Code plugin under `plugins/oml` connects twice, with a writer key and a reader key; the
+single-key shape waits on grants of several roles per key. The merge gates and release artifacts
+of [CI and toolchain](engineering/ci-and-toolchain.md) now run, except the MSRV build, the sqlx
+offline check, the container tests against MinIO, the scheduled `cargo audit` and the bench job.
+The docker profile's environment names were corrected to the ones
+[configuration](operations/configuration.md) declares.
+
 ### 2026-10-30 — Scan-veto journalling decided; a transition precondition added
 
 Two design points the Live Atlas review rounds forced into the open, now decided:

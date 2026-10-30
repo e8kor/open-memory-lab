@@ -37,15 +37,28 @@ pub enum MetadataFold {
     KeyIssued(KeyRecord),
     /// A captured submission: the row lands `held` (or `rejected` on a scan
     /// veto, with `enqueue: false` — nothing waits in the queue).
-    MemoryHeld { memory: MemoryRecord, enqueue: bool },
+    MemoryHeld {
+        memory: MemoryRecord,
+        enqueue: bool,
+    },
     /// A verdict that does not yet satisfy the policy's `k`: journalled,
     /// status unchanged.
-    VerdictRecorded { memory_id: Uuid, reviewer_key_id: Uuid },
-    MemoryPromoted { memory_id: Uuid },
-    MemoryRejected { memory_id: Uuid },
+    VerdictRecorded {
+        memory_id: Uuid,
+        reviewer_key_id: Uuid,
+    },
+    MemoryPromoted {
+        memory_id: Uuid,
+    },
+    MemoryRejected {
+        memory_id: Uuid,
+    },
     /// The old tip transitions to superseded; the successor enters held and
     /// is queued for review like any write.
-    MemorySuperseded { superseded: Uuid, successor: MemoryRecord },
+    MemorySuperseded {
+        superseded: Uuid,
+        successor: MemoryRecord,
+    },
 }
 
 /// The outbox row written in the same transaction as the event; the lake

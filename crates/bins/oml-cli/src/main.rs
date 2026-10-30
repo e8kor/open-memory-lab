@@ -4,6 +4,10 @@
 //! verification/doctor verdict), 2 local failure. `--json` emits exactly one
 //! JSON document on stdout — the server's typed response, unreshaped.
 
+// The argument doc comments are clap's --help text, where a placeholder such
+// as <role> must print as written rather than as markdown code.
+#![allow(rustdoc::invalid_html_tags)]
+
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};

@@ -13,8 +13,11 @@ This page decides the toolchain pins, the merge gates and the release machinery 
 pipeline exists. The reason it exists now is [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md):
 rejecting dynamic plugin loading moved the entire supply chain "inside `cargo build`", and a
 supply chain inside the build is only a security property if the build is pinned, audited and
-attested — which is this page's job to specify. Nothing here runs yet; the first pipeline is an
-M1 item on the [critical path](../product/critical-path.md).
+attested — which is this page's job to specify. The first pipeline is an M1 item on the
+[critical path](../product/critical-path.md). Since 2026-10-30 `.github/workflows/ci.yml` runs
+the format, lint, test, docs, cargo-deny and end-to-end gates, and `release.yml` ships the signed
+artifacts below. Not running yet: the MSRV build, the sqlx offline check, container tests against
+MinIO, the scheduled `cargo audit` and the bench job.
 
 ## Toolchain pins and MSRV
 

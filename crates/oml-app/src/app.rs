@@ -524,7 +524,12 @@ where
             .memory(key.tenant_id, memory_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        check_reviewer(key.role, &key.principal, key.key_id, &memory.lineage_closure())?;
+        check_reviewer(
+            key.role,
+            &key.principal,
+            key.key_id,
+            &memory.lineage_closure(),
+        )?;
 
         let (verdict_type, target_status) = match verdict {
             Verdict::Approve => (event_types::REVIEW_APPROVE, MemoryStatus::Promoted),

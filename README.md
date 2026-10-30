@@ -23,12 +23,50 @@ every unmeasured or unbuilt property as exactly that.
 
 ## Status
 
-This repository contains a design under review, plus a first proof-of-concept. **The design is
-the authority; the code implements its M1 slice** (the signed journal chain, the one-transaction
-commit point, submit → review → promote → recall over the standalone profile — see
-[Running the PoC](#running-the-poc)). Every capability beyond that slice is a design commitment
-with a tracked exit criterion, not a property of running software. If you are here to evaluate
-the design, start at the [review guide](docs/review-guide.md).
+This repository contains a design under review, plus a first working slice of it. **The design
+is the authority; the code implements its M1 slice** (the signed journal chain, the one-transaction
+commit point, submit → review → promote → recall over the standalone profile) and the first four
+tools of the agent plugin. You can run it today: see the [quickstart](#quickstart). Every
+capability beyond that slice is a design commitment with a tracked exit criterion, not a property
+of running software. If you are here to evaluate the design, start at the
+[review guide](docs/review-guide.md).
+
+## Quickstart
+
+Docker with the compose plugin, `curl` and `jq` are enough. From a checkout:
+
+```sh
+docker compose up -d          # Postgres and oml-server on 127.0.0.1:8080
+bash scripts/quickstart.sh    # claim the server, issue keys, check the agent plugin
+```
+
+The compose file uses the published image `ghcr.io/e8kor/open-memory-lab`. Use
+`docker compose up -d --build` to build it from the checkout instead. The quickstart claims the
+server's one-time enrollment token from its log and creates a workarea. It then issues three keys:
+a writer and a reader for your agent, and a dreamer key for the person who reviews. Finally it
+writes, approves and recalls one memory through the plugin's endpoint, and prints the lines to
+connect Claude Code:
+
+```sh
+export OML_URL=http://127.0.0.1:8080
+export OML_API_KEY=<writer key>
+export OML_RECALL_KEY=<reader key>
+claude plugin marketplace add e8kor/open-memory-lab
+claude plugin install oml@open-memory-lab
+```
+
+Each key is shown once, so store them when the quickstart prints them. Nothing the agent writes
+is recalled until someone approves it with the dreamer key:
+
+```sh
+docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <dreamer key> review next
+docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <dreamer key> \
+    review verdict --memory <artifact_id> --approve
+```
+
+The compose credentials are for a laptop, and the server listens on the loopback interface only.
+The plugin and its tools are described in [plugins/oml](plugins/oml/README.md). Releases, their
+signatures and SBOMs are on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
 
 ## Documentation
 
@@ -112,8 +150,9 @@ CLI verbs, exit codes and transcripts are specified in [docs/cli/reference.md](d
 [critical path](docs/product/critical-path.md): one standalone lead, one tenant
 (bootstrap-claimed), held-by-default admission with a deterministic marker scanner, the
 dreamer review ceremony with R2 enforced against the lineage closure, supersede, substring
-recall, and the signed per-tenant hash chain with an independent CLI verifier. **Not
-implemented yet:** attachments and the object lake, erasure ceremonies, the MCP/agent plugin
-surface, follower servers and read scaling, simulations, embedding-based retrieval, and the
-operator tier — see the [critical path](docs/product/critical-path.md) for the order in
-which they land.
+recall, the signed per-tenant hash chain with an independent CLI verifier, and four of the
+agent plugin's ten tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_events_tail`). **Not
+implemented yet:** the other six plugin tools, a key that holds more than one role, attachments
+and the object lake, erasure ceremonies, follower servers and read scaling, simulations,
+embedding-based retrieval, and the operator tier — see the
+[critical path](docs/product/critical-path.md) for the order in which they land.
