@@ -2,7 +2,7 @@
 id: architecture/audit-and-lineage
 tier: engineering
 status: design draft for review · decided, not built
-answers: what the journal records and never records; what an evidence export contains; how lineage is queried; what erasure does to every copy class; how versions are numbered, superseded and retired
+answers: what the journal records and never records; what an evidence export contains; how lineage is queried; what erasure does to every copy class; how versions are numbered, superseded and retired; which claim edges the lineage closure leaves out
 -->
 
 # Audit and lineage
@@ -87,7 +87,7 @@ carries its own stated limit:
 | Per-tenant chain verification | "Prove this record was not edited after the fact." | Recomputing the tenant's hash chain and verifying every signature against the deployment key; the result names the verified head (tenant, seq, hash). | Attests the deployment, not a unique process ([security](security.md)); proves integrity of the record, not truth of what agents wrote. |
 | Grants history | "Who could do what, where, and when — and who gave it to them?" | Journalled key issuance (with the issuer ceiling check), revocations, grants, per-grant denies, global key denials and permission epochs. Every effective-access computation is reproducible from these records alone ([workareas](workareas.md), [roles and keys](roles-and-keys.md)). | History of authority, not of intent; a key's holder is whoever the tenant gave it to. |
 | Read log, retention-scoped | "Who read this memory, and when?" | The read-event log, exported only within the tenant's retention window, with the journal-anchored batch digests that let the window's contents be verified. | Answers nothing outside the window, and says so in the bundle rather than exporting an unverifiable tail ([retrieval](retrieval.md)). |
-| Reciprocal-approval statistics | "Could the writer and the reviewer be the same interest?" | Per key-pair approval counts across the export window, surfacing pairs that predominantly ratify each other. | Makes collusion **visible, not impossible** — the independence axis ([roles and keys](roles-and-keys.md)) is checked at promotion; this section is the standing check on what slipped past it. |
+| Reciprocal-approval statistics | "Could the writer and the reviewer be the same interest?" | Per key-pair approval counts across the export window, surfacing pairs that predominantly ratify each other — claim-edge ratifications included, sliced by kind ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) d7), and classification ratifications and rejections as proposer↔decider pairs, sliced by edge label and [member profile](roles-and-keys.md#member-profiles), with each ontology crew's share of its members' classifications and vocabulary claims decided by keys of the same crew ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d12). | Makes collusion **visible, not impossible** — the independence axis ([roles and keys](roles-and-keys.md)) is checked at promotion; this section is the standing check on what slipped past it. |
 | Simulations, separated | "Is any of this synthetic?" | Simulation rows, excluded from the main sections by default and listed separately per `simulation_id` when included; the tainted closure is listed in the simulations section of **every** export, even one that excludes simulation content ([simulations](simulations.md)). The simulations section appears in every export, even one that includes nothing, so absence is asserted rather than assumed. | Fencing is as good as declared derivation (§ above). |
 
 The bundle is itself signed, so a recipient can verify it was produced by the deployment it
@@ -111,7 +111,10 @@ edit-as-proposal is a new attributed submission whose `derives_from` names the v
 a connection proposal is an explicit claim↔claim edge, pending until ratified by an identity
 that proposed neither endpoint. The **lineage closure** of a row — the transitive closure over
 `derives_from` and claim edges, **pending and ratified alike** — is computed at promotion time
-and is load-bearing twice:
+and is load-bearing twice. One label is not derivation and stays out of it: an `oml:about` edge,
+a [classification](ontologies.md#classification-ontology-crews-attach-terms-to-memories), says
+what a memory is about, not what it was built from, so it enters neither the closure nor taint
+([ADR-0027](../adr/ADR-0027-ontology-crews.md) d9). The closure is load-bearing for:
 
 - **Reviewer independence.** A verdict is refused when the reviewing key or principal appears
   anywhere in the closure, not merely as the row's direct author. Pending edges count, so a
@@ -345,3 +348,6 @@ and a chain that still verifies.
   supersession; the self-signed tip rule; the `claim_key` release after a never-promoted rejection
   and the reopen that would collide with it; the `held_fts` table, `tsvector` entries in the
   inventory.
+- [ADR-0027](../adr/ADR-0027-ontology-crews.md) (proposed) — `oml:about` edges outside the
+  lineage closure and taint; the classification pairs and in-crew share in the reciprocal-approval
+  statistics.

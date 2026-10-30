@@ -2,7 +2,7 @@
 id: api/mcp-plugin
 tier: engineering
 status: design draft for review · decided, not built
-answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape; how a tool's workarea argument takes an id or a name
+answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape; how a tool's workarea argument takes an id or a name; how an ontology crew's classifier proposes a classification on this surface
 -->
 
 # The agent plugin: MCP over streamable HTTP
@@ -831,10 +831,28 @@ A claim edge uses `kind: "claim"` with artifact ids as endpoints; claim-edge
 proposals are part of the admission pipeline and enter the lineage closure
 computed at promotion time, pending and ratified alike
 ([audit and lineage](../architecture/audit-and-lineage.md)). The claim-edge
-label vocabulary is not fixed by the design — an open detail tracked in the
-[roadmap](../product/roadmap.md) ([http-api.md](http-api.md)); the proposal
-event's payload shape is owned by the
-[event catalog](../data/event-catalog.md).
+label vocabulary is not fixed by the design beyond the `oml:` labels — an open
+detail tracked in the [roadmap](../product/roadmap.md)
+([http-api.md](http-api.md)); the proposal event's payload shape is owned by
+the [event catalog](../data/event-catalog.md).
+
+**A classification** is the claim edge an ontology crew's classifier proposes
+here: `label: "oml:about"`, `from` a promoted memory or derived fact outside
+every vocabulary, `to` the term's `artifact_id` as [`oml_vocab`](#oml_vocab)
+`get` returns it. It stays out of the lineage closure, never changes the
+memory, and is decided by a curator on the HTTP API; its rules are declared
+on [ontologies](../architecture/ontologies.md#classification-ontology-crews-attach-terms-to-memories)
+and its worked flow is the [ontology crews](ontology-crews.md) page:
+
+```json
+{
+  "kind": "claim",
+  "label": "oml:about",
+  "from": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
+  "to": "art_01JB2Q3S5U7W9Y1A3C5E7G9J2L",
+  "note": "the quote is for aluminium delivery"
+}
+```
 
 **Output**
 
@@ -851,7 +869,12 @@ event's payload shape is owned by the
 
 **Refusals** — missing propose access on every endpoint; an endpoint outside
 read scope (fail closed, indistinguishable from nonexistent); a label outside
-the closed set for workarea edges. Example:
+the closed set for workarea edges; a label the key's
+[narrowed](../architecture/roles-and-keys.md#narrowed-dreamer-grants-edge_labels)
+dreamer grants do not list (`access.grant_refused`, naming the labels they
+do); for a classification, a term already deprecated (`vocab.inactive_curie`,
+with its successors) and a memory version already classified with that term,
+or citing it (`vocab.classification_exists`). Example:
 
 ```json
 {
@@ -1006,6 +1029,7 @@ same one call; a key with no default is refused with
     }
   ],
   "my_effective_verbs": ["recall", "read", "graph_read", "events_tail", "remember", "learn", "attach", "supersede"],
+  "my_edge_labels": null,
   "permission_epoch": 815
 }
 ```
@@ -1023,7 +1047,10 @@ answer — the union, over the grant roles effective on the node, of the
 reproducible from journalled grants at the stated permission epoch
 ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
 It states the access conferred, not what this server build serves;
-`tools/list` states that. Children are ordered by `path_leaf` ascending in
+`tools/list` states that. `my_edge_labels` lists the labels a
+[narrowed](../architecture/roles-and-keys.md#narrowed-dreamer-grants-edge_labels)
+dreamer is limited to on the node — `["oml:about"]` for a classifier on its
+vocabulary — and is null where dreamer is unnarrowed or absent. Children are ordered by `path_leaf` ascending in
 byte order, then `id`; edges, in either direction, by `edge_id` ascending,
 and an edge's `edge_id` is the one [`oml_events_tail`](#oml_events_tail)
 reports. Children and edges outside the key's read scope are absent, not
@@ -1214,12 +1241,14 @@ workarea(s) involved. Vocabularies outside scope are absent, fail closed.
 ```
 
 **Output** — `get` returns `term_status` and the ratified successor pointers,
-so an agent whose citation is stale self-heals in one hop:
+so an agent whose citation is stale self-heals in one hop, and the served
+tip's `artifact_id`, which a classification names as its target:
 
 ```json
 {
   "curie": "proc:supplier-quote",
   "workarea_id": "408324c0-55dd-4eb7-b39f-2d7f7147dc66",
+  "artifact_id": "art_01JB2Q8W2Y4A6C8E1G3J5L7N9Q",
   "version": 4,
   "term_status": "deprecated",
   "definition_state": "present",
@@ -1298,7 +1327,10 @@ Operational notes:
   one `oml` entry above. A recall-only agent gets a reader key; a proposing
   agent, dreamer(propose). A reviewing crew member does not use this plugin
   for its verdicts — verdicts live on the [HTTP API](http-api.md) behind the
-  serve ceremony.
+  serve ceremony. An ontology crew's members get their keys from `oml crews
+  add-member`, and the tools each member profile uses are listed on the
+  [ontology crews](ontology-crews.md#what-each-member-profile-calls) page; no
+  profile adds a tool to this catalog.
 - **Retry with intent.** Put a stable `idempotency_key` on every
   `oml_remember`/`oml_learn` your harness might retry; retries then cost
   nothing and duplicate nothing.
@@ -1321,4 +1353,8 @@ own-work and workarea reads, and the events-tail visibility rule are
 the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
 which would amend ADR-0014 d2. Workarea arguments that take a name as well as
 an id, and the named crew record the workarea read serves, are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s.
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s. The classification a
+classifier proposes through `oml_relate_propose`, the term's `artifact_id` on
+`oml_vocab get` and `my_edge_labels` on the workarea read are the proposed
+[ADR-0027](../adr/ADR-0027-ontology-crews.md)'s, which leaves the catalog at
+twelve tools.

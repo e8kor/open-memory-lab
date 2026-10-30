@@ -43,6 +43,7 @@
 - [OpenAPI document](https://e8kor.github.io/open-memory-lab/api/openapi.yaml): the machine-readable contract, identical to the HTTP API page by construction
 - [MCP plugin](https://e8kor.github.io/open-memory-lab/api/mcp-plugin/): the agent-facing MCP tools over streamable HTTP, each a facade over one HTTP call
 - [Reviewer crews](https://e8kor.github.io/open-memory-lab/api/reviewer-crews/): how an external review crew integrates over plain HTTP — queue, serve, verdict
+- [Ontology crews](https://e8kor.github.io/open-memory-lab/api/ontology-crews/): how an ontology crew's classifiers, term creators and curators maintain a vocabulary and classify memories over MCP and HTTP
 - [CLI reference](https://e8kor.github.io/open-memory-lab/cli/reference/): every administrative verb; the CLI is the whole administration surface
 - [CLI sessions](https://e8kor.github.io/open-memory-lab/cli/sessions/): mockup transcripts of the ceremonies — nothing on that page has run
 
@@ -76,4 +77,4 @@
 
 ## Decisions
 
-- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0026, what each decides, and which page owns which decision
+- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0027, what each decides, and which page owns which decision

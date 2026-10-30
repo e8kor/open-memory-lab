@@ -29,6 +29,65 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-30 — ontology crews (ADR-0027)
+
+[ADR-0027](adr/ADR-0027-ontology-crews.md) (proposed) adds the ontology crew, a crew kind whose
+members maintain vocabularies and classify memories other agents wrote. It proposes amending
+ADR-0008 (d4), ADR-0010 (d5), ADR-0012 (d3, d4), ADR-0018 (d4), ADR-0021 (d7, d9, d11),
+ADR-0025 (d1, d2) and ADR-0026 (d5, d8); each of those records' Status lines gains the
+back-pointer when ADR-0027 is accepted.
+
+- **Decided:** a crew `kind`, `general` or `ontology`, fixed at creation, with every earlier crew
+  `general`; a vocabulary workarea names an ontology crew; three member profiles over the existing
+  roles — `classifier` (dreamer, its dreamer grants narrowed to `oml:about` and on vocabularies
+  only), `term_creator` (writer on vocabularies only) and `curator` (dreamer on vocabularies, and
+  narrowed to `oml:about` on content) — journalled on `key.issued` and enforced at issuance and at
+  every grant amendment with `access.profile_mismatch`; the `edge_labels` grant attribute, which
+  narrows a dreamer grant to claim edges with listed `oml:` labels, attenuates only its own grant
+  before the union, and answers `access.grant_refused` naming its labels for anything else; a
+  classification as a claim edge labelled `oml:about` from a promoted memory version to an active
+  term, proposed under dreamer(propose) on one endpoint and reader on both, decided by one ratify
+  act under dreamer(review) and reader on both, binding the memory version and the term's CURIE
+  and never touching the memory; `oml:about` in the `oml:` upper vocabulary, any number of
+  distinct terms per version and one live classification per version and CURIE
+  (`vocab.classification_exists`); rejection of a pending or ratified classification, journalled
+  as `claim_edge.rejected`, the edge kept; `oml:about` edges outside the lineage closure and
+  taint; retirement while the term is deprecated, read from the term and never written, with
+  self-heal by a new reviewed classification to the successor; recall's `terms` filter matching a
+  hit's own citations and its ratified, unretired classifications; the vocabulary's review policy
+  and its crew or manager axis governing a classification, so a same-crew curator ratifies under
+  the shipped default and not where the policy requires crew inequality, with classifications
+  AI-only and the reciprocal-approval statistics sliced by label and profile; no new MCP tool;
+  `oml crews create --kind` and `oml crews add-member`, which always writes the key value to its
+  `--out` file; and three vocabulary rows — classification, classifier, member profile.
+- **Surface:** `access.profile_mismatch` (403) and `vocab.classification_exists` (409) on
+  errors.md, the OpenAPI `ErrorCode` enum and http-api.md together; `POST
+  /v2/claim-edges/{edge_id}/reject` and the `label`, `state` and `term` filters on `GET
+  /v2/claim-edges`; `kind` on crews, `profile` on keys, `edge_labels` on grants, `term_curie`,
+  `retired` and the `rejected` state on claim edges, `my_edge_labels` on the workarea read and
+  `artifact_id` on the term read; `kind` on `crew.created`, `profile` on `key.issued`,
+  `edge_labels` on `grant.issued`, `term_curie` on `claim_edge.proposed`, `policy_workarea_id` on
+  `review.ratify`, and the new `claim_edge.rejected`; the `crews.kind`, `api_keys.profile`,
+  `grants.edge_labels` and `claim_edges` columns with the one-live-classification and recall
+  indexes. `mcp-tools.json` is unchanged: no tool is added and no input schema changes.
+- **`info.version` stays `0.2.0-design`.** The one `/v1` change is the meaning of recall's
+  `terms` filter, which no build serves yet, and it lands in the same unreleased revision as
+  ADR-0025 and ADR-0026, whose bump covers it.
+- **Pages touched:** [ADR-0027](adr/ADR-0027-ontology-crews.md), the
+  [decision register](adr/index.md) (row and the D7, D9, D11, D12, D13 and D14 cells),
+  [ontologies](architecture/ontologies.md), [roles and keys](architecture/roles-and-keys.md),
+  [workareas](architecture/workareas.md), [retrieval](architecture/retrieval.md),
+  [admission](architecture/admission.md), [audit and lineage](architecture/audit-and-lineage.md),
+  [concepts](concepts.md), [HTTP API](api/http-api.md), [OpenAPI](api/openapi.yaml),
+  [errors](api/errors.md), [agent plugin](api/mcp-plugin.md),
+  [reviewer crews](api/reviewer-crews.md), the new [ontology crews](api/ontology-crews.md) page,
+  [PostgreSQL schema](data/postgres-schema.md), [event catalog](data/event-catalog.md),
+  [CLI reference](cli/reference.md), [llms.txt](llms.txt), this changelog, `mkdocs.yml` and
+  `CONTRIBUTING.md` (the vocabulary rows).
+- **Roadmap:** no row opens or closes. The recall lookup of classifications is unmeasured and
+  tracked against FR-20 and FR-25, and the curators' classification throughput against FR-2;
+  RS-10's register gains `oml:about` when it is written.
+
 ### 2026-10-30 — names as keys (ADR-0026)
 
 [ADR-0026](adr/ADR-0026-names-are-keys.md) (proposed) gives workareas, crews, keys and tenants a

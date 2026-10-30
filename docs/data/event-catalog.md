@@ -2,7 +2,7 @@
 id: data/event-catalog
 tier: engineering
 status: design draft for review · decided, not built
-answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events; which events record a name, and how rows that predate names are named
+answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events; which events record a name, and how rows that predate names are named; which events record a crew's kind, a key's member profile, a grant's edge_labels and a classification's proposal, ratification and rejection
 -->
 
 # Journal event catalog
@@ -202,6 +202,7 @@ non-author reopen revives it.
   "edge_id": null,
   "verdict_event_ids": ["…"],
   "ratifier_key_id": "…",
+  "policy_workarea_id": null,
   "policy_snapshot": {"k": 1, "required_roles": ["dreamer"],
                       "independence_axis": "principal", "human_required": false},
   "lineage_closure_digest": "sha256:…"
@@ -210,7 +211,10 @@ non-author reopen revives it.
 
 The act that finds the review policy satisfied — for a claim or a proposed claim edge
 (`subject_kind: "claim_edge"` with `edge_id` set) — after checking R2 against the author and the
-full lineage closure at this moment, with the policy snapshot journalled.
+full lineage closure at this moment, with the policy snapshot journalled. For a claim edge,
+`policy_workarea_id` names the workarea whose policy the snapshot is — for a classification, the
+term's vocabulary workarea ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d12); it is null for a
+claim, whose policy is its own workarea's.
 
 ### review.reopen
 
@@ -236,13 +240,35 @@ Claim↔claim connection proposals enter the admission pipeline; ratification is
 {
   "edge_id": "…", "src_artifact_id": "…", "dst_artifact_id": "…",
   "label": "…",
+  "term_curie": null,
   "proposer_key_id": "…"
 }
 ```
 
 A dreamer(propose) key proposes a labelled claim↔claim edge; the proposal is pending, confers
 nothing, and enters the lineage closure computed at promotion time. The label vocabulary is not
-fixed by the design — an open detail in the [roadmap](../product/roadmap.md).
+fixed by the design beyond the `oml:` labels — an open detail in the
+[roadmap](../product/roadmap.md). An edge labelled `oml:about` is a
+[classification](../architecture/ontologies.md#classification-ontology-crews-attach-terms-to-memories):
+`term_curie` is the CURIE of its target term, null for every other label, and it enters neither
+the lineage closure nor taint ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d6, d9).
+
+### claim_edge.rejected
+
+```json
+{
+  "edge_id": "…", "src_artifact_id": "…", "dst_artifact_id": "…",
+  "prior_state": "pending",
+  "rejected_by_key_id": "…",
+  "reason_digest": "sha256:…"
+}
+```
+
+A curator rejects a classification, pending (`prior_state: "pending"`) or ratified
+(`"ratified"`): the edge stays, with state `rejected`, confers nothing, matches no recall, and its
+pair may be proposed again as a new edge. Only an `oml:about` edge is rejected
+([ADR-0027](../adr/ADR-0027-ontology-crews.md) d8). `src_artifact_id` and `dst_artifact_id`
+repeat the endpoints, so the fold needs no earlier event to read them.
 
 ## Lifecycle family
 
@@ -483,12 +509,15 @@ the events tail ([HTTP API](../api/http-api.md#events-tail)).
 ```json
 {
   "crew_id": "…", "name": "redline",
+  "kind": "general",
   "charter_uri": "…", "external_manager": "…",
   "created_by_key_id": "…"
 }
 ```
 
-An admin creates a crew record; `name` is unique in the tenant and never changes.
+An admin creates a crew record; `name` is unique in the tenant and never changes, and so does
+`kind`, `general` or `ontology` ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d1). An event
+without `kind`, written before ADR-0027, reads `general`.
 
 ### crew.updated
 
@@ -543,13 +572,17 @@ genesis byte rule).
   "held_by": "agent",
   "default_workarea_id": "…",
   "name": "procure-agent-7",
-  "crew_id": null
+  "crew_id": null,
+  "profile": null
 }
 ```
 
 `name` is the key's [name](../architecture/roles-and-keys.md#key-names-principals-and-labels),
 unique in its namespace and never released; `crew_id` is the crew record it named at issuance, or
-null, fixed for the key's life. A key issued without its value (show-once ceremony; the journal never learns the secret), under the
+null, fixed for the key's life; `profile` is the key's
+[member profile](../architecture/roles-and-keys.md#member-profiles) — `classifier`,
+`term_creator` or `curator` — present exactly when `crew_id` names a crew of kind `ontology`,
+null otherwise, and fixed for the key's life ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d3). A key issued without its value (show-once ceremony; the journal never learns the secret), under the
 issuer ceiling: role no higher than the issuer's. `held_by` is the issuing admin's journalled
 attestation that the key is held by a human, an agent, or a service process — the server verifies
 the attestation, never the humanness ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md));
@@ -578,7 +611,8 @@ over the fixed reason `issuance_incomplete`
 ```
 
 `new_name` is the successor's own name: both keys are live through the grace window, so the
-successor never takes the old key's, and it carries the old key's `crew_id`.
+successor never takes the old key's, and it carries the old key's `crew_id` and `profile`, with
+each reproduced grant's `edge_labels`.
 
 One journalled act carries both key ids and the grace deadline: the successor is minted with a new
 key id, linked to the old by `rotated_from`, its grants reproduced from the journalled grant
@@ -595,11 +629,14 @@ permission epoch ([workareas](../architecture/workareas.md#grants-bind-to-node-i
   "grant_id": "…", "key_id": "…",
   "workarea_node_id": "…", "role": "reader",
   "deny": [{"subtree_node_id": "…"}],
+  "edge_labels": null,
   "epoch": 17
 }
 ```
 
-Binds a key to a workarea node id (never a path) with per-grant deny masks; `epoch` is this
+Binds a key to a workarea node id (never a path) with per-grant deny masks and, on a dreamer
+grant, the `edge_labels` that narrow it, null when absent
+([narrowed dreamer grants](../architecture/roles-and-keys.md#narrowed-dreamer-grants-edge_labels)); `epoch` is this
 event's own journal seq, which makes every historical effective-access computation reproducible
 ([workareas](../architecture/workareas.md)).
 
@@ -919,7 +956,7 @@ version that adds names, before it serves a request, in each chain that has anyt
 each tenant's chain for its workareas, crews and keys, and the provider chain for tenant and
 operator-key names. `prior_name` is the name the row's creation event carried, or null. `crews`
 lists the crew records made from the crew objects that workarea events carried, and the
-workareas that name each. The rule it applies is declared on the
+workareas that name each; each is of kind `general`. The rule it applies is declared on the
 [HTTP API](../api/http-api.md#rows-created-before-names); every earlier event stays as it was
 signed.
 
@@ -943,7 +980,11 @@ from the journalled rule-set pin, and letting hostile input write into the signe
 an attacker the chain's growth. Whether refused submissions should leave a durable trace outside
 the chain (a scan-refusal log shaped like the read log) is RS-16 on the
 [roadmap](../product/roadmap.md). Upload-session part arrivals are operational state in `upload_sessions`; only the
-completed attachment binding (`submission.attach`) is journalled. Where an event's exact payload
+completed attachment binding (`submission.attach`) is journalled. A **classification's
+retirement is not an event**: a ratified `oml:about` edge is retired while its term's served tip
+is deprecated, a reading of the term's `term_status`, so the deprecation's ratification is the one
+journalled act and no event is written for the classifications it retires
+([ADR-0027](../adr/ADR-0027-ontology-crews.md) d10). Where an event's exact payload
 fields are still open (for example the independence-axis fields a `policy_snapshot` must carry for
 crew-level independence), the owning page says so and the gap is tracked in the
 [roadmap](../product/roadmap.md).

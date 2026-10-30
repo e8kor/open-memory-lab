@@ -14,8 +14,9 @@ every concept below is decided on an owning page or ADR, and this page links it 
 restating it. Where a sentence here and an owning page disagree, the owning page wins. The
 fixed term-by-term table that binds every engineering page is
 [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed
-[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 and the proposed
-[ADR-0026](adr/ADR-0026-names-are-keys.md) d1 add; the end of this page maps each concept to where
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11, the proposed
+[ADR-0026](adr/ADR-0026-names-are-keys.md) d1 and the proposed
+[ADR-0027](adr/ADR-0027-ontology-crews.md) d15 add; the end of this page maps each concept to where
 it is decided.
 
 ## Tenant
@@ -132,6 +133,16 @@ can be checked against something stable; whether a workarea's writes must cite v
 per-workarea policy that defaults off. The whole capability is additive: a tenant that never
 registers a vocabulary runs a plain memory provider
 ([ontologies](architecture/ontologies.md) owns the mechanism end to end).
+
+A vocabulary is kept by an **ontology crew**, a crew of kind `ontology` whose members' keys each
+carry a **member profile** — a fixed grant shape over one of the five roles, never a sixth role. A
+**term creator** (a writer on vocabularies only) proposes terms; a **classifier** (a dreamer that
+can only propose) attaches terms to memories other agents wrote; a **curator** (a dreamer that
+reviews) decides both. Attaching a term is a **classification**: a reviewed `oml:about` edge from
+a memory to a term that never changes the memory, and that recall's term filter matches beside the
+author's own citations. "Mapping" means only the term-to-term kind
+([ontologies](architecture/ontologies.md#classification-ontology-crews-attach-terms-to-memories),
+[roles and keys](architecture/roles-and-keys.md#member-profiles)).
 
 ## Roles and keys
 
@@ -284,6 +295,7 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | Names | [api/http-api.md](api/http-api.md#names-and-ids) | [ADR-0026](adr/ADR-0026-names-are-keys.md) |
 | The status ladder | [architecture/workareas.md](architecture/workareas.md) | [ADR-0009](adr/ADR-0009-status-ladder.md) |
 | Vocabularies, terms, releases | [architecture/ontologies.md](architecture/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |
+| Ontology crews, member profiles, classification | [architecture/ontologies.md](architecture/ontologies.md), [architecture/roles-and-keys.md](architecture/roles-and-keys.md) | [ADR-0027](adr/ADR-0027-ontology-crews.md) |
 | Roles, the dreamer split, key lifecycle | [architecture/roles-and-keys.md](architecture/roles-and-keys.md) | [ADR-0010](adr/ADR-0010-roles-and-keys.md) |
 | The admission pipeline and review policies | [architecture/admission.md](architecture/admission.md) | [ADR-0012](adr/ADR-0012-admission-and-review.md) |
 | Attachments | [architecture/storage.md](architecture/storage.md) | [ADR-0004](adr/ADR-0004-bodies-and-attachments.md) |
@@ -296,4 +308,4 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | The overlay tip | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
 | The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](architecture/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
 | The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
-| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 and the proposed [ADR-0026](adr/ADR-0026-names-are-keys.md) d1 add |
+| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11, the proposed [ADR-0026](adr/ADR-0026-names-are-keys.md) d1 and the proposed [ADR-0027](adr/ADR-0027-ontology-crews.md) d15 add |

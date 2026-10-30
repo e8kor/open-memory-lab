@@ -83,6 +83,7 @@ nav:
       - MCP plugin: api/mcp-plugin.md
       - Errors: api/errors.md
       - Reviewer crews: api/reviewer-crews.md
+      - Ontology crews: api/ontology-crews.md
   - CLI:
       - Reference: cli/reference.md
       - Sessions: cli/sessions.md
@@ -130,3 +131,4 @@ nav:
       - ADR-0024: adr/ADR-0024-performance-foundation.md
       - ADR-0025: adr/ADR-0025-the-agent-only-memory-surface.md
       - ADR-0026: adr/ADR-0026-names-are-keys.md
+      - ADR-0027: adr/ADR-0027-ontology-crews.md

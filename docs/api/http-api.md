@@ -2,7 +2,7 @@
 id: api/http-api
 tier: engineering
 status: design draft for review · decided, not built
-answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab routes, authentication, idempotency records, the pagination convention, and the verb ceiling per endpoint; which events a key sees on the events tail; which records carry a name, what a name may spell, and how a name is accepted and resolved wherever an id is
+answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab routes, authentication, idempotency records, the pagination convention, and the verb ceiling per endpoint; which events a key sees on the events tail; which records carry a name, what a name may spell, and how a name is accepted and resolved wherever an id is; how a classification is proposed, ratified and rejected, and what a member-profile key's issuance carries
 -->
 
 # HTTP API
@@ -368,6 +368,7 @@ join this table:
 | `GET /v2/claim-edges` | reader |
 | `POST /v2/claim-edges` | dreamer(propose) |
 | `POST /v2/claim-edges/{edge_id}/ratify` | dreamer(review); never the proposer (R2) |
+| `POST /v2/claim-edges/{edge_id}/reject` | dreamer(review) for `oml:about`, and reader, on both endpoints; never the proposer (R2); `oml:about` edges only |
 | `GET /v2/workareas` · `GET /v2/workareas/{id}` · `/tree` · `/edges` · `/status` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) |
 | `POST /v2/workareas` | admin (key role) |
 | `POST /v2/workareas/{id}/reparent` | admin (key role) |
@@ -390,7 +391,7 @@ join this table:
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints,
-claim-edge ratify and workarea-edge ratify — and status-transition ratify, with
+claim-edge ratify and reject, and workarea-edge ratify — and status-transition ratify, with
 `access.verb_ceiling` before any lookup, whatever its grants
 ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 
@@ -498,8 +499,11 @@ array: an absent filter narrows nothing, and a sent one names at least one value
 vocabulary fields complete it; a server that does not yet serve them refuses them by name, never
 ignores them:
 
-- `terms` — CURIEs; filters to rows whose `terms` annotation cites any of them. A CURIE the key
-  cannot read matches nothing (fail closed, as `derives_from` does).
+- `terms` — CURIEs; filters to hits whose own `terms` annotation cites any of them, or whose
+  version has a ratified, unretired [classification](../architecture/ontologies.md#classification-ontology-crews-attach-terms-to-memories)
+  naming one — the matching rule is declared on
+  [retrieval.md](../architecture/retrieval.md#the-serving-tier). A CURIE the key cannot read
+  matches nothing (fail closed, as `derives_from` does).
 - `expand_terms` ∈ `none` (default) | `descendants` — widens the `terms` filter before retrieval:
   each CURIE expands to its `is_a` descendants, resolved **per CURIE against the release pinned by
   the vocabulary that owns the expanded prefix** (a per-release closure lookup,
@@ -682,13 +686,13 @@ tenant without grants and never claim content
 | Endpoint | Returns / does |
 |---|---|
 | `GET /v2/workareas?path=<ltree>` | Resolve a node by derived path. Grants bind to node ids, never paths, and no reference field accepts a path ([names](#names-and-ids)); this is the lookup that bridges the two. |
-| `GET /v2/workareas/{id}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. |
+| `GET /v2/workareas/{id}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, kind, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)), `my_edge_labels` (the labels a [narrowed](../architecture/roles-and-keys.md#narrowed-dreamer-grants-edge_labels) dreamer is limited to on the node, or null) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. |
 | `GET /v2/workareas/{id}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
 | `GET /v2/workareas/{id}/edges` | Labelled `related` edges touching the node, `pending` and `ratified`, with proposer and ratifier. Edges confer zero access. |
 | `GET /v2/workareas/{id}/status` | Status, the review policy object in force, pending transitions. |
-| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}` — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). Refused under a `validated` parent (`workarea.frozen`). |
+| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}` — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` naming a crew of kind `ontology` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md), [ADR-0027](../adr/ADR-0027-ontology-crews.md) d2), else `request.validation`. Refused under a `validated` parent (`workarea.frozen`). |
 | `POST /v2/workareas/{id}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
-| `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`). Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
+| `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); on a vocabulary workarea the crew must be of kind `ontology`, else `request.validation`. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
 | `POST /v2/workareas/{id}/edges` | Propose an edge `{to_workarea_id, label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`. Requires dreamer(propose) effective access on at least one endpoint and reader effective access on both (an admin who must act here holds a separate dreamer key — a key never combines admin with dreamer grants, `access.role_exclusive`). → `202`, pending. |
 | `POST /v2/workarea-edges/{edge_id}/ratify` | Ratify under dreamer(review) effective access on **both** endpoints; the proposer is refused (`review.ratifier_is_proposer`, R2 extends to edges). |
 | `POST /v2/workareas/{id}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
@@ -696,7 +700,7 @@ tenant without grants and never claim content
 
 ## Crews
 
-A crew is a named record of an externally operated AI crew — `{crew_id, name, charter_uri,
+A crew is a named record of an externally operated AI crew — `{crew_id, name, kind, charter_uri,
 external_manager}` — recorded, not operated; a workarea names at most one, and a key may name one
 at issuance. The record and its relations are declared on
 [workareas](../architecture/workareas.md#crews-recorded-not-operated). Admin key role throughout;
@@ -705,25 +709,40 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 
 | Endpoint | Does |
 |---|---|
-| `POST /v2/crews` | Create: `{name, charter_uri?, external_manager?}` → `201` with the record. `name` is unique in the tenant (`name.taken`) and never changes. Journalled `crew.created`. |
+| `POST /v2/crews` | Create: `{name, kind?, charter_uri?, external_manager?}` → `201` with the record. `name` is unique in the tenant (`name.taken`) and never changes; `kind` is `general` (the default) or `ontology` and never changes either ([crews](../architecture/workareas.md#crews-recorded-not-operated)). Journalled `crew.created`. |
 | `GET /v2/crews` | The tenant's crew records, paginated. |
 | `GET /v2/crews/{crew_id}` | One crew record, by id or name. |
-| `POST /v2/crews/{crew_id}/update` | `{charter_uri?, external_manager?}`, at least one present — a journalled crew-record update (`crew.updated`). The name is not updatable. A crew record has no status, so an update is admitted whatever the status of the workareas that name it. |
+| `POST /v2/crews/{crew_id}/update` | `{charter_uri?, external_manager?}`, at least one present — a journalled crew-record update (`crew.updated`). The name and the kind are not updatable. A crew record has no status, so an update is admitted whatever the status of the workareas that name it. |
 
 ## Claim edges
 
 Claim↔claim connection proposals follow the same propose-then-ratify shape inside the admission
 pipeline ([admission.md](../architecture/admission.md)).
 
-- `GET /v2/claim-edges?workarea_id=…&artifact_id=…` — paginated graph read, pending and ratified,
-  scoped to read access.
+- `GET /v2/claim-edges?workarea_id=…&artifact_id=…&label=…&state=…&term=…` — paginated graph
+  read, pending, ratified and rejected, scoped to read access; `label`, `state` and `term` (a
+  CURIE, `oml:about` edges only) narrow it. An `oml:about` edge is served only to a key that can
+  read both endpoints, with its `term_curie` and `retired`.
 - `POST /v2/claim-edges` — `{from_artifact_id, to_artifact_id, label}` under dreamer(propose) →
-  `202`, pending. The label vocabulary for claim edges is not fixed by the design (the closed
-  label set exists for workarea edges only); fixing it is an open detail for the
-  [roadmap](../product/roadmap.md).
+  `202`, pending. The label vocabulary for claim edges is not fixed by the design beyond the
+  `oml:` labels (the closed label set exists for workarea edges only); fixing it is an open detail
+  for the [roadmap](../product/roadmap.md). A proposal labelled `oml:about` is a
+  [classification](../architecture/ontologies.md#classification-ontology-crews-attach-terms-to-memories),
+  whose source, target, authority and refusals — `vocab.classification_exists` for a duplicate,
+  `vocab.inactive_curie` for a deprecated term — are declared there.
 - `POST /v2/claim-edges/{edge_id}/ratify` — dreamer(review), never the proposer, and refused when
   the ratifying key or principal appears in either endpoint's lineage closure
-  (`review.author_in_lineage`).
+  (`review.author_in_lineage`). An `oml:about` edge also needs dreamer(review) for `oml:about` and
+  reader on both endpoints, and its vocabulary's crew or manager axis
+  (`review.ratifier_is_proposer`, `details.axis`).
+- `POST /v2/claim-edges/{edge_id}/reject` — `{reason}` (required) on a pending or ratified
+  `oml:about` edge, under the authority and refusals of its ratification except the crew and
+  manager axis → `200` with the edge, state `rejected`, journalled `claim_edge.rejected`. The edge
+  stays and confers nothing; an edge of another label is `request.validation`.
+
+A key whose dreamer grants are [narrowed by `edge_labels`](../architecture/roles-and-keys.md#narrowed-dreamer-grants-edge_labels)
+reaches these verbs only for the labels they list, and meets `access.grant_refused`, naming them,
+elsewhere.
 
 ## Vocabularies
 
@@ -737,7 +756,7 @@ scope are indistinguishable (`access.not_found` on the term get, an empty match 
 | Endpoint | Returns |
 |---|---|
 | `GET /v2/vocab/suggest?q=…&workarea_id=…` | Deterministic prefix+label typeahead over granted vocabulary workareas: `curie`, `label`, `term_status` per suggestion. Matching, never interpretation — no model runs here. |
-| `GET /v2/vocab/terms/{curie}` | The term's served tip: owning workarea, version, `term_status` (`active` \| `deprecated` — a structural payload field that survives shredding), definition presence (the CURIE is permanent, the body erasable), ratified `successors` with their relation (`replaced_by` \| `consider`), and the releases whose pin includes it. |
+| `GET /v2/vocab/terms/{curie}` | The term's served tip: owning workarea, `artifact_id`, version, `term_status` (`active` \| `deprecated` — a structural payload field that survives shredding), definition presence (the CURIE is permanent, the body erasable), ratified `successors` with their relation (`replaced_by` \| `consider`), and the releases whose pin includes it. |
 | `GET /v2/vocab/terms/{curie}/hierarchy?direction=…&release=…` | `parents` \| `children` \| `ancestors` \| `descendants` over ratified `is_a` — served from the per-release closure materialized at release ratification (a lookup, never a traversal: serialize, don't compute). `release` is optional and defaults to the latest ratified release of the owning vocabulary. |
 | `GET /v2/vocab/mappings?term=…` | Ratified SSSOM-shaped mappings touching the term: `subject`, `object`, `predicate` (`exactMatch` \| `closeMatch` \| `broadMatch` \| `narrowMatch` \| `relatedMatch`), `justification`, `ratified_at`. Both endpoints persist — a mapping never merges. |
 
@@ -852,11 +871,11 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 | Endpoint | Does |
 |---|---|
-| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea_node_id, role, deny: [{subtree_node_id}]}], default_workarea_id?, held_by?, crew?, expiry?, label?, principal?, tenant_id?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused; the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key must add `tenant_id`, an admin key must not send it, and an operator key may issue only a tenant's first admin key. The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. |
-| `GET /v2/keys` · `GET /v2/keys/{key_id}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events. Never values. A revoked or expired key's name still resolves here. |
+| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea_node_id, role, deny: [{subtree_node_id}], edge_labels?}], default_workarea_id?, held_by?, crew?, profile?, expiry?, label?, principal?, tenant_id?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused; the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life; a key that names a crew of kind `ontology` carries a `profile` — `classifier`, `term_creator` or `curator` — whose grant shape step 7 of the issuance order enforces (`access.profile_mismatch`, [member profiles](../architecture/roles-and-keys.md#member-profiles)), and a dreamer grant's `edge_labels` [narrows](../architecture/roles-and-keys.md#narrowed-dreamer-grants-edge_labels) it. Every workarea and crew reference takes an id or a name. An operator key must add `tenant_id`, an admin key must not send it, and an operator key may issue only a tenant's first admin key. The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. |
+| `GET /v2/keys` · `GET /v2/keys/{key_id}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, `profile`, grants with their `edge_labels`, denials, epoch, issuance/revocation events. Never values. A revoked or expired key's name still resolves here. |
 | `POST /v2/keys/{key_id}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
 | `POST /v2/keys/{key_id}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
-| `POST /v2/keys/{key_id}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
+| `POST /v2/keys/{key_id}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks and, on a dreamer grant, `edge_labels` → `201`, epoch bump. On a key with a [member profile](../architecture/roles-and-keys.md#member-profiles), the key's grants and the new one must still match it, else `access.profile_mismatch`, journalling nothing. |
 | `POST /v2/keys/{key_id}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
 | `POST /v2/keys/{key_id}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. |
 | `POST /v2/keys/{key_id}/denials/{denial_id}/lift` | Journalled lift. |

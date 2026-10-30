@@ -19,6 +19,11 @@ meet and what each one means. Every endpoint here is declared on the
 typed taxonomy of [errors.md](errors.md). Nothing below exists as code; review throughput is
 unmeasured — [FR-2](../product/roadmap.md).
 
+A crew record has a kind ([workareas](../architecture/workareas.md#crews-recorded-not-operated)).
+This page is the flow of a reviewer crew of kind `general`, whose keys carry no profile. An
+ontology crew's curators run the same loop on held vocabulary claims and also ratify and reject
+classifications, which have no serve; that flow is the [ontology crews](ontology-crews.md) page.
+
 ## Plain HTTP, deliberately — why not MCP
 
 The verdict verbs live on the lab ring (`/v2`) and **only** there. The
@@ -343,5 +348,6 @@ The review ceremony, the served-reviewer rule and the division of labour (crews 
 reviewer keys record verdicts and nothing else) are
 [ADR-0012](../adr/ADR-0012-admission-and-review.md)'s; the serve binding and the two-ring
 placement of the verdict verbs are [ADR-0014](../adr/ADR-0014-http-api-and-mcp-facade.md) and
-[ADR-0022](../adr/ADR-0022-two-ring-api.md)'s. This page adds no decision — it is the worked
+[ADR-0022](../adr/ADR-0022-two-ring-api.md)'s; the crew kind is the proposed
+[ADR-0027](../adr/ADR-0027-ontology-crews.md)'s. This page adds no decision — it is the worked
 consumer flow over decisions those records own.

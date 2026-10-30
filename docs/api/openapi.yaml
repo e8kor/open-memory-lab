@@ -628,11 +628,14 @@ paths:
     get:
       tags: [claim-edges]
       operationId: listClaimEdges
-      summary: Paginated claim-graph read, pending and ratified, scoped to read access.
-      description: 'Requires: reader effective access.'
+      summary: Paginated claim-graph read, pending, ratified and rejected, scoped to read access.
+      description: 'Requires: reader effective access. An oml:about edge (a classification, docs/architecture/ontologies.md) is served only to a key that can read both endpoints, with its term_curie and its derived retired flag (ADR-0027 d6, d10).'
       parameters:
         - { name: workarea_id, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' } }
         - { name: artifact_id, in: query, schema: { type: string } }
+        - { name: label, in: query, schema: { type: string }, description: 'Only edges with this label, e.g. oml:about.' }
+        - { name: state, in: query, schema: { type: string, enum: [pending, ratified, rejected] } }
+        - { name: term, in: query, schema: { $ref: '#/components/schemas/Curie' }, description: 'Only oml:about edges whose term_curie is this CURIE.' }
         - { $ref: '#/components/parameters/Limit' }
         - { $ref: '#/components/parameters/Cursor' }
       responses:
@@ -658,7 +661,7 @@ paths:
       tags: [claim-edges]
       operationId: proposeClaimEdge
       summary: Propose a claim-to-claim connection; pending until ratified.
-      description: 'Requires: dreamer(propose). The claim-edge label vocabulary is not fixed by the design (open detail, roadmap).'
+      description: 'Requires: dreamer(propose). The claim-edge label vocabulary is not fixed by the design beyond the oml: labels (open detail, roadmap). A key whose dreamer grants are narrowed by edge_labels proposes only the labels they list (access.grant_refused, details.edge_labels, otherwise). label oml:about proposes a classification: source a promoted memory or derived_fact version outside every vocabulary subtree, target a promoted term version whose served tip is active (vocab.inactive_curie otherwise), dreamer(propose) for oml:about on at least one endpoint and reader on both, one live classification per version and CURIE (409 vocab.classification_exists) — docs/architecture/ontologies.md, ADR-0027 d6, d7.'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -685,6 +688,7 @@ paths:
                 proposer_key_id: d405428e-4c99-426d-8826-76d28436e423
                 ratifier_key_id: null
               schema: { $ref: '#/components/schemas/ClaimEdge' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -693,7 +697,7 @@ paths:
       tags: [claim-edges]
       operationId: ratifyClaimEdge
       summary: Ratify a proposed claim edge.
-      description: 'Requires: dreamer(review); never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage) — R2. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
+      description: 'Requires: dreamer(review); never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage) — R2. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). An oml:about edge needs dreamer(review) for oml:about, and reader, on both endpoints, its term''s served tip active (vocab.inactive_curie), and the crew or manager axis its vocabulary''s policy requires (review.ratifier_is_proposer with details.axis); one act decides it, under that policy (ADR-0027 d6, d12).'
       parameters:
         - { name: edge_id, in: path, required: true, schema: { type: string } }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -714,6 +718,44 @@ paths:
                 ratifier_key_id: 54b2d035-b438-47f7-9055-67199237d5d7
               schema: { $ref: '#/components/schemas/ClaimEdge' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/claim-edges/{edge_id}/reject:
+    post:
+      tags: [claim-edges]
+      operationId: rejectClaimEdge
+      summary: Reject a classification (an oml:about edge), pending or ratified; journalled claim_edge.rejected, the edge kept.
+      description: 'Requires: dreamer(review) for oml:about, and reader, on both endpoints; never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage). The vocabulary policy''s crew and manager axis does not apply: a rejection makes nothing visible. An edge with any other label is request.validation. A held_by: service key is refused with access.verb_ceiling before any lookup. The rejected edge confers nothing, matches no recall, and frees its pair to be proposed again (ADR-0027 d8).'
+      parameters:
+        - { name: edge_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              reason: the quote names aluminium only as a comparison; the memory is about copper pricing
+            schema: { $ref: '#/components/schemas/ClaimEdgeRejection' }
+      responses:
+        '200':
+          description: Rejected edge.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              example:
+                edge_id: ce_01JB2YB2D4F6H8K1M3P5R7T9VX
+                from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                to_artifact_id: art_01JB2Q3S5U7W9Y1A3C5E7G9J2L
+                label: 'oml:about'
+                term_curie: 'metal:aluminium'
+                state: rejected
+                retired: false
+                proposer_key_id: 0c8e5a52-6f0d-4b6e-9a3f-2d7e1c9b4a10
+                ratifier_key_id: null
+              schema: { $ref: '#/components/schemas/ClaimEdge' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/workareas:
@@ -740,6 +782,7 @@ paths:
                 crew:
                   crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                   name: metals-crew
+                  kind: general
                   charter_uri: https://crews.example.com/metals/charter.md
                   external_manager: crewd.example.com
                 created_at: '2026-09-02T09:14:33Z'
@@ -777,6 +820,7 @@ paths:
                 crew:
                   crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                   name: metals-crew
+                  kind: general
                   charter_uri: https://crews.example.com/metals/charter.md
                   external_manager: crewd.example.com
                 created_at: '2026-10-29T15:40:12Z'
@@ -808,6 +852,7 @@ paths:
                 crew:
                   crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                   name: metals-crew
+                  kind: general
                   charter_uri: https://crews.example.com/metals/charter.md
                   external_manager: crewd.example.com
                 created_at: '2026-09-02T09:14:33Z'
@@ -854,6 +899,7 @@ paths:
                   crew:
                     crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                     name: metals-crew
+                    kind: general
                     charter_uri: https://crews.example.com/metals/charter.md
                     external_manager: crewd.example.com
                   created_at: '2026-09-02T09:14:33Z'
@@ -865,6 +911,7 @@ paths:
                   crew:
                     crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                     name: metals-crew
+                    kind: general
                     charter_uri: https://crews.example.com/metals/charter.md
                     external_manager: crewd.example.com
                   created_at: '2026-10-29T15:40:12Z'
@@ -1035,7 +1082,7 @@ paths:
       tags: [workareas]
       operationId: updateCrewMetadata
       summary: Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on validated areas (freeze covers claims, not metadata).
-      description: 'Requires: admin key role. Journals workarea.crew_updated with the crew''s id (ADR-0026 d8). The crew record itself is updated at POST /v2/crews/{crew_id}/update.'
+      description: 'Requires: admin key role. Journals workarea.crew_updated with the crew''s id (ADR-0026 d8). On a vocabulary workarea the crew must be of kind ontology, else request.validation (ADR-0027 d2). The crew record itself is updated at POST /v2/crews/{crew_id}/update.'
       parameters:
         - { $ref: '#/components/parameters/WorkareaId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1062,6 +1109,7 @@ paths:
                 crew:
                   crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                   name: metals-crew
+                  kind: general
                   charter_uri: https://crews.example.com/metals/charter.md
                   external_manager: crewd.example.com
                 created_at: '2026-09-02T09:14:33Z'
@@ -1089,6 +1137,7 @@ paths:
                 items:
                 - crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                   name: metals-crew
+                  kind: general
                   charter_uri: https://crews.example.com/metals/charter.md
                   external_manager: crewd.example.com
                   created_at: '2026-09-02T09:10:05Z'
@@ -1099,7 +1148,7 @@ paths:
       tags: [crews]
       operationId: createCrew
       summary: Create a named crew record; journalled crew.created.
-      description: 'Requires: admin key role. name must be unique in the tenant (409 name.taken, checked after every other check) and never changes (ADR-0026 d1, d8).'
+      description: 'Requires: admin key role. name must be unique in the tenant (409 name.taken, checked after every other check) and never changes (ADR-0026 d1, d8); kind, general by default or ontology, never changes either (ADR-0027 d1).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1120,6 +1169,7 @@ paths:
               example:
                 crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                 name: metals-crew
+                kind: general
                 charter_uri: https://crews.example.com/metals/charter.md
                 external_manager: crewd.example.com
                 created_at: '2026-09-02T09:10:05Z'
@@ -1145,6 +1195,7 @@ paths:
               example:
                 crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                 name: metals-crew
+                kind: general
                 charter_uri: https://crews.example.com/metals/charter.md
                 external_manager: crewd.example.com
                 created_at: '2026-09-02T09:10:05Z'
@@ -1178,6 +1229,7 @@ paths:
               example:
                 crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                 name: metals-crew
+                kind: general
                 charter_uri: https://crews.example.com/metals/charter-v2.md
                 external_manager: crewd.example.com
                 created_at: '2026-09-02T09:10:05Z'
@@ -1624,7 +1676,7 @@ paths:
       tags: [keys]
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
-      description: 'Requires: admin key role; operator only with tenant_id, for a tenant''s first admin key. Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).'
+      description: 'Requires: admin key role; operator only with tenant_id, for a tenant''s first admin key. Journalled as issued-without-value (show-once ceremony). A key naming a crew of kind ontology carries a profile whose grant shape is enforced at step 7 (403 access.profile_mismatch — ADR-0027 d4). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1804,7 +1856,7 @@ paths:
       tags: [keys]
       operationId: addGrant
       summary: Bind the key to a workarea node, by id or name (never a path), with optional per-grant deny masks; epoch bump.
-      description: 'Requires: admin key role. A grant''s role must be admissible under the key''s role (the admissibility table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible} otherwise — one grant, so no grant_index); a dreamer-class grant on an admin key is refused first (access.role_exclusive — the two-key rule). The grant''s epoch is its grant.issued journal seq.'
+      description: 'Requires: admin key role. A grant''s role must be admissible under the key''s role (the admissibility table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible} otherwise — one grant, so no grant_index); a dreamer-class grant on an admin key is refused first (access.role_exclusive — the two-key rule). On a key with a member profile, the key''s grants and this one must still match it (403 access.profile_mismatch, journalling nothing — ADR-0027 d4). edge_labels narrows a dreamer grant (ADR-0027 d5). The grant''s epoch is its grant.issued journal seq.'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -2800,6 +2852,7 @@ components:
         - access.issuer_ceiling
         - access.role_exclusive
         - access.banned
+        - access.profile_mismatch
         - request.validation
         - request.idempotency_key_required
         - request.payload_too_large
@@ -2827,6 +2880,7 @@ components:
         - vocab.prefix_conflict
         - vocab.unknown_curie
         - vocab.inactive_curie
+        - vocab.classification_exists
         - upload.session_invalid
         - upload.digest_mismatch
         - lifecycle.erased
@@ -3017,7 +3071,7 @@ components:
           type: array
           minItems: 1
           items: { $ref: '#/components/schemas/Curie' }
-          description: Filter to rows whose terms annotation cites any of these CURIEs; an unreadable CURIE matches nothing (fail closed). An empty array is refused with request.validation, and so is the field where unbuilt.
+          description: Filter to hits whose own terms annotation cites any of these CURIEs, or whose version has a ratified, unretired classification (an oml:about edge) naming one — the matching rule is declared in docs/architecture/retrieval.md (ADR-0027 d11); an unreadable CURIE matches nothing (fail closed). An empty array is refused with request.validation, and so is the field where unbuilt.
         expand_terms:
           type: string
           enum: [none, descendants]
@@ -3217,7 +3271,7 @@ components:
       properties:
         from_artifact_id: { type: string }
         to_artifact_id: { type: string }
-        label: { type: string, description: Vocabulary not fixed by the design (open detail). }
+        label: { type: string, description: 'Vocabulary not fixed by the design beyond the oml: labels (open detail); oml:about proposes a classification (docs/architecture/ontologies.md, ADR-0027 d6).' }
 
     ClaimEdge:
       type: object
@@ -3227,9 +3281,18 @@ components:
         from_artifact_id: { type: string }
         to_artifact_id: { type: string }
         label: { type: string }
-        state: { type: string, enum: [pending, ratified] }
+        state: { type: string, enum: [pending, ratified, rejected], description: 'rejected only for an oml:about edge (ADR-0027 d8).' }
+        term_curie: { type: [string, 'null'], description: 'For an oml:about edge, the term''s CURIE, which the edge binds; null for every other label.' }
+        retired: { type: boolean, description: 'oml:about edges only: true while the term''s served tip is deprecated — derived at the read, never written; a retired classification matches no recall (ADR-0027 d10).' }
         proposer_key_id: { type: string }
         ratifier_key_id: { type: [string, 'null'] }
+
+    ClaimEdgeRejection:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, description: Why the classification is rejected; journalled as a digest in claim_edge.rejected. }
 
     ClaimEdgePage:
       type: object
@@ -3241,10 +3304,11 @@ components:
     Crew:
       type: object
       description: A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workareas.md, Crews; ADR-0026 d8).
-      required: [crew_id, name]
+      required: [crew_id, name, kind]
       properties:
         crew_id: { type: string }
         name: { type: string, description: Unique in the tenant and never changed. }
+        kind: { type: string, enum: [general, ontology], description: 'Given at creation and never changed; general for every crew created before ADR-0027. Every key naming an ontology crew carries a member profile (ADR-0027 d1, d3).' }
         charter_uri: { type: [string, 'null'] }
         external_manager: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
@@ -3255,6 +3319,7 @@ components:
       required: [name]
       properties:
         name: { $ref: '#/components/schemas/Name' }
+        kind: { type: string, enum: [general, ontology], default: general, description: 'Never changes after creation (ADR-0027 d1).' }
         charter_uri: { type: string }
         external_manager: { type: string }
 
@@ -3262,7 +3327,7 @@ components:
       type: object
       additionalProperties: false
       minProperties: 1
-      description: At least one field; the name is not updatable.
+      description: At least one field; the name and the kind are not updatable.
       properties:
         charter_uri: { type: string }
         external_manager: { type: string }
@@ -3332,6 +3397,10 @@ components:
               type: array
               description: The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, writer and dreamer rows, each left to right) without duplicates; the access conferred, not what this server build serves.
               items: { type: string, enum: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose, review] }
+            my_edge_labels:
+              type: [array, 'null']
+              items: { type: string }
+              description: 'Where every dreamer grant effective on the node carries edge_labels, the union of their labels — the only claim edges this key''s dreamer verbs reach here; null where dreamer is unnarrowed or absent (docs/architecture/roles-and-keys.md, Narrowed dreamer grants; ADR-0027 d5).'
             permission_epoch: { type: integer, description: 'The calling key''s permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14).' }
 
     WorkareaCreate:
@@ -3341,7 +3410,7 @@ components:
         parent_id: { $ref: '#/components/schemas/WorkareaRef' }
         name: { $ref: '#/components/schemas/Name' }
         crew: { $ref: '#/components/schemas/CrewRef' }
-        prefix: { type: string, description: 'Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew record.' }
+        prefix: { type: string, description: 'Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew naming a crew of kind ontology — a vocabulary needs a named curator crew record (ADR-0027 d2); request.validation otherwise.' }
 
     WorkareaPage:
       type: object
@@ -3470,6 +3539,7 @@ components:
       properties:
         curie: { $ref: '#/components/schemas/Curie' }
         workarea_id: { type: string, description: The owning vocabulary workarea. }
+        artifact_id: { type: string, description: 'The served tip version''s artifact id — what a classification names as its target (ADR-0027 d13).' }
         version: { type: integer, description: The served tip version of the term claim. }
         term_status: { type: string, enum: [active, deprecated], description: Structural payload field — survives shredding, deterministically readable. }
         definition_state: { type: string, enum: [present, erased], description: The CURIE is permanent; the definition body is erasable (410 lifecycle.erased on fetch). }
@@ -3585,6 +3655,12 @@ components:
             properties:
               subtree_node_id: { $ref: '#/components/schemas/WorkareaRef' }
           description: Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise).
+        edge_labels:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string }
+          description: 'Dreamer grants only: narrows the grant to proposing, ratifying and rejecting claim edges with these oml: labels, and nothing else of the dreamer row; request.validation on another grant role or for a label outside oml: (docs/architecture/roles-and-keys.md, Narrowed dreamer grants; ADR-0027 d5).'
 
     Grant:
       type: object
@@ -3600,6 +3676,7 @@ components:
             type: object
             properties:
               subtree_node_id: { type: string }
+        edge_labels: { type: [array, 'null'], items: { type: string }, description: 'The labels a narrowed dreamer grant is limited to, as grant.issued journals them; null when absent (ADR-0027 d5).' }
         epoch: { type: integer, description: "The journal seq of this grant's grant.issued event." }
 
     DenialRequest:
@@ -3629,6 +3706,7 @@ components:
         default_workarea_id: { $ref: '#/components/schemas/WorkareaRef', description: "The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md." }
         held_by: { type: string, enum: [agent, human, service], description: "The issuing admin's journalled attestation (ADR-0021); never verified as fact." }
         crew: { $ref: '#/components/schemas/CrewRef', description: "The key's crew record, by id or name, journalled as crew_id and fixed for the key's life (ADR-0026 d8)." }
+        profile: { type: string, enum: [classifier, term_creator, curator], description: "Required with, and only with, a crew of kind ontology: the key's member profile, whose grant shape step 7 of the issuance order enforces (403 access.profile_mismatch); without crew, request.validation (docs/architecture/roles-and-keys.md, Member profiles; ADR-0027 d3, d4)." }
         expiry: { type: string, format: date-time }
         label: { type: string, description: A free-text note; unique nowhere. }
         principal: { type: string, description: Who acts — the attribution identity, shared across one identity's keys; free text. }
@@ -3651,6 +3729,7 @@ components:
         role: { $ref: '#/components/schemas/Role' }
         principal: { type: string }
         crew_id: { type: [string, 'null'], description: "The key's crew record, as key.issued journals it; null when none was named (ADR-0026 d8)." }
+        profile: { type: [string, 'null'], enum: [classifier, term_creator, curator, null], description: "The key's member profile, as key.issued journals it; null for a key that names no ontology crew (ADR-0027 d3)." }
         default_workarea_id: { type: [string, 'null'], description: "The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when no X-OML-Workarea is sent (ADR-0022 d4)." }
         held_by: { type: [string, 'null'], enum: [agent, human, service, null], description: "The issuing admin's attestation; for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2)." }
         label: { type: string }

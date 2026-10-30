@@ -2,7 +2,7 @@
 id: cli/reference
 tier: engineering
 status: design draft for review · decided, not built
-answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; the oml-admin plugin
+answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; the oml-admin plugin; how an ontology crew is created and its members' keys issued
 -->
 
 # CLI reference
@@ -117,12 +117,12 @@ add` is not an issuing verb and sends exactly the grant it names.
 
 | Verb | Does |
 |---|---|
-| `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. |
+| `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. Sends no `profile`, so a key naming an ontology crew is refused (`access.profile_mismatch`); [`oml crews add-member`](#oml-crews-crew-records) issues those. |
 | `oml keys issue-agent <key-name> --workarea <workarea> [--out <path>] [--write-only] [--crew <crew>] [--principal <text>] [--expires <duration>] [--label <text>]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, principal `<key-name>` unless `--principal` names another, `held_by: agent`, a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), and no default workarea, so the default is `<workarea>`, the first grant's node. No other call and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below, and nothing else on stdout; with `--out` the value goes to a file and neither line carries it ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d12). |
 | `oml keys revoke <key>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
 | `oml keys rotate <key> <new-key-name> [--grace <duration>]` | Mint a successor key named `<new-key-name>` — new key id and name, since both keys are live through the grace window, linked by `rotated_from`, grants and crew reproduced from the journalled records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `oml keys list [--role …] [--expiring <duration>]` | Key names, ids, roles, principals, labels, expiries. Never values. |
-| `oml keys show <key>` | One key, by id or name — a revoked or expired key's name still resolves: grants, denials, crew, epoch, issuance and revocation events. |
+| `oml keys show <key>` | One key, by id or name — a revoked or expired key's name still resolves: grants with their `edge_labels`, denials, crew, member profile, epoch, issuance and revocation events. |
 
 **`oml keys issue-agent` output.** On success the verb prints exactly two lines on stdout, the ones
 the `oml` plugin reads, and every other line on stderr:
@@ -169,7 +169,7 @@ a ban would refuse — without journalling anything.
 
 | Verb | Does |
 |---|---|
-| `oml grants add <key> <workarea>:<role> [--deny <subtree> …]` | Add a grant, optionally carrying deny entries that mask subtrees within this grant only. A dreamer-class grant on an admin key is refused (`access.role_exclusive` — the two-key rule). Journalled; bumps the key's permission epoch. |
+| `oml grants add <key> <workarea>:<role> [--deny <subtree> …] [--edge-label <label> …]` | Add a grant, optionally carrying deny entries that mask subtrees within this grant only. `--edge-label`, on a dreamer grant only, [narrows](../architecture/roles-and-keys.md#narrowed-dreamer-grants-edge_labels) it to claim edges with the listed `oml:` labels. A dreamer-class grant on an admin key is refused (`access.role_exclusive` — the two-key rule), and a grant a key's [member profile](../architecture/roles-and-keys.md#member-profiles) does not admit is refused (`access.profile_mismatch`). Journalled; bumps the key's permission epoch. |
 | `oml grants remove <key> <grant-id>` | Remove one grant. Journalled; epoch bump. |
 | `oml grants list [--key <key>] [--workarea <workarea>]` | Grants as journalled, with the derived effective access per key. |
 | `oml grants effective <key> [--at <workarea>]` | The resolved answer: what this key can do, where, and which deny produced each hole — reproducible from the journal by construction. |
@@ -192,7 +192,7 @@ them into `propose` and `ratify` run under different keys.
 
 | Verb | Does |
 |---|---|
-| `oml workareas create <parent> <name> [--crew <crew>] [--prefix <PREFIX>]` | Create a child workarea named `<name>` — unique in the tenant (`name.taken`; `universe` is the root's) — in `development`. Refused under a `validated` parent. `--crew` names an existing [crew record](#oml-crews-crew-records). `--prefix` registers a vocabulary workarea ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the prefix is tenant-unique and **permanent** — the command states this and confirms before acting — and requires `--crew` (a vocabulary needs a named curator crew). |
+| `oml workareas create <parent> <name> [--crew <crew>] [--prefix <PREFIX>]` | Create a child workarea named `<name>` — unique in the tenant (`name.taken`; `universe` is the root's) — in `development`. Refused under a `validated` parent. `--crew` names an existing [crew record](#oml-crews-crew-records). `--prefix` registers a vocabulary workarea ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the prefix is tenant-unique and **permanent** — the command states this and confirms before acting — and requires `--crew` naming a crew of kind `ontology` (a vocabulary needs a named curator crew, [ADR-0027](../adr/ADR-0027-ontology-crews.md) d2). |
 | `oml workareas tree [--root <workarea>] [--status]` | The tenant tree from `universe` down, with status and crew per node. |
 | `oml workareas show <workarea>` | One node, by id or name: name, id, path (derived), status, crew record, edges, policy snapshot in force. |
 | `oml workareas crew set <workarea> --crew <crew>` | Journalled crew-metadata update: point the workarea at another crew record. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
@@ -205,17 +205,48 @@ them into `propose` and `ratify` run under different keys.
 
 ## `oml crews` — crew records
 
-A crew is a named record — name, charter URI, external manager — recorded, not operated; a
+A crew is a named record — name, kind, charter URI, external manager — recorded, not operated; a
 workarea names at most one, and a key may name one at issuance
 ([workareas](../architecture/workareas.md#crews-recorded-not-operated)). Admin key role
 throughout; no agent role reaches these verbs.
 
 | Verb | Does |
 |---|---|
-| `oml crews create <name> [--charter-uri <uri>] [--external-manager <text>]` | Create a crew record (`crew.created`). The name is unique in the tenant (`name.taken`) and never changes. |
-| `oml crews update <crew> [--charter-uri <uri>] [--external-manager <text>]` | Journalled crew-record update (`crew.updated`), at least one flag; the name is not updatable. |
-| `oml crews list` | Crew records: name, id, charter URI, external manager. |
+| `oml crews create <name> [--kind general\|ontology] [--charter-uri <uri>] [--external-manager <text>]` | Create a crew record (`crew.created`). The name is unique in the tenant (`name.taken`) and never changes; so does the kind, `general` unless `--kind ontology` makes it an [ontology crew](../api/ontology-crews.md). |
+| `oml crews update <crew> [--charter-uri <uri>] [--external-manager <text>]` | Journalled crew-record update (`crew.updated`), at least one flag; the name and the kind are not updatable. |
+| `oml crews list` | Crew records: name, id, kind, charter URI, external manager. |
 | `oml crews show <crew>` | One crew record, by id or name. |
+| `oml crews add-member <crew> <key-name> --as <classifier\|term-creator\|curator> --vocabulary <workarea> [--vocabulary …] [--workarea <workarea> …] --out <path> [--held-by <agent\|human>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue one member key of an ontology crew in one `POST /v2/keys`, with the role, grants and default workarea of its [member profile](../architecture/roles-and-keys.md#member-profiles) (below). No other call and no HTTP surface of its own: every server refusal is the issuance's. Writes the value only to `--out`, which is required, and prints the two export lines below ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d14). |
+
+**`oml crews add-member`.** This paragraph is the single declaration site of the verb's request.
+The body carries `name` `<key-name>`, `crew` `<crew>`, `profile` (`term-creator` is the CLI's
+spelling of `term_creator`), `held_by` from `--held-by` (default `agent`; a curator who must
+satisfy `human_required_classes` is `human`), `principal` `<key-name>` unless `--principal` names
+another, and, per profile:
+
+| `--as` | Role | Grants, in this order | Default workarea |
+|---|---|---|---|
+| `classifier` | `dreamer` | reader on each `--workarea`; then, on each `--vocabulary`, dreamer with `edge_labels: ["oml:about"]` and reader | the first `--workarea` |
+| `term-creator` | `writer` | on each `--vocabulary`, writer and reader — the reader dropped with `--write-only`, as for every issuing verb ([above](#oml-keys-issuance-revocation-rotation)) | the first `--vocabulary` |
+| `curator` | `dreamer` | on each `--vocabulary`, dreamer and reader; then, on each `--workarea`, dreamer with `edge_labels: ["oml:about"]` and reader | the first `--vocabulary` |
+
+A classifier needs at least one `--workarea`, every profile at least one `--vocabulary`, a term
+creator takes no `--workarea`, and `--write-only` is a term creator's alone; an argument the
+profile cannot take exits `2` before anything is sent. **`--out <path>` is required** and follows
+`issue-agent`'s discipline exactly ([above](#oml-keys-issuance-revocation-rotation)): the file is
+created exclusively with mode 0600 before anything is sent, an existing path or one containing a
+quote or a newline is refused, a refused issuance removes the empty file, and a value that cannot
+be written once the key is issued is lost, the CLI printing the key's name and id on stderr and
+exiting `2`. The verb prints only:
+
+```console
+export OML_URL='https://oml.example.com'
+export OML_API_KEY="$(cat '/home/op/.config/oml/keys/metals-classifier-1')"
+```
+
+`--json` is refused, because the `201` body carries the value, so no key value reaches stdout,
+stderr or a transcript. What each member does with its key is worked through on the
+[ontology crews](../api/ontology-crews.md) page.
 
 ## `oml review` — the review ceremony
 
@@ -295,7 +326,7 @@ what to do next. Both emit the same four named signals — the contract that
 | Signal | Meaning | Unhealthy looks like |
 |---|---|---|
 | **Queue depth per step** | Items waiting at each admission step: quarantine, scan, review, ratification ([admission](../architecture/admission.md)). | Review depth growing without bound — arrival rate exceeds review capacity, which is exactly the unmeasured quantity [FR-2](../product/roadmap.md) tracks. |
-| **Review availability** | Whether each workarea's review policy can currently be satisfied — at least one eligible non-author dreamer reachable. Two vocabulary refinements of the same signal ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): a vocabulary workarea with no active dreamer grant is flagged orphaned ("propose freeze" is the named next action), and a workarea whose policy names `human_required_classes` with no attested-human dreamer key in scope is a review-availability warning. | A workarea failing closed: writes held indefinitely because no eligible reviewer exists. |
+| **Review availability** | Whether each workarea's review policy can currently be satisfied — at least one eligible non-author dreamer reachable. Two vocabulary refinements of the same signal ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): a vocabulary workarea with no active unnarrowed dreamer grant is flagged orphaned ("propose freeze" is the named next action) — a classifier's grant, [narrowed](../architecture/roles-and-keys.md#narrowed-dreamer-grants-edge_labels) to classifications, is not curation and does not count — and a workarea whose policy names `human_required_classes` with no attested-human dreamer key in scope is a review-availability warning. | A workarea failing closed: writes held indefinitely because no eligible reviewer exists. |
 | **Outbox frontier lag** | Journal head seq minus the lake writer's applied frontier, per tenant ([storage](../architecture/storage.md)). | A rising frontier lag with a healthy journal — the lake writer is down, split-brained-and-fenced, or stuck. |
 | **Dead-letter count** | Rows the lake writer abandoned after its retry budget. Each is already a journalled `materialize-skipped` event and a named reconciler finding ([reconciliation](../architecture/reconciliation.md)). | Any nonzero count that is not shrinking; repair is a journalled re-enqueue, not a manual table edit. |
 

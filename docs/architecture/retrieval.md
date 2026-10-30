@@ -2,7 +2,7 @@
 id: architecture/retrieval
 tier: engineering
 status: design draft for review · decided, not built
-answers: where reads are served from and in what order; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut
+answers: where reads are served from and in what order; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut; what recall's terms filter matches
 -->
 
 # Retrieval: reads are served from Postgres, journalled
@@ -87,7 +87,21 @@ Recall accepts a `terms` filter (CURIE annotations, ADR-0021) and
 **materialized per-release `is_a` closure** before retrieval — a lookup, never
 a graph walk at query time. Expansion resolves per CURIE against the release
 pinned by the vocabulary that owns the expanded prefix; steering order, `k`
-and the [token budget](#token-budgets) are untouched by expansion. A server
+and the [token budget](#token-budgets) are untouched by expansion. A hit
+matches the filter when the CURIEs it carries meet the filter set, after
+expansion has widened it: the `terms` its own version cites, and the
+`term_curie` of every ratified, unretired
+[classification](ontologies.md#classification-ontology-crews-attach-terms-to-memories)
+of that version. A citation matches by its literal CURIE whatever its term's
+status, because it is the author's signed bytes; a classification matches only
+while its term's served tip is active and never once it is rejected, because
+it is the crew's maintained statement. A CURIE the key cannot read matches
+nothing. The filter narrows the candidates before retrieval, so the rank order
+and the read log's `query_digest` are unchanged, and the logged ids record what
+matched ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d11). The lookup of
+classifications and their terms' status is a request-path cost, unmeasured
+like every other one and tracked against [FR-20](../product/roadmap.md) and
+[FR-25](../product/roadmap.md). A server
 that does not yet serve `terms` or `expand_terms` refuses them by name with
 `request.validation`, never ignores them
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d16).
@@ -546,4 +560,5 @@ This page's decisions are registered as ADR-0013
 ([decision register](../adr/index.md)); own held rows in recall, held text
 containment, token budgets, the segment membership and order, and the read-log
 content are the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
-which would amend ADR-0013 d1, d2 and d5.
+which would amend ADR-0013 d1, d2 and d5. What recall's `terms` filter matches is the proposed
+[ADR-0027](../adr/ADR-0027-ontology-crews.md)'s, which would amend ADR-0021 d9.

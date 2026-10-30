@@ -2,7 +2,7 @@
 id: architecture/workareas
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the workarea algebra works — universe tree, node-id grants, deny-wins semantics, edges — and how the status ladder changes a workarea's behavior; what the root is named and how paths relate to names; what a crew record is and how workareas and keys name one
+answers: how the workarea algebra works — universe tree, node-id grants, deny-wins semantics, edges — and how the status ladder changes a workarea's behavior; what the root is named and how paths relate to names; what a crew record is, which kind it is, and how workareas and keys name one
 -->
 
 # Workareas: the algebra and the status ladder
@@ -152,7 +152,11 @@ The three parts, in evaluation order:
 1. **Per-grant attenuation.** A deny entry lives *inside* a grant and names a
    subtree (by node id, like the grant itself). It masks that subtree **within
    its own grant only**. A deny is not a tenant-wide prohibition; it is a hole
-   cut in one grant.
+   cut in one grant. A dreamer grant may also carry `edge_labels`, which cuts
+   verbs rather than a subtree out of that one grant: it is attenuated the same
+   way, before the union, and never narrows another grant
+   ([narrowed dreamer grants](roles-and-keys.md#narrowed-dreamer-grants-edge_labels),
+   [ADR-0027](../adr/ADR-0027-ontology-crews.md) d5).
 2. **Union.** The key's grants are then unioned. Because attenuation happens
    per grant before the union, a subtree denied in grant A is still reachable
    if grant B covers it without a deny. This is deliberate: a grant is a
@@ -230,7 +234,7 @@ appears as pending in graph reads.
 
 ## Crews: recorded, not operated
 
-A crew is a named record of its own: `{crew_id, name, charter_uri,
+A crew is a named record of its own: `{crew_id, name, kind, charter_uri,
 external_manager}`. This section is the single declaration site for the record
 and its relations ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8). The record
 answers "who runs this crew, under what charter" — it does not make OML a crew
@@ -238,11 +242,21 @@ orchestrator. OML never contacts the external manager, never schedules the crew,
 and never validates the charter URI beyond storing it; "recorded, not operated"
 is the honest scope of the feature.
 
+- **A crew has a kind**, `general` or `ontology`, given at creation and never
+  changed; an absent kind is `general`, and every crew record created before
+  [ADR-0027](../adr/ADR-0027-ontology-crews.md) — `system.names_assigned`'s
+  among them — is `general`. A `general` crew is any crew, writer or reviewer,
+  whose keys carry no profile. An `ontology` crew maintains vocabularies: every
+  key that names one carries a
+  [member profile](roles-and-keys.md#member-profiles), and its business is
+  worked through on the [ontology crews](../api/ontology-crews.md) page.
 - **A workarea names at most one crew**, the one whose memory space it is; a crew
   may serve many workareas. The crew is named at workarea create, and pointing
   the workarea at another crew record is the workarea's journalled
   crew-metadata update (`workarea.crew_updated`). A vocabulary workarea must
-  name one, its curator crew ([ontologies](ontologies.md)).
+  name one, its curator crew, and that crew must be of kind `ontology`, at
+  create and at every crew-metadata update — else `request.validation`
+  ([ontologies](ontologies.md), ADR-0027 d2).
 - **A key may name one crew** at issuance; it is journalled in `key.issued`,
   fixed for the key's life and carried to a rotation's successor. A key holder
   who changes crews holds a new key ([roles and keys](roles-and-keys.md)).
@@ -252,7 +266,7 @@ is the honest scope of the feature.
   Its name is a unique, immutable [name](../api/http-api.md#names-and-ids) — OML's
   key for the crew, not its display title — so a crew that renames itself
   outside OML keeps its record and its key; its charter URI and external manager
-  are what an update corrects. A crew record has no status, so it stays
+  are what an update corrects, and neither its name nor its kind is. A crew record has no status, so it stays
   correctable whatever the status of the workareas that name it.
 - **Reads.** Crew records are admin reads; a key that can read a workarea sees
   that workarea's crew record in the workarea read, and no other.
@@ -391,4 +405,6 @@ ADR-0009 ([adr/index.md](../adr/index.md)); the permission-epoch reading and
 per-request effective access are
 [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1, d14); the
 root's name, names as references and crew records are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d6–d8).
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d6–d8); the crew kind and the
+`edge_labels` attenuation are the proposed
+[ADR-0027](../adr/ADR-0027-ontology-crews.md)'s (d1, d2, d5).

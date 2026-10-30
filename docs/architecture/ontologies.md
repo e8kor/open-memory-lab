@@ -2,7 +2,7 @@
 id: architecture/ontologies
 tier: engineering
 status: design draft for review · decided, not built
-answers: how vocabularies, terms, pinned releases and deprecation work as governed claims on the one existing pipeline
+answers: how vocabularies, terms, pinned releases and deprecation work as governed claims on the one existing pipeline; what a classification is and how an ontology crew proposes, ratifies, rejects and retires one
 -->
 
 # Ontologies
@@ -43,7 +43,11 @@ preview-every-mass-act rule to irreversible single acts like this one.
 
 Everything inside the vocabulary rides the ordinary machinery. Grants are ordinary: the vocabulary
 workarea grants writer to the crews it serves, dreamer to its curators
-([roles-and-keys](roles-and-keys.md)). Status is ordinary: trunk vocabulary lives at `committed`;
+([roles-and-keys](roles-and-keys.md)). The crew a vocabulary workarea names is an **ontology
+crew**, whose members' keys carry [member profiles](roles-and-keys.md#member-profiles) — classifier,
+term creator, curator — that fix those grants' shapes
+([ADR-0027](../adr/ADR-0027-ontology-crews.md)); any other key an admin grants on the vocabulary
+works there as before. Status is ordinary: trunk vocabulary lives at `committed`;
 `validated` (frozen) is vocabulary **retirement** — a freeze, not a revocation: terms stay
 resolvable forever, and no past verdict is retro-invalidated, because every scan verdict recorded
 the release id and scanner version it was taken against. The `oml:` prefix is reserved in every
@@ -132,6 +136,76 @@ vocabularies with ratifier ≠ proposer — the same argument [workareas](workar
 workarea edges, stated as an extension of that rule. Cross-tenant mappings are
 [RS-3](../product/roadmap.md), future.
 
+## Classification: ontology crews attach terms to memories
+
+A memory's own `terms` are its author's citation, inside its signed bytes, and no other identity
+can change them. A **classification** lets another identity say what a memory is about without
+touching it: a claim edge labelled `oml:about` from a memory version to a term, proposed by a
+classifier and ratified by a curator, both members of the vocabulary's ontology crew. This section
+is the single declaration site of a classification's rules
+([ADR-0027](../adr/ADR-0027-ontology-crews.md) d6–d10); recall's use of them is declared on
+[retrieval](retrieval.md#the-serving-tier), and the worked flow is the
+[ontology crews](../api/ontology-crews.md) page. Like everything on this page, it is decided, not
+built.
+
+**The edge.** Its source is a promoted version of a claim of kind `memory` or `derived_fact` in a
+workarea that is not a vocabulary node (a workarea in the subtree of one that registered a
+prefix); its target is a promoted version of a term whose served tip is `active`. Anything else is
+`request.validation`, naming the endpoint, and a deprecated term is `vocab.inactive_curie` with its
+successors. The edge records the term's CURIE as `term_curie`, binds the source **version** — a
+successor version of the memory is classified anew, because the curator judged the bytes it read
+— and binds the term by its CURIE, so an edit of the term leaves it in force. `oml:about` is a
+relation of the provider-published `oml:` vocabulary, shipped with the release like `is_a`
+([RS-10](../product/roadmap.md)), and the one whose source is not a term. A classification never
+changes the memory: no version is written, and its signed bytes, `terms` and tip stay as they
+were.
+
+**Who proposes and who decides.**
+
+| Act | Requires | Refused when |
+|---|---|---|
+| Propose (`POST /v2/claim-edges`, `oml_relate_propose`) | dreamer effective for `oml:about` on at least one endpoint's workarea, and reader on both — the [workarea-edge rule](workareas.md#edge-authority) extended, as mappings extend it | an endpoint is unreadable (`access.not_found`); the key's narrowed dreamer grants do not list the label (`access.grant_refused`); a duplicate (below) |
+| Ratify (`POST /v2/claim-edges/{edge_id}/ratify`) | dreamer effective for `oml:about`, and reader, on both endpoints' workareas | the proposer's key or principal (`review.ratifier_is_proposer`); a key or principal in either endpoint's lineage closure (`review.author_in_lineage`); the policy's crew or manager axis unmet (`review.ratifier_is_proposer`, `details.axis`); the term's tip deprecated (`vocab.inactive_curie`) |
+| Reject, pending or ratified (`POST /v2/claim-edges/{edge_id}/reject`, `reason` required) | as ratify | as ratify, except the crew and manager axis: a rejection makes nothing visible |
+
+One ratify act decides, under the review policy of the term's vocabulary workarea, whose snapshot
+`review.ratify` journals: the policy contributes its independence axis — the principal always, crew
+or manager inequality where it asks — with the classifier standing where an author stands, and no
+`k`, since an edge has no serve to count. A curator of the classifier's own crew therefore ratifies
+under the shipped default and does not where the policy requires crew inequality, and a tenant
+that wants that runs two ontology crews that curate each other's vocabularies. A classification is
+AI-only: no human-required class names it, and a tenant that wants human-curated classifications
+grants the curators' narrowed content-side grants only to keys attested `held_by: human`. A
+classification is admitted whatever the status of either endpoint's workarea, because freeze
+covers claim content and promotions and a classification changes neither, and an `oml:about` edge,
+in any state, is served only to a key that can read both endpoints.
+
+**How many.** A memory version carries any number of distinct classified terms; the bound on a
+flood is the journalled rate and quota grant attributes and the curators' throughput
+([FR-2](../product/roadmap.md)). It carries at most one live classification per CURIE: a proposal
+naming a version and a CURIE that a pending or ratified `oml:about` edge already joins, or that the
+version's own `terms` already cite, is refused with `vocab.classification_exists`
+([errors](../api/errors.md)), and a unique index makes a racing proposal answer the same code.
+
+**Rejection.** A rejection journals `claim_edge.rejected`; the edge stays, with state `rejected`,
+confers nothing, matches no recall, and frees its pair to be proposed again. Rejection is decided
+for `oml:about` alone; an edge of any other label answers `request.validation`.
+
+**Not derivation.** A classification says what a memory is about, not what it was built from, so
+`oml:about` edges stay out of the lineage closure and out of taint
+([audit and lineage](audit-and-lineage.md#the-derivation-graph)): classifying a memory never
+removes the term's authors from the memory's future reviewers, nor the memory's author from the
+term's, and a classified simulation row never taints a term.
+
+**Retirement and self-heal.** A ratified classification is **retired** while its term's served tip
+is deprecated. Retirement is read from the term's `term_status` at each read; the deprecation's
+ratification is the only journalled act, and nothing is written for the classifications it
+retires. A retired classification stays `ratified`, is listed with `retired: true`, and stops
+matching recall. The classifier self-heals it from the successor that `oml_vocab get` or a refused
+proposal's `vocab.inactive_curie` details name — mechanically for `replaced_by`, by judgment for
+`consider` — by proposing a classification of the same memory version to the successor, which a
+curator ratifies like any other. Recall never follows `replaced_by` on its own.
+
 ## Where the humans sit
 
 Volume is AI work. Any writer key proposes terms — mid-task, at agent speed — and dreamer crews
@@ -141,8 +215,11 @@ exactly where a mistake is expensive and judgment-shaped: by shipped default, a 
 `replaced_by`** (automation rewires against it), an **`exactMatch` mapping** (shared structure of
 two vocabularies), and a **release pin** (served as a diff a person can actually judge). Everything
 else — new terms, edits, the other mapping predicates, hierarchy ratified in batch at release —
-drains through AI dreamers. The full defaults table is in
-[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) d7, every row tenant-tunable.
+drains through AI dreamers, and so do [classifications](#classification-ontology-crews-attach-terms-to-memories),
+which are AI-only. The full defaults table is in
+[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) d7, every row tenant-tunable, with the
+classification row [ADR-0027](../adr/ADR-0027-ontology-crews.md) d12 adds. Under those defaults an
+ontology crew needs at least one curator attested `held_by: human`.
 
 The routing is deterministic, not ceremonial: `vocab_release` routes by kind, and the two
 body-field classes route through the vocab scanner's finding classes
@@ -213,6 +290,9 @@ A working agent's loop, with no human in sight:
    `replaced_by` the rewrite is a mechanical one-hop, and `oml_vocab get` returns `term_status`
    and successor pointers for the same fix at read time. `consider` successors are a judgment
    call, which is why they are a list and not a rewrite rule.
+4. **Be found by what it is about.** A memory written without a citation is found by term once an
+   ontology crew's classifier proposes an `oml:about` edge to it and a curator ratifies it — the
+   memory's bytes untouched ([classification](#classification-ontology-crews-attach-terms-to-memories)).
 
 Vocabulary rows themselves stay out of the shared FTS and vector indexes by default — reference
 data must not drown organic memories in recall ([retrieval](retrieval.md)); a vocabulary
@@ -221,7 +301,8 @@ workarea's policy may opt in, mirroring [ADR-0020](../adr/ADR-0020-dataset-onboa
 ## What this is not
 
 - **No annotation or NER.** `suggest` is deterministic matching; interpreting claim content to
-  propose terms is client-side crew work. The provider runs no model, here as everywhere
+  propose terms or classifications is client-side crew work, which the ontology crew's classifier
+  records as a reviewed edge. The provider runs no model, here as everywhere
   ([admission](admission.md)).
 - **No reasoner.** No OWL semantics — only the materialized transitive closure of ratified
   `is_a`. Queries agents actually ask are answered as lookups; inference that cannot be priced or
@@ -235,8 +316,9 @@ workarea's policy may opt in, mirroring [ADR-0020](../adr/ADR-0020-dataset-onboa
 
 A junk-drawer vocabulary — registered, half-filled, unreviewed — is the designed-against failure
 mode, and the defenses are structural, not exhortative. A vocabulary workarea requires a named
-curator crew at creation. `oml doctor` flags a vocabulary with no active dreamer grant as
-orphaned and names "propose freeze" as the next action; retirement is the ordinary two-party
+curator crew at creation, of kind `ontology` ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d2).
+`oml doctor` flags a vocabulary with no active unnarrowed dreamer grant — a classifier's narrowed
+grant is not curation — as orphaned and names "propose freeze" as the next action; retirement is the ordinary two-party
 status ceremony, and a frozen vocabulary keeps serving reads forever. The prefix permanence
 confirmation at creation makes the one irreversible act deliberate.
 
@@ -256,4 +338,5 @@ This page's decisions are registered as
 policy objects and scanner context are owned by [admission](admission.md); roles and the
 `held_by: human` attestation by [roles-and-keys](roles-and-keys.md); recall semantics by
 [retrieval](retrieval.md); the import path by
-[ADR-0020](../adr/ADR-0020-dataset-onboarding.md).
+[ADR-0020](../adr/ADR-0020-dataset-onboarding.md). Ontology crews, member profiles and
+classification are the proposed [ADR-0027](../adr/ADR-0027-ontology-crews.md)'s.

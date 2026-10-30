@@ -2,7 +2,7 @@
 id: architecture/roles-and-keys
 tier: engineering
 status: design draft for review · decided, not built
-answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants
+answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants; what a dreamer grant narrowed by edge_labels confers; which member profiles a key naming an ontology crew carries and how issuance enforces them
 -->
 
 # Roles and keys
@@ -37,7 +37,10 @@ confers one of those roles over one workarea subtree (grant mechanics, including
 the permission epoch, are declared in [workareas.md](workareas.md)). A crew member that must both write and recall holds a writer key
 whose grants include reader scope — not a writer key with implied read. Which verb a key may
 exercise in a given workarea is therefore resolved from effective access at call time, never from
-the role name alone.
+the role name alone. A dreamer grant may be [narrowed](#narrowed-dreamer-grants-edge_labels) to
+claim edges with listed labels, and a key that names an ontology crew carries a
+[member profile](#member-profiles) — a fixed grant shape over its role, never a sixth role
+([ADR-0027](../adr/ADR-0027-ontology-crews.md)).
 
 Every role above is designed to be held by an agent, and human principals hold the same roles
 through the same keys — there is no human-only role and no agent-only ceiling. Where a policy
@@ -84,6 +87,7 @@ settings, tenants — a column names the key's role itself.
 | propose connection, claim↔claim or workarea↔workarea | — | — | ✓ propose ² | — | — |
 | verdict on a held item | — | — | ✓ review ³ | — (refused) | — |
 | ratify a connection | — | — | ✓ review ³ | — | — |
+| reject a classification (an `oml:about` edge, pending or ratified; [ontologies](ontologies.md#classification-ontology-crews-attach-terms-to-memories)) | — | — | ✓ review ³ | — | — |
 | reopen a rejection (non-author) | — | — | ✓ review ³ | — | — |
 | re-enqueue a dead-lettered held item (journalled; [admission.md](admission.md)) | — | — | ✓ | ✓ | — |
 | propose workarea status transition | — | — | ✓ | ✓ | — |
@@ -129,6 +133,9 @@ so each answers `access.verb_ceiling` at step 1 of the refusal order. The conten
 two-key rule is therefore unchanged — an admin key carries no grant role, receives no serve,
 records no verdict and reads no claim's content — and "admin is never a reviewer" holds as
 before.
+
+A dreamer grant [narrowed by `edge_labels`](#narrowed-dreamer-grants-edge_labels) confers, of the
+dreamer column, only proposing, ratifying and rejecting claim edges whose label it lists.
 
 Promote, sign and delete appear in no column: promotion is an effect of ratification inside the
 admission pipeline, signing is done by `oml-server` with the deployment key
@@ -184,14 +191,19 @@ first checks that `tenant_id` is present if and only if the issuer is an operato
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
    key has none, and a key never inherits its issuer's default;
-7. the key's `name` is not already held in its namespace, a revoked or expired key's included —
+7. when the key names a crew of kind `ontology`, or the body carries `profile`, the key matches
+   its [member profile](#member-profiles) — else `access.profile_mismatch`, with details
+   `{profile, clause, grant_index}` ([ADR-0027](../adr/ADR-0027-ontology-crews.md) d4);
+8. the key's `name` is not already held in its namespace, a revoked or expired key's included —
    else `name.taken`, journalling nothing ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d5).
 
 Every workarea, crew and tenant reference in the body — a grant's node, a deny's subtree, the
 default workarea, `crew`, `tenant_id` — takes an id or a [name](../api/http-api.md#names-and-ids),
 and each name is replaced by its row's id, or by an id that matches no row, before step 1, so an
 unknown name fails step 4 exactly as an unknown id does. `name` is checked against the
-[name grammar](../api/http-api.md#names-and-ids) with the rest of the body, before step 0. The
+[name grammar](../api/http-api.md#names-and-ids) with the rest of the body, before step 0, and so
+are a `profile` sent without `crew` and an `edge_labels` that is empty, repeats a label, names a
+label outside `oml:` or sits on a grant whose role is not `dreamer` — each `request.validation`. The
 server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is a
 [CLI default](../cli/reference.md#oml-keys-issuance-revocation-rotation) the body carries like
 any other grant.
@@ -211,8 +223,11 @@ disclosed, so it authenticates no request either way, including before that comm
 formula evaluated at N, on every request:
 
 1. R is not admissible under the key's role → `access.verb_ceiling`;
-2. R is in `effective_roles(N)` → allowed;
-3. `reader` is in `effective_roles(N)` → `access.grant_refused`, details `{workarea_id, needed_role}`;
+2. R is in `effective_roles(N)` → allowed — for dreamer, where dreamer is
+   [narrowed](#narrowed-dreamer-grants-edge_labels) at N, only when the verb proposes, ratifies or
+   rejects a claim edge whose label the narrowed set lists;
+3. `reader` is in `effective_roles(N)` → `access.grant_refused`, details `{workarea_id, needed_role}`,
+   plus `edge_labels`, the narrowed set at N, where dreamer is narrowed there;
 4. otherwise → `access.not_found`.
 
 Step 1 depends only on the key's role and needs no node, so it runs before the workarea is
@@ -255,14 +270,18 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
 
 - **dreamer** — status-transition propose and ratify, and dead-letter re-enqueue, on the node;
   admin keys act on these verbs by their key role.
+- **classification propose, ratify and reject** — the rules for an `oml:about` edge are declared
+  on [ontologies](ontologies.md#classification-ontology-crews-attach-terms-to-memories): propose
+  needs dreamer, for `oml:about`, on at least one endpoint's workarea and reader on both; ratify
+  and reject need dreamer, for `oml:about`, and reader on both.
 - **review next and verdict** — dreamer on the row's workarea, in addition to the
   [lineage-closure exclusion](#the-dreamer-split): a row outside dreamer effective access is never
   served, and a verdict on one resolves by the refusal order like every other verb —
   `access.grant_refused` with `needed_role: dreamer` where reader is effective on the row's
   workarea, `access.not_found` otherwise.
 - **service keys** — a `held_by: service` key is refused every review-class verb — the
-  [matrix](#permission-matrix)'s review rows (verdict, reopen, claim-edge ratify and
-  workarea-edge ratify) and the review queue and review next that lead to a verdict — and
+  [matrix](#permission-matrix)'s review rows (verdict, reopen, claim-edge ratify, classification
+  reject and workarea-edge ratify) and the review queue and review next that lead to a verdict — and
   status-transition ratify with `access.verb_ceiling`, before any
   lookup, as at step 1 of the refusal order. A service key's dreamer grant confers those verbs
   like any dreamer grant; this rule, not the grant, keeps it out of review and out of every
@@ -320,7 +339,10 @@ grant roles effective on the node.
 A dreamer's `supersede` is edit-as-proposal and also needs `reader` on the node, under the
 supersede rule [above](#grant-admissibility-and-refusal-order). The array lists verbs in table
 order — the `reader`, `writer` and `dreamer` rows, each left to right — without duplicates; for a
-`held_by: service` key it omits `review`, which that key is refused whatever its grants. The
+`held_by: service` key it omits `review`, which that key is refused whatever its grants. A
+[narrowed](#narrowed-dreamer-grants-edge_labels) dreamer contributes `propose` and `review` like
+an unnarrowed one, and the workarea read's `my_edge_labels` then lists the labels they are
+limited to; it is null where dreamer is unnarrowed or absent. The
 set states the access conferred, not what a given server build serves; `tools/list` on the
 [agent plugin](../api/mcp-plugin.md) states that.
 
@@ -336,9 +358,12 @@ A dreamer key carries one role name and two capability classes:
   supersession the version it replaces — under a server-side serve binding
   ([cli/reference.md](../cli/reference.md)).
 
-The split is not two key types and is **not enforced at issuance**. Every dreamer key may propose
-and may review; what is enforced is *which rows* it may review, and that check runs at promotion
-time:
+The split is not two key types and is **not enforced at issuance** for a key of a `general` crew
+or of none. Such a dreamer key may propose and may review; what is enforced is *which rows* it may
+review, and that check runs at promotion time. Two things narrow a dreamer key further, both
+journalled at issuance: a grant [narrowed by `edge_labels`](#narrowed-dreamer-grants-edge_labels),
+and the [member profile](#member-profiles) of a key that names an ontology crew, which fixes the
+classifier's grants so that it can propose and never review.
 
 **Lineage-closure exclusion.** At promotion, the service computes the row's lineage closure — the
 transitive closure over `derives_from` edges and claim↔claim connection edges, pending **and**
@@ -370,6 +395,70 @@ suspicious review patterns visible after the fact (see
 In a simulation, the reviewer pool narrows further: simulation writes are reviewed only by dreamer
 keys in the simulation's journalled audience, and a simulation with no dreamer in its audience can
 promote nothing ([simulations.md](simulations.md)).
+
+## Narrowed dreamer grants: `edge_labels`
+
+This section is the single declaration site of the `edge_labels` grant attribute
+([ADR-0027](../adr/ADR-0027-ontology-crews.md) d5). A dreamer grant may carry `edge_labels`, a
+non-empty list of distinct labels of the provider-published `oml:` vocabulary
+([ontologies](ontologies.md)); no other grant role may. It is journalled in `grant.issued`, stored
+on the grant, reproduced by rotation and listed by every key read.
+
+- **What a narrowed grant confers.** Over its subtree, proposing, ratifying and rejecting claim
+  edges whose label it lists — and nothing else of the dreamer row: no serve and no verdict on a
+  held item, no reopen, no edit-as-proposal, no workarea-edge act, no status-transition act and no
+  dead-letter re-enqueue.
+- **How it composes.** `effective_roles(N)` is unchanged. Of the dreamer grants that survive at N
+  — on N or an ancestor, not masked at N by their own deny list — dreamer is **unnarrowed** if any
+  carries no `edge_labels`, and otherwise **narrowed** to the union of their lists; a global
+  denial covering N still empties every role. A narrowed grant attenuates only itself, as a deny
+  mask does, so it never narrows another grant
+  ([effective access](workareas.md#effective-access-union-of-attenuated-grants-then-deny-wins)).
+- **What it refuses.** Step 2 of the [refusal order](#grant-admissibility-and-refusal-order) allows
+  a narrowed dreamer only the edge verbs above; every other dreamer-class verb falls to step 3
+  (`access.grant_refused`, details naming the narrowed `edge_labels`) or step 4
+  (`access.not_found`).
+- **What it is not.** A narrowed grant is not review capacity for held items: review availability
+  and the orphaned-vocabulary flag ([CLI](../cli/reference.md#oml-status-and-oml-doctor-the-named-signals))
+  count unnarrowed dreamer grants only.
+
+## Member profiles
+
+This section is the single declaration site of member profiles
+([ADR-0027](../adr/ADR-0027-ontology-crews.md) d3, d4). A key that names a
+[crew](workareas.md#crews-recorded-not-operated) of kind `ontology` carries exactly one profile,
+journalled in `key.issued` as `profile`, fixed for the key's life and carried to a rotation's
+successor. A profile is a grant shape over the key's role, not a role. A **vocabulary node** is any
+workarea in the subtree of a workarea that registered a prefix ([ontologies](ontologies.md)).
+
+| Profile | Key role | Must carry | May also carry | Never carries |
+|---|---|---|---|---|
+| `classifier` | `dreamer` | a dreamer grant on a vocabulary node with `edge_labels: ["oml:about"]` | reader grants on any node | a dreamer grant without `edge_labels`, or any dreamer grant off a vocabulary node |
+| `term_creator` | `writer` | a writer grant on a vocabulary node | reader grants on vocabulary nodes | any grant off a vocabulary node |
+| `curator` | `dreamer` | a dreamer grant without `edge_labels` on a vocabulary node | reader grants on any node; dreamer grants with `edge_labels: ["oml:about"]` off vocabulary nodes | a dreamer grant without `edge_labels` off a vocabulary node, or one with `edge_labels` on a vocabulary node |
+
+Every profiled key is attested `held_by: agent` or `held_by: human`, never `service`. Deny masks
+and global per-key denials are admitted on every profile, since they only narrow.
+
+**Enforcement.** Step 7 of the [issuance order](#grant-admissibility-and-refusal-order) checks, in
+this order, and the first failure answers `access.profile_mismatch` (403) with `details`
+`{profile, clause, grant_index}`: the crew is of kind `ontology` (`crew_kind`); a profile is sent
+(`profile_required`); the key role is the profile's (`key_role`); `held_by` is `agent` or `human`
+(`held_by`); every grant lies within the row's "must" or "may" cells and none within "never"
+(`grant`, with the first such grant's 0-based index); every "must" is present (`required_grant`).
+`grant_index` is null for every clause but `grant`. A grant added to a profiled key is checked the
+same way against the key's grants and the new one together, journalling nothing when refused.
+Revoking a grant or the key, and setting a denial, are never refused by a profile: each only
+removes authority. A key that names a `general` crew, or none, carries no profile and is checked as
+before.
+
+**What the shapes guarantee.** A classifier's dreamer grants are all narrowed and all on
+vocabulary nodes, while a classification's source lies outside every vocabulary subtree
+([ontologies](ontologies.md#classification-ontology-crews-attach-terms-to-memories)), so a
+classifier receives no serve, records no verdict and ratifies or rejects nothing: it proposes. No
+key carries two profiles, so a curator is always a key separate from the classifiers and term
+creators whose work it decides, and R2 refuses it its own proposals in any case. What each profile
+calls is worked through on the [ontology crews](../api/ontology-crews.md) page.
 
 ## Admin verbs
 
@@ -590,12 +679,24 @@ not count toward the requirement it cannot establish, and the row stays held unt
 Both checks use metadata as journalled at promotion time, so a later crew reshuffle does not
 rewrite what was independent when the verdict landed.
 
+A **classification** — an `oml:about` claim edge — is decided by one ratify act under its term's
+vocabulary policy, with the classifier standing where an author stands: the ratifier is never the
+proposer's key or principal, nor in either endpoint's lineage closure, and where that policy
+requires crew or manager inequality, a ratify act that cannot establish it is refused with
+`review.ratifier_is_proposer`, `details.axis` `crew` or `manager`, and the edge stays pending
+([ontologies](ontologies.md#classification-ontology-crews-attach-terms-to-memories),
+[ADR-0027](../adr/ADR-0027-ontology-crews.md) d12). A curator of the classifier's own ontology
+crew therefore ratifies under the shipped default and does not where the policy requires crew
+inequality.
+
 What no check can do is prove the absence of collusion between distinct principals. The design's
 answer is visibility, not a claim of impossibility: the evidence export
 ([audit-and-lineage.md](audit-and-lineage.md), `oml audit export` in
 [cli/reference.md](../cli/reference.md)) surfaces **reciprocal-approval statistics per key pair**
 — how often key A approved key B's work and vice versa — alongside the grants history and
-per-memory decision trails. A pair of keys rubber-stamping each other shows up as a skewed pair in
+per-memory decision trails; classification ratifications and rejections count as proposer↔decider
+pairs, sliced by edge label and member profile, beside each ontology crew's in-crew share
+([audit and lineage](audit-and-lineage.md#the-evidence-export)). A pair of keys rubber-stamping each other shows up as a skewed pair in
 the export for a human or an auditing crew to judge. The statistics are evidence, not a verdict;
 no threshold auto-demotes anything.
 
@@ -605,6 +706,8 @@ This page's decisions are registered as ADR-0010 ([decision register](../adr/ind
 admissibility, the refusal order, the issuance order, own and the effective verbs are
 [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14); key names and the
 key's crew and the admin structure reads are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9, d15). One
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9, d15); narrowed dreamer grants, member
+profiles and the independence of a classification's curator are the proposed
+[ADR-0027](../adr/ADR-0027-ontology-crews.md)'s (d3–d5, d12). One
 adjacent decision is named elsewhere: programs hold keys, humans hold ceremonies, and OAuth for
 MCP clients remains a named roadmap trigger ([roadmap](../product/roadmap.md)).

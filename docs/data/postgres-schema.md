@@ -259,6 +259,8 @@ CREATE TABLE crews (                -- named records, recorded not operated (ADR
     id               uuid        PRIMARY KEY,
     tenant_id        uuid        NOT NULL,
     name             oml_name    NOT NULL,   -- immutable; OML's key for the crew
+    kind             text        NOT NULL DEFAULT 'general'
+        CHECK (kind IN ('general', 'ontology')),  -- immutable; ADR-0027 d1
     charter_uri      text,
     external_manager text,
     created_at       timestamptz NOT NULL,
@@ -306,11 +308,28 @@ CREATE TABLE claim_edges (
     tenant_id       uuid NOT NULL,
     src_artifact_id uuid NOT NULL,
     dst_artifact_id uuid NOT NULL,
-    label           text NOT NULL,     -- derives_from | relates_to | …
-    state           text NOT NULL CHECK (state IN ('pending', 'ratified')),
+    label           text NOT NULL,     -- derives_from | relates_to | oml:about | …
+    term_curie      text,              -- oml:about only: the target term's CURIE (ADR-0027 d6)
+    state           text NOT NULL CHECK (state IN ('pending', 'ratified', 'rejected')),
     proposer_key_id uuid NOT NULL,
-    ratifier_key_id uuid
+    ratifier_key_id uuid,
+    rejecter_key_id uuid,              -- claim_edge.rejected; oml:about only (ADR-0027 d8)
+    CHECK ((label = 'oml:about') = (term_curie IS NOT NULL)),
+    CHECK (state <> 'rejected' OR label = 'oml:about')
 );
+
+-- one live classification per memory version and CURIE: a duplicate proposal, or one that
+-- loses the race, answers vocab.classification_exists (ADR-0027 d7). A rejected edge leaves
+-- the index, so its pair may be proposed again.
+CREATE UNIQUE INDEX claim_edges_one_classification
+    ON claim_edges (tenant_id, src_artifact_id, term_curie)
+    WHERE label = 'oml:about' AND state IN ('pending', 'ratified');
+
+-- recall's terms filter: the ratified classifications naming a CURIE (ADR-0027 d11).
+-- Retirement is not stored: it is read from the term's served tip at the query.
+CREATE INDEX claim_edges_classified
+    ON claim_edges (tenant_id, term_curie, src_artifact_id)
+    WHERE label = 'oml:about' AND state = 'ratified';
 ```
 
 The key-inequality `CHECK` is the cheap spelling of R2 on edges; the full rule — ratifier principal
@@ -339,6 +358,11 @@ CREATE TABLE api_keys (
     rotated_from uuid      REFERENCES api_keys (id),  -- successor link; predecessor revoked at grace end
     name       oml_name    NOT NULL,      -- the key's name; never changed, never released
     crew_id    uuid,                      -- the crew record named at issuance; fixed for life
+    profile    text
+        CHECK (profile IN ('classifier', 'term_creator', 'curator')),
+                                          -- member profile, set exactly when crew_id names an
+                                          -- ontology crew; its grant shape is enforced at
+                                          -- issuance and amendment (ADR-0027 d3, d4)
     held_by    text        NOT NULL DEFAULT 'agent'
         CHECK (held_by IN ('agent', 'human', 'service')),
                                           -- issuance-time attestation by the issuing admin
@@ -357,7 +381,11 @@ CREATE TABLE api_keys (
                                           -- unique per tenant; operator keys (tenant_id NULL)
                                           -- share the provider's one namespace
     UNIQUE (tenant_id, id),               -- target of the tenant-scoped grant and denial references
-    FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id)
+    FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
+    CHECK (profile IS NULL OR crew_id IS NOT NULL),
+    CHECK (profile IS NULL
+           OR (profile = 'term_creator' AND role = 'writer')
+           OR (profile IN ('classifier', 'curator') AND role = 'dreamer'))
 );
 
 CREATE TABLE grants (
@@ -369,10 +397,13 @@ CREATE TABLE grants (
                                           -- roles-and-keys Grant admissibility (ADR-0025 d1)
     workarea_node_id uuid   NOT NULL,               -- node id, never a path
     deny             jsonb  NOT NULL DEFAULT '[]',  -- subtree masks inside THIS grant only
+    edge_labels      text[],                        -- dreamer only: narrows THIS grant to claim
+                                                    -- edges with these oml: labels (ADR-0027 d5)
     epoch            bigint NOT NULL,               -- journal seq of this grant's grant.issued,
                                                     -- or of the key.rotated that reproduced it
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
-    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id)
+    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id),
+    CHECK (edge_labels IS NULL OR (role = 'dreamer' AND cardinality(edge_labels) > 0))
 );
 
 CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all grants
@@ -404,7 +435,11 @@ CREATE UNIQUE INDEX bans_active ON bans (tenant_id, subject_kind, subject)
 ```
 
 Effective access is computed, never stored, on every request: union of a key's grants, each
-attenuated by its own `deny` entries, then masked by any `key_denials` row. The `epoch` column is
+attenuated by its own `deny` entries and, for a dreamer grant, its `edge_labels`, then masked by
+any `key_denials` row. Whether a profiled key's grants match its member profile depends on which
+nodes are vocabulary nodes and on the crew's kind, which no column constraint can see, so the
+check runs in the issuance and grant-amendment transactions, and the two `CHECK`s on `api_keys`
+are only its cheap spelling. The `epoch` column is
 the journal seq of the event that wrote the row, which makes every historical computation
 reproducible from journalled grants ([workareas](../architecture/workareas.md) owns the
 permission-epoch semantics).
@@ -744,7 +779,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `workareas` | workarea create / re-parent / status / crew events, `system.names_assigned` |
 | `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
 | `tenants` | the provider chain's `tenant.created`, `system.names_assigned` |
-| `workarea_edges`, `claim_edges` | relate / ratify events |
+| `workarea_edges`, `claim_edges` | relate / ratify events, `claim_edge.rejected` |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |
 | `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |
