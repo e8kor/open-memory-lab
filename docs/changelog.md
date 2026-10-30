@@ -29,6 +29,17 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-30 — `/readyz` names the build that answered (implementation)
+
+A page edit; no decision changes. [Health](api/http-api.md#health) now declares a `build` object
+on every `/readyz` response, ready or not: version, commit, commit time, build time, compiler,
+target and profile, each `unknown` when nothing could supply it. The `Ready` schema in
+[openapi.yaml](api/openapi.yaml) gains the `Build` schema. The image build has no git metadata,
+so the release workflow passes the commit and its time as build arguments, and
+`scripts/check_release.py` refuses a release workflow that does not. `SOURCE_DATE_EPOCH`, when
+set, fixes the reported build time so a pinned build stays reproducible. The stated cost: an
+unauthenticated probe now discloses the exact build.
+
 ### 2026-10-30 — The release image for linux/amd64 and linux/arm64 (implementation)
 
 An implementation milestone; no decision changes. `.github/workflows/release.yml` now builds the
