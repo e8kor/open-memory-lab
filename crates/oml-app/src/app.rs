@@ -26,10 +26,10 @@ use crate::ports::{
     Scanner, Signer, StoreError,
 };
 use crate::types::{
-    AppError, BootstrapRequest, BootstrapResult, Crew, DenialRecord, GrantRecord, IssueKeyRequest,
-    IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult, ServedMemory,
-    SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest, Verdict,
-    VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    AppError, BootstrapRequest, BootstrapResult, CreatedWorkarea, Crew, DenialRecord, GrantRecord,
+    IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult,
+    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest,
+    Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -828,16 +828,26 @@ where
     /// Create a node under `parent_id`, admin by key role. The crew is
     /// recorded, not operated: `workarea.create` journals it and the fold
     /// stores it, so the workarea read serves it from the store (event-
-    /// catalog.md `workarea.create`; ADR-0025 d14).
+    /// catalog.md `workarea.create`; ADR-0025 d14). The answer carries the
+    /// node's path derived from the parent's stored ancestry, as the read
+    /// derives it.
     pub async fn create_workarea(
         &self,
         api_key: &str,
         name: &str,
         parent_id: Option<Uuid>,
         crew: Option<Crew>,
-    ) -> Result<WorkareaRecord, AppError> {
+    ) -> Result<CreatedWorkarea, AppError> {
         let key = self.authenticate(api_key).await?.key;
         require_role(&key, Role::Admin, "create_workarea")?;
+        let ancestors = match parent_id {
+            Some(parent) => self
+                .journal
+                .workarea_ancestry(key.tenant_id, parent)
+                .await?
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
         let workarea = WorkareaRecord {
             workarea_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
@@ -863,7 +873,12 @@ where
         )?;
         self.commit(event, MetadataFold::WorkareaCreated(workarea.clone()), None)
             .await?;
-        Ok(workarea)
+        let ancestry: Vec<WorkareaRecord> =
+            std::iter::once(workarea.clone()).chain(ancestors).collect();
+        Ok(CreatedWorkarea {
+            path: derived_path(&ancestry),
+            workarea,
+        })
     }
 
     /// One workarea as the calling key may see it, at reader effective
@@ -871,9 +886,20 @@ where
     /// workareas; ADR-0025 d14): the node and its derived path, the
     /// immediate children the key can read, the verbs its effective roles
     /// on the node confer, and the permission epoch of the access this
-    /// request read.
-    pub async fn workarea_info(&self, api_key: &str, node: Uuid) -> Result<WorkareaInfo, AppError> {
+    /// request read. An omitted node is the key's journalled default,
+    /// resolved only after step 1 of the refusal order, as recall resolves
+    /// it (roles-and-keys.md refusal order; mcp-plugin.md
+    /// `oml_workarea_info`).
+    pub async fn workarea_info(
+        &self,
+        api_key: &str,
+        node: Option<Uuid>,
+    ) -> Result<WorkareaInfo, AppError> {
         let caller = self.authenticate(api_key).await?;
+        require_admissible(&caller.key, Role::Reader, "workarea_info")?;
+        let node = node
+            .or(caller.key.default_workarea)
+            .ok_or(AppError::WorkareaUnresolved)?;
         let tenant_id = caller.key.tenant_id;
         let ancestry = self
             .journal

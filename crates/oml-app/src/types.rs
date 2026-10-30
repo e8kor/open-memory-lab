@@ -113,6 +113,15 @@ impl WorkareaRecord {
     }
 }
 
+/// A node as `workarea.create` committed it, with the path derived from the
+/// stored ancestry: the same derivation the workarea read serves, so the
+/// create and the read never name one node two ways (ADR-0025 d14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedWorkarea {
+    pub workarea: WorkareaRecord,
+    pub path: String,
+}
+
 /// One workarea as the calling key may see it (http-api.md workareas;
 /// ADR-0025 d14): the node, its path derived from the `parent_id` names
 /// from `universe`, the immediate children the key can read, the verbs its

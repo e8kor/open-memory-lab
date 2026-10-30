@@ -59,6 +59,7 @@ async fn workarea(app: &TestApp, admin: &str, name: &str, parent: Uuid) -> Uuid 
     app.create_workarea(admin, name, Some(parent), None)
         .await
         .expect("create workarea")
+        .workarea
         .workarea_id
 }
 
@@ -1918,7 +1919,7 @@ async fn workarea_info_names_the_verbs_this_keys_grants_confer() {
         ),
     ] {
         let info = app
-            .workarea_info(&key.value, crew)
+            .workarea_info(&key.value, Some(crew))
             .await
             .expect("a readable node");
         assert_eq!(info.my_effective_verbs, verbs, "{}", key.principal);
@@ -1955,7 +1956,7 @@ async fn workarea_info_lists_only_readable_children() {
     // are absent, not marked; the rest are ordered by path_leaf in byte
     // order, so "Zulu" sorts before "alpha".
     let info = app
-        .workarea_info(&reader.value, crew)
+        .workarea_info(&reader.value, Some(crew))
         .await
         .expect("a readable node");
     assert_eq!(
@@ -1992,15 +1993,21 @@ async fn an_unreadable_workarea_is_not_found() {
         Uuid::from_u128(0xDEAD),
         quarantine,
     ] {
-        let err = app.workarea_info(&agent.value, node).await.unwrap_err();
+        let err = app
+            .workarea_info(&agent.value, Some(node))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::NotFound), "{node}: {err:?}");
     }
     // Writer alone does not read the node (refusal order step 4).
-    let err = app.workarea_info(&writer.value, crew).await.unwrap_err();
+    let err = app
+        .workarea_info(&writer.value, Some(crew))
+        .await
+        .unwrap_err();
     assert!(matches!(err, AppError::NotFound), "{err:?}");
     // Step 1 runs first: an admin key carries no grant role, so it is the
     // verb ceiling, never a read of the tree.
-    let err = app.workarea_info(admin, crew).await.unwrap_err();
+    let err = app.workarea_info(admin, Some(crew)).await.unwrap_err();
     assert!(
         matches!(
             err,
@@ -2014,6 +2021,45 @@ async fn an_unreadable_workarea_is_not_found() {
 }
 
 #[tokio::test]
+async fn an_omitted_workarea_resolves_to_the_default_only_after_the_verb_ceiling() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let second_admin = issue_with(&app, admin, Role::Admin, "bob-admin", vec![]).await;
+    assert_eq!(second_admin.default_workarea, None);
+    let agent = agent(&app, admin, "crew/agent-7", crew).await;
+    let unscoped = issue_with(&app, admin, Role::Reader, "rhea", vec![]).await;
+
+    // Step 1 needs no node, so it answers first: the bootstrap admin, whose
+    // default is the root, and a zero-grant admin with none get one code.
+    for key in [admin.as_str(), second_admin.value.as_str()] {
+        let err = app.workarea_info(key, None).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::VerbCeiling {
+                    role: Role::Admin,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+    // Past step 1, a key with no default is refused by name, and a key with
+    // one reads it as if it had named it.
+    let err = app.workarea_info(&unscoped.value, None).await.unwrap_err();
+    assert!(matches!(err, AppError::WorkareaUnresolved), "{err:?}");
+    assert_eq!(
+        app.workarea_info(&agent.value, None)
+            .await
+            .expect("default"),
+        app.workarea_info(&agent.value, Some(crew))
+            .await
+            .expect("named")
+    );
+}
+
+#[tokio::test]
 async fn the_derived_path_follows_parent_ids_from_universe() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
@@ -2022,7 +2068,7 @@ async fn the_derived_path_follows_parent_ids_from_universe() {
     let reader = issue(&app, admin, Role::Reader, "rhea", boot.root_workarea_id).await;
 
     let root = app
-        .workarea_info(&reader.value, boot.root_workarea_id)
+        .workarea_info(&reader.value, Some(boot.root_workarea_id))
         .await
         .expect("the root");
     assert_eq!(root.path, "universe");
@@ -2031,14 +2077,14 @@ async fn the_derived_path_follows_parent_ids_from_universe() {
     assert_eq!(root.workarea.status(), "committed");
 
     let leaf = app
-        .workarea_info(&reader.value, quarter)
+        .workarea_info(&reader.value, Some(quarter))
         .await
         .expect("the leaf");
     assert_eq!(leaf.path, "universe.crew.q1-2027");
     assert_eq!(leaf.workarea.parent_id, Some(crew));
     assert_eq!(leaf.workarea.status(), "development");
     let middle = app
-        .workarea_info(&reader.value, crew)
+        .workarea_info(&reader.value, Some(crew))
         .await
         .expect("the crew");
     assert_eq!(middle.path, "universe.crew");
@@ -2060,7 +2106,7 @@ async fn the_permission_epoch_moves_when_a_global_denial_is_journalled() {
     let quarantine = workarea(&app, admin, "quarantine", crew).await;
     let agent = agent(&app, admin, "crew/agent-7", crew).await;
     let epoch = || async {
-        app.workarea_info(&agent.value, crew)
+        app.workarea_info(&agent.value, Some(crew))
             .await
             .expect("a readable node")
             .permission_epoch
@@ -2108,6 +2154,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
         )
         .await
         .expect("create");
+    let (path, created) = (created.path, created.workarea);
     assert_eq!(created.crew, Some(crew.clone()));
     let bare = workarea(&app, admin, "bare", boot.root_workarea_id).await;
     let reader = issue_with(
@@ -2123,7 +2170,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     .await;
 
     let info = app
-        .workarea_info(&reader.value, created.workarea_id)
+        .workarea_info(&reader.value, Some(created.workarea_id))
         .await
         .expect("read");
     assert_eq!(
@@ -2131,7 +2178,13 @@ async fn crew_given_at_create_is_persisted_and_returned() {
         Some(crew.clone()),
         "persisted, not echoed"
     );
-    let info = app.workarea_info(&reader.value, bare).await.expect("read");
+    // The create answers with the path the read derives.
+    assert_eq!(path, "universe.metals");
+    assert_eq!(info.path, path);
+    let info = app
+        .workarea_info(&reader.value, Some(bare))
+        .await
+        .expect("read");
     assert_eq!(info.workarea.crew, None);
 
     // The journal carries the crew, so the fold is reproducible from it.
