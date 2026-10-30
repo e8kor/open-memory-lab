@@ -7,11 +7,13 @@
 //! The PoC slice: submit / get / recall / supersede on `/v1`; review next,
 //! verdicts, key issuance, workarea creation, the events tail and the
 //! bootstrap claim on `/v2`; `/healthz` and `/readyz` unversioned and
-//! unauthenticated (http-api.md "Health").
+//! unauthenticated (http-api.md "Health"); `/mcp`, the agent plugin's
+//! stateless facade over those rings ([`mcp`]).
 
 #![forbid(unsafe_code)]
 
 pub mod error;
+pub mod mcp;
 pub mod time;
 
 use std::collections::HashMap;
@@ -124,6 +126,7 @@ where
             .route("/v2/workareas", post(Self::create_workarea))
             .route("/v2/events", get(Self::events_tail))
             .route("/v2/bootstrap/claim", post(Self::bootstrap_claim))
+            .route("/mcp", post(Self::mcp).get(mcp::mcp_get))
             .with_state(self)
     }
 
