@@ -41,25 +41,20 @@ const ACCEPTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 
 /// The catalog tools whose ring endpoint exists in this slice.
-pub const SERVED_TOOLS: [&str; 6] = [
+pub const SERVED_TOOLS: [&str; 8] = [
     "oml_remember",
     "oml_learn",
     "oml_recall",
+    "oml_get",
+    "oml_supersede",
     "oml_my_work",
     "oml_workarea_info",
     "oml_events_tail",
 ];
 
-/// Catalog tools whose ring endpoint is not built yet: named, not unknown.
-/// `oml_get` and `oml_supersede` joined the catalog with ADR-0025 d12.
-const UNBUILT_TOOLS: [&str; 6] = [
-    "oml_get",
-    "oml_supersede",
-    "oml_attach",
-    "oml_relate_propose",
-    "oml_graph",
-    "oml_vocab",
-];
+/// Catalog tools whose ring endpoint is not built yet: named, not unknown
+/// (ADR-0025 d12).
+const UNBUILT_TOOLS: [&str; 4] = ["oml_attach", "oml_relate_propose", "oml_graph", "oml_vocab"];
 
 /// How a tool's refusal of arguments outside its input schema begins, as
 /// distinct from any refusal the ring answers to well-typed arguments.
@@ -136,6 +131,26 @@ struct RecallArgs {
     k: Option<u64>,
     include_own_held: Option<bool>,
     max_tokens: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GetArgs {
+    artifact_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SupersedeArgs {
+    artifact_id: String,
+    text: String,
+    retirement: Option<bool>,
+    kind: Option<String>,
+    derives_from: Option<Vec<String>>,
+    reason: Option<String>,
+    simulation_id: Option<String>,
+    simulated_time: Option<String>,
+    idempotency_key: String,
 }
 
 #[derive(Deserialize)]
@@ -270,6 +285,8 @@ where
             "oml_remember" => Self::tool_submit(st, token, "remember", args).await,
             "oml_learn" => Self::tool_submit(st, token, "learn", args).await,
             "oml_recall" => Self::tool_recall(st, token, args).await,
+            "oml_get" => Self::tool_get(st, token, args).await,
+            "oml_supersede" => Self::tool_supersede(st, token, args).await,
             "oml_my_work" => Self::tool_my_work(st, token, args).await,
             "oml_workarea_info" => Self::tool_workarea_info(st, token, args).await,
             "oml_events_tail" => Self::tool_events_tail(st, token, args).await,
@@ -393,6 +410,75 @@ where
             obj.insert("budget".to_owned(), budget.clone());
         }
         Ok(out)
+    }
+
+    /// `oml_get`: one `GET /v1/memories/{artifact_id}`. The item is the
+    /// claim item with `text`, `derives_from` and `attachments`, whose
+    /// `derives_from` and `replaces` the ring has already limited to what
+    /// the key can read (mcp-plugin.md `oml_get`; ADR-0025 d3, d12).
+    async fn tool_get(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: GetArgs = parse_args(args)?;
+        let memory =
+            ring_outcome(Self::get_memory_inner(st, &args.artifact_id, &ring_headers(token)).await)
+                .await?;
+        let mut item = claim_item(&memory);
+        for (from, to) in [
+            ("body", "text"),
+            ("derives_from", "derives_from"),
+            ("attachments", "attachments"),
+        ] {
+            item.insert(to.to_owned(), memory[from].clone());
+        }
+        Ok(Value::Object(item))
+    }
+
+    /// `oml_supersede`: one `POST /v1/memories/{artifact_id}/supersede`.
+    /// `idempotency_key` is the `Idempotency-Key` header and `text` the
+    /// body; `retirement`, `kind`, `derives_from`, `reason` and the
+    /// simulation fields pass through only when sent, so the ring applies
+    /// its own defaults. The tool carries no vocabulary fields, so a target
+    /// of a vocabulary kind is refused at step 5 of the supersede rule
+    /// (mcp-plugin.md `oml_supersede`; ADR-0025 d10, d11, d12).
+    async fn tool_supersede(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: SupersedeArgs = parse_args(args)?;
+        let mut headers = ring_headers(token);
+        insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
+        let mut body = Map::new();
+        body.insert("body".to_owned(), Value::String(args.text));
+        for (name, value) in [
+            ("retirement", args.retirement.map(Value::from)),
+            ("kind", args.kind.map(Value::from)),
+            ("derives_from", args.derives_from.map(Value::from)),
+            ("reason", args.reason.map(Value::from)),
+            ("simulation_id", args.simulation_id.map(Value::from)),
+            ("simulated_time", args.simulated_time.map(Value::from)),
+        ] {
+            if let Some(value) = value {
+                body.insert(name.to_owned(), value);
+            }
+        }
+        let response = Self::supersede_inner(
+            st,
+            &args.artifact_id,
+            &headers,
+            &Bytes::from(Value::Object(body).to_string()),
+            true,
+        )
+        .await;
+        let replayed = response
+            .as_ref()
+            .is_ok_and(|r| r.headers().contains_key("idempotency-replay"));
+        let receipt = ring_outcome(response).await?;
+        Ok(json!({
+            "artifact_id": receipt["artifact_id"],
+            "claim_key": receipt["claim_key"],
+            "version": receipt["version"],
+            "state": receipt["state"],
+            "retirement": receipt["retirement"],
+            "replaces": receipt["replaces"],
+            "workarea": receipt["workarea_id"],
+            "idempotent_replay": replayed,
+        }))
     }
 
     /// `oml_my_work`: one `GET /v1/memories?own=true`, the own-work
