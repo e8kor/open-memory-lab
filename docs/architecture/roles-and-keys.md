@@ -480,8 +480,8 @@ declaration site.
 
 A principal is not a name: the two keys of the two-key rule share one principal, and a principal
 may carry `/` (`crew-procure/agent-7`). Rotation mints a new key, so the successor takes a new name
-of its own, given in the rotation request. `oml keys issue-agent` sets the principal to the key
-name unless told otherwise, so every plugin key gets its own principal
+of its own, given in the rotation request. `oml keys issue-agent` takes the key's name and its
+principal as separate, required arguments, and never derives one from the other
 ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
 
 A key may also name a [crew](workareas.md#crews-recorded-not-operated) at issuance: journalled in

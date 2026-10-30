@@ -348,7 +348,8 @@ record decides is design; nothing below is built.
 
 - **d12 — Moved to ADR-0028 d1.** `oml keys issue-agent` and its `--out` key file are decided in
   ADR-0028 d1, and this record's d1 adds the key's name to the verb as its positional `<key-name>`
-  argument, which also becomes the key's principal unless `--principal` names another.
+  argument, beside the `--principal` ADR-0028 d1 requires, and changes nothing else that d1
+  decides.
 
 - **d13 — Moved to ADR-0028 d2.** The CLI's reader grant beside every writer grant and
   `--write-only` are decided in ADR-0028 d2, and they apply unchanged to `issue-agent` once this
@@ -356,7 +357,7 @@ record decides is design; nothing below is built.
 
 - **d14 — Moved to ADR-0028 d3.** The `oml-admin` plugin is decided in ADR-0028 d3, and once this
   record's d1 adds the positional key name to `issue-agent`, its skill passes the key's name there
-  and names the key file after it.
+  and keeps every other rule of ADR-0028 d3, the key file's path among them.
 
 - **d15 — Admin keys read workarea structure in their tenant, by key role and without grants,
   and never claim content.** An admin key reads, across its whole tenant, the workarea read

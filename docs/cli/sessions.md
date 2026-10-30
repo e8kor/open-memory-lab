@@ -142,7 +142,7 @@ NAME                  KEY ID      ROLE     EXPIRES     GRANTS
 corrosion-agent-1     key_9c44b7  writer   2027-01-27  corrosion:writer, corrosion:reader
 corrosion-reviewer-1  key_51d0ac  dreamer  2027-01-27  corrosion:dreamer
 
-$ eval "$(oml keys issue-agent corrosion-agent-3 --workarea corrosion)"
+$ eval "$(oml keys issue-agent corrosion-agent-3 --principal crew-corrosion/agent-3 --workarea corrosion)"
 key corrosion-agent-3 (key id key_7e21d0) issued — value exported as OML_API_KEY, printed nowhere else
 journal seq 818: key.issued {id: key_7e21d0, name: corrosion-agent-3, role: writer, value_disclosed: false, default_workarea_id: wa_00004e}
 journal seq 819: grant.issued {key: key_7e21d0, wa_00004e: writer}
