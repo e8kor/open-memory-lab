@@ -42,21 +42,23 @@ bash scripts/quickstart.sh    # claim the server, issue keys, check the agent pl
 
 The compose file uses the published image `ghcr.io/e8kor/open-memory-lab`. Use
 `docker compose up -d --build` to build it from the checkout instead. The quickstart claims the
-server's one-time enrollment token from its log and creates a workarea. It then issues three keys:
-a writer and a reader for your agent, and a dreamer key for the person who reviews. Finally it
-writes, approves and recalls one memory through the plugin's endpoint, and prints the lines to
-connect Claude Code:
+server's one-time enrollment token from its log and creates a workarea. It then issues two keys:
+one key for your agent, which both stores memories and searches them, and a dreamer key for the
+person who reviews. With the agent's key it writes one memory through the plugin's endpoint,
+finds it waiting for review in the agent's own list and in the agent's own search, has the
+dreamer key approve it, and searches for it again. Then it prints the lines to connect Claude
+Code:
 
 ```sh
 export OML_URL=http://127.0.0.1:8080
-export OML_API_KEY=<writer key>
-export OML_RECALL_KEY=<reader key>
+export OML_API_KEY=<agent key>
 claude plugin marketplace add e8kor/open-memory-lab
 claude plugin install oml@open-memory-lab
 ```
 
-Each key is shown once, so store them when the quickstart prints them. Nothing the agent writes
-is recalled until someone approves it with the dreamer key:
+Each key is shown once, so store them when the quickstart prints them. The agent sees its own
+writes while they wait, but nothing it writes reaches anyone else until someone approves it
+with the dreamer key:
 
 ```sh
 docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <dreamer key> review next

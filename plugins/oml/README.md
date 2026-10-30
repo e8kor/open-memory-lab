@@ -11,17 +11,34 @@ you store it.
 
 ```sh
 export OML_URL=http://127.0.0.1:8080        # the server, without /mcp
-export OML_API_KEY=oml_...                  # this agent's writer key
-export OML_RECALL_KEY=oml_...               # a reader key on the same workarea
+export OML_API_KEY=oml_...                  # this agent's one key
 claude plugin marketplace add e8kor/open-memory-lab
 claude plugin install oml@open-memory-lab
 ```
 
-The plugin registers two MCP connections to the same endpoint: `oml` with the writer key
-for remembering and revising, and `oml-recall` with the reader key for recall. A writer
-key issued with both writer and reader grants on the workarea can do both, and the second
-connection goes away once the plugin is built around that one key. If `OML_RECALL_KEY` is
-unset, only `oml-recall` fails to connect.
+The plugin registers one MCP connection, `oml`, and every tool runs on the one key behind
+it. Issue that key with the writer role, a writer grant and a reader grant on the agent's
+workarea, and that workarea as its default. A key without the reader grant still writes,
+but `oml_recall` refuses it with `access.not_found`.
+
+## The loop
+
+On that one key the agent:
+
+1. checks what it may do in its workarea with `oml_workarea_info`;
+2. recalls before it acts with `oml_recall`, reading the `steering` rows first;
+3. writes with `oml_remember`, or `oml_learn` for a conclusion drawn from memories it
+   holds, and gets `state: "held"` back;
+4. sees its held writes in `oml_my_work`, reads one back with `oml_get`, and searches them
+   beside the approved memories by passing `include_own_held: true` to `oml_recall`; no
+   other key reads or recalls them before approval;
+5. waits for a different identity to approve them, following `oml_events_tail`, after
+   which every key that reads the workarea recalls them;
+6. revises or retires a memory with `oml_supersede`, which is held and approved like any
+   write while recall keeps serving the version it replaces.
+
+`oml_recall` takes `max_tokens` to bound its answer: the steering rows are never cut, the
+hits are the longest run from the top of the ranking that fits, and `budget` reports the cut.
 
 Give each agent its own key. Attribution, and the rule that a reviewer never reviews
 their own work, both depend on it. Keep the key in the environment, not in a file you
