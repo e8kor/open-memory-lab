@@ -59,6 +59,20 @@ pub struct KeyAccess {
     pub denials: Vec<DenialRecord>,
 }
 
+impl KeyAccess {
+    /// The key's permission epoch over what is built: the latest of its
+    /// `key.issued`, `grant.issued` and `key.denied` seqs (workareas.md
+    /// permission epoch; ADR-0025 d14).
+    #[must_use]
+    pub fn permission_epoch(&self) -> u64 {
+        self.grants
+            .iter()
+            .map(|g| g.epoch)
+            .chain(self.denials.iter().map(|d| d.epoch))
+            .fold(self.issued_seq, u64::max)
+    }
+}
+
 /// A workarea's crew: recorded, not operated — OML never contacts the
 /// external manager (openapi.yaml `CrewRecord`; event-catalog.md
 /// `workarea.create`). An absent member is stored and served absent.
@@ -133,11 +147,21 @@ pub struct BootstrapRequest {
 }
 
 /// Show-once: the value is returned exactly here and never stored
-/// (roles-and-keys.md key lifecycle).
+/// (roles-and-keys.md key lifecycle), and only after the key's last
+/// `grant.issued` committed. The rest is the key as `key.issued` journalled
+/// it and its grants as stored, ids and epochs included (ADR-0025 d2).
 #[derive(Debug, Clone)]
 pub struct IssuedKey {
     pub key_id: Uuid,
     pub value: String,
+    pub role: Role,
+    pub principal: String,
+    /// The issuer's attestation as journalled; `None` when none was sent.
+    pub held_by: Option<HeldBy>,
+    /// The sent default, else the first grant's node; `None` for a
+    /// zero-grant key.
+    pub default_workarea: Option<Uuid>,
+    pub access: KeyAccess,
 }
 
 #[derive(Debug, Clone)]
@@ -147,13 +171,29 @@ pub struct BootstrapResult {
     pub admin_key: IssuedKey,
 }
 
+/// `POST /v2/keys`, validated in the issuance order (roles-and-keys.md
+/// grant admissibility and refusal order; ADR-0025 d2).
 #[derive(Debug, Clone)]
 pub struct IssueKeyRequest {
     pub role: Role,
     pub principal: String,
-    pub held_by: HeldBy,
-    /// `None` inherits the issuer's default workarea.
+    /// The issuing admin's attestation; `None` journals null and stores the
+    /// schema default, `agent`.
+    pub held_by: Option<HeldBy>,
+    /// `None` takes the first grant's node; a key never inherits its
+    /// issuer's default.
     pub default_workarea: Option<Uuid>,
+    pub grants: Vec<GrantRequest>,
+}
+
+/// One requested grant: a role over the subtree of `node`, less the
+/// subtrees of `deny`, each of which must lie inside it (workareas.md
+/// per-grant attenuation).
+#[derive(Debug, Clone)]
+pub struct GrantRequest {
+    pub node: Uuid,
+    pub role: Role,
+    pub deny: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -202,8 +242,9 @@ pub struct VerdictOutcome {
 pub struct RecallRequest {
     pub query: String,
     pub k: usize,
-    /// `None` resolves to the key's default workarea; a key with no default
-    /// searches tenant-wide (PoC simplification of the subtree scope).
+    /// The scope node; `None` resolves to the key's default workarea, and a
+    /// key with neither is refused — there is no tenant-wide fallback
+    /// (ADR-0025 d1).
     pub workarea_id: Option<Uuid>,
 }
 
@@ -239,8 +280,40 @@ pub enum AppError {
         "{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)"
     )]
     VerbCeiling { role: Role, verb: &'static str },
-    #[error("a {issuer:?} key cannot issue a {requested:?} key (roles-and-keys.md issuer ceiling)")]
-    IssuerCeiling { issuer: Role, requested: Role },
+    /// Issuance steps 2 and 3: with no `grant_index`, `role` is the requested
+    /// key role and `admissible` the key roles the issuer may issue; with
+    /// one, `role` is the first refused grant's role and `admissible` the key
+    /// role's admissible grant roles (roles-and-keys.md issuance order).
+    #[error(
+        "{role:?} is outside the admissible set {admissible:?} (roles-and-keys.md issuer ceiling, access.issuer_ceiling)"
+    )]
+    IssuerCeiling {
+        role: Role,
+        admissible: &'static [Role],
+        grant_index: Option<usize>,
+    },
+    #[error(
+        "an admin key never carries a dreamer grant (roles-and-keys.md two-key rule, access.role_exclusive)"
+    )]
+    RoleExclusive,
+    #[error(
+        "the node is readable but effective access does not confer {needed_role:?} (roles-and-keys.md refusal order, access.grant_refused)"
+    )]
+    GrantRefused {
+        workarea_id: Uuid,
+        needed_role: Role,
+    },
+    #[error(
+        "deny node {subtree_node_id} lies outside grant {grant_index}'s subtree (roles-and-keys.md issuance order, request.validation)"
+    )]
+    DenyOutsideGrant {
+        grant_index: usize,
+        subtree_node_id: Uuid,
+    },
+    #[error(
+        "no grant of the key covers default workarea {workarea_id} (roles-and-keys.md issuance order, request.validation)"
+    )]
+    DefaultUncovered { workarea_id: Uuid },
     #[error(
         "no workarea: the key has no default and the request names none (http-api.md request.workarea_unresolved)"
     )]
@@ -249,7 +322,9 @@ pub enum AppError {
         "not found — absence and no-access are indistinguishable (http-api.md access.not_found)"
     )]
     NotFound,
-    #[error("a writer may supersede only its own claims (http-api.md access.author_only)")]
+    #[error(
+        "a writer may supersede only the claims its own key authored (roles-and-keys.md#own, access.author_only)"
+    )]
     AuthorOnly,
     #[error(
         "the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)"
@@ -257,7 +332,9 @@ pub enum AppError {
     TipConflict,
     #[error("deterministic scan veto: {0} (admission.md — the rejection is journalled)")]
     ScanVeto(String),
-    #[error("derives_from names unknown artifact {0} (fail closed)")]
+    #[error(
+        "derives_from names {0}, which the key cannot read or no row is (fail closed, access.not_found)"
+    )]
     LineageUnknown(Uuid),
     #[error(
         "idempotency key reused with a different request (http-api.md idempotency.digest_mismatch)"

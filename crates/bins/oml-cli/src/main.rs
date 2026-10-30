@@ -57,6 +57,11 @@ enum Command {
         #[command(subcommand)]
         command: KeysCommand,
     },
+    /// Global per-key denials: deny-wins across all of a key's grants.
+    Deny {
+        #[command(subcommand)]
+        command: DenyCommand,
+    },
     /// Workarea tree verbs.
     Workareas {
         #[command(subcommand)]
@@ -119,7 +124,8 @@ struct KeysIssueArgs {
     /// agent | human | service
     #[arg(long, default_value = "agent")]
     held_by: String,
-    /// Workarea node the provider ring targets when a request names none.
+    /// Workarea node the provider ring targets when a request names none;
+    /// some grant must cover it. Omitted, the first grant's node.
     #[arg(long)]
     default_workarea: Option<Uuid>,
     /// Grant as <workarea-node-id>:<role>; repeatable.
@@ -130,6 +136,21 @@ struct KeysIssueArgs {
     principal: Option<String>,
     #[arg(long)]
     label: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum DenyCommand {
+    /// Create or extend the key's global deny object over a subtree. Distinct
+    /// from a per-grant deny; journalled as key.denied.
+    Set {
+        /// The key the denial binds.
+        key_id: Uuid,
+        /// The workarea node id whose subtree the key no longer reaches.
+        subtree: Uuid,
+        /// Why; the server accepts it and journals no reason.
+        #[arg(long)]
+        reason: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -393,6 +414,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    key id : {}", field(&response, "key_id"));
                 println!("    key    : {}", field(&response, "value"));
                 println!("    role   : {}", field(&response, "role"));
+                println!("    default: {}", field(&response, "default_workarea_id"));
                 if let Some(grants) = response["grants"].as_array() {
                     for g in grants {
                         println!(
@@ -404,6 +426,34 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 }
                 println!();
                 println!("store this value now; the server keeps only its hash.");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Deny {
+            command:
+                DenyCommand::Set {
+                    key_id,
+                    subtree,
+                    reason,
+                },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let mut body = json!({ "workarea_node_id": subtree });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
+            let (_, response) =
+                client.post(&format!("/v2/keys/{key_id}/denials"), &body, &write_opts())?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "denial journalled — key {key_id} no longer reaches {} (epoch {})",
+                    field(&response, "workarea_node_id"),
+                    response["epoch"]
+                );
+                println!("  denial id : {}", field(&response, "denial_id"));
             }
             Ok(ExitCode::SUCCESS)
         }

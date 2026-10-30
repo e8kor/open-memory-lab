@@ -59,6 +59,12 @@ pub enum MetadataFold {
         denial: KeyDenial,
         created_by: Uuid,
     },
+    /// `key.revoked`: the key resolves by its hash no more; its row, grants
+    /// and denials stay as history. The store refuses a revocation of a key
+    /// it does not hold (roles-and-keys.md key lifecycle; ADR-0025 d2).
+    KeyRevoked {
+        key_id: Uuid,
+    },
     /// A captured submission: the row lands `held` (or `rejected` on a scan
     /// veto, with `enqueue: false` — nothing waits in the queue).
     MemoryHeld {
@@ -166,28 +172,35 @@ pub trait JournalStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
     /// Promoted-only full-text recall (retrieval.md: reads return promoted
-    /// rows only). `workarea_id: None` searches tenant-wide (PoC).
+    /// rows only) over exactly the `readable` workarea nodes — subtree(scope)
+    /// ∩ the nodes where reader is effective, computed by the use-case. An
+    /// empty set searches nothing: there is no tenant-wide fallback
+    /// (ADR-0025 d1).
     fn recall_fts(
         &self,
         tenant_id: Uuid,
-        workarea_id: Option<Uuid>,
+        readable: &[Uuid],
         query: &str,
         k: usize,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
-    /// Claim the next reviewable queue entry for this reviewer: entries
-    /// claimed by another key are skipped, and so is any row whose lineage
-    /// closure contains the reviewer — the store never serves what this key
-    /// may not judge (admission.md review; the R2 check proper still runs
-    /// at verdict time in the use-case).
+    /// Claim the next reviewable queue entry for this reviewer among the rows
+    /// whose workarea is in `workareas`, the nodes where the reviewer's
+    /// dreamer access is effective (ADR-0025 d1): entries claimed by another
+    /// key are skipped, and so is any row whose lineage closure contains the
+    /// reviewer — the store never serves what this key may not judge
+    /// (admission.md review; the R2 check proper still runs at verdict time
+    /// in the use-case). An empty set serves nothing.
     fn review_claim_next(
         &self,
         tenant_id: Uuid,
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
+        workareas: &[Uuid],
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
-    /// One equality lookup on the key-value hash (roles-and-keys.md).
+    /// One equality lookup on the key-value hash (roles-and-keys.md); a
+    /// revoked key resolves to nothing.
     fn key_by_hash(
         &self,
         key_hash: &str,

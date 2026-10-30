@@ -191,6 +191,22 @@ impl ChainRig {
         .await
     }
 
+    /// Commit one `key.revoked` folding the revocation of `key_id`.
+    pub async fn revoke_key<S: JournalStore>(
+        &mut self,
+        store: &S,
+        key_id: Uuid,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.commit(
+            store,
+            event_types::KEY_REVOKED,
+            json!({ "key_id": key_id.to_string() }),
+            MetadataFold::KeyRevoked { key_id },
+            None,
+        )
+        .await
+    }
+
     /// Commit one event whose fold changes no row, to move the head.
     pub async fn filler<S: JournalStore>(&mut self, store: &S) -> CommitReceipt {
         self.commit(
@@ -451,7 +467,9 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
 }
 
 /// Recall returns promoted rows only — R3 at the store (retrieval.md) —
-/// honors the workarea filter and the `k` bound.
+/// searches exactly the readable workarea set it is handed, an empty set
+/// included, and honors the `k` bound (ADR-0025 d1: no tenant-wide
+/// fallback).
 pub async fn journal_recall_promoted_only<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(5);
     rig.seed_chain(store, 0).await;
@@ -492,7 +510,7 @@ pub async fn journal_recall_promoted_only<S: JournalStore>(store: &S) {
     .expect("promote");
 
     let hits = store
-        .recall_fts(rig.tenant_id, Some(wa), "canary", 10)
+        .recall_fts(rig.tenant_id, &[wa], "canary", 10)
         .await
         .expect("recall");
     assert_eq!(
@@ -501,37 +519,55 @@ pub async fn journal_recall_promoted_only<S: JournalStore>(store: &S) {
         "promoted rows only — the held twin is invisible"
     );
     assert_eq!(hits[0].memory_id, promoted_id);
-    let other_wa = store
-        .recall_fts(rig.tenant_id, Some(Uuid::from_u128(0xBF)), "canary", 10)
+    let wider = store
+        .recall_fts(rig.tenant_id, &[Uuid::from_u128(0xBF), wa], "canary", 10)
         .await
         .expect("recall");
-    assert!(other_wa.is_empty(), "the workarea filter holds");
+    assert_eq!(wider, hits, "every node of the set is searched");
+    let other_wa = store
+        .recall_fts(rig.tenant_id, &[Uuid::from_u128(0xBF)], "canary", 10)
+        .await
+        .expect("recall");
+    assert!(other_wa.is_empty(), "the workarea set holds");
+    let nothing_readable = store
+        .recall_fts(rig.tenant_id, &[], "canary", 10)
+        .await
+        .expect("recall");
+    assert!(
+        nothing_readable.is_empty(),
+        "an empty readable set searches nothing, never the tenant"
+    );
     let bounded = store
-        .recall_fts(rig.tenant_id, None, "canary", 0)
+        .recall_fts(rig.tenant_id, &[wa], "canary", 0)
         .await
         .expect("recall");
     assert!(bounded.is_empty(), "k bounds the result");
 }
 
-/// The review queue serves each item to one reviewer, skips rows the
-/// reviewer's lineage excludes, and re-serves a reviewer its own claim.
+/// The review queue serves each item to one reviewer, only from the
+/// workarea set it is handed — the reviewer's dreamer effective access
+/// (ADR-0025 d1) — skips rows the reviewer's lineage excludes, and
+/// re-serves a reviewer its own claim.
 pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(6);
     rig.seed_chain(store, 0).await;
     let wa = Uuid::from_u128(0xB3);
+    let elsewhere = Uuid::from_u128(0xB4);
     let m1 = Uuid::from_u128(0xC4);
     let m2 = Uuid::from_u128(0xC5);
+    let m3 = Uuid::from_u128(0xC6);
     let author1_key = Uuid::from_u128(0xD2);
-    for (id, author, key) in [
-        (m1, "alice", author1_key),
-        (m2, "bob", Uuid::from_u128(0xD3)),
+    for (id, workarea, author, key) in [
+        (m1, wa, "alice", author1_key),
+        (m2, wa, "bob", Uuid::from_u128(0xD3)),
+        (m3, elsewhere, "bob", Uuid::from_u128(0xD3)),
     ] {
         rig.commit(
             store,
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
-                memory: held_memory(rig.tenant_id, wa, id, author, key, "body"),
+                memory: held_memory(rig.tenant_id, workarea, id, author, key, "body"),
                 enqueue: true,
             },
             None,
@@ -540,34 +576,47 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
         .expect("commit");
     }
 
+    // A reviewer with no dreamer node is served nothing, never the tenant.
+    let none = store
+        .review_claim_next(rig.tenant_id, "erin", Uuid::from_u128(0xE4), &[])
+        .await
+        .expect("claim");
+    assert!(none.is_none(), "an empty workarea set serves nothing");
     // alice (in m1's lineage) is served m2, never her own row.
     let alice_key = Uuid::from_u128(0xE1);
     let served = store
-        .review_claim_next(rig.tenant_id, "alice", alice_key)
+        .review_claim_next(rig.tenant_id, "alice", alice_key, &[wa])
         .await
         .expect("claim")
         .expect("m2 waits");
     assert_eq!(served.memory_id, m2, "lineage-excluded rows are skipped");
     // A re-claim by the same key returns the same item.
     let again = store
-        .review_claim_next(rig.tenant_id, "alice", alice_key)
+        .review_claim_next(rig.tenant_id, "alice", alice_key, &[wa])
         .await
         .expect("claim")
         .expect("still hers");
     assert_eq!(again.memory_id, m2);
     // An independent reviewer gets the remaining item, not alice's claim.
     let served = store
-        .review_claim_next(rig.tenant_id, "carol", Uuid::from_u128(0xE2))
+        .review_claim_next(rig.tenant_id, "carol", Uuid::from_u128(0xE2), &[wa])
         .await
         .expect("claim")
         .expect("m1 waits");
     assert_eq!(served.memory_id, m1);
-    // Everything is claimed: a third reviewer gets nothing.
+    // Everything in the set is claimed: m3 waits outside it and is never
+    // served from it.
     let none = store
-        .review_claim_next(rig.tenant_id, "dave", Uuid::from_u128(0xE3))
+        .review_claim_next(rig.tenant_id, "dave", Uuid::from_u128(0xE3), &[wa])
         .await
         .expect("claim");
-    assert!(none.is_none());
+    assert!(none.is_none(), "a row outside the set is never served");
+    let served = store
+        .review_claim_next(rig.tenant_id, "dave", Uuid::from_u128(0xE3), &[elsewhere])
+        .await
+        .expect("claim")
+        .expect("m3 waits");
+    assert_eq!(served.memory_id, m3);
 }
 
 /// Key rows fold in with their event and resolve by value hash — one
@@ -603,6 +652,55 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
     assert_eq!(
         store.key_by_hash("sha256:beef").await.expect("lookup"),
         None
+    );
+}
+
+/// A revoked key resolves by its hash no more, from the commit that
+/// journalled `key.revoked` on, while its row stays as history; revoking a
+/// key the tenant does not hold, or one already revoked, is refused and
+/// commits nothing (roles-and-keys.md key lifecycle; ADR-0025 d2, the
+/// `issuance_incomplete` revocation).
+pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(21);
+    rig.seed_chain(store, 0).await;
+    let key = key_record(rig.tenant_id, Uuid::from_u128(0xDA), Role::Writer, None);
+    rig.issue_key(store, key.clone()).await;
+    assert_eq!(
+        store.key_by_hash(&key.key_hash).await.expect("lookup"),
+        Some(key.clone())
+    );
+
+    rig.revoke_key(store, key.key_id).await.expect("revoke");
+    assert_eq!(
+        store.key_by_hash(&key.key_hash).await.expect("lookup"),
+        None,
+        "a revoked key authenticates nothing"
+    );
+    assert!(
+        store
+            .key_access(rig.tenant_id, key.key_id)
+            .await
+            .expect("read")
+            .is_some(),
+        "the revoked key's row stays as history"
+    );
+
+    let head = store
+        .chain_head(rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("chain");
+    for key_id in [Uuid::from_u128(0xDB), key.key_id] {
+        let refused = rig.revoke_key(store, key_id).await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        store.chain_head(rig.tenant_id).await.expect("head"),
+        Some(head),
+        "a refused revocation commits nothing"
     );
 }
 
@@ -1265,6 +1363,7 @@ where
     journal_recall_promoted_only(&new_store().await).await;
     journal_review_claim_laws(&new_store().await).await;
     journal_key_lookup_by_hash(&new_store().await).await;
+    a_revoked_key_no_longer_resolves_by_its_hash(&new_store().await).await;
     journal_idempotency_roundtrip(&new_store().await).await;
     grants_and_denials_round_trip_through_their_folds_and_key_access(&new_store().await).await;
     a_grant_epoch_is_its_event_seq(&new_store().await).await;

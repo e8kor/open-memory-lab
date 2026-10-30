@@ -172,14 +172,12 @@ async fn full_ceremony_through_the_cli() {
             ],
         );
         assert_eq!(code, 0, "issue {role}: {log}");
-        response["value"]
-            .as_str()
-            .expect("show-once value")
-            .to_owned()
+        let field = |name: &str| response[name].as_str().expect(name).to_owned();
+        (field("value"), field("key_id"))
     };
-    let writer = issue("writer", "crew/agent-1");
-    let dreamer = issue("dreamer", "crew/reviewer-1");
-    let reader = issue("reader", "crew/recall-1");
+    let (writer, writer_id) = issue("writer", "crew/agent-1");
+    let (dreamer, _) = issue("dreamer", "crew/reviewer-1");
+    let (reader, _) = issue("reader", "crew/recall-1");
 
     // The two-key rule travels through the CLI as a typed refusal.
     let (code, envelope, log) = oml(
@@ -300,6 +298,25 @@ async fn full_ceremony_through_the_cli() {
     // -- tenants create is honestly out of the PoC slice ---------------------
     let (code, _, log) = oml(&server, &creds, None, &["tenants", "create", "aurora"]);
     assert_eq!(code, 2, "operator tier out of slice: {log}");
+
+    // -- deny set: a global per-key denial wins over the key's grant ----------
+    let (code, denial, log) = oml(
+        &server,
+        &creds,
+        None,
+        &["deny", "set", &writer_id, root, "--reason", "incident 44"],
+    );
+    assert_eq!(code, 0, "deny set: {log}");
+    assert_eq!(denial["workarea_node_id"].as_str(), Some(root), "{log}");
+    assert!(denial["epoch"].as_u64().is_some(), "{log}");
+    let (code, envelope, log) = oml(
+        &server,
+        &creds,
+        Some(&writer),
+        &["submit", "--claim", "written after the denial"],
+    );
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(envelope["error"]["code"], "access.not_found", "{log}");
 
     // -- the tamper case: a stub replays a corrupted events document ---------
     // Pull the genuine tail, corrupt one signed field, serve it verbatim.

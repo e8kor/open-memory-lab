@@ -381,10 +381,14 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
     assert_eq!(before["isError"], false, "{before}");
     assert_eq!(before["structuredContent"]["hits"], json!([]));
 
-    // The writer's key carries no read grant: the ring's typed refusal.
+    // The writer's key carries no read grant, so its scope is not readable:
+    // the ring's typed refusal, absence (ADR-0025 d1).
     let refused = call_tool(&router, &writer, 4, "oml_recall", recall.clone()).await;
     assert_eq!(refused["isError"], true, "{refused}");
-    assert!(refused["structuredContent"]["error"]["code"].is_string());
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"], "access.not_found",
+        "{refused}"
+    );
     assert!(refused["structuredContent"]["error"]["rule"].is_string());
 
     // A different identity ratifies over the HTTP API — never over MCP.
