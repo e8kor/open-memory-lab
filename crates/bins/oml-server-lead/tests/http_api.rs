@@ -530,7 +530,7 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_envelope(&body, "idempotency.digest_mismatch");
 
-    // The deterministic scan can veto; the rejection is journalled.
+    // The deterministic scan can veto: a refusal that journals nothing.
     let (status, _, body) = send(
         router,
         "POST",
@@ -568,7 +568,7 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "held");
     assert_eq!(body["body"], submit_body["body"]);
-    assert_eq!(body["tip"], true);
+    assert_eq!(body["tip"], false, "a held version is never the tip");
     let (status, _, body) = send(
         router,
         "GET",
@@ -1408,5 +1408,196 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
 
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// The claim item's real fields (ADR-0025 d6, d10, d12)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn responses_carry_real_version_kind_tokens_and_workarea_path() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let quotes = create_workarea(router, &admin, crew, "quotes").await;
+    let agent = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": crew, "role": "reader" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+    let dreamer = issue_key(router, &admin, "dreamer", "crew/reviewer-3", crew).await;
+    // Sent decomposed; counted, digested and stored as its NFC form.
+    let decomposed = "Accra Metals quoted 412 USD/t at the cafe\u{301}.";
+    let composed = "Accra Metals quoted 412 USD/t at the caf\u{e9}.";
+    let tokens = |text: &str| text.len().div_ceil(4);
+    let get = |token: String, id: Value| async move {
+        let id = id.as_str().expect("artifact id").to_owned();
+        let (status, _, body) = send(
+            router,
+            "GET",
+            &format!("/v1/memories/{id}"),
+            Call::auth(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    };
+    let assert_path = |item: &Value| {
+        let path = item["workarea_path"].as_str().expect("a derived path");
+        let segments: Vec<&str> = path.split('.').collect();
+        assert_eq!(segments.len(), 3, "root, crew, quotes: {path}");
+        assert_eq!(&segments[1..], ["metals-crew", "quotes"], "{path}");
+    };
+
+    let (status, _, accepted) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&agent)
+            .idem("s-1")
+            .workarea(&quotes.to_string())
+            .body(json!({
+                "verb": "remember", "claim_key": "quote-am-7741", "kind": "derived_fact",
+                "body": decomposed,
+            })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    assert_eq!(accepted["version"], 1);
+    assert_eq!(accepted["retirement"], false);
+    assert_eq!(accepted["replaces"], Value::Null);
+    assert_eq!(accepted["workarea_id"], json!(quotes));
+    let first = accepted["artifact_id"].clone();
+
+    let held = get(agent.clone(), first.clone()).await;
+    assert_eq!(held["version"], 1);
+    assert_eq!(
+        held["kind"], "derived_fact",
+        "the kind sent, never 'memory'"
+    );
+    assert_eq!(held["state"], "held");
+    assert_eq!(held["tip"], false);
+    assert_eq!(
+        held["tokens"],
+        tokens(composed),
+        "budget tokens of the NFC body"
+    );
+    assert_eq!(held["body"], composed);
+    assert_eq!(held["retirement"], false);
+    assert_eq!(held["replaces"], Value::Null);
+    assert_eq!(
+        held["held_expires_at"],
+        Value::Null,
+        "held-item expiry is unbuilt"
+    );
+    assert_eq!(held["promoted_at"], Value::Null);
+    assert_eq!(held["workarea_id"], json!(quotes));
+    assert_path(&held);
+
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer).idem("r-1").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    assert_eq!(serve["item"]["version"], 1);
+    assert_eq!(serve["item"]["kind"], "derived_fact");
+    assert_eq!(serve["item"]["tokens"], tokens(composed));
+    let (status, _, verdict) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Call::auth(&dreamer)
+            .idem("v-1")
+            .body(json!({"serve_id": serve["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    assert_eq!(verdict["version"], 1);
+
+    let promoted = get(agent.clone(), first.clone()).await;
+    assert_eq!(promoted["state"], "promoted");
+    assert_eq!(
+        promoted["tip"], true,
+        "the ratified first version is the tip"
+    );
+    assert!(promoted["promoted_at"].is_string(), "{promoted}");
+
+    let (status, _, recall) = send(
+        router,
+        "POST",
+        "/v1/memories/recall",
+        Call::auth(&agent).body(json!({"query": "Accra Metals"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    let hit = &recall["hits"][0]["memory"];
+    assert_eq!(hit["artifact_id"], first);
+    assert_eq!(hit["version"], 1);
+    assert_eq!(hit["kind"], "derived_fact");
+    assert_eq!(hit["tokens"], tokens(composed));
+    assert_eq!(hit["tip"], true);
+    assert_path(hit);
+
+    let revised = "Accra Metals revised the quote to 408 USD/t.";
+    let (status, _, successor) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{}/supersede", first.as_str().expect("id")),
+        Call::auth(&agent)
+            .idem("sup-1")
+            .body(json!({"body": revised})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
+    assert_eq!(successor["version"], 2);
+    let next = get(agent.clone(), successor["artifact_id"].clone()).await;
+    assert_eq!(next["version"], 2, "1 + the claim's greatest version");
+    assert_eq!(next["kind"], "derived_fact", "the target's kind");
+    assert_eq!(next["claim_key"], "quote-am-7741");
+    assert_eq!(
+        next["replaces"],
+        json!({ "artifact_id": first, "version": 1 })
+    );
+    assert_eq!(next["tokens"], tokens(revised));
+    assert_eq!(next["tip"], false);
+    assert_path(&next);
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn the_body_limit_counts_the_nfc_text() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let submit = |idem: &str, claim_key: &str, body: String| {
+        let call = Call::auth(&writer).idem(idem).body(json!({
+            "verb": "remember", "claim_key": claim_key, "kind": "memory", "body": body,
+        }));
+        async move { send(router, "POST", "/v1/memories", call).await }
+    };
+
+    // 400 000 decomposed é: 1.2 MB as sent, 0.8 MB in NFC, under the
+    // shipped 1 MiB submission.max_body_size (http-api.md limits).
+    let (status, _, body) = submit("s-1", "decomposed", "e\u{301}".repeat(400_000)).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    // One byte over 1 MiB in NFC is refused before anything is stored.
+    let (status, _, body) = submit("s-2", "over", "a".repeat(1_048_577)).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_envelope(&body, "request.payload_too_large");
     drop_db(&rig.db_name).await;
 }

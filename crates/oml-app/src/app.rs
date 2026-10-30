@@ -17,7 +17,7 @@ use oml_domain::access::{
 };
 use oml_domain::{
     ChainHead, EventDraft, HeldBy, KeySet, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
-    check_reviewer, event_types, next_envelope, sha256_digest_string, transition,
+    check_reviewer, event_types, next_envelope, nfc, sha256_digest_string, transition,
 };
 
 use crate::ports::{
@@ -27,9 +27,9 @@ use crate::ports::{
 };
 use crate::types::{
     AppError, BootstrapRequest, BootstrapResult, DenialRecord, GrantRecord, IssueKeyRequest,
-    IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult, SubmitOutcome,
-    SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest, Verdict, VerdictOutcome,
-    WorkareaRecord,
+    IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult, ServedMemory,
+    SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest, Verdict,
+    VerdictOutcome, VersionRef, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -166,6 +166,7 @@ fn submit_request_digest(req: &SubmitRequest, workarea_id: Uuid) -> String {
     let doc = json!({
         "body": req.body,
         "claim_key": req.claim_key,
+        "kind": req.kind.as_str(),
         "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "workarea_id": workarea_id.to_string(),
     });
@@ -259,23 +260,52 @@ where
 
     /// `memory` as served to the caller: `derives_from` keeps only the
     /// ancestors `readable` accepts, so a promoted row derived from its
-    /// author's held row names that row to no other key (http-api.md get;
-    /// ADR-0025 d3).
+    /// author's held row names that row to no other key, and `replaces`
+    /// obeys the same test, so one item never names in `replaces` what its
+    /// `derives_from` hides (http-api.md get; ADR-0025 d3). The path is the
+    /// ancestry's names from the root, joined with `.` (ADR-0025 d14).
     async fn served(
         &self,
         caller: &Caller,
         mut memory: MemoryRecord,
-    ) -> Result<MemoryRecord, AppError> {
+    ) -> Result<ServedMemory, AppError> {
+        let tenant_id = caller.key.tenant_id;
         let mut derives_from = Vec::with_capacity(memory.derives_from.len());
         for ancestor in memory.derives_from {
-            if let Some(m) = self.journal.memory(caller.key.tenant_id, ancestor).await?
+            if let Some(m) = self.journal.memory(tenant_id, ancestor).await?
                 && self.readable(caller, &m).await?
             {
                 derives_from.push(ancestor);
             }
         }
         memory.derives_from = derives_from;
-        Ok(memory)
+        let mut replaces = None;
+        if let Some(id) = memory.replaces
+            && let Some(m) = self.journal.memory(tenant_id, id).await?
+            && self.readable(caller, &m).await?
+        {
+            replaces = Some(VersionRef {
+                artifact_id: id,
+                version: m.version,
+            });
+        }
+        let workarea_path = self
+            .journal
+            .workarea_ancestry(tenant_id, memory.workarea_id)
+            .await?
+            .map(|ancestry| {
+                ancestry
+                    .iter()
+                    .rev()
+                    .map(|w| w.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(".")
+            });
+        Ok(ServedMemory {
+            memory,
+            replaces,
+            workarea_path,
+        })
     }
 
     /// The nodes of the subtree at `root` where `role` is effective for the
@@ -817,8 +847,12 @@ where
 
     /// Submit a memory: writer on the resolved node, which must exist, by
     /// the refusal order (ADR-0025 d1); every `derives_from` target readable
-    /// (ADR-0025 d3); same-call deterministic scan, held on arrival,
-    /// idempotency record honored (admission.md, http-api.md).
+    /// (ADR-0025 d3); the claim text normalized to NFC before the digest,
+    /// the scan and the byte count (admission.md capture; ADR-0025 d6);
+    /// same-call deterministic scan, whose veto is a refusal that journals
+    /// nothing; a new claim's `claim_key` free in the workarea (ADR-0025
+    /// d18); held on arrival as the claim's version 1, idempotency record
+    /// honored (admission.md, http-api.md).
     pub async fn submit_memory(
         &self,
         api_key: &str,
@@ -853,19 +887,22 @@ where
             });
         }
 
-        // Deterministic scan: same call, before the commit transaction
-        // (admission.md). A veto is a journalled rejection, not a drop.
-        let scan = self.scanner.scan(&AdmissionEnvelope {
+        // Capture normalizes first: the digest, the scan and the byte count
+        // all see the NFC text (admission.md capture; ADR-0025 d6).
+        let body = nfc(&req.body);
+
+        // Deterministic scan: same call, before the commit transaction. A
+        // veto is a refusal like any other: it journals nothing and stores
+        // no row (admission.md; errors.md submission.scan_veto).
+        let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
-            kind: "memory",
-            body: &req.body,
-        });
-        let (status, scan_finding) = match &scan {
-            ScanOutcome::Pass => (MemoryStatus::Held, None),
-            ScanOutcome::Hold(reason) => (MemoryStatus::Held, Some(reason.clone())),
-            ScanOutcome::Veto(reason) => (MemoryStatus::Rejected, Some(reason.clone())),
+            kind: req.kind.as_str(),
+            body: &body,
+        }) {
+            ScanOutcome::Pass => None,
+            ScanOutcome::Hold(reason) => Some(reason),
+            ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
-        let vetoed = status == MemoryStatus::Rejected;
 
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
@@ -885,37 +922,69 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
+        // The head first, then the claim_key read: a capture that commits
+        // in between moves the head, so this commit conflicts and its retry
+        // reads the key again (ADR-0025 d10, ordinals; d18).
+        let prev = self.head_event(key.tenant_id).await?;
+        if self
+            .journal
+            .claim_key_state(key.tenant_id, workarea_id, &req.claim_key)
+            .await?
+            .live
+        {
+            return Err(AppError::ClaimKeyConflict);
+        }
+
         let memory_id = self.ids.new_id();
-        let body_digest = sha256_digest_string(req.body.as_bytes());
+        let body_digest = sha256_digest_string(body.as_bytes());
+        let body_bytes = body.len() as u64;
         let memory = MemoryRecord {
             memory_id,
             tenant_id: key.tenant_id,
             workarea_id,
             claim_key: req.claim_key.clone(),
-            body: req.body.clone(),
+            version: 1,
+            kind: req.kind,
+            body,
             body_digest: body_digest.clone(),
-            status,
+            body_bytes,
+            status: MemoryStatus::Held,
+            is_tip: false,
+            promoted_at: None,
+            retirement: false,
+            replaces: None,
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
             derives_from: req.derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
-            superseded_by: None,
             scan_finding: scan_finding.clone(),
             created_at: self.clock.now(),
         };
 
-        let prev = self.head_event(key.tenant_id).await?;
+        // The catalog payload of submission.remember: digest-only, body
+        // plaintext never rides the journal (ADR-0002 d1; event-catalog.md).
+        // The PoC stores the body inline and unencrypted, so there is no
+        // ciphertext digest, and it pins no scan rule set, so there is no
+        // scanner version (admission.md rule-set registry).
         let payload = json!({
             "artifact_id": memory_id.to_string(),
             "workarea_id": workarea_id.to_string(),
             "claim_key": req.claim_key,
-            // Digest-only payload: body plaintext never rides the journal
-            // (ADR-0002 d1, admission.md capture).
-            "body_digest": body_digest,
+            "version": memory.version,
+            "kind": req.kind.as_str(),
+            "plaintext_digest": body_digest,
+            "body_bytes": body_bytes,
+            "ciphertext_digest": Value::Null,
+            "attachments": [],
             "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "provenance": "agent",
+            "simulation_id": Value::Null,
+            "replaces": Value::Null,
+            "retirement": false,
             "scan": {
-                "result": if vetoed { "veto" } else if scan_finding.is_some() { "hold" } else { "pass" },
+                "result": if scan_finding.is_some() { "hold" } else { "pass" },
+                "scanner_version": Value::Null,
                 "finding": scan_finding,
             },
         });
@@ -932,38 +1001,29 @@ where
         let receipt = SubmitReceipt {
             memory_id,
             claim_key: req.claim_key.clone(),
+            version: memory.version,
             workarea_id,
-            state: status.as_str().to_owned(),
+            state: MemoryStatus::Held.as_str().to_owned(),
             journal_seq: seq,
             body_digest,
         };
-        // A vetoed submission is journalled as rejected but stores no
-        // idempotency record: the caller gets the typed error (PoC choice).
-        let idempotency = if vetoed {
-            None
-        } else {
-            Some(IdempotencyPut {
-                scope,
-                record: IdempotencyRecord {
-                    request_digest,
-                    response: serde_json::to_value(&receipt)
-                        .map_err(|e| AppError::StoredResponse(e.to_string()))?,
-                },
-            })
-        };
+        let idempotency = Some(IdempotencyPut {
+            scope,
+            record: IdempotencyRecord {
+                request_digest,
+                response: serde_json::to_value(&receipt)
+                    .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+            },
+        });
         self.commit(
             event,
             MetadataFold::MemoryHeld {
                 memory,
-                enqueue: !vetoed,
+                enqueue: true,
             },
             idempotency,
         )
         .await?;
-
-        if let ScanOutcome::Veto(reason) = scan {
-            return Err(AppError::ScanVeto(reason));
-        }
         Ok(SubmitOutcome {
             receipt,
             replayed: false,
@@ -973,16 +1033,20 @@ where
     /// Serve the next reviewable held item to this dreamer, claiming it,
     /// from the rows within its dreamer effective access only; a
     /// `held_by: service` key is refused before any lookup (ADR-0025 d1).
-    pub async fn review_next(&self, api_key: &str) -> Result<Option<MemoryRecord>, AppError> {
+    pub async fn review_next(&self, api_key: &str) -> Result<Option<ServedMemory>, AppError> {
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Dreamer, "review")?;
         refuse_service(key, "review")?;
         let workareas = self.dreamer_nodes(&caller).await?;
-        Ok(self
+        match self
             .journal
             .review_claim_next(key.tenant_id, &key.principal, key.key_id, &workareas)
-            .await?)
+            .await?
+        {
+            None => Ok(None),
+            Some(memory) => Ok(Some(self.served(&caller, memory).await?)),
+        }
     }
 
     /// Record a verdict. Dreamer on the row's workarea by the refusal order,
@@ -1051,6 +1115,7 @@ where
                     .await?;
                 Ok(VerdictOutcome {
                     memory_id,
+                    version: memory.version,
                     state: new_status,
                     journal_seq: receipt.seq,
                 })
@@ -1085,6 +1150,7 @@ where
                     .await?;
                 Ok(VerdictOutcome {
                     memory_id,
+                    version: memory.version,
                     state: new_status,
                     journal_seq: receipt.seq,
                 })
@@ -1123,10 +1189,7 @@ where
             // replaced version is promoted history, never a hit (ADR-0025
             // d8). Each hit names only the ancestors the caller can read
             // (d3).
-            if m.status == MemoryStatus::Promoted
-                && m.superseded_by.is_none()
-                && readable.contains(&m.workarea_id)
-            {
+            if m.status == MemoryStatus::Promoted && m.is_tip && readable.contains(&m.workarea_id) {
                 hits.push(self.served(&caller, m).await?);
             }
         }
@@ -1146,7 +1209,7 @@ where
         &self,
         api_key: &str,
         memory_id: Uuid,
-    ) -> Result<MemoryRecord, AppError> {
+    ) -> Result<ServedMemory, AppError> {
         let caller = self.authenticate(api_key).await?;
         let memory = self
             .journal
@@ -1189,21 +1252,42 @@ where
             .await?;
         // Only the promoted tip is a lawful target; supersession moves the
         // tip and changes no state (ADR-0025 d10).
-        if target.status != MemoryStatus::Promoted || target.superseded_by.is_some() {
+        if target.status != MemoryStatus::Promoted || !target.is_tip {
             return Err(AppError::TipConflict);
         }
 
-        // The successor is a new submission: scanned like any write.
+        // The successor is a new submission: normalized to NFC and scanned
+        // like any write, under the target's kind, which an omitted kind
+        // inherits (admission.md capture; ADR-0025 d6, d11).
+        let body = nfc(&req.body);
         if let ScanOutcome::Veto(reason) = self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
-            kind: "memory",
-            body: &req.body,
+            kind: target.kind.as_str(),
+            body: &body,
         }) {
             return Err(AppError::ScanVeto(reason));
         }
 
+        // The head first, then the ordinal: 1 + the greatest version of the
+        // claim_key in the workarea, whatever its state (ADR-0025 d10).
+        let prev = self.head_event(key.tenant_id).await?;
+        let claim_key = req
+            .claim_key
+            .clone()
+            .unwrap_or_else(|| target.claim_key.clone());
+        let version = self
+            .journal
+            .claim_key_state(key.tenant_id, target.workarea_id, &claim_key)
+            .await?
+            .greatest_version
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| {
+                StoreError::Backend(format!("claim_key {claim_key:?} has no next ordinal"))
+            })?;
+
         let successor_id = self.ids.new_id();
-        let body_digest = sha256_digest_string(req.body.as_bytes());
+        let body_digest = sha256_digest_string(body.as_bytes());
         let mut lineage_principals: BTreeSet<String> =
             target.lineage_principals.iter().cloned().collect();
         lineage_principals.insert(key.principal.clone());
@@ -1213,21 +1297,26 @@ where
             memory_id: successor_id,
             tenant_id: key.tenant_id,
             workarea_id: target.workarea_id,
-            claim_key: req.claim_key.clone().or_else(|| target.claim_key.clone()),
-            body: req.body.clone(),
+            claim_key,
+            version,
+            kind: target.kind,
+            body_bytes: body.len() as u64,
+            body,
             body_digest: body_digest.clone(),
             status: MemoryStatus::Held,
+            is_tip: false,
+            promoted_at: None,
+            retirement: false,
+            replaces: Some(req.target_id),
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
             derives_from: vec![req.target_id],
             lineage_principals: lineage_principals.into_iter().collect(),
             lineage_key_ids: lineage_key_ids.into_iter().collect(),
-            superseded_by: None,
             scan_finding: None,
             created_at: self.clock.now(),
         };
 
-        let prev = self.head_event(key.tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,

@@ -19,7 +19,17 @@ use crate::ports::{
     IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
     ScanOutcome, Scanner, Signer, StoreError,
 };
-use crate::types::{DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord};
+use crate::types::{
+    ClaimKeyState, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
+};
+
+/// The states whose versions hold their `claim_key` and their ordinal
+/// (postgres-schema.md `memories_claim_version`; ADR-0025 d18).
+const LIVE: [MemoryStatus; 3] = [
+    MemoryStatus::Held,
+    MemoryStatus::Promoted,
+    MemoryStatus::Demoted,
+];
 
 // ---------------------------------------------------------------------------
 // Journal store
@@ -116,11 +126,33 @@ fn require_held(state: &TenantState, key_id: Uuid, node: Uuid) -> Result<(), Sto
     Ok(())
 }
 
+/// A second live version of `memory`'s ordinal under its `claim_key` in its
+/// workarea is refused, as `memories_claim_version` refuses it.
+fn require_free_ordinal(state: &TenantState, memory: &MemoryRecord) -> Result<(), StoreError> {
+    if state.memories.values().any(|m| {
+        m.workarea_id == memory.workarea_id
+            && m.claim_key == memory.claim_key
+            && m.version == memory.version
+            && LIVE.contains(&m.status)
+    }) {
+        return Err(StoreError::Backend(format!(
+            "version {} of claim_key {:?} is already live in this workarea",
+            memory.version, memory.claim_key
+        )));
+    }
+    Ok(())
+}
+
 /// Applies one fold, or refuses it before changing anything — what the
 /// schema refuses, the double refuses, so the commit stays all or nothing.
-/// `seq` is the commit's event seq: a key's `issued_seq` and a grant's or
-/// denial's epoch.
-fn apply_fold(state: &mut TenantState, fold: MetadataFold, seq: u64) -> Result<(), StoreError> {
+/// `seq` and `at` are the commit's event seq and time: a key's
+/// `issued_seq`, a grant's or denial's epoch and a memory's `promoted_at`.
+fn apply_fold(
+    state: &mut TenantState,
+    fold: MetadataFold,
+    seq: u64,
+    at: &EventTime,
+) -> Result<(), StoreError> {
     match fold {
         MetadataFold::TenantGenesis | MetadataFold::VerdictRecorded { .. } => {}
         MetadataFold::WorkareaCreated(workarea) => {
@@ -172,6 +204,7 @@ fn apply_fold(state: &mut TenantState, fold: MetadataFold, seq: u64) -> Result<(
             state.revoked.insert(key_id);
         }
         MetadataFold::MemoryHeld { memory, enqueue } => {
+            require_free_ordinal(state, &memory)?;
             if enqueue {
                 state.queue.push(QueueEntry {
                     memory_id: memory.memory_id,
@@ -181,8 +214,32 @@ fn apply_fold(state: &mut TenantState, fold: MetadataFold, seq: u64) -> Result<(
             state.memories.insert(memory.memory_id, memory);
         }
         MetadataFold::MemoryPromoted { memory_id } => {
-            if let Some(memory) = state.memories.get_mut(&memory_id) {
-                memory.status = MemoryStatus::Promoted;
+            if let Some(promoted) = state.memories.get(&memory_id).cloned() {
+                // One served tip per claim: the replaced version gives the
+                // tip up, and any other tip refuses the commit, as
+                // `memories_served_tip` does (ADR-0025 d10).
+                if state.memories.values().any(|m| {
+                    m.memory_id != memory_id
+                        && Some(m.memory_id) != promoted.replaces
+                        && m.workarea_id == promoted.workarea_id
+                        && m.claim_key == promoted.claim_key
+                        && m.is_tip
+                        && m.status == MemoryStatus::Promoted
+                }) {
+                    return Err(StoreError::Backend(format!(
+                        "claim_key {:?} already has a served tip in this workarea",
+                        promoted.claim_key
+                    )));
+                }
+                if let Some(replaced) = promoted.replaces.and_then(|id| state.memories.get_mut(&id))
+                {
+                    replaced.is_tip = false;
+                }
+                if let Some(memory) = state.memories.get_mut(&memory_id) {
+                    memory.status = MemoryStatus::Promoted;
+                    memory.is_tip = true;
+                    memory.promoted_at = Some(at.clone());
+                }
             }
             state.queue.retain(|e| e.memory_id != memory_id);
         }
@@ -198,8 +255,9 @@ fn apply_fold(state: &mut TenantState, fold: MetadataFold, seq: u64) -> Result<(
         } => {
             // The replaced version stays promoted; only the tip moves
             // (ADR-0025 d10).
+            require_free_ordinal(state, &successor)?;
             if let Some(memory) = state.memories.get_mut(&superseded) {
-                memory.superseded_by = Some(successor.memory_id);
+                memory.is_tip = false;
             }
             state.queue.push(QueueEntry {
                 memory_id: successor.memory_id,
@@ -239,7 +297,7 @@ impl JournalStore for MemStore {
         {
             return Err(StoreError::PrevHashConflict { seq: expected_seq });
         }
-        apply_fold(&mut state, req.fold, expected_seq)?;
+        apply_fold(&mut state, req.fold, expected_seq, &req.event.envelope.at)?;
         if let Some(put) = req.idempotency {
             state.idempotency.insert(
                 (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key),
@@ -313,12 +371,32 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.status == MemoryStatus::Promoted && m.superseded_by.is_none())
+            .filter(|m| m.status == MemoryStatus::Promoted && m.is_tip)
             .filter(|m| readable.contains(&m.workarea_id))
             .filter(|m| m.body.to_lowercase().contains(&needle))
             .take(k)
             .cloned()
             .collect())
+    }
+
+    async fn claim_key_state(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+    ) -> Result<ClaimKeyState, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(ClaimKeyState::default());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| m.workarea_id == workarea_id && m.claim_key == claim_key)
+            .fold(ClaimKeyState::default(), |acc, m| ClaimKeyState {
+                greatest_version: acc.greatest_version.max(Some(m.version)),
+                live: acc.live || LIVE.contains(&m.status),
+            }))
     }
 
     async fn review_claim_next(

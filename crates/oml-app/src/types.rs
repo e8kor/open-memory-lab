@@ -2,8 +2,8 @@
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::{
-    ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryStatus, Role, TransitionError,
-    VerdictError, VerifyError,
+    ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
+    TransitionError, VerdictError, VerifyError,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -100,15 +100,39 @@ pub struct WorkareaRecord {
 
 /// The metadata row of one memory version. The body lives here, never in the
 /// journal — journal payloads are digest-only (ADR-0002 d1, admission.md).
+/// The claim fields follow postgres-schema.md `memories` (ADR-0025 d6, d10,
+/// d11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryRecord {
     pub memory_id: Uuid,
     pub tenant_id: Uuid,
     pub workarea_id: Uuid,
-    pub claim_key: Option<String>,
+    /// Names one live claim per workarea; its versions share it
+    /// (audit-and-lineage.md supersession chains).
+    pub claim_key: String,
+    /// The ordinal within the `claim_key`: 1 for a new claim, 1 + the
+    /// greatest version of the key in any state for a successor (ADR-0025
+    /// d10).
+    pub version: u32,
+    pub kind: MemoryKind,
+    /// The NFC-normalized claim text.
     pub body: String,
     pub body_digest: String,
+    /// UTF-8 octets of the NFC body, the count budget tokens derive from
+    /// (retrieval.md token budgets; ADR-0025 d6).
+    pub body_bytes: u64,
     pub status: MemoryStatus,
+    /// Whether this version is its claim's served tip: set when a version
+    /// is promoted, cleared when a ratified successor replaces it. A held,
+    /// rejected or replaced version is never the tip (ADR-0025 d10).
+    pub is_tip: bool,
+    /// The `at` of the event that promoted this version; `None` until then.
+    pub promoted_at: Option<EventTime>,
+    /// A retirement version: ratified as tip, it retires the claim (ADR-0025
+    /// d11).
+    pub retirement: bool,
+    /// The version a supersession replaces; `None` for a version 1.
+    pub replaces: Option<Uuid>,
     pub author_principal: String,
     pub author_key_id: Uuid,
     pub derives_from: Vec<Uuid>,
@@ -116,9 +140,42 @@ pub struct MemoryRecord {
     /// ancestor's closure (roles-and-keys.md lineage-closure exclusion).
     pub lineage_principals: Vec<String>,
     pub lineage_key_ids: Vec<Uuid>,
-    pub superseded_by: Option<Uuid>,
     pub scan_finding: Option<String>,
     pub created_at: EventTime,
+}
+
+/// What a capture reads of one `claim_key` in one workarea before it commits
+/// (audit-and-lineage.md supersession chains; ADR-0025 d10, d18).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClaimKeyState {
+    /// The greatest `version` of any row of the key, whatever its state;
+    /// `None` when no row carries the key.
+    pub greatest_version: Option<u32>,
+    /// Whether a held, promoted or demoted version holds the key: a new
+    /// claim (version 1) collides then. A key whose every version is
+    /// rejected or erased is released.
+    pub live: bool,
+}
+
+/// A version a supersession replaces, as served: its id and its ordinal
+/// (openapi.yaml `MemorySummary.replaces`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VersionRef {
+    pub artifact_id: Uuid,
+    pub version: u32,
+}
+
+/// One memory version as the calling key is served it (http-api.md get and
+/// recall; ADR-0025 d3, d12): the row with `derives_from` cut to the
+/// ancestors the key can read, the version it replaces only where the key
+/// can read that version too, and the workarea's derived path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServedMemory {
+    pub memory: MemoryRecord,
+    pub replaces: Option<VersionRef>,
+    /// The `parent_id` names from the root to the row's workarea, joined
+    /// with `.` (ADR-0025 d14); `None` for a node the tenant does not hold.
+    pub workarea_path: Option<String>,
 }
 
 impl MemoryRecord {
@@ -199,7 +256,9 @@ pub struct GrantRequest {
 #[derive(Debug, Clone)]
 pub struct SubmitRequest {
     pub idempotency_key: String,
-    pub claim_key: Option<String>,
+    pub claim_key: String,
+    pub kind: MemoryKind,
+    /// The claim text as sent; capture normalizes it to NFC (admission.md).
     pub body: String,
     /// `None` resolves to the key's default workarea
     /// (http-api.md, ADR-0022 d4).
@@ -212,7 +271,8 @@ pub struct SubmitRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubmitReceipt {
     pub memory_id: Uuid,
-    pub claim_key: Option<String>,
+    pub claim_key: String,
+    pub version: u32,
     pub workarea_id: Uuid,
     pub state: String,
     pub journal_seq: u64,
@@ -234,6 +294,7 @@ pub enum Verdict {
 #[derive(Debug, Clone)]
 pub struct VerdictOutcome {
     pub memory_id: Uuid,
+    pub version: u32,
     pub state: MemoryStatus,
     pub journal_seq: u64,
 }
@@ -253,8 +314,8 @@ pub struct RecallRequest {
 /// always empty here; the shape is the contract.
 #[derive(Debug, Clone)]
 pub struct RecallResult {
-    pub steering: Vec<MemoryRecord>,
-    pub hits: Vec<MemoryRecord>,
+    pub steering: Vec<ServedMemory>,
+    pub hits: Vec<ServedMemory>,
 }
 
 #[derive(Debug, Clone)]
@@ -330,7 +391,11 @@ pub enum AppError {
         "the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)"
     )]
     TipConflict,
-    #[error("deterministic scan veto: {0} (admission.md — the rejection is journalled)")]
+    #[error(
+        "a held, promoted or demoted version holds this claim_key in the workarea (audit-and-lineage.md, submission.claim_key_conflict)"
+    )]
+    ClaimKeyConflict,
+    #[error("deterministic scan veto: {0} (admission.md — a refusal that journals nothing)")]
     ScanVeto(String),
     #[error(
         "derives_from names {0}, which the key cannot read or no row is (fail closed, access.not_found)"

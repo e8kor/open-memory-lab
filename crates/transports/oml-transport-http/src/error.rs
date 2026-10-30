@@ -290,6 +290,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "Supersession promotion CAS-checks its target is the current tip; the tip flip is one journalled fact, never a lost update.",
             "the supersede target is not the current served tip",
         ),
+        AppError::ClaimKeyConflict => ApiError::new(
+            StatusCode::CONFLICT,
+            "submission.claim_key_conflict",
+            "A claim_key names one live claim per (tenant, workarea); a claim whose every version is rejected or erased releases it (D7).",
+            "a held, promoted or demoted version already holds this claim_key in the workarea",
+        ),
         AppError::ScanVeto(finding) => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "submission.scan_veto",

@@ -34,6 +34,6 @@ pub use keys::{
     verify_rotation_cross_sig,
 };
 pub use model::{
-    HeldBy, LineageClosure, MemoryStatus, Role, TransitionError, VerdictError, check_reviewer, nfc,
-    transition,
+    HeldBy, LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError,
+    check_reviewer, nfc, transition,
 };
