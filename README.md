@@ -151,8 +151,8 @@ CLI verbs, exit codes and transcripts are specified in [docs/cli/reference.md](d
 (bootstrap-claimed), held-by-default admission with a deterministic marker scanner, the
 dreamer review ceremony with R2 enforced against the lineage closure, supersede, substring
 recall, the signed per-tenant hash chain with an independent CLI verifier, and four of the
-agent plugin's ten tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_events_tail`). **Not
-implemented yet:** the other six plugin tools, a key that holds more than one role, attachments
-and the object lake, erasure ceremonies, follower servers and read scaling, simulations,
+agent plugin's twelve tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_events_tail`). **Not
+implemented yet:** the other eight plugin tools, one key that both writes and recalls (grants of
+several roles on one key), attachments and the object lake, erasure ceremonies, follower servers and read scaling, simulations,
 embedding-based retrieval, and the operator tier — see the
 [critical path](docs/product/critical-path.md) for the order in which they land.

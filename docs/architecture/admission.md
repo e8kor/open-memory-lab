@@ -62,9 +62,11 @@ Reading the diagram:
 - **Capture.** A `remember`/`learn` call commits one Postgres transaction: the signed journal
   event (digest or ciphertext reference only — never body plaintext), the metadata row in
   state `held`, and an outbox row. The write is durable iff that transaction commits; the
-  commit protocol is [storage](storage.md)'s to define. The author can see and supersede their
-  own held claim; nobody else can see it at all. Claim text is Unicode-normalized to **NFC** at
-  this step — before the plaintext digest is computed and before the scan runs — so the digest,
+  commit protocol is [storage](storage.md)'s to define. The author can see their own held
+  claim; nobody else can see it at all. Supersession targets the current served tip
+  ([HTTP API](../api/http-api.md#supersede-post-v1memoriesartifact_idsupersede)); revising one's
+  own held claim before its review is [RS-17](../product/roadmap.md). Claim text is
+  Unicode-normalized to **NFC** at this step — before the plaintext digest is computed and before the scan runs — so the digest,
   the scan verdict and every downstream index see one canonical byte form; what search does with
   the normalized text is [retrieval](retrieval.md)'s to state. Bans are checked at capture, before quarantine
   or scan: a banned author's or source's submission is refused at the door with a typed error,
@@ -82,7 +84,11 @@ Reading the diagram:
 - **Review and ratification.** Reviewers record verdicts; when the workarea's policy is
   satisfied (k approving verdicts from identities meeting the independence axis), the server
   ratifies: a journalled promotion event carrying a snapshot of the policy it was decided
-  under. Only ratification makes the claim readable by others.
+  under. Only ratification makes the claim readable by others. A supersession or retirement
+  version passes this same pipeline — held on arrival, served with the version it replaces —
+  and changes the claim's tip only at ratification, by compare-and-set
+  ([audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); it
+  adds no state to the diagram.
 - **Release** is asynchronous and follows promotion: the outbox drains to the lake
   ([storage](storage.md)). Release never gates visibility — reads are served from Postgres
   — so a lagging lake delays analytics, not availability.
@@ -327,7 +333,10 @@ reopen is a review-family verb, and admin ≠ reviewer ([roles-and-keys.md](role
 why; the original rejecting verdict stays in the journal and in the evidence export. The
 author cannot reopen their own rejection (that would be self-review by another door); they
 can submit a new version under the same claim key, which enters the pipeline as a fresh held
-item with its `derives_from` lineage intact.
+item with its `derives_from` lineage intact — under the `claim_key` and reopen rules of
+[audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). A reopened
+version's text re-enters the author-fenced held index in the reopen's commit
+([retrieval](retrieval.md#held-text-containment)).
 
 ## Throughput is the honest open question
 

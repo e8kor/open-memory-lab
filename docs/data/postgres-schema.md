@@ -110,6 +110,13 @@ CREATE TABLE memories (
     is_tip            boolean     NOT NULL DEFAULT false,
     self_signed       boolean     NOT NULL DEFAULT false,  -- constitution development exception (ADR-0001) only
     writer_identity   text        NOT NULL,
+    author_key_id     uuid        NOT NULL REFERENCES api_keys (id),
+                                          -- the authoring key (envelope api_key_id of the submission):
+                                          -- "own" is this column (ADR-0025 d3), never the principal
+    retirement        boolean     NOT NULL DEFAULT false,
+                                          -- structural, like term_status: survives shredding; a
+                                          -- ratified retirement version as tip retires the claim
+    replaces_artifact_id uuid,            -- a supersession's replaced version; NULL for version 1
     producer          text,
     provenance        text        NOT NULL
         CHECK (provenance IN ('agent', 'human', 'connector', 'simulation')),
@@ -122,6 +129,9 @@ CREATE TABLE memories (
     term_status       text        CHECK (term_status IN ('active', 'deprecated')),
                                           -- kind=term only: the structural deprecation marker (ADR-0021)
     plaintext_digest  bytea,   -- journalled in the submission event: content identity
+    body_bytes        integer     NOT NULL,  -- UTF-8 octets of the NFC body, from the submission
+                                             -- event; the budget-token count derives from it
+                                             -- (retrieval Token budgets), and it survives shredding
     ciphertext_digest bytea,   -- journalled in the same event: the key-less reconciler's comparand
     body_ref          jsonb       NOT NULL,  -- {class: quarantine|object|lake, ref: …}
     kind              text        NOT NULL,  -- memory | derived_fact | steering | term |
@@ -132,11 +142,17 @@ CREATE TABLE memories (
     CHECK (provenance <> 'simulation' OR simulation_id IS NOT NULL)
 );
 
--- claim_key scope: unique per (tenant, workarea) over non-erased rows;
--- a version joins exactly one claim lineage in exactly one workarea.
+-- claim_key scope: one live claim per (tenant, workarea); a version number
+-- is unique among held, promoted and demoted versions, so a claim whose
+-- every version is rejected or erased releases its claim_key for a fresh
+-- version 1, and a demoted one never does (ADR-0025 d10). A successor's
+-- ordinal is 1 + the greatest version of the claim_key in any state, so
+-- competing held successors of one tip carry distinct ordinals and coexist;
+-- this index refuses only a capture that lost the ordinal race, which the
+-- server retries with a fresh ordinal (audit-and-lineage owns the rule).
 CREATE UNIQUE INDEX memories_claim_version
     ON memories (tenant_id, workarea_id, claim_key, version)
-    WHERE state <> 'erased';
+    WHERE state IN ('held', 'promoted', 'demoted');
 
 -- the default served tip: at most one version of a claim is what
 -- non-audience readers get. Taint never enters this index: a tainted
@@ -157,6 +173,9 @@ CREATE UNIQUE INDEX memories_overlay_tip
       AND (provenance = 'simulation' OR sim_derived_ids <> '{}');
 
 CREATE INDEX memories_workarea ON memories (tenant_id, workarea_id, state);
+
+-- the own-work listing: every row a key authored, newest first (ADR-0025 d13).
+CREATE INDEX memories_author ON memories (tenant_id, author_key_id, created_at DESC);
 ```
 
 The workarea-qualified index above is the enforceable spelling of the one-served-tip rule:
@@ -164,9 +183,14 @@ The workarea-qualified index above is the enforceable spelling of the one-served
 refused unless the move event records a re-key, so `(tenant, workarea_id, claim_key)` is the
 identity a tip is unique under — a `(tenant, claim_key)` shorthand would be either too strict
 (one tip across workareas) or unenforceable.
-Two invariants live in transaction logic, not DDL: a supersession promotion CAS-checks that its
-target is still the current tip before flipping `is_tip`, and a claim moved to a stricter-policy
-workarea re-enters `held`.
+Three invariants live in transaction logic, not DDL: a supersession's ratification
+compare-and-sets that its target is still the current tip before flipping `is_tip` and journalling
+`lifecycle.supersede`; a successor's version ordinal is read before `BEGIN`, and a capture that
+`memories_claim_version` refuses because a concurrent capture took that ordinal is retried by the
+server with a fresh one, never answered as a constraint error; and a claim moved to a
+stricter-policy workarea re-enters `held`. A
+superseded version keeps `state = 'promoted'` with `is_tip = false`
+([audit-and-lineage](../architecture/audit-and-lineage.md) owns the tip semantics).
 
 ## workareas and edges
 
@@ -249,6 +273,9 @@ CREATE TABLE api_keys (
     default_workarea_id uuid REFERENCES workareas (id),
                                           -- provider-ring target (ADR-0022 d4): a /v1 request
                                           -- names no workarea — this, or X-OML-Workarea, resolves it
+    issued_seq bigint      NOT NULL,      -- journal seq of this key's key.issued, or of the
+                                          -- key.rotated that minted it; the floor of its
+                                          -- permission epoch (ADR-0025 d14)
     expiry     timestamptz,
     revoked_at timestamptz
 );
@@ -257,10 +284,13 @@ CREATE TABLE grants (
     id               uuid   PRIMARY KEY,
     tenant_id        uuid   NOT NULL,
     key_id           uuid   NOT NULL REFERENCES api_keys (id),
-    role             text   NOT NULL,
+    role             text   NOT NULL
+        CHECK (role IN ('reader', 'writer', 'dreamer')),  -- admissible per key role:
+                                          -- roles-and-keys Grant admissibility (ADR-0025 d1)
     workarea_node_id uuid   NOT NULL REFERENCES workareas (id),  -- node id, never a path
     deny             jsonb  NOT NULL DEFAULT '[]',  -- subtree masks inside THIS grant only
-    epoch            bigint NOT NULL                -- permission epoch invalidates caches
+    epoch            bigint NOT NULL                -- journal seq of this grant's grant.issued,
+                                                    -- or of the key.rotated that reproduced it
 );
 
 CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all grants
@@ -268,7 +298,7 @@ CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all
     tenant_id        uuid        NOT NULL,
     key_id           uuid        NOT NULL REFERENCES api_keys (id),
     workarea_node_id uuid        NOT NULL REFERENCES workareas (id),
-    epoch            bigint      NOT NULL,
+    epoch            bigint      NOT NULL,   -- journal seq of this denial's key.denied
     created_by       uuid        NOT NULL,
     created_at       timestamptz NOT NULL
 );
@@ -289,10 +319,11 @@ CREATE UNIQUE INDEX bans_active ON bans (tenant_id, subject_kind, subject)
     WHERE lifted_at IS NULL;
 ```
 
-Effective access is computed, never stored: union of a key's grants, each attenuated by its own
-`deny` entries, then masked by any `key_denials` row. The `epoch` column is what makes cached
-computations invalidatable and every historical computation reproducible from journalled grants
-([workareas](../architecture/workareas.md) owns the permission-epoch semantics).
+Effective access is computed, never stored, on every request: union of a key's grants, each
+attenuated by its own `deny` entries, then masked by any `key_denials` row. The `epoch` column is
+the journal seq of the event that wrote the row, which makes every historical computation
+reproducible from journalled grants ([workareas](../architecture/workareas.md) owns the
+permission-epoch semantics).
 Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before it is imposed.
 
 ## vocabularies (ADR-0021)
@@ -473,8 +504,10 @@ absent; the full copy-class inventory and its honest boundary live in
 
 ## Full-text search and embeddings
 
-The serving tier's two indexes over promoted rows. Both are plaintext-derived, so both are in the
-erasure inventory and are removed at erase time.
+The serving tier's two indexes over promoted rows, and the author-fenced index of held text. All
+three are plaintext-derived, so all three are in the erasure inventory and are removed at erase
+time. Which indexed rows recall serves is declared in
+[retrieval](../architecture/retrieval.md#the-serving-tier).
 
 ```sql
 CREATE TABLE memories_fts (
@@ -485,6 +518,21 @@ CREATE TABLE memories_fts (
     PRIMARY KEY (tenant_id, artifact_id, version)
 );
 CREATE INDEX memories_fts_gin ON memories_fts USING gin (tsv);
+
+-- decided, not built (ADR-0025 d5): held text, fenced to its author.
+-- A row exists only while its version is held: every transition into held
+-- inserts it (capture, with tsv computed from the NFC plaintext before BEGIN;
+-- reopen, and a reassignment that re-enters held, with tsv computed on the
+-- serving path), every transition out of held removes it, and a reassignment
+-- updates workarea_id in its own commit (retrieval, Held text containment).
+CREATE TABLE held_fts (
+    tenant_id     uuid     NOT NULL,
+    memory_id     uuid     PRIMARY KEY,           -- the held version's artifact_id
+    author_key_id uuid     NOT NULL REFERENCES api_keys (id),
+    workarea_id   uuid     NOT NULL REFERENCES workareas (id),
+    tsv           tsvector NOT NULL
+);
+CREATE INDEX held_fts_gin ON held_fts USING gin (tsv);
 
 CREATE TABLE memory_embeddings (
     tenant_id     uuid    NOT NULL,
@@ -557,6 +605,30 @@ CREATE POLICY tenant_isolation ON memories
   the outbox via `oml-server`, so it needs no write policy at all.
 - Provider-level rows (operator keys with `tenant_id IS NULL`) are reachable only by a separate
   policy on `api_keys` for the operator path; no tenant session can see them.
+- `held_fts` (decided, not built) carries a second policy besides `tenant_isolation`, so a session
+  reads only the held text its own key set wrote — containment by construction
+  ([retrieval](../architecture/retrieval.md#held-text-containment)). The set is the caller's
+  [own](../architecture/roles-and-keys.md#own) keys: `oml-server` sets `oml.own_key_ids` — the
+  authenticated key and every key in its journalled `rotated_from` chain, comma-separated — at
+  the start of every transaction, exactly as it sets `oml.tenant_id`, and never from the client:
+
+    ```sql
+    ALTER TABLE held_fts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE held_fts FORCE ROW LEVEL SECURITY;
+    CREATE POLICY author_only ON held_fts AS RESTRICTIVE
+        USING (author_key_id = ANY (string_to_array(current_setting('oml.own_key_ids'), ',')::uuid[]))
+        WITH CHECK (author_key_id = ANY (string_to_array(current_setting('oml.own_key_ids'), ',')::uuid[]));
+    ```
+
+    The capture commit runs under the author's own key, so its insert passes the policy. A commit
+    that moves a version into or out of `held` under another key — a promotion, rejection,
+    erasure, reopen or reassignment — sets `oml.own_key_ids`, transaction-local
+    (`set_config(…, true)`), to the version's author key set inside round trip one's statement,
+    beside `pg_advisory_xact_lock` and the chain-head read
+    ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1), for the whole transaction; no
+    restore is needed, since that transaction reads no other held text. Only `oml-server` sets
+    that setting, never a client, so the fence binds every read path without blocking the
+    transitions.
 
 A `current_setting`-based policy is simple and index-friendly; its cost is that a service bug that
 sets the wrong tenant GUC becomes a cross-tenant read. That risk and its mitigations (one

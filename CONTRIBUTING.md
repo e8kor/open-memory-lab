@@ -66,8 +66,10 @@ are the checklist every review holds a change against:
   rows with exit criteria, never apologies in prose; compliance vocabulary only in the
   sanctioned form ("produces the evidence an auditor asks for"); the market claim only in its
   scoped, re-verified form.
-- **Fixed vocabulary (d4).** One word per concept; a spelling in the table's "never" column is
-  a defect wherever it appears.
+- **Fixed vocabulary (d4).** One word per concept; a spelling in the "never" column of the
+  table — ADR-0018 d4 and the records that amend it
+  ([ADR-0025](docs/adr/ADR-0025-the-agent-only-memory-surface.md) d6, d11) — is a defect wherever
+  it appears.
 - **One declaration site (d5).** Each rule, table or identifier family is declared on exactly
   one page and linked from everywhere else; a paraphrase on a second page is drift.
 - **Machine readability (d6).** Pages carry the frontmatter comment block; `docs/llms.txt`
@@ -92,7 +94,7 @@ will fail the pull request.
 
 ## Spec versioning and tags
 
-The specification carries its own version, currently **0.1.0-design** (matching
+The specification carries its own version, currently **0.2.0-design** (matching
 `info.version` in [docs/api/openapi.yaml](docs/api/openapi.yaml)). The conventions:
 
 - **`spec-v0.1`** is tagged when implementation starts, freezing the design the build is held

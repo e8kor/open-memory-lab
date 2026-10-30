@@ -1,10 +1,16 @@
 {
   "_meta": {
-    "comment": "Status: design draft for review - decided, not built. This file is the normative machine shape of the MCP tool catalog declared in mcp-plugin.md: the exact tools/list result payload the plugin serves. The prose catalog and this file describe the same ten tools; a divergence between them is a documentation bug. Target MCP specification revision: 2025-06-18 (streamable HTTP transport, run stateless per mcp-plugin.md); the revision the implementation finally pins, and the transport behavior verified against it, are recorded with a fetch date at implementation time.",
+    "comment": "Status: design draft for review - decided, not built. This file is the normative machine shape of the MCP tool catalog declared in mcp-plugin.md: the exact tools/list result payload the plugin serves. The prose catalog and this file describe the same twelve tools (ADR-0025 d12); a divergence between them that pending_design does not list is a documentation bug. tools/list serves the subset of this file the server builds; an entry for a tool the server does not serve yet carries its designed shape, and a served tool's entry describes what the build serves and changes only in the same change as the code that serves it, so the server never advertises a field it refuses. pending_design names, per served tool, what mcp-plugin.md decides that the served entry does not carry yet, or a decided refusal its description states that the build does not raise yet. Target MCP specification revision: 2025-06-18 (streamable HTTP transport, run stateless per mcp-plugin.md); the revision the implementation finally pins, and the transport behavior verified against it, are recorded with a fetch date at implementation time.",
     "spec_revision_targeted": "2025-06-18",
     "catalog_page": "mcp-plugin.md",
-    "design_spec_version": "0.1.0-design",
-    "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas."
+    "design_spec_version": "0.2.0-design",
+    "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
+    "pending_design": {
+      "oml_remember": "ADR-0025 d10: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
+      "oml_learn": "ADR-0025 d10: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
+      "oml_recall": "ADR-0025 d4, d7, d8, d12, d16: include_own_held and max_tokens inputs; the caller's own held rows among the hits; steering never among the hits; the claim-item output with tokens; the budget object; refusal of unknown and unbuilt fields by name.",
+      "oml_events_tail": "ADR-0025 d15: the scope input (the ring's workarea_id, defaulting to the key's default workarea, request.workarea_unresolved for a key with none); per-family visibility; next_after_seq; the subject and workarea output fields; idle; request.validation for an after_seq beyond head_seq."
+    }
   },
   "tools": [
     {
@@ -19,7 +25,7 @@
           },
           "claim_key": {
             "type": "string",
-            "description": "Groups the versions of one claim; caller-supplied, unique per workarea over non-erased claims (submission.claim_key_conflict on collision)."
+            "description": "Groups the versions of one claim; caller-supplied. A new claim collides (submission.claim_key_conflict) only with a held, promoted or demoted version of it in the workarea, and a claim whose every version is rejected or erased releases it."
           },
           "text": {
             "type": "string",
@@ -85,7 +91,8 @@
           "k": {
             "type": "integer",
             "minimum": 1,
-            "description": "How many hits to return."
+            "maximum": 100,
+            "description": "How many hits to return, at most 100 as on the ring."
           }
         },
         "required": ["query"],
@@ -104,7 +111,7 @@
           },
           "claim_key": {
             "type": "string",
-            "description": "Groups the versions of one claim; unique per workarea over non-erased claims."
+            "description": "Groups the versions of one claim. A new claim collides (submission.claim_key_conflict) only with a held, promoted or demoted version of it in the workarea, and a claim whose every version is rejected or erased releases it."
           },
           "text": {
             "type": "string",
@@ -130,6 +137,64 @@
           }
         },
         "required": ["claim_key", "text", "derives_from", "idempotency_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_get",
+      "description": "Read one claim version by artifact_id: the calling key's own rows in any state, others' promoted versions within read access. Anything else answers access.not_found. Rides GET /v1/memories/{artifact_id}.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "description": "The version to read; each version of a claim has its own artifact_id, and superseded versions stay readable as history."
+          }
+        },
+        "required": ["artifact_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_supersede",
+      "description": "Propose a new version of a claim, or with retirement:true propose retiring it. Enters admission held; the old version stays served until a non-author ratifies. Rides POST /v1/memories/{artifact_id}/supersede.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "description": "The version to replace: the claim's current served tip (submission.tip_conflict otherwise, naming the current tip when the key can read it). A target of a vocabulary kind (term, term_mapping, vocab_release) is refused on this tool with request.validation; supersede it on the HTTP API."
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 1048576,
+            "description": "The new claim text, or, with retirement true, why the claim is retired."
+          },
+          "retirement": {
+            "type": "boolean",
+            "default": false,
+            "description": "True proposes retiring the claim: once a non-author ratifies, recall stops serving it and every version stays readable by oml_get."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["memory", "derived_fact", "steering"],
+            "description": "Optional successor kind, passed through to the supersede body. With retirement true it must equal the target's kind (request.validation otherwise)."
+          },
+          "derives_from": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Further artifact ids the new version derives from; the target is included implicitly. Every id must be readable by the key."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Optional reason for the change, passed through to the supersede body."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Scoped to (key, target workarea). A retry with the same key and an identical request returns the stored response; the same key with a different request is a typed error, never a second write (D13)."
+          }
+        },
+        "required": ["artifact_id", "text", "idempotency_key"],
         "additionalProperties": false
       }
     },
@@ -201,13 +266,17 @@
     },
     {
       "name": "oml_my_work",
-      "description": "The caller's own submissions and where each stands: held, promoted, demoted, rejected, erased. The only view a writer has of its held rows (R3), scoped to the calling key's own submissions by construction. Rides GET /v1/memories?own=true.",
+      "description": "The caller's own submissions and where each stands: held, promoted, demoted, rejected, erased. Scoped to the calling key's own submissions by construction, across every workarea it wrote to, newest first. Rides GET /v1/memories?own=true.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea filter."
+            "description": "Optional workarea node id, a subtree filter; omitted, every workarea the key wrote to."
+          },
+          "claim_key": {
+            "type": "string",
+            "description": "Optional claim_key filter: the versions of one claim."
           },
           "state": {
             "type": "string",
@@ -230,13 +299,13 @@
     },
     {
       "name": "oml_workarea_info",
-      "description": "One workarea as the calling key is allowed to see it: identity, derived path, status, crew record, immediate structure, and the verbs this key's effective access carries there. Rides GET /v2/workareas/{id} and its sibling reads.",
+      "description": "One workarea as the calling key is allowed to see it: identity, derived path, status, crew record, readable immediate children, and the verbs this key's effective access carries there, with the permission epoch. Rides GET /v2/workareas/{id}, one call.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the tool describes the key's default workarea."
+            "description": "Optional workarea node id. Omitted: the tool describes the key's default workarea; a key with none is refused (request.workarea_unresolved)."
           }
         },
         "required": [],
@@ -283,14 +352,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "scope": {
-            "type": "string",
-            "description": "Optional workarea node id. Omitted: the key's default workarea. The tail is filtered to events whose subject the key could read."
-          },
           "after_seq": {
             "type": "integer",
             "minimum": 0,
-            "description": "The last per-tenant journal sequence the client processed; events after it are returned, seq ascending. Omit to start from the newest events (the response says where you are). A malformed or foreign value is a typed request.validation refusal, never a silent restart from zero."
+            "description": "The last per-tenant journal sequence the client processed; events after it are returned, seq ascending. Omit to start from the beginning (0), as on the ring; pass the head_seq of a first call to start from now. A malformed value is a typed request.validation refusal, never a silent restart from zero."
           },
           "limit": {
             "type": "integer",
