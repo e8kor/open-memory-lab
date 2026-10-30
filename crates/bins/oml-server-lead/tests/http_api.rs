@@ -786,7 +786,9 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
 
-    // Events tail: seq ascending from after_seq, head_seq for lag.
+    // Events tail: seq ascending from after_seq, filtered to what the
+    // reader may see, so gaps are normal; head_seq for lag and
+    // next_after_seq to resume from (ADR-0025 d15).
     let (status, _, events) = send(
         router,
         "GET",
@@ -802,11 +804,14 @@ async fn full_happy_path_over_http() {
         .map(|e| e["seq"].as_u64().expect("seq"))
         .collect();
     assert!(
-        seqs.windows(2).all(|w| w[1] == w[0] + 1),
-        "seq ascending, gapless: {seqs:?}"
+        seqs.windows(2).all(|w| w[1] > w[0]),
+        "seq ascending: {seqs:?}"
     );
-    assert_eq!(seqs[0], 1);
-    assert_eq!(events["head_seq"].as_u64(), seqs.last().copied());
+    assert!(
+        seqs[0] > 1,
+        "the genesis is not on the content tail: {seqs:?}"
+    );
+    assert_eq!(events["next_after_seq"], events["head_seq"], "{events}");
     assert!(
         items.iter().any(|e| e["event_type"] == "lifecycle.promote"),
         "the ratification is journalled"
@@ -1485,6 +1490,574 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
     assert_envelope(&body, "access.not_found");
 
     drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// The events tail: per-family visibility, the subtree filter and the bounded
+// scan (http-api.md events tail; ADR-0025 d15)
+// ---------------------------------------------------------------------------
+
+/// A key the tail tests read with: its show-once value and its key id.
+struct TailKey {
+    value: String,
+    key_id: String,
+}
+
+/// A crew and the keys that tail it: two writer keys holding writer and
+/// reader there under one principal, so own is the authoring key and never
+/// the principal (roles-and-keys.md#own), a dreamer holding dreamer and
+/// reader, and a reader.
+struct TailRig {
+    rig: Rig,
+    admin: String,
+    tenant: Uuid,
+    root: Uuid,
+    crew: Uuid,
+    agent: TailKey,
+    twin: TailKey,
+    dreamer: TailKey,
+    reader: TailKey,
+}
+
+async fn tail_key(
+    router: &Router,
+    admin: &str,
+    role: &str,
+    principal: &str,
+    idem: &str,
+    grants: Value,
+) -> TailKey {
+    let (value, key_id) = key_with(router, admin, role, principal, idem, grants).await;
+    TailKey { value, key_id }
+}
+
+async fn tail_rig() -> TailRig {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "metals-crew").await;
+    let on_crew = |roles: &[&str]| {
+        Value::Array(
+            roles
+                .iter()
+                .map(|role| json!({ "workarea_node_id": crew, "role": role }))
+                .collect(),
+        )
+    };
+    let agent = tail_key(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "issue-agent",
+        on_crew(&["writer", "reader"]),
+    )
+    .await;
+    let twin = tail_key(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "issue-twin",
+        on_crew(&["writer", "reader"]),
+    )
+    .await;
+    let dreamer = tail_key(
+        router,
+        &admin,
+        "dreamer",
+        "crew/reviewer-3",
+        "issue-dreamer",
+        on_crew(&["dreamer", "reader"]),
+    )
+    .await;
+    let reader = tail_key(
+        router,
+        &admin,
+        "reader",
+        "crew/agent-recall",
+        "issue-reader",
+        on_crew(&["reader"]),
+    )
+    .await;
+    TailRig {
+        rig,
+        admin,
+        tenant,
+        root,
+        crew,
+        agent,
+        twin,
+        dreamer,
+        reader,
+    }
+}
+
+/// Every item of `key`'s events tail from the beginning, at `scope` when one
+/// is named, following `next_after_seq` until it reaches `head_seq`.
+async fn tailed(router: &Router, key: &str, scope: Option<Uuid>) -> Vec<Value> {
+    let mut events = Vec::new();
+    let mut after_seq = 0;
+    for _ in 0..100 {
+        let mut path = format!("/v2/events?after_seq={after_seq}&limit=5");
+        if let Some(scope) = scope {
+            path.push_str(&format!("&workarea_id={scope}"));
+        }
+        let (status, _, page) = send(router, "GET", &path, Call::auth(key)).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        events.extend(page["items"].as_array().expect("items").iter().cloned());
+        let next = page["next_after_seq"].as_u64().expect("next_after_seq");
+        if Some(next) == page["head_seq"].as_u64() {
+            return events;
+        }
+        assert!(
+            next > after_seq,
+            "a page short of head_seq advances: {page}"
+        );
+        after_seq = next;
+    }
+    panic!("the tail never reached head_seq");
+}
+
+/// The claim versions the `event_type` items of a tail name, in order: the
+/// new version of a `lifecycle.supersede`, the payload's `artifact_id`
+/// otherwise.
+fn tail_subjects(events: &[Value], event_type: &str) -> Vec<String> {
+    events
+        .iter()
+        .filter(|e| e["event_type"] == event_type)
+        .map(|e| {
+            let payload = &e["payload"];
+            payload
+                .get("new_artifact_id")
+                .or_else(|| payload.get("artifact_id"))
+                .and_then(Value::as_str)
+                .expect("a claim subject")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// The events of a tail outside the submission family: what two keys with
+/// equal access see alike.
+fn shared_events(events: &[Value]) -> Vec<Value> {
+    events
+        .iter()
+        .filter(|e| {
+            !e["event_type"]
+                .as_str()
+                .expect("event_type")
+                .starts_with("submission.")
+        })
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn the_tail_never_shows_another_keys_submission() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let mine = remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let theirs = remember(
+        router,
+        &t.twin.value,
+        "km-2210",
+        "Kumasi Metals quoted 405 USD/t.",
+        None,
+    )
+    .await;
+
+    // The two writer keys share a principal: only the authoring key makes a
+    // submission its own (roles-and-keys.md#own; ADR-0025 d3, d15).
+    let agent = tailed(router, &t.agent.value, None).await;
+    assert_eq!(tail_subjects(&agent, "submission.remember"), [mine]);
+    let twin = tailed(router, &t.twin.value, None).await;
+    assert_eq!(tail_subjects(&twin, "submission.remember"), [theirs]);
+    for key in [&t.dreamer.value, &t.reader.value] {
+        let events = tailed(router, key, None).await;
+        assert!(
+            events.iter().all(|e| !e["event_type"]
+                .as_str()
+                .expect("event_type")
+                .starts_with("submission.")),
+            "a held submission reaches no other key: {events:?}"
+        );
+    }
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_author_sees_its_own_submission_in_the_tail() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let text = "Accra Metals quoted 412 USD/t for Q1-2027 delivery.";
+    let mine = remember(router, &t.agent.value, "am-7741", text, None).await;
+
+    let events = tailed(router, &t.agent.value, None).await;
+    let own: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["event_type"] == "submission.remember")
+        .collect();
+    assert_eq!(own.len(), 1, "{events:?}");
+    let event = own[0];
+    assert_eq!(event["payload"]["artifact_id"], mine);
+    assert_eq!(event["payload"]["workarea_id"], t.crew.to_string());
+    // The key is the actor, so the tail names it (http-api.md events tail).
+    assert_eq!(event["api_key_id"], t.agent.key_id, "{event}");
+    assert_eq!(event["principal"], "crew/agent-7", "{event}");
+    assert!(
+        !event["payload"].to_string().contains("Accra Metals quoted"),
+        "no body plaintext rides the tail (D1): {event}"
+    );
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn lifecycle_promote_is_visible_to_readers_of_the_workarea() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let ledger = create_workarea(router, &t.admin, t.root, "ledger").await;
+    let outsider = tail_key(
+        router,
+        &t.admin,
+        "reader",
+        "ledger/agent-recall",
+        "issue-outsider",
+        json!([{ "workarea_node_id": ledger, "role": "reader" }]),
+    )
+    .await;
+    let mine = remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    assert_eq!(review(router, &t.dreamer.value, "approve").await, mine);
+
+    let events = tailed(router, &t.reader.value, None).await;
+    assert_eq!(tail_subjects(&events, "lifecycle.promote"), [mine]);
+    assert!(
+        tail_subjects(&events, "submission.remember").is_empty(),
+        "{events:?}"
+    );
+    let promote = events
+        .iter()
+        .find(|e| e["event_type"] == "lifecycle.promote")
+        .expect("the promote");
+    assert_eq!(promote["payload"]["workarea_id"], t.crew.to_string());
+    assert_eq!(promote["payload"]["version"], 1);
+    // The reader is outside the actor's own key set: the tail names no
+    // identity (ADR-0025 d15).
+    assert!(promote["principal"].is_null(), "{promote}");
+    assert!(promote["api_key_id"].is_null(), "{promote}");
+
+    // A reader of another workarea sees nothing of it.
+    let elsewhere = tailed(router, &outsider.value, None).await;
+    assert!(
+        tail_subjects(&elsewhere, "lifecycle.promote").is_empty(),
+        "{elsewhere:?}"
+    );
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn the_tail_never_shows_review_or_key_administration_events() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    remember(
+        router,
+        &t.agent.value,
+        "am-7742",
+        "Accra Metals quoted 415 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "reject").await;
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        &format!("/v2/keys/{}/denials", t.twin.key_id),
+        Call::auth(&t.admin)
+            .idem("deny-twin")
+            .body(json!({ "workarea_node_id": t.crew })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    // The journal holds them; the content tail omits them for every key.
+    let journalled: Vec<String> = t
+        .rig
+        .store
+        .events_range(t.tenant, 1, 1000)
+        .await
+        .expect("journal")
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    for event_type in [
+        "tenant.genesis",
+        "key.issued",
+        "grant.issued",
+        "key.denied",
+        "review.approve",
+        "review.reject",
+    ] {
+        assert!(
+            journalled.iter().any(|j| j == event_type),
+            "{event_type}: {journalled:?}"
+        );
+    }
+    // The dreamer recorded both verdicts and sees neither (ADR-0025 d15).
+    for key in [&t.agent.value, &t.dreamer.value, &t.reader.value] {
+        for event in tailed(router, key, None).await {
+            let event_type = event["event_type"].as_str().expect("event_type");
+            assert!(
+                ["submission.", "lifecycle.", "workarea."]
+                    .iter()
+                    .any(|family| event_type.starts_with(family)),
+                "{event_type} is not on the content tail: {event}"
+            );
+        }
+    }
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn two_keys_with_equal_access_tail_the_same_events_in_the_same_order() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let first = remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    let theirs = remember(
+        router,
+        &t.twin.value,
+        "km-2210",
+        "Kumasi Metals quoted 405 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    let rejected = remember(
+        router,
+        &t.agent.value,
+        "am-7742",
+        "Accra Metals quoted 415 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "reject").await;
+
+    let agent = tailed(router, &t.agent.value, None).await;
+    let twin = tailed(router, &t.twin.value, None).await;
+    let reader = tailed(router, &t.reader.value, None).await;
+    assert_eq!(shared_events(&agent), shared_events(&twin));
+    assert_eq!(
+        shared_events(&reader),
+        shared_events(&agent),
+        "reader access on the crew is the access that matters"
+    );
+    assert_eq!(
+        tail_subjects(&agent, "lifecycle.promote"),
+        [first.clone(), theirs.clone()]
+    );
+    // Each additionally sees its own submissions, and only those.
+    assert_eq!(
+        tail_subjects(&agent, "submission.remember"),
+        [first, rejected]
+    );
+    assert_eq!(tail_subjects(&twin, "submission.remember"), [theirs]);
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_filtered_page_advances_next_after_seq() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let start = head_seq(&t.rig, t.tenant).await;
+    // Six events no tail shows: three keys, a key.issued and a
+    // grant.issued apiece.
+    for n in 0..3 {
+        tail_key(
+            router,
+            &t.admin,
+            "reader",
+            &format!("crew/extra-{n}"),
+            &format!("issue-extra-{n}"),
+            json!([{ "workarea_node_id": t.crew, "role": "reader" }]),
+        )
+        .await;
+    }
+    let head = head_seq(&t.rig, t.tenant).await;
+    assert_eq!(head, start + 6);
+    let page = async |after_seq: u64| {
+        send(
+            router,
+            "GET",
+            &format!("/v2/events?after_seq={after_seq}&limit=4"),
+            Call::auth(&t.reader.value),
+        )
+        .await
+    };
+
+    // One call scans at most limit raw events and resumes after the last.
+    let (status, _, first) = page(start).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["items"], json!([]), "{first}");
+    assert_eq!(first["next_after_seq"].as_u64(), Some(start + 4), "{first}");
+    assert_eq!(first["head_seq"].as_u64(), Some(head), "{first}");
+    let (status, _, second) = page(start + 4).await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second["items"], json!([]), "{second}");
+    assert_eq!(second["next_after_seq"].as_u64(), Some(head), "{second}");
+    // No raw event follows the head: the resume point stays where it is.
+    let (status, _, idle) = page(head).await;
+    assert_eq!(status, StatusCode::OK, "{idle}");
+    assert_eq!(idle["items"], json!([]), "{idle}");
+    assert_eq!(idle["next_after_seq"].as_u64(), Some(head), "{idle}");
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_after_seq_beyond_head_is_request_validation() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let head = head_seq(&t.rig, t.tenant).await;
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v2/events?after_seq={}", head + 1),
+        Call::auth(&t.reader.value),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v2/events?after_seq={head}"),
+        Call::auth(&t.reader.value),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["next_after_seq"].as_u64(), Some(head), "{body}");
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_tail_scope_outside_read_access_is_not_found() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let quotes = create_workarea(router, &t.admin, t.crew, "quotes").await;
+    let ledger = create_workarea(router, &t.admin, t.root, "ledger").await;
+    for scope in [
+        ledger.to_string(),
+        t.root.to_string(),
+        Uuid::from_u128(0xBEEF).to_string(),
+        "not-a-node".to_owned(),
+    ] {
+        let (status, _, body) = send(
+            router,
+            "GET",
+            &format!("/v2/events?workarea_id={scope}"),
+            Call::auth(&t.reader.value),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{scope}: {body}");
+        assert_envelope(&body, "access.not_found");
+    }
+    // An omitted scope is the key's default, and a key with none is
+    // refused, never guessed for.
+    let unscoped = tail_key(
+        router,
+        &t.admin,
+        "reader",
+        "crew/unscoped",
+        "issue-unscoped",
+        json!([]),
+    )
+    .await;
+    let (status, _, body) = send(router, "GET", "/v2/events", Call::auth(&unscoped.value)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_envelope(&body, "request.workarea_unresolved");
+
+    // Within read access the scope is a subtree filter.
+    let in_crew = remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    let in_quotes = remember(
+        router,
+        &t.agent.value,
+        "am-7742",
+        "Accra Metals quoted 415 USD/t.",
+        Some(quotes),
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    let scoped = tailed(router, &t.reader.value, Some(quotes)).await;
+    assert_eq!(
+        tail_subjects(&scoped, "lifecycle.promote"),
+        std::slice::from_ref(&in_quotes)
+    );
+    let created: Vec<&Value> = scoped
+        .iter()
+        .filter(|e| e["event_type"] == "workarea.create")
+        .map(|e| &e["payload"]["workarea_id"])
+        .collect();
+    assert_eq!(created, [&json!(quotes.to_string())]);
+    let whole = tailed(router, &t.reader.value, None).await;
+    assert_eq!(
+        tail_subjects(&whole, "lifecycle.promote"),
+        [in_crew, in_quotes]
+    );
+    let created: Vec<&Value> = whole
+        .iter()
+        .filter(|e| e["event_type"] == "workarea.create")
+        .map(|e| &e["payload"]["workarea_id"])
+        .collect();
+    assert_eq!(
+        created,
+        [&json!(t.crew.to_string()), &json!(quotes.to_string())]
+    );
+
+    drop_db(&t.rig.db_name).await;
 }
 
 // ---------------------------------------------------------------------------

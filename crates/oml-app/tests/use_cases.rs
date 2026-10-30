@@ -312,22 +312,30 @@ async fn happy_path_end_to_end() {
     assert_eq!(head.seq, 14);
     assert_eq!(head.tenant_id, boot.tenant_id);
 
-    // The tail serves the journal ascending with digest-only payloads.
-    let tail = app.tail_events(&reader.value, 0, 100).await.expect("tail");
-    assert_eq!(tail.len(), 14);
-    assert_eq!(tail[0].envelope.event_type, event_types::TENANT_GENESIS);
+    // The reader's tail serves only what it may see, ascending, with
+    // digest-only payloads: the crew's creation and the promotion, never
+    // another key's submission, a verdict or key administration (ADR-0025
+    // d15).
+    let tail = app
+        .tail_events(&reader.value, None, 0, 100)
+        .await
+        .expect("tail");
+    let types: Vec<&str> = tail
+        .events
+        .iter()
+        .map(|e| e.event.envelope.event_type.as_str())
+        .collect();
     assert_eq!(
-        tail[13].envelope.event_type,
-        event_types::SUBMISSION_REMEMBER,
-        "a supersession is a submission until it is ratified"
+        types,
+        [event_types::WORKAREA_CREATE, event_types::LIFECYCLE_PROMOTE]
     );
-    let submit_event = &tail[10].envelope;
-    assert_eq!(submit_event.event_type, event_types::SUBMISSION_REMEMBER);
+    assert_eq!((tail.head_seq, tail.next_after_seq), (14, 14));
+    let promote = &tail.events[1];
+    assert!(!promote.names_actor, "the tail names no reviewer");
     assert!(
-        submit_event.payload.get("body").is_none(),
+        promote.payload.get("body").is_none(),
         "digest-only payloads"
     );
-    assert!(submit_event.payload.get("plaintext_digest").is_some());
 }
 
 #[tokio::test]

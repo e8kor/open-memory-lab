@@ -13,11 +13,12 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_domain::access::{
-    AccessRefusal, Grant, IssuanceRefusal, KeyDenial, admissible_grant_roles, check_issuance,
-    effective_roles, effective_verbs, resolve,
+    AccessRefusal, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
+    admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
+    tail_visible,
 };
 use oml_domain::{
-    ChainHead, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
+    ChainHead, Envelope, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
     sha256_digest_string, transition,
 };
@@ -26,15 +27,15 @@ use crate::cursor::ListingCursor;
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, OutboxRow, ScanOutcome,
-    Scanner, Signer, StoreError,
+    Scanner, Signer, StoreError, SubjectRow, TailEvent,
 };
 use crate::types::{
     AppError, BootstrapRequest, BootstrapResult, CreatedWorkarea, Crew, DenialRecord, GrantRecord,
     HIT_KINDS, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, ListRequest, ListingFilter,
     ListingPosition, ListingScope, MemoryPage, MemoryRecord, PROVIDER_TENANT, RecallHit,
     RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, Verdict, VerdictOutcome, VersionRef,
-    WorkareaInfo, WorkareaRecord,
+    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, Verdict,
+    VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -2009,25 +2010,184 @@ where
         )?)
     }
 
-    /// The events tail: reader on the key's default workarea by the refusal
-    /// order (ADR-0025 d1), `seq` ascending from `after_seq` (http-api.md
-    /// events tail; payloads are digest-only by construction). The PoC tail
-    /// still serves the whole tenant journal.
+    /// The events tail (http-api.md#events-tail, the single declaration
+    /// site; ADR-0025 d15): reader on the scope by the refusal order — the
+    /// named `workarea_id`, else the key's default, else
+    /// `request.workarea_unresolved` — then one bounded scan of at most
+    /// `limit` raw events from `after_seq + 1`. An event stays only where
+    /// the per-family rule ([`tail_visible`]) shows it to this key within
+    /// subtree(scope), judged on the event's own payload and its subject's
+    /// authoring key and never on later row state, and it is served with
+    /// only the names the key may learn. `next_after_seq` is the last raw
+    /// seq scanned, or `after_seq` when no raw event follows it, and
+    /// `head_seq` is read in the scan's snapshot; an `after_seq` beyond it is
+    /// refused.
     pub async fn tail_events(
         &self,
         api_key: &str,
+        workarea_id: Option<Uuid>,
         after_seq: u64,
         limit: usize,
-    ) -> Result<Vec<SignedEnvelope>, AppError> {
+    ) -> Result<TailPage, AppError> {
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "events_tail")?;
-        let scope = key.default_workarea.ok_or(AppError::WorkareaUnresolved)?;
+        let scope = workarea_id
+            .or(key.default_workarea)
+            .ok_or(AppError::WorkareaUnresolved)?;
         self.require_access(&caller, scope, Role::Reader, "events_tail")
             .await?;
-        Ok(self
+        let scan = self
             .journal
-            .events_range(key.tenant_id, after_seq + 1, limit)
-            .await?)
+            .events_with_subjects(key.tenant_id, after_seq.saturating_add(1), limit)
+            .await?;
+        if after_seq > scan.head_seq {
+            return Err(AppError::AfterSeqBeyondHead {
+                after_seq,
+                head_seq: scan.head_seq,
+            });
+        }
+        let next_after_seq = scan
+            .events
+            .last()
+            .map_or(after_seq, |e| e.event.envelope.seq);
+
+        // The own key set is the calling key alone until rotation is built
+        // (roles-and-keys.md#own).
+        let own_keys = [key.key_id];
+        let tail_caller = TailCaller {
+            own_keys: &own_keys,
+            grants: &caller.grants,
+            denials: &caller.denials,
+            scope,
+        };
+        let mut ancestries: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
+        let mut events = Vec::new();
+        for TailEvent { event, subject } in scan.events {
+            let envelope = &event.envelope;
+            let Some(judged) = judged_subject(envelope, subject.as_ref()) else {
+                continue;
+            };
+            let ancestry: &Vec<Uuid> = match ancestries.entry(judged.node) {
+                Entry::Occupied(known) => known.into_mut(),
+                Entry::Vacant(new) => new.insert(self.ancestry(key.tenant_id, judged.node).await?),
+            };
+            let tail_subject = TailSubject {
+                workareas: std::slice::from_ref(ancestry),
+                author_key: judged.author_key,
+                promoted: judged.promoted,
+                self_signed: judged.self_signed,
+                outside_audience: judged.outside_audience,
+            };
+            if !tail_visible(&envelope.event_type, &tail_subject, &tail_caller) {
+                continue;
+            }
+            let names_actor = envelope.api_key_id.is_some_and(|k| own_keys.contains(&k));
+            let names_node = !caller.effective(ancestry).is_empty();
+            let payload = served_payload(envelope, judged.claim, names_actor, names_node);
+            events.push(TailedEvent {
+                event,
+                names_actor,
+                payload,
+            });
+        }
+        Ok(TailPage {
+            events,
+            head_seq: scan.head_seq,
+            next_after_seq,
+        })
     }
+}
+
+/// What the content tail judges one event by, assembled from the event's
+/// own payload and its subject's authoring row (http-api.md#events-tail,
+/// the subject table; ADR-0025 d15).
+struct JudgedSubject {
+    /// Whether the subject is a claim version, not a workarea node.
+    claim: bool,
+    /// The subject's workarea: the payload's `workarea_id`, else the
+    /// subject row's.
+    node: Uuid,
+    author_key: Option<Uuid>,
+    promoted: bool,
+    self_signed: bool,
+    outside_audience: bool,
+}
+
+/// The subject of `envelope` as the tail judges it, or `None` for an event
+/// it cannot place, which the tail never shows. The author is the envelope
+/// key of a `submission.*` or `simulation.write` event and the subject
+/// row's authoring key for a `lifecycle.*` one. *Promoted* holds for a
+/// `lifecycle.promote` or `lifecycle.supersede`, the promotion of the
+/// version it names; every other `lifecycle.*` event fails it, so only its
+/// author sees it — the journal read that judges the latest transition
+/// lands with the write paths of those types, none of which this build
+/// journals. A subject is `self_signed` unless the promoting payload says
+/// `false`, and outside every audience when its submission names a
+/// simulation, whose audience is unbuilt. `lifecycle.reassign` and
+/// `workarea.relate_*` name two workareas, are never journalled by this
+/// build, and are not placed: they stay hidden until they are.
+fn judged_subject(envelope: &Envelope, subject: Option<&SubjectRow>) -> Option<JudgedSubject> {
+    let event_type = envelope.event_type.as_str();
+    let payload = &envelope.payload;
+    if event_type == "lifecycle.reassign" || event_type.starts_with("workarea.relate_") {
+        return None;
+    }
+    let named = payload
+        .get("workarea_id")
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok());
+    if event_type.starts_with("workarea.") {
+        return Some(JudgedSubject {
+            claim: false,
+            node: named?,
+            author_key: None,
+            promoted: false,
+            self_signed: false,
+            outside_audience: false,
+        });
+    }
+    let submission = event_type.starts_with("submission.") || event_type == "simulation.write";
+    if !submission && !event_type.starts_with("lifecycle.") {
+        return None;
+    }
+    let promoted = matches!(
+        event_type,
+        event_types::LIFECYCLE_PROMOTE | event_types::LIFECYCLE_SUPERSEDE
+    );
+    Some(JudgedSubject {
+        claim: true,
+        node: named.or(subject.map(|s| s.workarea_id))?,
+        author_key: if submission {
+            envelope.api_key_id
+        } else {
+            subject.map(|s| s.author_key_id)
+        },
+        promoted,
+        self_signed: payload.get("self_signed") != Some(&Value::Bool(false)),
+        outside_audience: payload.get("simulation_id").is_some_and(|s| !s.is_null())
+            || payload.get("provenance").and_then(Value::as_str) == Some("simulation"),
+    })
+}
+
+/// The payload as the tail serves it (http-api.md#events-tail, what a
+/// served event names): to a key outside the actor's own key set every
+/// field naming a key — `proposer_key_id`, `ratifier_key_id` and each
+/// `*_by_key_id` — is null, and a claim subject's `workarea_id` on a node
+/// where the key holds no role is null (roles-and-keys.md#own, naming a
+/// node).
+fn served_payload(envelope: &Envelope, claim: bool, names_actor: bool, names_node: bool) -> Value {
+    let mut payload = envelope.payload.clone();
+    if let Some(fields) = payload.as_object_mut() {
+        for (field, value) in fields.iter_mut() {
+            let names_key = field == "proposer_key_id"
+                || field == "ratifier_key_id"
+                || field.ends_with("_by_key_id");
+            let withheld_node = claim && field == "workarea_id" && !names_node;
+            if (names_key && !names_actor) || withheld_node {
+                *value = Value::Null;
+            }
+        }
+    }
+    payload
 }

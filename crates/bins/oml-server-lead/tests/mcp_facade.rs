@@ -422,24 +422,145 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
     assert_eq!(hits[0]["state"], "promoted");
     assert_eq!(after["structuredContent"]["steering"], json!([]));
 
-    // The events tail shows the journal the loop wrote.
-    let tail = call_tool(
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_events_tail_accepts_scope_and_answers_events_head_seq_next_after_seq_idle() {
+    let (router, db) = fresh_router().await;
+    let (writer, dreamer, reader, crew) = crew(&router).await;
+    let held = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_remember",
+        json!({
+            "claim_key": "supplier-quote-am-7741",
+            "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
+            "idempotency_key": "crew-procure/run-1/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(held["isError"], false, "{held}");
+    let artifact = held["structuredContent"]["artifact_id"].clone();
+    let (status, served) = send(
+        &router,
+        "POST",
+        "/v2/review/next",
+        Some(&dreamer),
+        Some("n-1"),
+        Some(&json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    let (status, verdict) = send(
+        &router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(&dreamer),
+        Some("v-1"),
+        Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+
+    // An omitted after_seq starts from the beginning, as on the ring, and an
+    // omitted scope is the key's default workarea (ADR-0025 d15).
+    let whole = call_tool(
         &router,
         &reader,
-        6,
+        2,
         "oml_events_tail",
         json!({"limit": 200}),
     )
     .await;
-    assert_eq!(tail["isError"], false, "{tail}");
-    let items = tail["structuredContent"]["items"]
-        .as_array()
-        .expect("items");
-    assert!(!items.is_empty());
+    assert_eq!(whole["isError"], false, "{whole}");
+    let page = &whole["structuredContent"];
+    let head = page["head_seq"].as_u64().expect("head_seq");
+    assert_eq!(page["next_after_seq"].as_u64(), Some(head), "{page}");
+    assert_eq!(page["idle"], true, "{page}");
+    let events = page["events"].as_array().expect("events");
+    for event in events {
+        let mut fields: Vec<&str> = event
+            .as_object()
+            .expect("an event")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(
+            fields,
+            ["at", "event_type", "seq", "subject", "workarea"],
+            "hashes, signatures, payloads and identities are dropped: {event}"
+        );
+    }
+    let promote = events
+        .iter()
+        .find(|e| e["event_type"] == "lifecycle.promote")
+        .expect("the promote");
     assert_eq!(
-        tail["structuredContent"]["head_seq"],
-        items.last().expect("last")["seq"]
+        promote["subject"],
+        json!({"artifact_id": artifact, "claim_key": "supplier-quote-am-7741", "version": 1})
     );
+    assert_eq!(promote["workarea"], crew.to_string());
+    let created = events
+        .iter()
+        .find(|e| e["event_type"] == "workarea.create")
+        .expect("the crew's creation");
+    assert_eq!(created["subject"], json!({"workarea_id": crew.to_string()}));
+    assert_eq!(created["workarea"], crew.to_string());
+    assert!(
+        events
+            .iter()
+            .all(|e| e["event_type"] != "submission.remember"),
+        "another key's submission is not on this key's tail: {page}"
+    );
+
+    // scope is the ring's workarea_id: naming the default answers the same.
+    let scoped = call_tool(
+        &router,
+        &reader,
+        3,
+        "oml_events_tail",
+        json!({"scope": crew, "limit": 200}),
+    )
+    .await;
+    assert_eq!(scoped["structuredContent"], *page, "{scoped}");
+
+    // A page short of the head is not idle and resumes where its scan ended.
+    let first = call_tool(
+        &router,
+        &reader,
+        4,
+        "oml_events_tail",
+        json!({"after_seq": 0, "limit": 1}),
+    )
+    .await;
+    let first = &first["structuredContent"];
+    assert_eq!(
+        first["events"],
+        json!([]),
+        "the genesis is not on the content tail"
+    );
+    assert_eq!(first["next_after_seq"], 1, "{first}");
+    assert_eq!(first["idle"], false, "{first}");
+
+    // A scope outside read access and an after_seq past the head are the
+    // ring's refusals.
+    for (args, code) in [
+        (
+            json!({"scope": Uuid::from_u128(0xBEEF)}),
+            "access.not_found",
+        ),
+        (json!({"after_seq": head + 1}), "request.validation"),
+    ] {
+        let refused = call_tool(&router, &reader, 5, "oml_events_tail", args).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], code,
+            "{refused}"
+        );
+    }
 
     drop_db(&db).await;
 }

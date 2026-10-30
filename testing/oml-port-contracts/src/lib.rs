@@ -21,7 +21,7 @@ use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, KeyringStore, MetadataFold, OutboxRow,
-    Scanner, Signer, StoreError,
+    Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
     ClaimKeyState, Crew, DenialRecord, GrantRecord, KeyAccess, KeyRecord, ListingFilter,
@@ -519,6 +519,96 @@ pub async fn journal_events_range_pages<S: JournalStore>(store: &S) {
         .await
         .expect("range");
     assert!(empty.is_empty());
+}
+
+/// A tail scan reads at most `limit` raw events from `from_seq`, seq
+/// ascending, joins each event that names a claim version — the version a
+/// submission or promotion names, the successor a supersession ratifies —
+/// to that row's workarea and authoring key as data, and reads `head_seq`
+/// with it (http-api.md events tail; ADR-0025 d15).
+pub async fn a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_with_it<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(70);
+    let tenant = rig.tenant_id;
+    let unknown = store
+        .events_with_subjects(tenant, 1, 10)
+        .await
+        .expect("scan");
+    assert!(unknown.events.is_empty(), "a tenant with no chain");
+    assert_eq!(unknown.head_seq, 0, "a tenant with no chain");
+
+    rig.seed_chain(store, 0).await; // seq 1
+    let workarea = Uuid::from_u128(0x7001);
+    rig.create_workarea(store, workarea_record(tenant, workarea, None, "crew"))
+        .await; // seq 2
+    let author = Uuid::from_u128(0x7002);
+    let first = held_memory(
+        tenant,
+        workarea,
+        Uuid::from_u128(0x7003),
+        "wanda",
+        author,
+        "drain the canary",
+    );
+    hold_and_promote(&mut rig, store, first.clone()).await; // seq 3, 4
+    let successor = MemoryRecord {
+        author_key_id: Uuid::from_u128(0x7004),
+        ..successor_of(&first, Uuid::from_u128(0x7005), "drain it twice", false)
+    };
+    hold_and_ratify(&mut rig, store, successor.clone()).await; // seq 5, 6
+    rig.filler(store).await; // seq 7: a submission naming no artifact
+
+    let row = |m: &MemoryRecord| {
+        Some(SubjectRow {
+            artifact_id: m.memory_id,
+            workarea_id: m.workarea_id,
+            author_key_id: m.author_key_id,
+        })
+    };
+    let scan = store
+        .events_with_subjects(tenant, 1, 100)
+        .await
+        .expect("scan");
+    assert_eq!(scan.head_seq, 7);
+    assert_eq!(
+        scan.events
+            .iter()
+            .map(|e| (e.event.envelope.seq, e.subject))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, None),
+            (2, None),
+            (3, row(&first)),
+            (4, row(&first)),
+            (5, row(&successor)),
+            (6, row(&successor)),
+            (7, None),
+        ],
+        "each claim subject joins its own row"
+    );
+
+    let page = store
+        .events_with_subjects(tenant, 3, 2)
+        .await
+        .expect("scan");
+    assert_eq!(
+        page.events
+            .iter()
+            .map(|e| e.event.envelope.seq)
+            .collect::<Vec<_>>(),
+        vec![3, 4],
+        "limit bounds the scan"
+    );
+    assert_eq!(page.head_seq, 7, "the head is read whatever the page holds");
+    let past = store
+        .events_with_subjects(tenant, 8, 10)
+        .await
+        .expect("scan");
+    assert!(past.events.is_empty());
+    assert_eq!(past.head_seq, 7);
 }
 
 /// The metadata fold is applied atomically with the event: a held row lands
@@ -2685,6 +2775,8 @@ where
     journal_commit_and_head(&new_store().await).await;
     journal_commit_refuses_conflicts(&new_store().await).await;
     journal_events_range_pages(&new_store().await).await;
+    a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_with_it(&new_store().await)
+        .await;
     journal_memory_fold_and_lookup(&new_store().await).await;
     recall_serves_promoted_tips_only_within_the_readable_set(&new_store().await).await;
     hits_that_tie_on_score_are_ordered_by_artifact_id(&new_store().await).await;

@@ -177,6 +177,59 @@ pub struct CommitReceipt {
     pub hash: Sha256Hash,
 }
 
+/// The claim version an event names as its subject, by the subject table of
+/// the events tail (http-api.md#events-tail; ADR-0025 d15): the new version
+/// of a `lifecycle.supersede`, the version that becomes the tip of a
+/// `lifecycle.tip_override`, and the payload's `artifact_id` for every other
+/// `lifecycle.*`, `submission.*` and `simulation.write` event. `None` for
+/// every other family, and for a payload that names no version.
+#[must_use]
+pub fn claim_subject(event_type: &str, payload: &Value) -> Option<Uuid> {
+    let field = match event_type {
+        "lifecycle.supersede" => "new_artifact_id",
+        "lifecycle.tip_override" => "to_artifact_id",
+        t if t.starts_with("lifecycle.")
+            || t.starts_with("submission.")
+            || t == "simulation.write" =>
+        {
+            "artifact_id"
+        }
+        _ => return None,
+    };
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+}
+
+/// The row of a tail event's claim subject, joined as data: the filter that
+/// reads it is the use-case's (ADR-0025 d15; ADR-0019 d1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubjectRow {
+    pub artifact_id: Uuid,
+    pub workarea_id: Uuid,
+    /// `memories.author_key_id`: the envelope `api_key_id` of the version's
+    /// submission event.
+    pub author_key_id: Uuid,
+}
+
+/// One raw event of a tail scan, with the row its [`claim_subject`] names
+/// when the store holds one.
+#[derive(Debug, Clone)]
+pub struct TailEvent {
+    pub event: SignedEnvelope,
+    pub subject: Option<SubjectRow>,
+}
+
+/// One bounded tail scan and the head read in the snapshot it reads (0 for
+/// a tenant with no chain), so `next_after_seq` and `head_seq` label one
+/// journalled state (http-api.md#events-tail).
+#[derive(Debug, Clone, Default)]
+pub struct TailScan {
+    pub head_seq: u64,
+    pub events: Vec<TailEvent>,
+}
+
 /// The journal-and-metadata store port (workspace-plan.md row 1).
 pub trait JournalStore: Send + Sync {
     /// The one-transaction commit point. The store refuses a commit whose
@@ -214,6 +267,17 @@ pub trait JournalStore: Send + Sync {
         from_seq: u64,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<SignedEnvelope>, StoreError>> + Send;
+
+    /// The events tail's bounded scan: events with `seq >= from_seq`,
+    /// ascending, at most `limit`, each joined to the row its
+    /// [`claim_subject`] names, with the chain head read in the same
+    /// snapshot (http-api.md#events-tail; ADR-0025 d15).
+    fn events_with_subjects(
+        &self,
+        tenant_id: Uuid,
+        from_seq: u64,
+        limit: usize,
+    ) -> impl Future<Output = Result<TailScan, StoreError>> + Send;
 
     fn memory(
         &self,
