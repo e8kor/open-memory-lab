@@ -29,7 +29,13 @@ use crate::{ApiState, bearer, finish, json_response, new_request_id};
 /// The MCP specification revision this facade answers `initialize` with.
 /// A client asking for another revision is answered with this one, which the
 /// specification permits; the client decides whether to proceed.
+/// Verified against the published revision on 2026-10-30
+/// (modelcontextprotocol.io/specification/2025-06-18, basic/transports and
+/// server/tools).
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// `MCP-Protocol-Version` values a request may carry.
+const ACCEPTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 
 /// The normative `tools/list` payload (docs/api/mcp-tools.json).
 const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
@@ -142,6 +148,21 @@ where
             Ok(token) => token,
             Err(e) => return finish(&rid, Err(e)),
         };
+        // A revision the facade does not speak is a 400; an absent header
+        // means 2025-03-26, whose stateless JSON shape this one shares.
+        if let Some(version) = headers.get("mcp-protocol-version") {
+            let known = version
+                .to_str()
+                .is_ok_and(|v| ACCEPTED_PROTOCOL_VERSIONS.contains(&v));
+            if !known {
+                return finish(
+                    &rid,
+                    Err(ApiError::validation(format!(
+                        "MCP-Protocol-Version must be one of {ACCEPTED_PROTOCOL_VERSIONS:?}"
+                    ))),
+                );
+            }
+        }
         let Ok(message) = serde_json::from_slice::<Value>(&body) else {
             return finish(
                 &rid,

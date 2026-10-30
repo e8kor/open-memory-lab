@@ -272,6 +272,25 @@ async fn the_transport_is_stateless_and_serves_the_catalog_slice_from_mcp_tools_
         assert_eq!(tool, declared);
     }
 
+    // A protocol revision the facade does not speak is a 400.
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("authorization", format!("Bearer {writer}"))
+                .header("content-type", "application/json")
+                .header("mcp-protocol-version", "1999-01-01")
+                .body(Body::from(
+                    json!({"jsonrpc": "2.0", "id": 9, "method": "ping"}).to_string(),
+                ))
+                .expect("request builds"),
+        )
+        .await
+        .expect("infallible router");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
     // Batches are refused: one message per POST.
     let (_, body) = send(
         &router,
