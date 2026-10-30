@@ -61,6 +61,10 @@ const UNBUILT_TOOLS: [&str; 6] = [
     "oml_vocab",
 ];
 
+/// How a tool's refusal of arguments outside its input schema begins, as
+/// distinct from any refusal the ring answers to well-typed arguments.
+pub const ARGUMENTS_OUTSIDE_THE_SCHEMA: &str = "the arguments are not this tool's input schema";
+
 // JSON-RPC 2.0 error codes.
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -130,6 +134,8 @@ struct RecallArgs {
     query: String,
     scope: Option<String>,
     k: Option<u64>,
+    include_own_held: Option<bool>,
+    max_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -340,41 +346,53 @@ where
         }))
     }
 
-    /// `oml_recall`: one `POST /v1/memories/recall`.
+    /// `oml_recall`: one `POST /v1/memories/recall`. `include_own_held`,
+    /// `max_tokens` and `k` pass through only when sent, so the ring applies
+    /// its defaults, its range checks and its query digest to exactly what
+    /// the agent asked (retrieval.md own held rows and token budgets;
+    /// ADR-0025 d4, d7, d9, d12).
     async fn tool_recall(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
         let args: RecallArgs = parse_args(args)?;
         let mut headers = ring_headers(token);
         if let Some(scope) = &args.scope {
             insert_header(&mut headers, "x-oml-workarea", scope)?;
         }
-        let mut body = json!({ "query": args.query });
-        if let (Some(k), Some(obj)) = (args.k, body.as_object_mut()) {
-            obj.insert("k".to_owned(), json!(k));
+        let mut body = Map::new();
+        body.insert("query".to_owned(), Value::String(args.query));
+        for (name, value) in [
+            ("k", args.k.map(Value::from)),
+            ("include_own_held", args.include_own_held.map(Value::from)),
+            ("max_tokens", args.max_tokens.map(Value::from)),
+        ] {
+            if let Some(value) = value {
+                body.insert(name.to_owned(), value);
+            }
         }
-        let result =
-            ring_outcome(Self::recall_inner(st, &headers, &Bytes::from(body.to_string())).await)
-                .await?;
-        // Steering items and hits are one claim-item shape; only a hit
-        // carries a score (mcp-plugin.md, the claim item; ADR-0025 d12).
+        let result = ring_outcome(
+            Self::recall_inner(st, &headers, &Bytes::from(Value::Object(body).to_string())).await,
+        )
+        .await?;
+        // Steering items and hits are one claim-item shape with text; only a
+        // hit carries a score (mcp-plugin.md, the claim item; ADR-0025 d12).
         let steering: Vec<Value> = result["steering"]
             .as_array()
-            .map(|items| items.iter().map(recall_item).collect())
+            .map(|items| items.iter().map(|m| recall_item(m, None)).collect())
             .unwrap_or_default();
         let hits: Vec<Value> = result["hits"]
             .as_array()
             .map(|hits| {
                 hits.iter()
-                    .map(|hit| {
-                        let mut item = recall_item(&hit["memory"]);
-                        if let Some(obj) = item.as_object_mut() {
-                            obj.insert("score".to_owned(), hit["score"].clone());
-                        }
-                        item
-                    })
+                    .map(|hit| recall_item(&hit["memory"], Some(&hit["score"])))
                     .collect()
             })
             .unwrap_or_default();
-        Ok(json!({ "steering": steering, "hits": hits }))
+        let mut out = json!({ "steering": steering, "hits": hits });
+        // The ring's budget object, present if and only if max_tokens was
+        // sent (retrieval.md token budgets; ADR-0025 d7).
+        if let (Some(budget), Some(obj)) = (result.get("budget"), out.as_object_mut()) {
+            obj.insert("budget".to_owned(), budget.clone());
+        }
+        Ok(out)
     }
 
     /// `oml_my_work`: one `GET /v1/memories?own=true`, the own-work
@@ -404,22 +422,9 @@ where
                 items
                     .iter()
                     .map(|m| {
-                        json!({
-                            "artifact_id": m["artifact_id"],
-                            "claim_key": m["claim_key"],
-                            "version": m["version"],
-                            "kind": m["kind"],
-                            "state": m["state"],
-                            "tip": m["tip"],
-                            "retirement": m["retirement"],
-                            "replaces": m["replaces"],
-                            "workarea": m["workarea_id"],
-                            "workarea_path": m["workarea_path"],
-                            "tokens": m["tokens"],
-                            "created_at": m["created_at"],
-                            "promoted_at": m["promoted_at"],
-                            "held_expires_at": m["held_expires_at"],
-                        })
+                        let mut item = claim_item(m);
+                        item.insert("held_expires_at".to_owned(), m["held_expires_at"].clone());
+                        Value::Object(item)
                     })
                     .collect()
             })
@@ -489,21 +494,40 @@ pub(crate) async fn mcp_get() -> Response {
     response
 }
 
-/// A ring `Memory` as an `oml_recall` claim item, `body` renamed `text`
-/// (mcp-plugin.md, the claim item; ADR-0025 d12).
-fn recall_item(m: &Value) -> Value {
-    json!({
-        "artifact_id": m["artifact_id"],
-        "claim_key": m["claim_key"],
-        "version": m["version"],
-        "state": m["state"],
-        "text": m["body"],
-        "workarea_id": m["workarea_id"],
-        // The PoC derives no workarea paths (see create_workarea).
-        "workarea_path": Value::Null,
-        "promoted_at": m["promoted_at"],
-        "attachments": m["attachments"],
-    })
+/// The base claim item of a ring `Memory` or `MemorySummary`: the one shape
+/// every tool returns a claim version in, the ring's `workarea_id` named
+/// `workarea` (mcp-plugin.md, the claim item; ADR-0025 d12).
+fn claim_item(m: &Value) -> Map<String, Value> {
+    [
+        ("artifact_id", "artifact_id"),
+        ("claim_key", "claim_key"),
+        ("version", "version"),
+        ("kind", "kind"),
+        ("state", "state"),
+        ("tip", "tip"),
+        ("retirement", "retirement"),
+        ("replaces", "replaces"),
+        ("workarea_id", "workarea"),
+        ("workarea_path", "workarea_path"),
+        ("tokens", "tokens"),
+        ("created_at", "created_at"),
+        ("promoted_at", "promoted_at"),
+    ]
+    .into_iter()
+    .map(|(from, to)| (to.to_owned(), m[from].clone()))
+    .collect()
+}
+
+/// A ring `Memory` as an `oml_recall` item: the claim item plus its `body`
+/// as `text`, and a hit's `score`; a steering item has none (mcp-plugin.md,
+/// the claim item; ADR-0025 d12).
+fn recall_item(m: &Value, score: Option<&Value>) -> Value {
+    let mut item = claim_item(m);
+    item.insert("text".to_owned(), m["body"].clone());
+    if let Some(score) = score {
+        item.insert("score".to_owned(), score.clone());
+    }
+    Value::Object(item)
 }
 
 fn ring_headers(token: &str) -> HeaderMap {
@@ -531,7 +555,7 @@ fn insert_header(headers: &mut HeaderMap, name: &'static str, value: &str) -> Re
 fn parse_args<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, Value> {
     serde_json::from_value(args).map_err(|e| {
         refusal(ApiError::validation(format!(
-            "the arguments are not this tool's input schema: {e}"
+            "{ARGUMENTS_OUTSIDE_THE_SCHEMA}: {e}"
         )))
     })
 }
