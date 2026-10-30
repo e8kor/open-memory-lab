@@ -35,7 +35,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::App;
-use oml_app::domain::budget::budget_tokens;
+use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
+use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::{
     HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, nfc, sha256_digest_string,
 };
@@ -356,6 +357,17 @@ where
             ));
         }
         let kinds = parse_hit_kinds(req.kinds.as_deref())?;
+        // A budget is an integer ≥ 1, and one RFC 8785 digests exactly: an
+        // integer above 2^53 − 1 has no exact I-JSON form (retrieval.md, the
+        // read log; ADR-0025 d7, d9).
+        if req
+            .max_tokens
+            .is_some_and(|m| !(1..=MAX_CHAIN_INTEGER).contains(&m))
+        {
+            return Err(ApiError::validation(
+                "max_tokens must be an integer between 1 and 2^53 - 1",
+            ));
+        }
         let include_bodies = req.include_bodies.unwrap_or(true);
         let workarea_id = workarea_override(headers)?;
         let result = st
@@ -367,6 +379,9 @@ where
                     k,
                     workarea_id,
                     kinds,
+                    include_bodies,
+                    include_own_held: req.include_own_held.unwrap_or(false),
+                    max_tokens: req.max_tokens,
                 },
             )
             .await
@@ -388,14 +403,17 @@ where
                 })
             })
             .collect();
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({
-                "steering": steering,
-                "hits": hits,
-                "query_digest": sha256_digest_string(req.query.as_bytes()),
-            }),
-        ))
+        let mut response = json!({
+            "steering": steering,
+            "hits": hits,
+            "query_digest": result.query_digest,
+        });
+        // The budget object is present if and only if max_tokens was sent
+        // (retrieval.md token budgets; ADR-0025 d7).
+        if let (Some(budget), Some(obj)) = (&result.budget, response.as_object_mut()) {
+            obj.insert("budget".to_owned(), budget_json(budget));
+        }
+        Ok(json_response(StatusCode::OK, &response))
     }
 
     async fn supersede(
@@ -953,6 +971,8 @@ struct RecallBody {
     k: Option<usize>,
     kinds: Option<Vec<String>>,
     include_bodies: Option<bool>,
+    include_own_held: Option<bool>,
+    max_tokens: Option<u64>,
     /// Parsed only to be refused while the vocabulary filter is unbuilt
     /// (ADR-0025 d16).
     terms: Option<Vec<String>>,
@@ -1449,6 +1469,20 @@ pub fn memory_json(served: &ServedMemory, include_body: bool) -> Value {
         obj.insert("body".to_owned(), Value::String(m.body.clone()));
     }
     value
+}
+
+/// openapi.yaml `RecallBudget`: how the `max_tokens` cut was applied
+/// (retrieval.md token budgets; ADR-0025 d7).
+fn budget_json(budget: &Budget) -> Value {
+    json!({
+        "max_tokens": budget.max_tokens,
+        "counter": COUNTER_ID,
+        "steering_tokens": budget.steering_tokens,
+        "used_tokens": budget.used_tokens,
+        "truncated": budget.truncated,
+        "hits_omitted": budget.hits_omitted,
+        "next_hit_tokens": budget.next_hit_tokens,
+    })
 }
 
 /// openapi.yaml `WorkareaView`: the `Workarea` fields — `crew` absent when
