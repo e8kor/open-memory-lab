@@ -115,13 +115,16 @@ Status line gains the back-pointer when ADR-0028 is accepted.
   one `POST /v2/keys` for a writer key with writer and reader grants on the workarea and that
   workarea as its default, printing exactly the `OML_URL` and `OML_API_KEY` export lines; with
   `--out <path>`, the value written once to a new 0600 file created before anything is sent, an
-  existing path, a path with a quote or a newline, and `--out` with `--json` refused; the reader
+  existing path, a path with a quote or a newline, and `--out` with `--json` refused; an issuance
+  that gets no usable answer once it may have reached the server, which the CLI reports as a key
+  that may have been issued, never as a refusal, and without echoing the body; the reader
   grant `oml keys issue` and `issue-agent` add beside every writer grant unless `--write-only`,
   while HTTP issuance still takes exactly the grants it is sent (ADR-0025 d2); the `oml-admin`
   Claude Code plugin, one skill that runs `issue-agent` only with `--out` and never with `--json`,
   and no MCP server.
 - **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` drives the verbs against the real lead behind
-  a request recorder; `scripts/check_plugin.py` now also fails if the marketplace stops listing
+  a request recorder, and against stubs that cut the `201` short or close the connection
+  unanswered; `scripts/check_plugin.py` now also fails if the marketplace stops listing
   `oml-admin` with a manifest, if `oml-admin` gains an `.mcp.json`, or if its skill runs
   `issue-agent` without `--out` or with `--json`.
 - **Not built:** the positional key name (ADR-0026 d1), key revocation, which a write failure

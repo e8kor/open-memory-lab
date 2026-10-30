@@ -75,12 +75,16 @@ maintainer accepts it.
     No key value reaches stdout, stderr or the terminal. A refused issuance removes the empty file
     the CLI created. If the value cannot be written once the key exists, the value is lost: the
     CLI removes the partial file, names the key's id on stderr, says to revoke it, and exits `2`.
-    A path containing a quote or a newline is refused before anything is sent, so the printed
-    line is always safe to run, and `--out` with `--json` is refused, because the `201` body
-    carries the value. This amends ADR-0015 d1: an issued value is shown exactly once, or written
-    exactly once to the file the operator named, and the
-    [key format rule](../architecture/roles-and-keys.md#key-format) names that file as the one
-    place a value may rest outside the show-once response.
+    If no usable answer comes back once the request may have reached the server (the exchange
+    fails after connecting, a `5xx` arrives without the typed envelope, or the `201` body cannot
+    be read or parsed), the CLI cannot tell whether the key exists. It handles that as neither a
+    refusal nor a write failure: it removes the empty file, shows none of the body, says a key for
+    the principal may have been issued with its value lost, and exits `2`. A path containing a
+    quote or a newline is refused before anything is sent, so the printed line is always safe to
+    run, and `--out` with `--json` is refused, because the `201` body carries the value. This
+    amends ADR-0015 d1: an issued value is shown exactly once, or written exactly once to the file
+    the operator named, and the [key format rule](../architecture/roles-and-keys.md#key-format)
+    names that file as the one place a value may rest outside the show-once response.
 
     The verb composes an existing call, so every rule of the issuance order applies unchanged, and
     its acceptance test is that the printed lines, exported, let one key remember and recall on
@@ -143,9 +147,10 @@ maintainer accepts it.
   key that may not issue is refused by the issuance itself. Key revocation is not built, so the
   write-failure message also names `oml deny set <key-id> <root workarea id>`, a journalled global
   denial that keeps the key from every workarea, as the stop until it is.
-- What arrives later, with ADR-0026: the positional key name, `--crew`, and the skill's checks by
-  `oml context show` and `oml keys show`. `--expires` and `--label` pass-through wait on key
-  expiry and on the CLI verbs that would show a label; neither is decided here.
+- What arrives later, with ADR-0026: the positional key name (its d1) and `--crew` (its d8). The
+  skill's checks by `oml context show` and `oml keys show` wait on those verbs, and `--expires`
+  and `--label` pass-through on key expiry and on the CLI verbs that would show a label; none of
+  them is decided here.
 - Process: the record registers at its three points (this file, a [register](index.md) row and a
   `mkdocs.yml` nav entry); `llms.txt` names it; the D14 cell of the D-register names ADR-0028;
   one [changelog](../changelog.md) entry records the change. On acceptance, and not before: this
@@ -164,6 +169,7 @@ maintainer accepts it.
 | **d1 — Print the value alone and let the operator write the exports** | The two lines are what the plugin reads; printing them removes a step where the value gets pasted somewhere else. |
 | **d1 — Let `--out` overwrite an existing file** | A mistyped path would destroy an unrelated file, and a second issuance to one path would destroy the only copy of an earlier key's value. |
 | **d1 — Create the `--out` file after the issuance succeeds** | A path that cannot be created would surface only after the key exists, with its value already lost. |
+| **d1 — Handle every failed issuance call as a refusal** | A transport or body failure can follow a key the server committed: removing the file and reporting only the failure would hide a live key, and echoing an unparsed `201` as the error would print its value. |
 | **d2 — The server implies read from writer** | It contradicts roles-and-keys.md ("not a writer key with implied read") and ADR-0025's rejected "writer implying read", and the authority would never appear in the journal. |
 | **d2 — The HTTP issuance adds the reader grant** | It would amend ADR-0025 d2, under which the server takes exactly the grants it is sent. |
 | **d2 — A tenant-wide default read** | It voids per-workarea access. |

@@ -150,7 +150,12 @@ No key value reaches stdout, stderr or the terminal; the second line reads it fr
 the operator's shell runs it. A refused issuance removes the empty file the CLI created. If the
 value cannot be written once the key is issued, the value is lost: the CLI removes the partial
 file, names the key's id on stderr, says to revoke it, and exits `2`; until key revocation is
-built, `oml deny set <key-id> <root workarea id>` keeps the key from every workarea. A path
+built, `oml deny set <key-id> <root workarea id>` keeps the key from every workarea. With or
+without `--out`, if no usable answer comes back once the request may have reached the server
+(the exchange fails after connecting, a `5xx` arrives without the typed envelope, or the `201`
+body cannot be read or parsed), the CLI cannot tell whether the key exists: it removes the empty
+file, shows none of the body, names the principal, says a key may have been issued with its
+value lost, and exits `2`; it never reports that case as a refusal. A path
 containing a quote or a newline is refused (exit `2`) before anything is sent, so the printed line
 is always safe to run, and `--out` with `--json` is refused (exit `2`), because the `201` body
 carries the value. The file is the one place the

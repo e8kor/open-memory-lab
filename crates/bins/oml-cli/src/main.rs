@@ -330,7 +330,7 @@ fn main() -> ExitCode {
             }
             ExitCode::from(1)
         }
-        Err(CliError::Local(message)) => {
+        Err(CliError::Local(message) | CliError::Unanswered(message)) => {
             eprintln!("error: {message}");
             ExitCode::from(2)
         }
@@ -749,12 +749,25 @@ fn run_issue_agent(
     });
     let response = match client.post("/v2/keys", &body, &write_opts()) {
         Ok((_, response)) => response,
-        Err(refusal) => {
-            // No key exists: the empty file goes with the refusal.
+        Err(failure) => {
+            // The empty file holds nothing either way, so it goes.
             if let Some(Err(e)) = key_file.map(KeyFile::discard) {
                 eprintln!("note: {e}");
             }
-            return Err(refusal);
+            return Err(match failure {
+                // Sent, and no usable answer: a key may exist whose value
+                // nothing kept. Only a refusal, or a failure before sending,
+                // means no key exists (ADR-0028 d1).
+                CliError::Unanswered(why) => CliError::Unanswered(format!(
+                    "{why}. A key for principal {} may have been issued. If it was, its value is \
+                     lost, since the server keeps only its hash and the CLI kept none of the \
+                     answer: issue a new key, and revoke this one once `oml keys list` can name \
+                     its id; until key revocation is built, `oml deny set <key-id> <root \
+                     workarea id>` keeps it from every workarea (ADR-0028 d1)",
+                    args.principal
+                )),
+                refused_or_unsent => refused_or_unsent,
+            });
         }
     };
     if cli.json {
