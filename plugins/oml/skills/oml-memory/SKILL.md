@@ -1,6 +1,6 @@
 ---
 name: oml-memory
-description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_remember, oml_learn, oml_recall, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, and why a write is not visible right away.
+description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_remember, oml_learn, oml_recall, oml_my_work, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, and why a write is not visible right away.
 ---
 
 # Working with Open Memory Lab memory
@@ -13,11 +13,12 @@ than writing the same fact twice.
 ## Two connections, one server
 
 The plugin connects twice. The `oml` connection uses the agent's writer key, so call
-`oml_remember` and `oml_learn` there. The `oml-recall` connection uses a reader key, so
-call `oml_recall`, `oml_workarea_info` and `oml_events_tail` there. Each connection lists
-all five tools, and a tool called on the wrong connection is refused: `oml_remember` and
-`oml_learn` with `access.verb_ceiling` on the reader key, and the three reads with
-`access.not_found` on a writer key that holds no reader grant.
+`oml_remember`, `oml_learn` and `oml_my_work` there. The `oml-recall` connection uses a
+reader key, so call `oml_recall`, `oml_workarea_info` and `oml_events_tail` there. Each
+connection lists all six tools, and a tool called on the wrong connection is refused:
+`oml_remember` and `oml_learn` with `access.verb_ceiling` on the reader key, and the three
+reads with `access.not_found` on a writer key that holds no reader grant. `oml_my_work` is
+answered on either connection, but only with the writes of the key behind it.
 
 ## Check what a workarea allows
 
@@ -37,6 +38,16 @@ ranked, so read them first.
 The server matches words exactly, without stemming: `quote` does not find `quoted`. Use
 the words the memory most likely contains, and try a second query before you conclude
 nothing is there.
+
+## See what became of your writes
+
+Call `oml_my_work` to list what your key wrote, newest first, in every workarea it wrote
+to: each item's `state` is `held` while it waits for review, then `promoted` or
+`rejected`. Items carry the `artifact_id`, `claim_key`, `version` and `tokens` but not the
+text. Pass `state`, `claim_key` or `workarea` to narrow the list. When `next_cursor` is not
+null, pass it back as `cursor` for the next page. A cursor works only for the key that
+received it and expires; when one is refused with `request.validation`, start again from
+the first page.
 
 ## Remember one claim at a time
 

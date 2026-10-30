@@ -20,6 +20,7 @@ use oml_domain::{
     check_reviewer, event_types, next_envelope, nfc, sha256_digest_string, transition,
 };
 
+use crate::cursor::ListingCursor;
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, OutboxRow, ScanOutcome,
@@ -27,7 +28,8 @@ use crate::ports::{
 };
 use crate::types::{
     AppError, BootstrapRequest, BootstrapResult, CreatedWorkarea, Crew, DenialRecord, GrantRecord,
-    IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult,
+    IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, ListRequest, ListingFilter, ListingPosition,
+    ListingScope, MemoryPage, MemoryRecord, PROVIDER_TENANT, RecallRequest, RecallResult,
     ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest,
     Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
@@ -217,6 +219,17 @@ where
             .key_by_hash(&hash)
             .await?
             .ok_or(AppError::Unauthorized)?;
+        // A provider-level key carries no grant and no denial, since no
+        // tenant's row can name it (postgres-schema.md): it holds no access,
+        // so every verb refuses it by its role (ADR-0025 d13).
+        if key.tenant_id == PROVIDER_TENANT {
+            return Ok(Caller {
+                key,
+                grants: Vec::new(),
+                denials: Vec::new(),
+                permission_epoch: 0,
+            });
+        }
         // The access read answers nothing only for a key its own tenant
         // does not hold: fail closed.
         let access = self
@@ -928,6 +941,138 @@ where
             my_effective_verbs: effective_verbs(&effective, caller.key.held_by),
             permission_epoch: caller.permission_epoch,
         })
+    }
+
+    /// `GET /v1/memories` (http-api.md search; ADR-0025 d3, d13). With
+    /// `own`, the own-work listing: every row the calling key authored, in
+    /// every state, across every node minus the subtrees its global
+    /// denials cover; any tenant role but operator, no grant needed, and a
+    /// `workarea_id` filter naming a node where the key holds some role.
+    /// Without `own`, the scoped listing: reader on the scope node by the
+    /// refusal order, and the promoted served tips of subtree(scope) ∩ the
+    /// nodes where reader is effective, narrowed to a `workarea_id` subtree
+    /// where reader is effective. Newest first; the cursor is bound to the
+    /// key and to `api.cursor_ttl`, and every page re-applies the filter.
+    pub async fn list_memories(
+        &self,
+        api_key: &str,
+        req: &ListRequest,
+    ) -> Result<MemoryPage, AppError> {
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        let tenant_id = key.tenant_id;
+        let subtree_ids = |node: Uuid| async move {
+            Ok::<BTreeSet<Uuid>, AppError>(
+                self.journal
+                    .workarea_subtree(tenant_id, node)
+                    .await?
+                    .into_iter()
+                    .map(|w| w.workarea_id)
+                    .collect(),
+            )
+        };
+        let (scope, subtree) = if req.own {
+            // The operator never reads content (roles-and-keys.md#own).
+            if key.role == Role::Operator {
+                return Err(AppError::VerbCeiling {
+                    role: key.role,
+                    verb: "list",
+                });
+            }
+            // A filter names only a node the naming rule names to the key.
+            let subtree = match req.workarea_id {
+                None => None,
+                Some(node) => {
+                    let ancestry = self.ancestry(tenant_id, node).await?;
+                    if caller.effective(&ancestry).is_empty() {
+                        return Err(AppError::NotFound);
+                    }
+                    Some(subtree_ids(node).await?.into_iter().collect())
+                }
+            };
+            let mut masked = BTreeSet::new();
+            for denial in &caller.denials {
+                masked.extend(subtree_ids(denial.node).await?);
+            }
+            let scope = ListingScope::Own {
+                key_ids: vec![key.key_id],
+                masked: masked.into_iter().collect(),
+            };
+            (scope, subtree)
+        } else {
+            require_admissible(key, Role::Reader, "list")?;
+            let scope = req
+                .scope
+                .or(key.default_workarea)
+                .ok_or(AppError::WorkareaUnresolved)?;
+            self.require_access(&caller, scope, Role::Reader, "list")
+                .await?;
+            let mut nodes = self.nodes_with(&caller, scope, Role::Reader).await?;
+            if let Some(node) = req.workarea_id {
+                let ancestry = self.ancestry(tenant_id, node).await?;
+                if !caller.effective(&ancestry).contains(&Role::Reader) {
+                    return Err(AppError::NotFound);
+                }
+                let within = subtree_ids(node).await?;
+                nodes.retain(|n| within.contains(n));
+            }
+            (ListingScope::Tips { nodes }, None)
+        };
+        let now = self.clock.now();
+        let after = req
+            .cursor
+            .as_deref()
+            .map(|cursor| ListingCursor::resume(cursor, key.key_id, &now))
+            .transpose()?;
+        let filter = ListingFilter {
+            scope,
+            subtree,
+            state: req.state,
+            kind: req.kind,
+            claim_key: req.claim_key.clone(),
+            since: req.since.clone(),
+            until: req.until.clone(),
+        };
+        // One row past the page says whether another page exists.
+        let mut rows = self
+            .journal
+            .list_memories(
+                tenant_id,
+                &filter,
+                after.as_ref(),
+                req.limit.saturating_add(1),
+            )
+            .await?;
+        let more = rows.len() > req.limit;
+        rows.truncate(req.limit);
+        let next_cursor = rows.last().filter(|_| more).map(|last| {
+            ListingCursor {
+                key_id: key.key_id,
+                position: ListingPosition {
+                    created_at: last.created_at.clone(),
+                    artifact_id: last.memory_id,
+                },
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        let mut items = Vec::with_capacity(rows.len());
+        for m in rows {
+            // R3 defense in depth: nothing outside the scope's predicate
+            // leaves the application layer, whatever the store returned.
+            let admitted = match &filter.scope {
+                ListingScope::Own { key_ids, masked } => {
+                    key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
+                }
+                ListingScope::Tips { nodes } => {
+                    m.status == MemoryStatus::Promoted && m.is_tip && nodes.contains(&m.workarea_id)
+                }
+            };
+            if admitted {
+                items.push(self.served(&caller, m).await?);
+            }
+        }
+        Ok(MemoryPage { items, next_cursor })
     }
 
     /// Submit a memory: writer on the resolved node, which must exist, by

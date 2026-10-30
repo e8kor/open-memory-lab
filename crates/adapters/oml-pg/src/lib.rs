@@ -21,11 +21,12 @@ use oml_app::ports::{
     StoreError,
 };
 use oml_app::types::{
-    ClaimKeyState, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
+    ClaimKeyState, DenialRecord, GrantRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, PROVIDER_TENANT, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Postgres, Row, Transaction};
+use sqlx::{Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
 /// The committed migrations, embedded at build time. The migrations are
@@ -921,6 +922,77 @@ impl JournalStore for PgStore {
         rows.iter().map(memory_from_row).collect()
     }
 
+    async fn list_memories(
+        &self,
+        tenant_id: Uuid,
+        filter: &ListingFilter,
+        after: Option<&ListingPosition>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut sql = QueryBuilder::<Postgres>::new(format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = "
+        ));
+        sql.push_bind(tenant_id);
+        // The scope is the store's own predicate: the own key set off the
+        // masked nodes (memories_author serves it), or promoted tips on the
+        // node set alone — an empty array matches nothing (R3; ADR-0025 d1,
+        // d13).
+        match &filter.scope {
+            ListingScope::Own { key_ids, masked } => {
+                sql.push(" AND m.author_key_id = ANY(")
+                    .push_bind(key_ids.clone())
+                    .push("::uuid[]) AND NOT (m.workarea_id = ANY(")
+                    .push_bind(masked.clone())
+                    .push("::uuid[]))");
+            }
+            ListingScope::Tips { nodes } => {
+                sql.push(" AND m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY(")
+                    .push_bind(nodes.clone())
+                    .push("::uuid[])");
+            }
+        }
+        if let Some(subtree) = &filter.subtree {
+            sql.push(" AND m.workarea_id = ANY(")
+                .push_bind(subtree.clone())
+                .push("::uuid[])");
+        }
+        if let Some(state) = filter.state {
+            sql.push(" AND m.status = ").push_bind(state.as_str());
+        }
+        if let Some(kind) = filter.kind {
+            sql.push(" AND m.kind = ").push_bind(kind.as_str());
+        }
+        if let Some(claim_key) = &filter.claim_key {
+            sql.push(" AND m.claim_key = ").push_bind(claim_key.clone());
+        }
+        if let Some(since) = &filter.since {
+            sql.push(" AND m.created_at >= (")
+                .push_bind(since.as_str().to_owned())
+                .push(")::timestamptz");
+        }
+        if let Some(until) = &filter.until {
+            sql.push(" AND m.created_at < (")
+                .push_bind(until.as_str().to_owned())
+                .push(")::timestamptz");
+        }
+        // Keyset: strictly after the position in the listing's order.
+        if let Some(after) = after {
+            sql.push(" AND (m.created_at, m.id) < ((")
+                .push_bind(after.created_at.as_str().to_owned())
+                .push(")::timestamptz, ")
+                .push_bind(after.artifact_id)
+                .push(")");
+        }
+        sql.push(" ORDER BY m.created_at DESC, m.id DESC LIMIT ")
+            .push_bind(limit);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sql.build().fetch_all(&mut *tx).await.map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(memory_from_row).collect()
+    }
+
     async fn claim_key_state(
         &self,
         tenant_id: Uuid,
@@ -1030,13 +1102,11 @@ impl JournalStore for PgStore {
         let Some(row) = row else {
             return Ok(None);
         };
+        // A provider-level row names no tenant (postgres-schema.md
+        // api_keys): it resolves under the provider tenant, so its refusals
+        // are the use-cases' own, never a storage failure (ADR-0025 d13).
         let tenant_id: Option<Uuid> = row.try_get("tenant_id").map_err(backend)?;
-        let tenant_id = tenant_id.ok_or_else(|| {
-            StoreError::Backend(
-                "provider-level key rows (tenant_id NULL) are outside the PoC port shape"
-                    .to_owned(),
-            )
-        })?;
+        let tenant_id = tenant_id.unwrap_or(PROVIDER_TENANT);
         let role: String = row.try_get("role").map_err(backend)?;
         let held_by: String = row.try_get("held_by").map_err(backend)?;
         let stored_hash: Vec<u8> = row.try_get("hash").map_err(backend)?;

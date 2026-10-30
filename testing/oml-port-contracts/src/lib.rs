@@ -24,8 +24,8 @@ use oml_app::ports::{
     Scanner, Signer, StoreError,
 };
 use oml_app::types::{
-    ClaimKeyState, Crew, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord,
-    WorkareaRecord,
+    ClaimKeyState, Crew, DenialRecord, GrantRecord, KeyAccess, KeyRecord, ListingFilter,
+    ListingPosition, ListingScope, MemoryRecord, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -1714,6 +1714,280 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
     );
 }
 
+/// The ids of a listing page, in page order.
+fn page_ids(page: &[MemoryRecord]) -> Vec<Uuid> {
+    page.iter().map(|m| m.memory_id).collect()
+}
+
+/// A listing filter that narrows nothing beyond its scope.
+fn listing(scope: ListingScope) -> ListingFilter {
+    ListingFilter {
+        scope,
+        subtree: None,
+        state: None,
+        kind: None,
+        claim_key: None,
+        since: None,
+        until: None,
+    }
+}
+
+/// A held fixture row of the listing laws, written at second `second`.
+fn listed_row(seed: u64, n: u128, workarea: Uuid, author_key_id: Uuid, second: u8) -> MemoryRecord {
+    MemoryRecord {
+        created_at: EventTime::parse(&format!("2026-10-29T13:00:{second:02}.000000Z"))
+            .expect("fixture time"),
+        ..held_memory(
+            rig_tenant(seed),
+            workarea,
+            Uuid::from_u128(n),
+            "wanda",
+            author_key_id,
+            "a claim",
+        )
+    }
+}
+
+/// The own-work scope lists the key set's rows in every state and no other
+/// key's, minus every row on a masked node; the subtree, state, kind and
+/// claim_key predicates narrow it (roles-and-keys.md#own; ADR-0025 d13).
+pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_nodes<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(31);
+    rig.seed_chain(store, 0).await;
+    let (wa, denied) = (Uuid::from_u128(0xB31), Uuid::from_u128(0xB32));
+    let (author, other) = (Uuid::from_u128(0xD31), Uuid::from_u128(0xD32));
+    let held = listed_row(31, 0xC31, wa, author, 1);
+    let promoted = listed_row(31, 0xC32, wa, author, 2);
+    let rejected = MemoryRecord {
+        kind: MemoryKind::Steering,
+        ..listed_row(31, 0xC33, wa, author, 3)
+    };
+    let masked = listed_row(31, 0xC34, denied, author, 4);
+    let foreign = listed_row(31, 0xC35, wa, other, 5);
+    for m in [&held, &promoted, &rejected, &masked, &foreign] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    promote(&mut rig, store, promoted.memory_id)
+        .await
+        .expect("promote");
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+    let list = |filter: ListingFilter| async move {
+        page_ids(
+            &store
+                .list_memories(rig_tenant(31), &filter, None, 50)
+                .await
+                .expect("list"),
+        )
+    };
+    let own = |masked: Vec<Uuid>| {
+        listing(ListingScope::Own {
+            key_ids: vec![author],
+            masked,
+        })
+    };
+
+    assert_eq!(
+        list(own(Vec::new())).await,
+        vec![
+            masked.memory_id,
+            rejected.memory_id,
+            promoted.memory_id,
+            held.memory_id
+        ],
+        "every state of the key's own rows, newest first, and no other key's"
+    );
+    assert_eq!(
+        list(own(vec![denied])).await,
+        vec![rejected.memory_id, promoted.memory_id, held.memory_id],
+        "a masked node's rows are absent"
+    );
+    assert_eq!(
+        list(listing(ListingScope::Own {
+            key_ids: vec![other],
+            masked: Vec::new(),
+        }))
+        .await,
+        vec![foreign.memory_id]
+    );
+    assert!(
+        list(listing(ListingScope::Own {
+            key_ids: Vec::new(),
+            masked: Vec::new(),
+        }))
+        .await
+        .is_empty(),
+        "an empty key set lists nothing"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            subtree: Some(vec![denied]),
+            ..own(Vec::new())
+        })
+        .await,
+        vec![masked.memory_id],
+        "the subtree narrows"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            state: Some(MemoryStatus::Held),
+            ..own(vec![denied])
+        })
+        .await,
+        vec![held.memory_id],
+        "the state narrows"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            kind: Some(MemoryKind::Steering),
+            ..own(Vec::new())
+        })
+        .await,
+        vec![rejected.memory_id],
+        "the kind narrows"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            claim_key: Some(promoted.claim_key.clone()),
+            ..own(Vec::new())
+        })
+        .await,
+        vec![promoted.memory_id],
+        "the claim_key narrows"
+    );
+}
+
+/// The tips scope lists the promoted served tips on exactly its nodes:
+/// never a held, rejected or replaced version, never a row off the set, and
+/// nothing for an empty set (R3; ADR-0025 d1, d13).
+pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(32);
+    rig.seed_chain(store, 0).await;
+    let (wa, elsewhere) = (Uuid::from_u128(0xB33), Uuid::from_u128(0xB34));
+    let author = Uuid::from_u128(0xD33);
+    let replaced = listed_row(32, 0xC36, wa, author, 1);
+    let tip = MemoryRecord {
+        version: 2,
+        replaces: Some(replaced.memory_id),
+        claim_key: replaced.claim_key.clone(),
+        ..listed_row(32, 0xC37, wa, author, 2)
+    };
+    let held = listed_row(32, 0xC38, wa, author, 3);
+    let rejected = listed_row(32, 0xC39, wa, author, 4);
+    let off_set = listed_row(32, 0xC3A, elsewhere, author, 5);
+    for m in [&replaced, &tip, &held, &rejected, &off_set] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    for id in [replaced.memory_id, tip.memory_id, off_set.memory_id] {
+        promote(&mut rig, store, id).await.expect("promote");
+    }
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+    let list = |filter: ListingFilter| async move {
+        page_ids(
+            &store
+                .list_memories(rig_tenant(32), &filter, None, 50)
+                .await
+                .expect("list"),
+        )
+    };
+    let tips = |nodes: Vec<Uuid>| listing(ListingScope::Tips { nodes });
+
+    assert_eq!(list(tips(vec![wa])).await, vec![tip.memory_id]);
+    assert_eq!(
+        list(tips(vec![elsewhere, wa])).await,
+        vec![off_set.memory_id, tip.memory_id],
+        "every node of the set is listed"
+    );
+    assert!(
+        list(tips(Vec::new())).await.is_empty(),
+        "an empty set lists nothing, never the tenant"
+    );
+    assert!(
+        list(ListingFilter {
+            state: Some(MemoryStatus::Held),
+            ..tips(vec![wa])
+        })
+        .await
+        .is_empty(),
+        "no filter reaches a held row through the tips scope"
+    );
+}
+
+/// A listing orders `created_at` descending, then `artifact_id`
+/// descending; a page resumes strictly after its position, `limit` bounds
+/// it, and `since` (inclusive) and `until` (exclusive) bound `created_at`
+/// (http-api.md search and pagination).
+pub async fn a_listing_pages_newest_first_and_resumes_strictly_after_its_position<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(33);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB35);
+    let author = Uuid::from_u128(0xD34);
+    // Two rows share an instant: the greater id comes first.
+    for (n, second) in [(0xC3B, 1), (0xC3C, 2), (0xC3E, 2), (0xC3D, 3)] {
+        hold(&mut rig, store, listed_row(33, n, wa, author, second))
+            .await
+            .expect("hold");
+    }
+    let own = listing(ListingScope::Own {
+        key_ids: vec![author],
+        masked: Vec::new(),
+    });
+    let at = |second: u8| {
+        EventTime::parse(&format!("2026-10-29T13:00:{second:02}.000000Z")).expect("fixture time")
+    };
+    let page = |filter: ListingFilter, after: Option<(u128, u8)>, limit: usize| async move {
+        let after = after.map(|(id, second)| ListingPosition {
+            created_at: at(second),
+            artifact_id: Uuid::from_u128(id),
+        });
+        page_ids(
+            &store
+                .list_memories(rig_tenant(33), &filter, after.as_ref(), limit)
+                .await
+                .expect("list"),
+        )
+    };
+    let order: Vec<Uuid> = [0xC3D, 0xC3E, 0xC3C, 0xC3B]
+        .into_iter()
+        .map(Uuid::from_u128)
+        .collect();
+
+    assert_eq!(page(own.clone(), None, 50).await, order);
+    assert_eq!(page(own.clone(), None, 2).await, order[..2]);
+    assert_eq!(
+        page(own.clone(), Some((0xC3E, 2)), 50).await,
+        order[2..],
+        "strictly after the position, the tie broken by id"
+    );
+    assert!(page(own.clone(), Some((0xC3B, 1)), 50).await.is_empty());
+    assert_eq!(
+        page(
+            ListingFilter {
+                since: Some(at(2)),
+                until: Some(at(3)),
+                ..own.clone()
+            },
+            None,
+            50
+        )
+        .await,
+        order[1..3],
+        "since is inclusive and until exclusive"
+    );
+    assert!(page(own, None, 0).await.is_empty(), "limit bounds the page");
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
@@ -1744,6 +2018,10 @@ where
     a_second_served_tip_of_one_claim_commits_nothing(&new_store().await).await;
     a_second_live_version_with_one_ordinal_commits_nothing(&new_store().await).await;
     claim_key_state_counts_every_version_and_only_live_ones_hold_the_key(&new_store().await).await;
+    an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_nodes(&new_store().await)
+        .await;
+    a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(&new_store().await).await;
+    a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await).await;
 }
 
 // ---------------------------------------------------------------------------
