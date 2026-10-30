@@ -317,6 +317,29 @@ async fn promote<S: JournalStore>(
     .await
 }
 
+/// Commits the ratification of `successor`, which takes the tip from
+/// `replaced`, through the rig.
+async fn supersede_tip<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    successor: Uuid,
+    replaced: Uuid,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_SUPERSEDE,
+        json!({
+            "new_artifact_id": successor.to_string(),
+            "replaces_artifact_id": replaced.to_string(),
+        }),
+        MetadataFold::MemoryPromoted {
+            memory_id: successor,
+        },
+        None,
+    )
+    .await
+}
+
 /// Commits the rejection of `memory_id` through the rig.
 async fn reject<S: JournalStore>(
     rig: &mut ChainRig,
@@ -525,82 +548,375 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
     );
 }
 
-/// Recall returns promoted rows only — R3 at the store (retrieval.md) —
-/// searches exactly the readable workarea set it is handed, an empty set
-/// included, and honors the `k` bound (ADR-0025 d1: no tenant-wide
-/// fallback).
-pub async fn journal_recall_promoted_only<S: JournalStore>(store: &S) {
+/// Holds `memory`, a claim's first version, and promotes it through the
+/// rig: the claim's served tip until a ratified successor takes it.
+async fn hold_and_promote<S: JournalStore>(rig: &mut ChainRig, store: &S, memory: MemoryRecord) {
+    let id = memory.memory_id;
+    hold(rig, store, memory).await.expect("hold");
+    promote(rig, store, id).await.expect("promote");
+}
+
+/// Holds `successor` and ratifies it through the rig, so it takes the tip
+/// from the version it replaces (ADR-0025 d10).
+async fn hold_and_ratify<S: JournalStore>(rig: &mut ChainRig, store: &S, successor: MemoryRecord) {
+    let id = successor.memory_id;
+    let replaced = successor.replaces.expect("a successor replaces a version");
+    hold(rig, store, successor).await.expect("hold");
+    supersede_tip(rig, store, id, replaced)
+        .await
+        .expect("ratify");
+}
+
+/// The next version of `target`'s claim, held: `retirement` marks a
+/// retirement version (ADR-0025 d10, d11).
+fn successor_of(
+    target: &MemoryRecord,
+    memory_id: Uuid,
+    body: &str,
+    retirement: bool,
+) -> MemoryRecord {
+    MemoryRecord {
+        memory_id,
+        version: target.version + 1,
+        body: body.to_owned(),
+        body_digest: sha256_digest_string(body.as_bytes()),
+        body_bytes: body.len() as u64,
+        retirement,
+        replaces: Some(target.memory_id),
+        derives_from: vec![target.memory_id],
+        ..target.clone()
+    }
+}
+
+/// The ids of recall hits, in the order served.
+fn hit_ids(hits: &[(MemoryRecord, f32)]) -> Vec<Uuid> {
+    hits.iter().map(|(m, _)| m.memory_id).collect()
+}
+
+/// The hit kinds recall admits by default (retrieval.md: vocabulary kinds
+/// only by a workarea's opt-in, which is unbuilt).
+const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedFact];
+
+/// Recall serves promoted served tips only — R3 at the store (retrieval.md)
+/// — never a held row or a replaced version, searches exactly the readable
+/// workarea set it is handed, an empty set included, admits exactly the
+/// kinds it is handed, and honours the `k` bound (ADR-0025 d1: no
+/// tenant-wide fallback; d8).
+pub async fn recall_serves_promoted_tips_only_within_the_readable_set<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(5);
     rig.seed_chain(store, 0).await;
     let wa = Uuid::from_u128(0xB2);
-    let promoted_id = Uuid::from_u128(0xC2);
-    let held_id = Uuid::from_u128(0xC3);
-    for (id, n) in [(promoted_id, 1_u8), (held_id, 2)] {
-        rig.commit(
-            store,
-            event_types::SUBMISSION_REMEMBER,
-            json!({ "n": n }),
-            MetadataFold::MemoryHeld {
-                memory: held_memory(
-                    rig.tenant_id,
-                    wa,
-                    id,
-                    "wanda",
-                    Uuid::from_u128(0xD1),
-                    "the canary token",
-                ),
-                enqueue: true,
-            },
-            None,
+    let fixture = |id: u128, body: &str| {
+        held_memory(
+            rig_tenant(5),
+            wa,
+            Uuid::from_u128(id),
+            "wanda",
+            Uuid::from_u128(0xD1),
+            body,
         )
-        .await
-        .expect("commit");
-    }
-    rig.commit(
-        store,
-        event_types::LIFECYCLE_PROMOTE,
-        json!({}),
-        MetadataFold::MemoryPromoted {
-            memory_id: promoted_id,
-        },
-        None,
-    )
-    .await
-    .expect("promote");
-
-    let hits = store
-        .recall_fts(rig.tenant_id, &[wa], "canary", 10)
-        .await
-        .expect("recall");
-    assert_eq!(
-        hits.len(),
-        1,
-        "promoted rows only — the held twin is invisible"
+    };
+    let promoted = fixture(0xC2, "the canary token");
+    let held = fixture(0xC3, "the canary token");
+    let replaced = fixture(0xC4, "the canary token, first cut");
+    let tip = successor_of(
+        &replaced,
+        Uuid::from_u128(0xC5),
+        "the canary token, second cut",
+        false,
     );
-    assert_eq!(hits[0].memory_id, promoted_id);
-    let wider = store
-        .recall_fts(rig.tenant_id, &[Uuid::from_u128(0xBF), wa], "canary", 10)
-        .await
-        .expect("recall");
+    let derived = MemoryRecord {
+        kind: MemoryKind::DerivedFact,
+        ..fixture(0xC6, "the canary token, derived")
+    };
+    hold_and_promote(&mut rig, store, promoted.clone()).await;
+    hold(&mut rig, store, held).await.expect("hold the twin");
+    hold_and_promote(&mut rig, store, replaced).await;
+    hold_and_ratify(&mut rig, store, tip.clone()).await;
+    hold_and_promote(&mut rig, store, derived.clone()).await;
+
+    let recall = |readable: Vec<Uuid>, kinds: Vec<MemoryKind>, k: usize| async move {
+        store
+            .recall_fts(rig_tenant(5), &readable, "canary", &kinds, k)
+            .await
+            .expect("recall")
+    };
+    let hits = recall(vec![wa], HIT_KINDS.to_vec(), 10).await;
+    let mut served = hit_ids(&hits);
+    served.sort();
+    assert_eq!(
+        served,
+        vec![promoted.memory_id, tip.memory_id, derived.memory_id],
+        "served tips only — neither the held twin nor the replaced version"
+    );
+    let wider = recall(vec![Uuid::from_u128(0xBF), wa], HIT_KINDS.to_vec(), 10).await;
     assert_eq!(wider, hits, "every node of the set is searched");
-    let other_wa = store
-        .recall_fts(rig.tenant_id, &[Uuid::from_u128(0xBF)], "canary", 10)
-        .await
-        .expect("recall");
-    assert!(other_wa.is_empty(), "the workarea set holds");
-    let nothing_readable = store
-        .recall_fts(rig.tenant_id, &[], "canary", 10)
-        .await
-        .expect("recall");
     assert!(
-        nothing_readable.is_empty(),
+        recall(vec![Uuid::from_u128(0xBF)], HIT_KINDS.to_vec(), 10)
+            .await
+            .is_empty(),
+        "the workarea set holds"
+    );
+    assert!(
+        recall(Vec::new(), HIT_KINDS.to_vec(), 10).await.is_empty(),
         "an empty readable set searches nothing, never the tenant"
     );
-    let bounded = store
-        .recall_fts(rig.tenant_id, &[wa], "canary", 0)
+    assert_eq!(
+        hit_ids(&recall(vec![wa], vec![MemoryKind::DerivedFact], 10).await),
+        vec![derived.memory_id],
+        "kinds narrows the hits"
+    );
+    assert!(
+        recall(vec![wa], Vec::new(), 10).await.is_empty(),
+        "an empty kinds set admits nothing"
+    );
+    assert!(
+        recall(vec![wa], HIT_KINDS.to_vec(), 0).await.is_empty(),
+        "k bounds the result"
+    );
+    assert_eq!(
+        recall(vec![wa], HIT_KINDS.to_vec(), 1).await,
+        hits[..1],
+        "k keeps the first of the order"
+    );
+}
+
+/// Hits come in the total order of retrieval.md — score descending, then
+/// `artifact_id` ascending in byte order — so rows that tie on score, here
+/// identical texts, come back in id order whatever order they were written
+/// in, and `k` keeps a prefix of that order (ADR-0025 d8). Scores are each
+/// store's own and are not compared across stores.
+pub async fn hits_that_tie_on_score_are_ordered_by_artifact_id<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(40);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB40);
+    let ties = [0xC43_u128, 0xC41, 0xC42].map(Uuid::from_u128);
+    for id in ties {
+        let memory = held_memory(
+            rig.tenant_id,
+            wa,
+            id,
+            "wanda",
+            Uuid::from_u128(0xD40),
+            "drain the canary",
+        );
+        hold_and_promote(&mut rig, store, memory).await;
+    }
+    let louder = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC40),
+        "wanda",
+        Uuid::from_u128(0xD40),
+        "drain the canary, the canary, the canary",
+    );
+    hold_and_promote(&mut rig, store, louder).await;
+
+    let hits = store
+        .recall_fts(rig.tenant_id, &[wa], "canary", &HIT_KINDS, 10)
         .await
         .expect("recall");
-    assert!(bounded.is_empty(), "k bounds the result");
+    assert_eq!(hits.len(), 4, "{hits:?}");
+    assert!(
+        hits.windows(2).all(|w| {
+            let ((a, a_score), (b, b_score)) = (&w[0], &w[1]);
+            a_score > b_score || (a_score == b_score && a.memory_id < b.memory_id)
+        }),
+        "score descending, then artifact_id ascending: {hits:?}"
+    );
+    let tied: Vec<&(MemoryRecord, f32)> = hits
+        .iter()
+        .filter(|(m, _)| ties.contains(&m.memory_id))
+        .collect();
+    assert_eq!(
+        tied.iter().map(|(m, _)| m.memory_id).collect::<Vec<_>>(),
+        [0xC41_u128, 0xC42, 0xC43].map(Uuid::from_u128),
+        "equal texts tie, and the tie breaks by artifact_id"
+    );
+    assert!(tied.iter().all(|(_, score)| *score == tied[0].1));
+    let first_two = store
+        .recall_fts(rig.tenant_id, &[wa], "canary", &HIT_KINDS, 2)
+        .await
+        .expect("recall");
+    assert_eq!(first_two, hits[..2], "k keeps the prefix of the order");
+}
+
+/// Steering is never a hit, whatever the kinds it is handed name and
+/// however well it matches the query; it is served as applicable steering
+/// (retrieval.md, the recall-ordering contract; ADR-0025 d8).
+pub async fn steering_is_never_returned_as_a_hit<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(41);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB41);
+    let fixture = |id: u128, body: &str| {
+        held_memory(
+            rig_tenant(41),
+            wa,
+            Uuid::from_u128(id),
+            "wanda",
+            Uuid::from_u128(0xD41),
+            body,
+        )
+    };
+    let steering = MemoryRecord {
+        kind: MemoryKind::Steering,
+        ..fixture(0xC410, "canary canary: drain the canary first")
+    };
+    let memory = fixture(0xC411, "the canary drained");
+    hold_and_promote(&mut rig, store, steering.clone()).await;
+    hold_and_promote(&mut rig, store, memory.clone()).await;
+
+    let every_kind = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Steering,
+    ];
+    let hits = store
+        .recall_fts(rig.tenant_id, &[wa], "canary", &every_kind, 10)
+        .await
+        .expect("recall");
+    assert_eq!(hit_ids(&hits), vec![memory.memory_id], "{hits:?}");
+    let in_force = store
+        .steering_in_force(rig.tenant_id, &[wa])
+        .await
+        .expect("steering");
+    assert_eq!(
+        in_force.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        vec![steering.memory_id]
+    );
+}
+
+/// A retired claim, one whose served tip is a retirement version, serves
+/// nothing: neither the retirement version nor any version it replaced is a
+/// hit or applicable steering, while a claim whose retirement is still held
+/// keeps serving its tip (ADR-0025 d8, d11).
+pub async fn retired_claims_are_absent_from_recall_and_steering<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(42);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB42);
+    let fixture = |id: u128, kind: MemoryKind, body: &str| MemoryRecord {
+        kind,
+        ..held_memory(
+            rig_tenant(42),
+            wa,
+            Uuid::from_u128(id),
+            "wanda",
+            Uuid::from_u128(0xD42),
+            body,
+        )
+    };
+    let retire = "retired: the canary lapsed";
+    let mut kept = Vec::new();
+    for (base, kind) in [
+        (0xC420_u128, MemoryKind::Memory),
+        (0xC430, MemoryKind::Steering),
+    ] {
+        let retired = fixture(base, kind, "the canary claim");
+        let retirement = successor_of(&retired, Uuid::from_u128(base + 1), retire, true);
+        hold_and_promote(&mut rig, store, retired.clone()).await;
+        hold_and_ratify(&mut rig, store, retirement).await;
+
+        let pending = fixture(base + 2, kind, "the canary claim still served");
+        let held_retirement = successor_of(&pending, Uuid::from_u128(base + 3), retire, true);
+        hold_and_promote(&mut rig, store, pending.clone()).await;
+        hold(&mut rig, store, held_retirement)
+            .await
+            .expect("hold the retirement");
+        kept.push(pending.memory_id);
+    }
+
+    let every_kind = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Steering,
+    ];
+    for query in ["canary", "retired"] {
+        let hits = store
+            .recall_fts(rig.tenant_id, &[wa], query, &every_kind, 10)
+            .await
+            .expect("recall");
+        let expected = if query == "canary" {
+            vec![kept[0]]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(hit_ids(&hits), expected, "query {query:?}: {hits:?}");
+    }
+    let in_force = store
+        .steering_in_force(rig.tenant_id, &[wa])
+        .await
+        .expect("steering");
+    assert_eq!(
+        in_force.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        vec![kept[1]],
+        "a held retirement changes nothing until it is ratified"
+    );
+}
+
+/// Applicable steering is served over exactly the nodes named, ordered by
+/// its node's position among them — the depth from the root — then by
+/// `promoted_at`, then by `artifact_id`, never in the order rows were
+/// written; a held steering row and a promoted memory are not steering in
+/// force (retrieval.md, the recall-ordering contract; ADR-0025 d8).
+pub async fn steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifact_id<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(43);
+    rig.seed_chain(store, 0).await;
+    let [root, child, grandchild, elsewhere] =
+        [0xB430_u128, 0xB431, 0xB432, 0xB433].map(Uuid::from_u128);
+    let fixture = |wa: Uuid, id: u128, kind: MemoryKind| MemoryRecord {
+        kind,
+        ..held_memory(
+            rig_tenant(43),
+            wa,
+            Uuid::from_u128(id),
+            "wanda",
+            Uuid::from_u128(0xD43),
+            "drain the canary first",
+        )
+    };
+    // Promoted in this order: the deepest first, then the root's
+    // higher id before its lower one.
+    let deep = fixture(grandchild, 0xC431, MemoryKind::Steering);
+    let root_first = fixture(root, 0xC439, MemoryKind::Steering);
+    let root_second = fixture(root, 0xC432, MemoryKind::Steering);
+    let mid = fixture(child, 0xC433, MemoryKind::Steering);
+    let outside = fixture(elsewhere, 0xC434, MemoryKind::Steering);
+    let memory = fixture(root, 0xC430, MemoryKind::Memory);
+    for row in [&deep, &root_first, &root_second, &mid, &outside, &memory] {
+        hold_and_promote(&mut rig, store, row.clone()).await;
+    }
+    hold(&mut rig, store, fixture(root, 0xC435, MemoryKind::Steering))
+        .await
+        .expect("hold");
+
+    let in_force = |nodes: Vec<Uuid>| async move {
+        store
+            .steering_in_force(rig_tenant(43), &nodes)
+            .await
+            .expect("steering")
+            .iter()
+            .map(|m| m.memory_id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        in_force(vec![root, child, grandchild]).await,
+        vec![
+            root_first.memory_id,
+            root_second.memory_id,
+            mid.memory_id,
+            deep.memory_id
+        ],
+        "depth, then promoted_at, then artifact_id"
+    );
+    assert_eq!(in_force(vec![child]).await, vec![mid.memory_id]);
+    assert!(
+        in_force(Vec::new()).await.is_empty(),
+        "no node serves nothing"
+    );
 }
 
 /// The review queue serves each item to one reviewer, only from the
@@ -1999,7 +2315,12 @@ where
     journal_commit_refuses_conflicts(&new_store().await).await;
     journal_events_range_pages(&new_store().await).await;
     journal_memory_fold_and_lookup(&new_store().await).await;
-    journal_recall_promoted_only(&new_store().await).await;
+    recall_serves_promoted_tips_only_within_the_readable_set(&new_store().await).await;
+    hits_that_tie_on_score_are_ordered_by_artifact_id(&new_store().await).await;
+    steering_is_never_returned_as_a_hit(&new_store().await).await;
+    retired_claims_are_absent_from_recall_and_steering(&new_store().await).await;
+    steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifact_id(&new_store().await)
+        .await;
     journal_review_claim_laws(&new_store().await).await;
     journal_key_lookup_by_hash(&new_store().await).await;
     a_revoked_key_no_longer_resolves_by_its_hash(&new_store().await).await;

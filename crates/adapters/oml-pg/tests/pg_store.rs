@@ -731,19 +731,19 @@ async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_serve
 
     // Recall serves each claim's tip and nothing else.
     let hits = store
-        .recall_fts(tenant, &[wa], "Accra", 10)
+        .recall_fts(tenant, &[wa], "Accra", &[MemoryKind::Memory], 10)
         .await
         .expect("recall");
     assert_eq!(
-        hits.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        hits.iter().map(|(m, _)| m.memory_id).collect::<Vec<_>>(),
         vec![quote]
     );
     let hits = store
-        .recall_fts(tenant, &[wa], "canary", 10)
+        .recall_fts(tenant, &[wa], "canary", &[MemoryKind::Memory], 10)
         .await
         .expect("recall");
     assert_eq!(
-        hits.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        hits.iter().map(|(m, _)| m.memory_id).collect::<Vec<_>>(),
         vec![note_next]
     );
 

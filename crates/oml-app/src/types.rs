@@ -351,6 +351,11 @@ pub struct VerdictOutcome {
     pub journal_seq: u64,
 }
 
+/// The kinds recall serves as hits. Vocabulary kinds join them only by a
+/// workarea's journalled opt-in, which is unbuilt (retrieval.md, the
+/// recall-ordering contract; ADR-0021 d9, ADR-0025 d8).
+pub const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedFact];
+
 #[derive(Debug, Clone)]
 pub struct RecallRequest {
     pub query: String,
@@ -359,15 +364,39 @@ pub struct RecallRequest {
     /// key with neither is refused — there is no tenant-wide fallback
     /// (ADR-0025 d1).
     pub workarea_id: Option<Uuid>,
+    /// The hit kinds the request admits; empty when it sent no filter. It
+    /// narrows the hits only, never the steering (retrieval.md, the
+    /// recall-ordering contract; ADR-0025 d8).
+    pub kinds: Vec<MemoryKind>,
 }
 
-/// Steering rows precede hits and are never ranked (retrieval.md recall-
-/// ordering contract). The PoC indexes no steering kind, so the segment is
-/// always empty here; the shape is the contract.
+/// One recall hit: the row as the calling key is served it, and the store's
+/// score for it (openapi.yaml `RecallResponse.hits`; ADR-0025 d8). A hit
+/// reads as the served row it carries.
+#[derive(Debug, Clone)]
+pub struct RecallHit {
+    pub served: ServedMemory,
+    /// The store's rank: `ts_rank` in Postgres, the count of distinct query
+    /// terms matched in the in-memory store (retrieval.md, the
+    /// recall-ordering contract).
+    pub score: f32,
+}
+
+impl core::ops::Deref for RecallHit {
+    type Target = ServedMemory;
+
+    fn deref(&self) -> &ServedMemory {
+        &self.served
+    }
+}
+
+/// Applicable steering, ordered structurally and never ranked, precedes the
+/// hits, ordered by score descending then `artifact_id` ascending
+/// (retrieval.md, the recall-ordering contract; ADR-0025 d8).
 #[derive(Debug, Clone)]
 pub struct RecallResult {
     pub steering: Vec<ServedMemory>,
-    pub hits: Vec<ServedMemory>,
+    pub hits: Vec<RecallHit>,
 }
 
 /// Whose rows a listing reads: the store's own predicate, so no page
