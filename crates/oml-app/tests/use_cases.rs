@@ -1536,7 +1536,7 @@ fn steering_ids(recall: &RecallResult) -> Vec<Uuid> {
 }
 
 /// The hit ids a recall served, in order.
-fn hit_ids(recall: &RecallResult) -> Vec<Uuid> {
+fn hit_ids_of(recall: &RecallResult) -> Vec<Uuid> {
     recall.hits.iter().map(|h| h.memory.memory_id).collect()
 }
 
@@ -1596,7 +1596,7 @@ async fn a_promoted_steering_row_precedes_hits_unranked() {
         "steering is never a hit"
     );
     assert_eq!(
-        hit_ids(&recall),
+        hit_ids_of(&recall),
         vec![stronger, equal, weaker],
         "score descending, then artifact_id ascending"
     );
@@ -1770,7 +1770,7 @@ async fn kinds_filters_hits_only() {
             .await
             .expect("recall");
         assert_eq!(steering_ids(&recall), vec![steering], "kinds {kinds:?}");
-        assert_eq!(hit_ids(&recall), hits, "kinds {kinds:?}");
+        assert_eq!(hit_ids_of(&recall), hits, "kinds {kinds:?}");
     }
 }
 
