@@ -543,3 +543,180 @@ async fn oml_get_answers_not_built_yet_and_so_does_oml_supersede() {
 
     drop_db(&db).await;
 }
+
+#[tokio::test]
+async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() {
+    let (router, db) = fresh_router().await;
+    let (status, boot) = send(
+        &router,
+        "POST",
+        "/v2/bootstrap/claim",
+        None,
+        None,
+        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{boot}");
+    let admin = boot["value"].as_str().expect("admin key").to_owned();
+    let root = boot["root_workarea_id"].as_str().expect("root").to_owned();
+    let (status, wa) = send(
+        &router,
+        "POST",
+        "/v2/workareas",
+        Some(&admin),
+        Some("wa-1"),
+        Some(&json!({
+            "parent_id": root,
+            "name": "metals-crew",
+            "crew": {"name": "metals-crew"},
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{wa}");
+    let crew = wa["id"].as_str().expect("workarea id").to_owned();
+    let issue = |idem: &'static str, role: &'static str, grants: Value| {
+        let (router, admin) = (&router, &admin);
+        async move {
+            let (status, key) = send(
+                router,
+                "POST",
+                "/v2/keys",
+                Some(admin),
+                Some(idem),
+                Some(&json!({"role": role, "principal": idem, "grants": grants})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{key}");
+            key["value"].as_str().expect("show-once value").to_owned()
+        }
+    };
+    let agent = issue(
+        "agent",
+        "writer",
+        json!([
+            {"workarea_node_id": crew, "role": "writer"},
+            {"workarea_node_id": crew, "role": "reader"},
+        ]),
+    )
+    .await;
+    let writer = issue(
+        "writer",
+        "writer",
+        json!([{"workarea_node_id": crew, "role": "writer"}]),
+    )
+    .await;
+    let unscoped = issue("unscoped", "reader", json!([])).await;
+
+    // Listed, and omitted workarea means the key's journalled default: the
+    // same answer as naming it, from one ring call.
+    let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
+    assert!(
+        listed["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|t| t["name"] == "oml_workarea_info"),
+        "{listed}"
+    );
+    let info = call_tool(&router, &agent, 2, "oml_workarea_info", json!({})).await;
+    assert_eq!(info["isError"], false, "{info}");
+    let view = &info["structuredContent"];
+    assert_eq!(
+        view,
+        &json!({
+            "id": crew,
+            "path": "universe.metals-crew",
+            "status": "development",
+            "crew": {"name": "metals-crew"},
+            "parent": root,
+            "children": [],
+            "edges": [],
+            "my_effective_verbs": [
+                "recall", "read", "graph_read", "events_tail",
+                "remember", "learn", "attach", "supersede",
+            ],
+            "permission_epoch": view["permission_epoch"],
+        })
+    );
+    assert!(view["permission_epoch"].is_u64(), "{view}");
+    let named = call_tool(
+        &router,
+        &agent,
+        3,
+        "oml_workarea_info",
+        json!({"workarea": crew}),
+    )
+    .await;
+    assert_eq!(&named["structuredContent"], view);
+
+    // A key with no default is refused by name; a node the key cannot read
+    // is absence, as on the ring; an unknown argument is validation.
+    for (id, token, args, code) in [
+        (4, &unscoped, json!({}), "request.workarea_unresolved"),
+        (5, &writer, json!({}), "access.not_found"),
+        (6, &agent, json!({"workarea": root}), "access.not_found"),
+        (
+            7,
+            &agent,
+            json!({"workarea_id": crew}),
+            "request.validation",
+        ),
+    ] {
+        let refused = call_tool(&router, token, id, "oml_workarea_info", args).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], code,
+            "{refused}"
+        );
+    }
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_not_it_has_a_default()
+ {
+    let (router, db) = fresh_router().await;
+    let (status, boot) = send(
+        &router,
+        "POST",
+        "/v2/bootstrap/claim",
+        None,
+        None,
+        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{boot}");
+    let bootstrap_admin = boot["value"].as_str().expect("admin key").to_owned();
+    // A second admin key: admin admits no grant role, so it has no grants
+    // and no default (roles-and-keys.md issuance order step 6).
+    let (status, second) = send(
+        &router,
+        "POST",
+        "/v2/keys",
+        Some(&bootstrap_admin),
+        Some("second-admin"),
+        Some(&json!({"role": "admin", "principal": "bob-admin", "grants": []})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    assert!(second["default_workarea_id"].is_null(), "{second}");
+    let second_admin = second["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+
+    // Step 1 of the refusal order needs no node, so it answers before the
+    // default resolves: both admin keys get the same code, and neither is
+    // told about its default workarea.
+    for (id, token) in [(1, &bootstrap_admin), (2, &second_admin)] {
+        let refused = call_tool(&router, token, id, "oml_workarea_info", json!({})).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], "access.verb_ceiling",
+            "{refused}"
+        );
+    }
+
+    drop_db(&db).await;
+}

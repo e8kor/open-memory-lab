@@ -41,17 +41,22 @@ const ACCEPTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 
 /// The catalog tools whose ring endpoint exists in this slice.
-pub const SERVED_TOOLS: [&str; 4] = ["oml_remember", "oml_learn", "oml_recall", "oml_events_tail"];
+pub const SERVED_TOOLS: [&str; 5] = [
+    "oml_remember",
+    "oml_learn",
+    "oml_recall",
+    "oml_workarea_info",
+    "oml_events_tail",
+];
 
 /// Catalog tools whose ring endpoint is not built yet: named, not unknown.
 /// `oml_get` and `oml_supersede` joined the catalog with ADR-0025 d12.
-const UNBUILT_TOOLS: [&str; 8] = [
+const UNBUILT_TOOLS: [&str; 7] = [
     "oml_get",
     "oml_supersede",
     "oml_attach",
     "oml_relate_propose",
     "oml_my_work",
-    "oml_workarea_info",
     "oml_graph",
     "oml_vocab",
 ];
@@ -125,6 +130,12 @@ struct RecallArgs {
     query: String,
     scope: Option<String>,
     k: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkareaInfoArgs {
+    workarea: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -243,6 +254,7 @@ where
             "oml_remember" => Self::tool_submit(st, token, "remember", args).await,
             "oml_learn" => Self::tool_submit(st, token, "learn", args).await,
             "oml_recall" => Self::tool_recall(st, token, args).await,
+            "oml_workarea_info" => Self::tool_workarea_info(st, token, args).await,
             "oml_events_tail" => Self::tool_events_tail(st, token, args).await,
             _ if UNBUILT_TOOLS.contains(&name) => {
                 return rpc_error(
@@ -355,6 +367,39 @@ where
             })
             .unwrap_or_default();
         Ok(json!({ "steering": result["steering"], "hits": hits }))
+    }
+
+    /// `oml_workarea_info`: one `GET /v2/workareas/{id}`. An omitted
+    /// workarea is the key's journalled default, which the app resolves from
+    /// the authenticated key record after step 1 of the refusal order, so an
+    /// admin key is the verb ceiling with or without a default, and a key
+    /// past step 1 with none is `request.workarea_unresolved` (mcp-plugin.md;
+    /// roles-and-keys.md refusal order; ADR-0025 d14).
+    async fn tool_workarea_info(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: WorkareaInfoArgs = parse_args(args)?;
+        let view = ring_outcome(
+            Self::get_workarea_inner(st, args.workarea.as_deref(), &ring_headers(token)).await,
+        )
+        .await?;
+        // The plugin's output names the parent `parent`; `crew` stays absent
+        // when none was recorded (mcp-plugin.md `oml_workarea_info`).
+        let mut out = Map::new();
+        for (from, to) in [
+            ("id", "id"),
+            ("path", "path"),
+            ("status", "status"),
+            ("crew", "crew"),
+            ("parent_id", "parent"),
+            ("children", "children"),
+            ("edges", "edges"),
+            ("my_effective_verbs", "my_effective_verbs"),
+            ("permission_epoch", "permission_epoch"),
+        ] {
+            if let Some(value) = view.get(from) {
+                out.insert(to.to_owned(), value.clone());
+            }
+        }
+        Ok(Value::Object(out))
     }
 
     /// `oml_events_tail`: one `GET /v2/events`.

@@ -11,7 +11,7 @@ use oml_app::domain::{
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
-    AppError, BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, IssuedKey,
+    AppError, BootstrapRequest, BootstrapResult, Crew, GrantRequest, IssueKeyRequest, IssuedKey,
     RecallRequest, SubmitRequest, SupersedeRequest, Verdict, VersionRef,
 };
 use uuid::Uuid;
@@ -56,9 +56,10 @@ async fn bootstrap(app: &TestApp) -> BootstrapResult {
 
 /// A workarea under `parent`, created by the admin.
 async fn workarea(app: &TestApp, admin: &str, name: &str, parent: Uuid) -> Uuid {
-    app.create_workarea(admin, name, Some(parent))
+    app.create_workarea(admin, name, Some(parent), None)
         .await
         .expect("create workarea")
+        .workarea
         .workarea_id
 }
 
@@ -1839,4 +1840,365 @@ async fn a_failed_grant_commit_discloses_no_key_value() {
 
     // The refusal was one-shot: the next issuance completes.
     issue(&app, admin, Role::Reader, "rhea", crew).await;
+}
+
+// ---------------------------------------------------------------------------
+// The workarea read: the caller's children, verbs and epoch (ADR-0025 d14)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn workarea_info_names_the_verbs_this_keys_grants_confer() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let agent = agent(&app, admin, "crew/agent-7", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let dreamer = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dana",
+        vec![grant(crew, Role::Reader), grant(crew, Role::Dreamer)],
+    )
+    .await;
+    let service = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                held_by: Some(HeldBy::Service),
+                ..issue_req(
+                    Role::Dreamer,
+                    "reconciler",
+                    vec![grant(crew, Role::Reader), grant(crew, Role::Dreamer)],
+                )
+            },
+        )
+        .await
+        .expect("issue a service key");
+
+    // The union over the effective grant roles, in table order without
+    // duplicates (roles-and-keys.md effective verbs).
+    for (key, verbs) in [
+        (
+            &agent,
+            vec![
+                "recall",
+                "read",
+                "graph_read",
+                "events_tail",
+                "remember",
+                "learn",
+                "attach",
+                "supersede",
+            ],
+        ),
+        (&reader, vec!["recall", "read", "graph_read", "events_tail"]),
+        (
+            &dreamer,
+            vec![
+                "recall",
+                "read",
+                "graph_read",
+                "events_tail",
+                "propose",
+                "review",
+                "supersede",
+            ],
+        ),
+        // A service key is refused review whatever its grants (ADR-0025 d1).
+        (
+            &service,
+            vec![
+                "recall",
+                "read",
+                "graph_read",
+                "events_tail",
+                "propose",
+                "supersede",
+            ],
+        ),
+    ] {
+        let info = app
+            .workarea_info(&key.value, Some(crew))
+            .await
+            .expect("a readable node");
+        assert_eq!(info.my_effective_verbs, verbs, "{}", key.principal);
+    }
+}
+
+#[tokio::test]
+async fn workarea_info_lists_only_readable_children() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let beta = workarea(&app, admin, "beta", crew).await;
+    let sealed = workarea(&app, admin, "sealed", crew).await;
+    let zulu = workarea(&app, admin, "Zulu", crew).await;
+    let alpha = workarea(&app, admin, "alpha", crew).await;
+    let quarantine = workarea(&app, admin, "quarantine", crew).await;
+    let reader = issue_with(
+        &app,
+        admin,
+        Role::Reader,
+        "rhea",
+        vec![GrantRequest {
+            node: crew,
+            role: Role::Reader,
+            deny: vec![sealed],
+        }],
+    )
+    .await;
+    app.deny_key(admin, reader.key_id, quarantine)
+        .await
+        .expect("deny");
+
+    // A child its grant's own deny masks and a child a global denial covers
+    // are absent, not marked; the rest are ordered by path_leaf in byte
+    // order, so "Zulu" sorts before "alpha".
+    let info = app
+        .workarea_info(&reader.value, Some(crew))
+        .await
+        .expect("a readable node");
+    assert_eq!(
+        info.children
+            .iter()
+            .map(|c| (c.workarea_id, c.name.as_str(), c.status()))
+            .collect::<Vec<_>>(),
+        vec![
+            (zulu, "Zulu", "development"),
+            (alpha, "alpha", "development"),
+            (beta, "beta", "development"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_unreadable_workarea_is_not_found() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let sibling = workarea(&app, admin, "sibling", boot.root_workarea_id).await;
+    let quarantine = workarea(&app, admin, "quarantine", crew).await;
+    let agent = agent(&app, admin, "crew/agent-7", crew).await;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    app.deny_key(admin, agent.key_id, quarantine)
+        .await
+        .expect("deny");
+
+    // A sibling, an ancestor of the granted node, a node no tenant holds and
+    // a globally denied child all answer as absence.
+    for node in [
+        sibling,
+        boot.root_workarea_id,
+        Uuid::from_u128(0xDEAD),
+        quarantine,
+    ] {
+        let err = app
+            .workarea_info(&agent.value, Some(node))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{node}: {err:?}");
+    }
+    // Writer alone does not read the node (refusal order step 4).
+    let err = app
+        .workarea_info(&writer.value, Some(crew))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    // Step 1 runs first: an admin key carries no grant role, so it is the
+    // verb ceiling, never a read of the tree.
+    let err = app.workarea_info(admin, Some(crew)).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::VerbCeiling {
+                role: Role::Admin,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_omitted_workarea_resolves_to_the_default_only_after_the_verb_ceiling() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let second_admin = issue_with(&app, admin, Role::Admin, "bob-admin", vec![]).await;
+    assert_eq!(second_admin.default_workarea, None);
+    let agent = agent(&app, admin, "crew/agent-7", crew).await;
+    let unscoped = issue_with(&app, admin, Role::Reader, "rhea", vec![]).await;
+
+    // Step 1 needs no node, so it answers first: the bootstrap admin, whose
+    // default is the root, and a zero-grant admin with none get one code.
+    for key in [admin.as_str(), second_admin.value.as_str()] {
+        let err = app.workarea_info(key, None).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::VerbCeiling {
+                    role: Role::Admin,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+    // Past step 1, a key with no default is refused by name, and a key with
+    // one reads it as if it had named it.
+    let err = app.workarea_info(&unscoped.value, None).await.unwrap_err();
+    assert!(matches!(err, AppError::WorkareaUnresolved), "{err:?}");
+    assert_eq!(
+        app.workarea_info(&agent.value, None)
+            .await
+            .expect("default"),
+        app.workarea_info(&agent.value, Some(crew))
+            .await
+            .expect("named")
+    );
+}
+
+#[tokio::test]
+async fn the_derived_path_follows_parent_ids_from_universe() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", boot.root_workarea_id).await;
+
+    let root = app
+        .workarea_info(&reader.value, Some(boot.root_workarea_id))
+        .await
+        .expect("the root");
+    assert_eq!(root.path, "universe");
+    assert_eq!(root.workarea.parent_id, None);
+    // The universe root is permanently committed (workareas.md).
+    assert_eq!(root.workarea.status(), "committed");
+
+    let leaf = app
+        .workarea_info(&reader.value, Some(quarter))
+        .await
+        .expect("the leaf");
+    assert_eq!(leaf.path, "universe.crew.q1-2027");
+    assert_eq!(leaf.workarea.parent_id, Some(crew));
+    assert_eq!(leaf.workarea.status(), "development");
+    let middle = app
+        .workarea_info(&reader.value, Some(crew))
+        .await
+        .expect("the crew");
+    assert_eq!(middle.path, "universe.crew");
+    assert_eq!(
+        middle
+            .children
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["q1-2027"]
+    );
+}
+
+#[tokio::test]
+async fn the_permission_epoch_moves_when_a_global_denial_is_journalled() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarantine = workarea(&app, admin, "quarantine", crew).await;
+    let agent = agent(&app, admin, "crew/agent-7", crew).await;
+    let epoch = || async {
+        app.workarea_info(&agent.value, Some(crew))
+            .await
+            .expect("a readable node")
+            .permission_epoch
+    };
+
+    // The latest of the key's key.issued and grant.issued seqs.
+    let issued = epoch().await;
+    assert_eq!(issued, agent.access.permission_epoch());
+    assert_eq!(issued, agent.access.grants[1].epoch);
+
+    // Journal events about other things leave it where it is.
+    app.submit_memory(&agent.value, &submit_req("i1", "the canary drains first"))
+        .await
+        .expect("submit");
+    issue(&app, admin, Role::Reader, "rhea", crew).await;
+    assert_eq!(epoch().await, issued);
+
+    // A denial on another subtree keeps the node readable and moves the
+    // epoch to the denial's own key.denied seq.
+    let denial = app
+        .deny_key(admin, agent.key_id, quarantine)
+        .await
+        .expect("deny");
+    assert!(denial.epoch > issued);
+    assert_eq!(epoch().await, denial.epoch);
+}
+
+#[tokio::test]
+async fn crew_given_at_create_is_persisted_and_returned() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    let crew = Crew {
+        name: Some("metals-crew".to_owned()),
+        charter_uri: Some("https://crews.example.com/metals/charter.md".to_owned()),
+        external_manager: None,
+    };
+    let created = app
+        .create_workarea(
+            admin,
+            "metals",
+            Some(boot.root_workarea_id),
+            Some(crew.clone()),
+        )
+        .await
+        .expect("create");
+    let (path, created) = (created.path, created.workarea);
+    assert_eq!(created.crew, Some(crew.clone()));
+    let bare = workarea(&app, admin, "bare", boot.root_workarea_id).await;
+    let reader = issue_with(
+        &app,
+        admin,
+        Role::Reader,
+        "rhea",
+        vec![
+            grant(created.workarea_id, Role::Reader),
+            grant(bare, Role::Reader),
+        ],
+    )
+    .await;
+
+    let info = app
+        .workarea_info(&reader.value, Some(created.workarea_id))
+        .await
+        .expect("read");
+    assert_eq!(
+        info.workarea.crew,
+        Some(crew.clone()),
+        "persisted, not echoed"
+    );
+    // The create answers with the path the read derives.
+    assert_eq!(path, "universe.metals");
+    assert_eq!(info.path, path);
+    let info = app
+        .workarea_info(&reader.value, Some(bare))
+        .await
+        .expect("read");
+    assert_eq!(info.workarea.crew, None);
+
+    // The journal carries the crew, so the fold is reproducible from it.
+    let tail = journal(&store, boot.tenant_id).await;
+    let create = tail
+        .iter()
+        .find(|e| {
+            e.envelope.event_type == event_types::WORKAREA_CREATE
+                && e.envelope.payload["workarea_id"] == created.workarea_id.to_string()
+        })
+        .expect("the create is journalled");
+    assert_eq!(
+        create.envelope.payload["crew"],
+        serde_json::to_value(&crew).expect("json")
+    );
+    assert_eq!(create.envelope.payload["status"], "development");
 }

@@ -1,8 +1,8 @@
 # The `oml` agent plugin
 
-This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds four
-tools, `oml_remember`, `oml_learn`, `oml_recall` and `oml_events_tail`, plus a skill that
-explains when to use them. Every write is held until a different identity approves it.
+This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds five
+tools, `oml_remember`, `oml_learn`, `oml_recall`, `oml_workarea_info` and
+`oml_events_tail`, plus a skill that explains when to use them. Every write is held until a different identity approves it.
 That is the point of the server, and it means a fact you store is not shared the moment
 you store it.
 
@@ -47,8 +47,7 @@ works:
 ## What is served today
 
 The catalog in [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares twelve tools.
-This release serves the four above. The other eight are not served yet: `oml_attach`,
-`oml_relate_propose`, `oml_my_work`, `oml_workarea_info`, `oml_graph` and `oml_vocab` answer
-with an error saying they are not built yet, and `oml_get` and `oml_supersede`, added to the
-catalog by ADR-0025, are not yet named by the server. They arrive with the milestones in the
-[critical path](../../docs/product/critical-path.md).
+This release serves the five above. The other seven are not served yet: `oml_get`,
+`oml_supersede`, `oml_attach`, `oml_relate_propose`, `oml_my_work`, `oml_graph` and
+`oml_vocab` answer with an error saying they are not built yet. They arrive with the
+milestones in the [critical path](../../docs/product/critical-path.md).
