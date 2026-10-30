@@ -684,17 +684,138 @@ async fn apply_fold(
     Ok(())
 }
 
+/// Appends one event inside the commit's transaction if it extends
+/// `expected`, the (seq, prev_hash) the head calls for: the journal row, the
+/// chain-head upsert, the metadata fold, the outbox row and the idempotency
+/// record (ADR-0002 d1).
+async fn append_event(
+    tx: &mut Transaction<'_, Postgres>,
+    (expected_seq, expected_prev): (u64, Sha256Hash),
+    req: CommitRequest,
+) -> Result<CommitReceipt, StoreError> {
+    let env = &req.event.envelope;
+    let tenant_id = env.tenant_id;
+    // The caller pre-signed the envelope; a commit that does not extend
+    // the head is a typed refusal, never a silent overwrite.
+    if env.seq != expected_seq {
+        return Err(StoreError::SeqConflict {
+            expected_seq,
+            found_seq: env.seq,
+        });
+    }
+    if env.prev_hash != expected_prev {
+        return Err(StoreError::PrevHashConflict { seq: env.seq });
+    }
+
+    // The tenants row must exist before the journal FK: genesis creates
+    // it (idempotently — the rig also reuses this fold as a no-op).
+    if matches!(req.fold, MetadataFold::TenantGenesis) {
+        let name = env
+            .payload
+            .get("tenant_name")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
+            .bind(tenant_id)
+            .bind(name)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+    }
+
+    let seq = i64::try_from(env.seq).map_err(backend)?;
+    sqlx::query(
+        "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+         api_key_id, at, payload, signed_bytes, signed_bytes_hash, sig) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12)",
+    )
+    .bind(tenant_id)
+    .bind(seq)
+    .bind(env.event_id)
+    .bind(&env.event_type)
+    .bind(env.prev_hash.0.to_vec())
+    .bind(&env.principal)
+    .bind(env.api_key_id)
+    .bind(env.at.as_str())
+    .bind(&env.payload)
+    .bind(&req.event.signed_bytes)
+    .bind(req.event.hash.0.to_vec())
+    .bind(req.event.sig.to_bytes().to_vec())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+
+    sqlx::query(
+        "INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES ($1, $2, $3) \
+         ON CONFLICT (tenant_id) DO UPDATE SET seq = EXCLUDED.seq, \
+         head_hash = EXCLUDED.head_hash",
+    )
+    .bind(tenant_id)
+    .bind(seq)
+    .bind(req.event.hash.0.to_vec())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+
+    apply_fold(tx, tenant_id, env.event_id, seq, &env.at, req.fold).await?;
+
+    // Outbox: kind 'bronze-event' (0001's drain-kind set); the port
+    // row's event id, topic and digest-only payload ride in the jsonb
+    // payload (storage.md outbox protocol).
+    let outbox_payload = serde_json::json!({
+        "event_id": req.outbox.event_id,
+        "topic": req.outbox.topic,
+        "payload": req.outbox.payload,
+    });
+    sqlx::query(
+        "INSERT INTO outbox (tenant_id, tenant_seq, kind, payload) \
+         VALUES ($1, $2, 'bronze-event', $3)",
+    )
+    .bind(tenant_id)
+    .bind(seq)
+    .bind(outbox_payload)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+
+    if let Some(put) = req.idempotency {
+        // request_digest stores the digest string's bytes verbatim —
+        // the PoC digest is an opaque comparand (http-api.md idempotency).
+        sqlx::query(
+            "INSERT INTO idempotency (tenant_id, key, request_digest, response, \
+             committed_at) VALUES ($1, $2, $3, $4, now())",
+        )
+        .bind(put.scope.tenant_id)
+        .bind(scope_key(&put.scope))
+        .bind(put.record.request_digest.into_bytes())
+        .bind(put.record.response)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
+
+    Ok(CommitReceipt {
+        seq: env.seq,
+        hash: req.event.hash,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // The port implementation
 // ---------------------------------------------------------------------------
 
 impl JournalStore for PgStore {
-    async fn commit(&self, req: CommitRequest) -> Result<CommitReceipt, StoreError> {
-        // Everything networked happened before BEGIN (ADR-0024): the event
-        // arrives signed; inside the transaction nothing waits on anything
+    async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
+        // Everything networked happened before BEGIN (ADR-0024): the events
+        // arrive signed; inside the transaction nothing waits on anything
         // but Postgres.
-        let env = &req.event.envelope;
-        let tenant_id = env.tenant_id;
+        let mut reqs = reqs.into_iter();
+        let Some(first) = reqs.next() else {
+            return Err(StoreError::Backend(
+                "an empty chain commits nothing".to_owned(),
+            ));
+        };
+        let tenant_id = first.event.envelope.tenant_id;
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
 
@@ -712,7 +833,7 @@ impl JournalStore for PgStore {
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(backend)?;
-        let (expected_seq, expected_prev) = match &head {
+        let expected = match &head {
             None => (1_u64, Sha256Hash::ZERO),
             Some(row) => {
                 let seq: i64 = row.try_get("seq").map_err(backend)?;
@@ -721,112 +842,21 @@ impl JournalStore for PgStore {
                 (seq + 1, hash32(&head_hash)?)
             }
         };
-        // The caller pre-signed the envelope; a commit that does not extend
-        // the head is a typed refusal, never a silent overwrite.
-        if env.seq != expected_seq {
-            return Err(StoreError::SeqConflict {
-                expected_seq,
-                found_seq: env.seq,
-            });
-        }
-        if env.prev_hash != expected_prev {
-            return Err(StoreError::PrevHashConflict { seq: env.seq });
-        }
-
-        // The tenants row must exist before the journal FK: genesis creates
-        // it (idempotently — the rig also reuses this fold as a no-op).
-        if matches!(req.fold, MetadataFold::TenantGenesis) {
-            let name = env
-                .payload
-                .get("tenant_name")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            sqlx::query(
-                "INSERT INTO tenants (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
-            )
-            .bind(tenant_id)
-            .bind(name)
-            .execute(&mut *tx)
-            .await
-            .map_err(backend)?;
-        }
-
-        let seq = i64::try_from(env.seq).map_err(backend)?;
-        sqlx::query(
-            "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
-             api_key_id, at, payload, signed_bytes, signed_bytes_hash, sig) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12)",
-        )
-        .bind(tenant_id)
-        .bind(seq)
-        .bind(env.event_id)
-        .bind(&env.event_type)
-        .bind(env.prev_hash.0.to_vec())
-        .bind(&env.principal)
-        .bind(env.api_key_id)
-        .bind(env.at.as_str())
-        .bind(&env.payload)
-        .bind(&req.event.signed_bytes)
-        .bind(req.event.hash.0.to_vec())
-        .bind(req.event.sig.to_bytes().to_vec())
-        .execute(&mut *tx)
-        .await
-        .map_err(backend)?;
-
-        sqlx::query(
-            "INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES ($1, $2, $3) \
-             ON CONFLICT (tenant_id) DO UPDATE SET seq = EXCLUDED.seq, \
-             head_hash = EXCLUDED.head_hash",
-        )
-        .bind(tenant_id)
-        .bind(seq)
-        .bind(req.event.hash.0.to_vec())
-        .execute(&mut *tx)
-        .await
-        .map_err(backend)?;
-
-        apply_fold(&mut tx, tenant_id, env.event_id, seq, &env.at, req.fold).await?;
-
-        // Outbox: kind 'bronze-event' (0001's drain-kind set); the port
-        // row's event id, topic and digest-only payload ride in the jsonb
-        // payload (storage.md outbox protocol).
-        let outbox_payload = serde_json::json!({
-            "event_id": req.outbox.event_id,
-            "topic": req.outbox.topic,
-            "payload": req.outbox.payload,
-        });
-        sqlx::query(
-            "INSERT INTO outbox (tenant_id, tenant_seq, kind, payload) \
-             VALUES ($1, $2, 'bronze-event', $3)",
-        )
-        .bind(tenant_id)
-        .bind(seq)
-        .bind(outbox_payload)
-        .execute(&mut *tx)
-        .await
-        .map_err(backend)?;
-
-        if let Some(put) = req.idempotency {
-            // request_digest stores the digest string's bytes verbatim —
-            // the PoC digest is an opaque comparand (http-api.md idempotency).
-            sqlx::query(
-                "INSERT INTO idempotency (tenant_id, key, request_digest, response, \
-                 committed_at) VALUES ($1, $2, $3, $4, now())",
-            )
-            .bind(put.scope.tenant_id)
-            .bind(scope_key(&put.scope))
-            .bind(put.record.request_digest.into_bytes())
-            .bind(put.record.response)
-            .execute(&mut *tx)
-            .await
-            .map_err(backend)?;
+        // Each link extends the one before it, under the one lock; a
+        // refused link returns before COMMIT, so the transaction rolls back
+        // every earlier link with it (ADR-0025 d10).
+        let mut receipt = append_event(&mut tx, expected, first).await?;
+        for req in reqs {
+            if req.event.envelope.tenant_id != tenant_id {
+                return Err(StoreError::Backend(
+                    "a chain commit names one tenant".to_owned(),
+                ));
+            }
+            receipt = append_event(&mut tx, (receipt.seq + 1, receipt.hash), req).await?;
         }
 
         tx.commit().await.map_err(backend)?;
-        Ok(CommitReceipt {
-            seq: env.seq,
-            hash: req.event.hash,
-        })
+        Ok(receipt)
     }
 
     async fn chain_head(&self, tenant_id: Uuid) -> Result<Option<ChainHead>, StoreError> {

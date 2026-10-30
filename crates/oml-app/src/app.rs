@@ -227,6 +227,31 @@ fn successor_kind(
     }
 }
 
+/// One event's commit request, with its outbox row.
+fn commit_request(
+    event: SignedEnvelope,
+    fold: MetadataFold,
+    idempotency: Option<IdempotencyPut>,
+) -> CommitRequest {
+    let outbox = OutboxRow {
+        event_id: event.envelope.event_id,
+        topic: event.envelope.event_type.clone(),
+        // Digest-only, like the journal: no body plaintext rides the
+        // outbox either (storage.md bronze mirror).
+        payload: json!({
+            "tenant_id": event.envelope.tenant_id.to_string(),
+            "seq": event.envelope.seq,
+            "event_type": event.envelope.event_type,
+        }),
+    };
+    CommitRequest {
+        event,
+        fold,
+        outbox,
+        idempotency,
+    }
+}
+
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
     J: JournalStore,
@@ -490,25 +515,26 @@ where
         fold: MetadataFold,
         idempotency: Option<IdempotencyPut>,
     ) -> Result<CommitReceipt, AppError> {
-        let outbox = OutboxRow {
-            event_id: event.envelope.event_id,
-            topic: event.envelope.event_type.clone(),
-            // Digest-only, like the journal: no body plaintext rides the
-            // outbox either (storage.md bronze mirror).
-            payload: json!({
-                "tenant_id": event.envelope.tenant_id.to_string(),
-                "seq": event.envelope.seq,
-                "event_type": event.envelope.event_type,
-            }),
-        };
         Ok(self
             .journal
-            .commit(CommitRequest {
-                event,
-                fold,
-                outbox,
-                idempotency,
-            })
+            .commit(commit_request(event, fold, idempotency))
+            .await?)
+    }
+
+    /// Commits chain-consecutive events as one transaction: a refusal of
+    /// any of them writes none (ADR-0025 d10).
+    async fn commit_chain(
+        &self,
+        links: Vec<(SignedEnvelope, MetadataFold)>,
+    ) -> Result<CommitReceipt, AppError> {
+        Ok(self
+            .journal
+            .commit_chain(
+                links
+                    .into_iter()
+                    .map(|(event, fold)| commit_request(event, fold, None))
+                    .collect(),
+            )
             .await?)
     }
 
@@ -1132,8 +1158,9 @@ where
     /// (ADR-0025 d1); R2 runs here against the row's reviewer-exclusion set
     /// — its lineage closure plus, for a held successor, the authors of the
     /// held rivals of its target (`check_reviewer`; ADR-0025 d10). With the
-    /// PoC policy k = 1 an approval ratifies immediately, as a separate
-    /// journalled event carrying the policy snapshot (admission.md review and
+    /// PoC policy k = 1 an approval ratifies immediately, as a second
+    /// journalled event carrying the policy snapshot, committed in the
+    /// verdict's own transaction (admission.md review and
     /// ratification): `lifecycle.promote` for a first version, and for a
     /// successor `lifecycle.supersede`, which compare-and-sets that its
     /// target is still the served tip of the successor's workarea and
@@ -1242,16 +1269,6 @@ where
                 })
             }
             Verdict::Approve => {
-                let verdict_signed = verdict_event.clone();
-                self.commit(
-                    verdict_event,
-                    MetadataFold::VerdictRecorded {
-                        memory_id,
-                        reviewer_key_id: key.key_id,
-                    },
-                    None,
-                )
-                .await?;
                 // Ratification snapshots the policy it was decided under
                 // (admission.md). The PoC journals no review.ratify: at k = 1
                 // the approving verdict is the ratifying act, so
@@ -1294,14 +1311,28 @@ where
                     ),
                 };
                 let ratification = self.seal(
-                    Some(&verdict_signed),
+                    Some(&verdict_event),
                     key.tenant_id,
                     event_type,
                     "oml-server",
                     None,
                     payload,
                 )?;
-                let receipt = match self.commit(ratification, fold, None).await {
+                // The verdict and its ratification commit as one transaction,
+                // so the compare-and-set conditions the verdict too: a lost
+                // one journals neither, and a chain-head conflict leaves no
+                // verdict for the retry to journal twice (ADR-0025 d10).
+                let links = vec![
+                    (
+                        verdict_event,
+                        MetadataFold::VerdictRecorded {
+                            memory_id,
+                            reviewer_key_id: key.key_id,
+                        },
+                    ),
+                    (ratification, fold),
+                ];
+                let receipt = match self.commit_chain(links).await {
                     Err(AppError::Store(StoreError::TipMoved { .. })) => {
                         return Err(AppError::TipConflict {
                             current_tip: self
