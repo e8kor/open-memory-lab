@@ -802,7 +802,12 @@ submission event that produces it — reserved, not an oversight.
 Reads are not journal events: they go to the retention-bounded `read_events` log, whose batch
 digests enter the chain via `system.readlog_anchor` — journalling every read would couple read
 latency to the per-tenant chain lock. Serve/verdict/ratify are events because they change what may
-become visible. Upload-session part arrivals are operational state in `upload_sessions`; only the
+become visible. A **scan veto is not an event either**: `submission.scan_veto` is a refusal like
+any other refusal, and refusals journal nothing — the deterministic scan's verdict is reproducible
+from the journalled rule-set pin, and letting hostile input write into the signed chain would hand
+an attacker the chain's growth. Whether refused submissions should leave a durable trace outside
+the chain (a scan-refusal log shaped like the read log) is RS-16 on the
+[roadmap](../product/roadmap.md). Upload-session part arrivals are operational state in `upload_sessions`; only the
 completed attachment binding (`submission.attach`) is journalled. Where an event's exact payload
 fields are still open (for example the independence-axis fields a `policy_snapshot` must carry for
 crew-level independence), the owning page says so and the gap is tracked in the

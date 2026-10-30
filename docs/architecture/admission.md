@@ -210,7 +210,10 @@ The v1 shipped registry:
 | `vocab.deprecated_successor` | A deprecation whose named successor is itself already deprecated at ratification time — judgment, not law ([ontologies](ontologies.md)) | annotate |
 
 The **default** column is the class's behavior when no policy says otherwise: a `veto` class
-refuses the submission (`submission.scan_veto`, journalled as a rejection); an `annotate` class
+refuses the submission (`submission.scan_veto` — a refusal like any other refusal, journalling
+nothing: the scan is deterministic, so the verdict is reproducible from the journalled rule-set
+pin and needs no event of its own; whether refused submissions deserve a durable trace outside
+the chain is RS-16 on the [roadmap](../product/roadmap.md)); an `annotate` class
 records the finding on the held item and never blocks. The `secret.*` and `format.*` families
 ship in the default scanner set; the `vocab.*` family is emitted only by the vocab scanner,
 selected where a workarea's `vocabulary_policy` names a vocabulary (above). The exact pattern

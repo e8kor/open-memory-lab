@@ -9,7 +9,8 @@ answers: what Open Memory Lab is, the problem it solves, what it guarantees in p
 
 Design revision **0.1.0-design** — see the [changelog](changelog.md).
 **See it move:** the [Live Atlas](atlas/index.html) is an interactive 3D tour of how crews work
-memory through OML — recall, remember, review, supersede, integrate — over mocked data.
+memory through OML — recall along grants, remember, review, supersede, and the grants a freeze
+opens — over mocked data.
 
 **Status:** design draft for review · decided — and since 2026-10-30 the critical path's M1
 slice runs as a PoC in this repository (see the README's *Running the PoC*)

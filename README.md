@@ -37,6 +37,7 @@ The full design lives in [`docs/`](docs/) and is published via GitHub Pages at
 
 | Section | What it covers |
 | --- | --- |
+| [Live Atlas](https://e8kor.github.io/open-memory-lab/atlas/) | See it move: an interactive 3D tour of crews working memory through OML — grant-scoped recall, admission, review, the signed chain — over mocked data |
 | [Overview](docs/index.md) | What OML is: the problem, what you get, the evidence it produces |
 | [Concepts](docs/concepts.md) | The design's vocabulary: tenants, claims, workareas, roles, admission, simulations, the journal |
 | [Review guide](docs/review-guide.md) | What a reviewer of this design decides, in order |
