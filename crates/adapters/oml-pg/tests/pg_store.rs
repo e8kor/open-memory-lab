@@ -4,7 +4,8 @@
 //! (ADR-0002 d4), the fork check verifies the stored head (ADR-0002 d7),
 //! grants and denials stay inside their tenant under row-level security, the
 //! served-tip index holds one tip per claim, and 0005 migrates the PoC's
-//! superseded rows to versions and tips (ADR-0025 d10).
+//! superseded rows to versions and tips and refuses two live first versions
+//! of one claim_key (ADR-0025 d10, d18).
 //!
 //! Each law runs against a throwaway database (`oml_test_<pid>_<n>`) created
 //! through `DATABASE_URL` (the role needs CREATEDB), migrated by the embedded
@@ -419,6 +420,36 @@ async fn fork_check_verifies_and_detects() {
 // Claim versions and tips (migrations/0005_claim_versions.sql)
 // ---------------------------------------------------------------------------
 
+/// A throwaway database at the pre-0005 schema, 0001–0004 applied; its name
+/// and a connection to it for seeding PoC rows.
+async fn poc_schema(created: &Mutex<Vec<String>>) -> (String, PgConnection) {
+    let name = fresh_database(created).await;
+    let mut conn = PgConnection::connect(&db_url(&name))
+        .await
+        .expect("connect");
+    conn.ensure_migrations_table()
+        .await
+        .expect("migrations table");
+    for migration in MIGRATOR.iter().filter(|m| m.version < 5) {
+        conn.apply(migration).await.expect("0001-0004 apply");
+    }
+    (name, conn)
+}
+
+/// Binds the transaction to `tenant` and stores the tenant row.
+async fn poc_tenant(conn: &mut PgConnection, tenant: Uuid) {
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *conn)
+        .await
+        .expect("set tenant");
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, 'poc')")
+        .bind(tenant)
+        .execute(&mut *conn)
+        .await
+        .expect("tenant");
+}
+
 /// One PoC journal row as the pre-0005 schema stores it: the migration reads
 /// only its type, payload and `at`, so the hash and signature are filler.
 async fn poc_event(
@@ -500,16 +531,7 @@ async fn poc_memory(
 #[tokio::test]
 async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_served_tip() {
     let created = Mutex::new(Vec::new());
-    let name = fresh_database(&created).await;
-    let mut conn = PgConnection::connect(&db_url(&name))
-        .await
-        .expect("connect");
-    conn.ensure_migrations_table()
-        .await
-        .expect("migrations table");
-    for migration in MIGRATOR.iter().filter(|m| m.version < 5) {
-        conn.apply(migration).await.expect("0001-0004 apply");
-    }
+    let (name, mut conn) = poc_schema(&created).await;
 
     let tenant = Uuid::from_u128(0xA500);
     let wa = Uuid::from_u128(0xB500);
@@ -521,16 +543,7 @@ async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_serve
     let composed = "Accra Metals quoted 412 USD/t at the caf\u{e9}";
 
     let mut tx = conn.begin().await.expect("begin");
-    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
-        .bind(tenant.to_string())
-        .execute(&mut *tx)
-        .await
-        .expect("set tenant");
-    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, 'poc')")
-        .bind(tenant)
-        .execute(&mut *tx)
-        .await
-        .expect("tenant");
+    poc_tenant(&mut tx, tenant).await;
     let promote = |id: Uuid| json!({ "artifact_id": id.to_string() });
     let e1 = poc_event(
         &mut tx,
@@ -756,6 +769,195 @@ async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_serve
             .expect("receipt");
     tx.rollback().await.expect("rollback");
     assert_eq!(response["version"], 1, "a PoC submit was a version 1");
+    drop_dbs(&created).await;
+}
+
+/// The PoC never refused a second claim under a claim_key already in use,
+/// so its rows can hold two live first versions of one claim_key in one
+/// workarea: a held one beside a promoted one, or two held ones. d18 never
+/// lets them stand together, and approving the held one would meet the
+/// served tip at promotion as a constraint error, so 0005 refuses them by
+/// name and migrates nothing (ADR-0025 d18).
+#[tokio::test]
+async fn a_poc_held_first_version_beside_a_live_one_refuses_the_migration_by_name() {
+    let created = Mutex::new(Vec::new());
+    for first in ["promoted", "held"] {
+        let (name, mut conn) = poc_schema(&created).await;
+        let tenant = Uuid::from_u128(0xA510);
+        let wa = Uuid::from_u128(0xB510);
+        let mut tx = conn.begin().await.expect("begin");
+        poc_tenant(&mut tx, tenant).await;
+        let e1 = poc_event(
+            &mut tx,
+            tenant,
+            1,
+            "submission.remember",
+            json!({}),
+            "2026-10-01T10:00:00Z",
+        )
+        .await;
+        let e2 = poc_event(
+            &mut tx,
+            tenant,
+            2,
+            "submission.remember",
+            json!({}),
+            "2026-10-01T10:00:01Z",
+        )
+        .await;
+        poc_memory(
+            &mut tx,
+            tenant,
+            wa,
+            Uuid::from_u128(0xC510),
+            "deploy-runbook",
+            "roll back before the canary",
+            first,
+            None,
+            e1,
+            "2026-10-01T10:00:00Z",
+        )
+        .await;
+        poc_memory(
+            &mut tx,
+            tenant,
+            wa,
+            Uuid::from_u128(0xC511),
+            "deploy-runbook",
+            "drain the canary, then roll back",
+            "held",
+            None,
+            e2,
+            "2026-10-01T10:00:01Z",
+        )
+        .await;
+        tx.commit().await.expect("commit the PoC rows");
+        drop(conn);
+
+        let store = PgStore::connect(&db_url(&name)).await.expect("connect");
+        let err = store
+            .migrate()
+            .await
+            .expect_err("a held first version beside a live one is refused");
+        assert!(
+            err.to_string()
+                .contains("2 live first versions of claim_key deploy-runbook"),
+            "beside a {first} first version, got: {err}"
+        );
+        let applied: Option<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE version = 5")
+                .fetch_optional(store.pool())
+                .await
+                .expect("migration ledger read");
+        assert_eq!(applied, None, "0005 migrates nothing it refuses");
+    }
+    drop_dbs(&created).await;
+}
+
+/// A first version rejected without ever being promoted released its
+/// claim_key, so the PoC claim captured after it under that key is a fresh
+/// version 1 and the served tip, and that claim's successor is 1 + the
+/// greatest version before it, whatever its state (audit-and-lineage.md
+/// supersession chains; ADR-0025 d10, d18).
+#[tokio::test]
+async fn a_poc_claim_captured_after_a_rejected_first_version_migrates_as_a_fresh_version_one() {
+    let created = Mutex::new(Vec::new());
+    let (name, mut conn) = poc_schema(&created).await;
+    let tenant = Uuid::from_u128(0xA520);
+    let wa = Uuid::from_u128(0xB520);
+    let (rejected, fresh, next) = (
+        Uuid::from_u128(0xC520),
+        Uuid::from_u128(0xC521),
+        Uuid::from_u128(0xC522),
+    );
+    let mut tx = conn.begin().await.expect("begin");
+    poc_tenant(&mut tx, tenant).await;
+    let mut events = Vec::new();
+    for (seq, at) in [
+        "2026-10-01T10:00:00Z",
+        "2026-10-01T10:00:01Z",
+        "2026-10-01T10:00:02Z",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let seq = i64::try_from(seq).expect("seq") + 1;
+        events.push((
+            poc_event(&mut tx, tenant, seq, "submission.remember", json!({}), at).await,
+            at,
+        ));
+    }
+    // The successor is inserted before the version whose superseded_by
+    // names it.
+    for (id, claim, status, superseded_by, (event, at)) in [
+        (
+            rejected,
+            "roll back before the canary",
+            "rejected",
+            None,
+            events[0],
+        ),
+        (
+            next,
+            "drain the canary within 5 minutes, then roll back",
+            "held",
+            None,
+            events[2],
+        ),
+        (
+            fresh,
+            "drain the canary, then roll back",
+            "superseded",
+            Some(next),
+            events[1],
+        ),
+    ] {
+        poc_memory(
+            &mut tx,
+            tenant,
+            wa,
+            id,
+            "deploy-runbook",
+            claim,
+            status,
+            superseded_by,
+            event,
+            at,
+        )
+        .await;
+    }
+    tx.commit().await.expect("commit the PoC rows");
+    drop(conn);
+
+    let store = PgStore::connect(&db_url(&name)).await.expect("connect");
+    store.migrate().await.expect("0005 applies over PoC rows");
+    let read = |id| {
+        let store = store.clone();
+        async move {
+            store
+                .memory(tenant, id)
+                .await
+                .expect("memory")
+                .expect("the row survives the migration")
+        }
+    };
+    let r = read(rejected).await;
+    assert_eq!(
+        (r.status, r.version, r.is_tip),
+        (MemoryStatus::Rejected, 1, false)
+    );
+    let f = read(fresh).await;
+    assert_eq!(
+        (f.status, f.version, f.replaces),
+        (MemoryStatus::Promoted, 1, None),
+        "the released key starts a fresh version 1"
+    );
+    assert!(f.is_tip, "its successor never reached promotion");
+    let n = read(next).await;
+    assert_eq!(
+        (n.status, n.version, n.replaces),
+        (MemoryStatus::Held, 2, Some(fresh))
+    );
     drop_dbs(&created).await;
 }
 
