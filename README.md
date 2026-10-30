@@ -23,10 +23,12 @@ every unmeasured or unbuilt property as exactly that.
 
 ## Status
 
-This repository contains a design under review. **No code exists.** Every capability described in
-the documentation is a design commitment with a tracked exit criterion, not a property of running
-software. If you are here to evaluate the design, start at the
-[review guide](docs/review-guide.md).
+This repository contains a design under review, plus a first proof-of-concept. **The design is
+the authority; the code implements its M1 slice** (the signed journal chain, the one-transaction
+commit point, submit → review → promote → recall over the standalone profile — see
+[Running the PoC](#running-the-poc)). Every capability beyond that slice is a design commitment
+with a tracked exit criterion, not a property of running software. If you are here to evaluate
+the design, start at the [review guide](docs/review-guide.md).
 
 ## Documentation
 

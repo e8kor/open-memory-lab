@@ -66,9 +66,11 @@ a command-line tool. There is no web console — that is a deliberate choice, ex
 
 ## Honest status
 
-This is a design under review. **Nothing described here is built, and nothing has been
-measured.** Every page in this documentation is a design commitment with a tracked exit
-criterion, not a description of running software. Where a claim depends on a measurement
+This is a design under review with one proof-of-concept behind it. **The M1 slice is built
+(the signed chain, the commit point, submit → review → promote → recall, standalone profile);
+everything else described here is not, and nothing has been measured.** Every page in this
+documentation is a design commitment with a tracked exit criterion, not a description of
+running software; where the PoC diverges from a page, the page wins and the code says so. Where a claim depends on a measurement
 (throughput, latency, recall quality), the page says so and points at the roadmap item that will
 produce the number. No measurement of OML exists, and no number is quoted anywhere in this
 documentation as a property of OML.
