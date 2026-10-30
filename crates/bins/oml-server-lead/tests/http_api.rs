@@ -1631,6 +1631,8 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     assert_eq!(created["crew"], crew_record);
+    // The create serves the same derived path the read serves.
+    assert_eq!(created["path"], "universe.metals-crew");
     let crew = Uuid::parse_str(created["id"].as_str().expect("id")).expect("uuid");
     let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
     let agent = issue_key_with(

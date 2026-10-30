@@ -672,3 +672,51 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
 
     drop_db(&db).await;
 }
+
+#[tokio::test]
+async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_not_it_has_a_default()
+ {
+    let (router, db) = fresh_router().await;
+    let (status, boot) = send(
+        &router,
+        "POST",
+        "/v2/bootstrap/claim",
+        None,
+        None,
+        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{boot}");
+    let bootstrap_admin = boot["value"].as_str().expect("admin key").to_owned();
+    // A second admin key: admin admits no grant role, so it has no grants
+    // and no default (roles-and-keys.md issuance order step 6).
+    let (status, second) = send(
+        &router,
+        "POST",
+        "/v2/keys",
+        Some(&bootstrap_admin),
+        Some("second-admin"),
+        Some(&json!({"role": "admin", "principal": "bob-admin", "grants": []})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    assert!(second["default_workarea_id"].is_null(), "{second}");
+    let second_admin = second["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+
+    // Step 1 of the refusal order needs no node, so it answers before the
+    // default resolves: both admin keys get the same code, and neither is
+    // told about its default workarea.
+    for (id, token) in [(1, &bootstrap_admin), (2, &second_admin)] {
+        let refused = call_tool(&router, token, id, "oml_workarea_info", json!({})).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], "access.verb_ceiling",
+            "{refused}"
+        );
+    }
+
+    drop_db(&db).await;
+}

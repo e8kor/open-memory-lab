@@ -623,19 +623,21 @@ where
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
             ));
         }
-        let workarea = retry_chain(|| {
+        let created = retry_chain(|| {
             st.app
                 .create_workarea(&token, &req.name, Some(req.parent_id), req.crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let workarea = &created.workarea;
         Ok(json_response(
             StatusCode::CREATED,
             &json!({
                 "id": workarea.workarea_id,
                 "parent_id": workarea.parent_id,
-                // The PoC derives no ltree; the node's own name stands in.
-                "path": workarea.name,
+                // Derived from the parent names, as the workarea read serves
+                // it (ADR-0025 d14).
+                "path": created.path,
                 "status": workarea.status(),
                 // The crew as stored, which the workarea read serves.
                 "crew": workarea.crew,
@@ -652,21 +654,26 @@ where
         let rid = new_request_id();
         finish(
             &rid,
-            Self::get_workarea_inner(&st, &workarea_id, &headers).await,
+            Self::get_workarea_inner(&st, Some(&workarea_id), &headers).await,
         )
     }
 
     /// `GET /v2/workareas/{workarea_id}`: the node and the calling key's
     /// view of it in one call, at reader effective access and otherwise
-    /// `access.not_found` (http-api.md workareas; ADR-0025 d14).
+    /// `access.not_found` (http-api.md workareas; ADR-0025 d14). `None` is
+    /// the MCP facade's omitted workarea: the key's default, which the app
+    /// resolves after step 1 of the refusal order (mcp-plugin.md
+    /// `oml_workarea_info`).
     async fn get_workarea_inner(
         st: &Self,
-        workarea_id: &str,
+        workarea_id: Option<&str>,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
         // Ids are opaque; one that can name no node is absent.
-        let id = Uuid::parse_str(workarea_id).map_err(|_| ApiError::not_found())?;
+        let id = workarea_id
+            .map(|id| Uuid::parse_str(id).map_err(|_| ApiError::not_found()))
+            .transpose()?;
         let info = st
             .app
             .workarea_info(&token, id)

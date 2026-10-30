@@ -370,33 +370,17 @@ where
     }
 
     /// `oml_workarea_info`: one `GET /v2/workareas/{id}`. An omitted
-    /// workarea is the key's journalled default, read from the
-    /// authenticated key record; a key with none is refused with
-    /// `request.workarea_unresolved` (mcp-plugin.md; ADR-0025 d14).
+    /// workarea is the key's journalled default, which the app resolves from
+    /// the authenticated key record after step 1 of the refusal order, so an
+    /// admin key is the verb ceiling with or without a default, and a key
+    /// past step 1 with none is `request.workarea_unresolved` (mcp-plugin.md;
+    /// roles-and-keys.md refusal order; ADR-0025 d14).
     async fn tool_workarea_info(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
         let args: WorkareaInfoArgs = parse_args(args)?;
-        let workarea = match args.workarea {
-            Some(workarea) => workarea,
-            None => {
-                let key = st
-                    .store
-                    .key_by_hash(&sha256_digest_string(token.as_bytes()))
-                    .await
-                    .map_err(|e| refusal(map_app_error(AppError::Store(e), ErrorContext::Write)))?
-                    .ok_or_else(|| refusal(ApiError::auth_invalid("unknown")))?;
-                key.default_workarea
-                    .ok_or_else(|| {
-                        refusal(map_app_error(
-                            AppError::WorkareaUnresolved,
-                            ErrorContext::Write,
-                        ))
-                    })?
-                    .to_string()
-            }
-        };
-        let view =
-            ring_outcome(Self::get_workarea_inner(st, &workarea, &ring_headers(token)).await)
-                .await?;
+        let view = ring_outcome(
+            Self::get_workarea_inner(st, args.workarea.as_deref(), &ring_headers(token)).await,
+        )
+        .await?;
         // The plugin's output names the parent `parent`; `crew` stays absent
         // when none was recorded (mcp-plugin.md `oml_workarea_info`).
         let mut out = Map::new();
