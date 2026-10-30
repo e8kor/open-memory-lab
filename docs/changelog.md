@@ -10,8 +10,9 @@ answers: how the design spec is versioned, what 0.1.0-design covers, and what ea
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.1.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). No
-code exists; every entry below records a change to the design, never to software.
+is **0.1.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+2026-10-30 no code existed; since the PoC entry below, an entry may also record an
+implementation milestone where it changes what the repository holds.
 
 ## How this changelog is kept
 
@@ -30,6 +31,25 @@ code exists; every entry below records a change to the design, never to software
 Reconstructed from the repository history; all dates 2026-10-29. The set was written and
 revised in one sustained effort, so the entries below group commits by what they decided
 rather than pretending a longer calendar.
+
+### 2026-10-30 — Live Atlas visualization
+
+- The published site gains the [Live Atlas](atlas/index.html): an interactive 3D visualization
+  of the crew-harness story — one crew per workarea, recall pulses pulled from production
+  areas, remember pulses into the crew's own area, supersession with pulled evidence, ladder
+  transitions, and the integration lattice between production areas — with drill-in modes for
+  the admission reactor and the chain ledger. All data is mocked client-side in the shapes of
+  the [event catalog](data/event-catalog.md); three.js is vendored (MIT), nothing loads from a
+  CDN at runtime. Replaying a real PoC `/v2/events` tail is a planned data-source swap.
+
+### 2026-10-30 — The PoC lands (M1 slice)
+
+- The critical path's M1 slice is implemented in this repository (commit `54dadfd`): the Cargo
+  workspace of [workspace-plan](engineering/workspace-plan.md), the signed chain reproducing
+  [chain-format](data/chain-format.md)'s test vectors byte-for-byte, the one-transaction
+  commit point, the standalone-profile server with startup fork check, and an independent CLI
+  chain verifier — demonstrated end to end by `scripts/poc-demo.sh`. The spec remains the
+  authority; where the PoC diverges it says so in code comments and the README.
 
 ### 2026-10-29 — Documentation finalization
 

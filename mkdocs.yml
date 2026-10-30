@@ -54,6 +54,7 @@ nav:
   - Concepts: concepts.md
   - Review guide: review-guide.md
   - Spec changelog: changelog.md
+  - Live atlas: https://e8kor.github.io/open-memory-lab/atlas/
   - Product:
       - Positioning: product/positioning.md
       - Roadmap: product/roadmap.md

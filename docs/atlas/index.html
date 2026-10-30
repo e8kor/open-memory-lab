@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OML Live Atlas</title>
+<meta name="description" content="Interactive 3D visualization of how crew harnesses work memory through Open Memory Lab: recall from production areas, remember into their own, supersede with pulled evidence, and integrate once validated. Mocked data.">
+<style>
+  :root{
+    --bg:#05070f; --bg-raise:#0c111f; --bg-panel:#101730;
+    --fg:#e8ecf8; --fg-dim:#97a0bd; --fg-faint:#5c6480;
+    --line:#232c4a; --accent:#7aa2ff; --accent-2:#53e0c4;
+    --held:#f5b84d; --promoted:#4ade80; --rejected:#f87171;
+    --superseded:#64748b; --sim:#c084fc; --recall:#53e0c4; --remember:#f5b84d;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column;overflow:hidden;
+       padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+  a{color:var(--accent)}
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:10px max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));
+    border-bottom:1px solid var(--line);background:var(--bg-raise)}
+  header .brand{font-weight:700;font-size:15px;letter-spacing:.02em;color:var(--fg);text-decoration:none}
+  header .brand span{color:var(--accent-2)}
+  .crumb{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--fg-dim)}
+  .crumb b{color:var(--fg)}
+  .badge{font:600 10.5px/1 system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--held);border:1px solid color-mix(in srgb,var(--held) 45%,transparent);border-radius:999px;padding:5px 9px}
+  header .spacer{flex:1}
+  button{font:600 12px/1 system-ui,sans-serif;color:var(--fg);background:var(--bg-panel);
+    border:1px solid var(--line);border-radius:7px;padding:8px 12px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+  button[hidden]{display:none!important}
+  main{position:relative;flex:1;min-height:0}
+  canvas#gl{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+  canvas#gl:active{cursor:grabbing}
+  #labels{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+  .lbl{position:absolute;transform:translate(-50%,-130%);white-space:nowrap;
+    font:600 11px/1.3 system-ui,sans-serif;color:var(--fg);text-shadow:0 1px 6px #000c;
+    opacity:.92}
+  .lbl small{display:block;font:500 9.5px/1.3 system-ui,sans-serif;color:var(--fg-dim);letter-spacing:.04em}
+  .lbl .st{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;vertical-align:1px}
+  .hud{position:absolute;top:10px;left:max(12px,env(safe-area-inset-left,0px));right:max(12px,env(safe-area-inset-right,0px));
+    display:flex;gap:8px;flex-wrap:wrap;align-items:center;pointer-events:none}
+  .hud>*{pointer-events:auto}
+  .tag{font:600 11.5px/1.4 system-ui,sans-serif;color:var(--fg-dim);
+    background:color-mix(in srgb,var(--bg) 72%,transparent);backdrop-filter:blur(4px);
+    border:1px solid var(--line);border-radius:7px;padding:6px 10px}
+  .tag b{color:var(--fg)}
+  .hint{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;
+    font-size:12px;color:var(--fg-dim);background:color-mix(in srgb,var(--bg) 70%,transparent);
+    border:1px solid var(--line);border-radius:999px;padding:6px 14px;pointer-events:none;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
+  .panel{position:absolute;right:max(12px,env(safe-area-inset-right,0px));top:54px;width:min(282px,80%);
+    background:color-mix(in srgb,var(--bg-panel) 90%,transparent);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:12.5px;color:var(--fg-dim)}
+  .panel h4{margin:0 0 2px;font:700 13px/1.3 system-ui,sans-serif;color:var(--fg)}
+  .panel .crew{font-size:11px;color:var(--accent-2);margin:0 0 8px}
+  .panel table{width:100%;border-collapse:collapse}
+  .panel td{padding:2.5px 0}
+  .panel td:last-child{text-align:right;color:var(--fg)}
+  .panel .bar{height:5px;border-radius:4px;background:var(--line);margin:8px 0 2px;overflow:hidden}
+  .panel .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--held),var(--promoted))}
+  .panel .go{margin-top:10px;width:100%}
+  .steps{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:54px;width:min(250px,72%);
+    background:color-mix(in srgb,var(--bg-panel) 90%,transparent);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--fg-dim)}
+  .steps h4{margin:0 0 6px;font:700 12px/1.3 system-ui,sans-serif;color:var(--fg)}
+  .steps ol{margin:0;padding-left:18px}
+  .steps li{padding:1.5px 0;transition:color .2s}
+  .steps li.on{color:var(--accent-2)}
+  .steps li.bad{color:var(--rejected)}
+  .steps .src{margin-top:8px;font-size:10.5px;color:var(--fg-faint)}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:12px;color:var(--fg-dim);
+    padding:8px max(16px,env(safe-area-inset-right,0px)) 8px max(16px,env(safe-area-inset-left,0px));
+    border-top:1px solid var(--line);background:var(--bg-raise)}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+  .ticker{height:58px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;
+    padding:4px max(16px,env(safe-area-inset-right,0px)) 6px max(16px,env(safe-area-inset-left,0px));
+    border-top:1px solid var(--line);background:var(--bg);
+    font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--fg-dim)}
+  .ticker div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ticker .k{color:var(--accent-2)}
+  .ticker .r{color:var(--fg-faint)}
+  .ticker .r .k{color:var(--recall)}
+  .fade{position:absolute;inset:0;background:var(--bg);opacity:0;pointer-events:none;transition:opacity .22s}
+  .fade.on{opacity:1}
+  @media (max-width:640px){
+    .steps{display:none}
+    .ticker{height:46px}
+    header{gap:8px}
+    .lbl small{display:none}
+  }
+  noscript{display:block;padding:24px}
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="../">⟵ OML<span> docs</span></a>
+  <nav class="crumb" aria-label="mode">
+    <b>Live Atlas</b><span>·</span><span id="crumbMode">universe</span>
+  </nav>
+  <span class="badge" title="Every event is generated client-side in the shapes of data/event-catalog.md. Nothing calls a server.">mocked data</span>
+  <span class="spacer"></span>
+  <button id="btnBack" hidden>← universe</button>
+  <button id="btnLive" aria-pressed="true">live traffic</button>
+</header>
+
+<main id="main">
+  <canvas id="gl" aria-label="Interactive 3D visualization: crew harnesses recalling from production workareas and remembering into their own"></canvas>
+  <div id="labels"></div>
+  <div class="hud" id="hud"></div>
+  <div class="panel" id="panel" hidden></div>
+  <div class="steps" id="steps" hidden></div>
+  <div class="hint" id="hint">drag to orbit · scroll to zoom · click a workarea or the core</div>
+  <div class="fade" id="fade"></div>
+  <noscript>The Live Atlas needs JavaScript (and WebGL). The static story it tells lives in the
+  <a href="../concepts/">concepts</a> and <a href="../architecture/overview/">architecture</a> pages.</noscript>
+</main>
+
+<div class="legend" id="legend"></div>
+<div class="ticker" id="ticker" aria-live="off"></div>
+
+<script src="./three.min.js"></script>
+<script>
+(() => {
+'use strict';
+if (!window.THREE) { document.getElementById('hint').textContent = '3D library failed to load — three.min.js missing.'; return; }
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const CLR = {held:0xf5b84d, prom:0x4ade80, rej:0xf87171, sup:0x64748b, sim:0xc084fc,
+             agent:0x7aa2ff, human:0xffffff, line:0x2b3763, chain:0x7aa2ff,
+             recall:0x53e0c4, remember:0xf5b84d, integrate:0xffd166};
+const LADDER = {development:0xf5b84d, committed:0x7aa2ff, 'validated/frozen':0x53e0c4};
+const CLAIMS = ['accra-metals-price-anchor','supplier-quote-am-7741','port-dwell-time-tema','smelter-capacity-q3',
+  'fx-usd-ghs-hedge-note','rail-slot-allocation','assay-report-lot-118','warehouse-receipt-554'];
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const pick=a=>a[(Math.random()*a.length)|0];
+const hex8=()=>((Math.random()*0xffffffff)>>>0).toString(16).padStart(8,'0');
+
+/* ── mock journal: one generator, event-catalog.md envelope shapes ─────── */
+const journal = {
+  seq: 14, tenant: 'acme-metals',
+  emit(event_type, detail, readPath=false){
+    if(!readPath) this.seq++;
+    const el=document.getElementById('ticker');
+    const d=document.createElement('div');
+    if(readPath){ d.className='r'; d.innerHTML=`read-log · <span class="k">${event_type}</span> · ${detail}`; }
+    else d.innerHTML=`seq ${this.seq} · <span class="k">${event_type}</span> · ${detail}`;
+    el.appendChild(d); while(el.children.length>3) el.removeChild(el.firstChild);
+  }
+};
+let LIVE=true;
+document.getElementById('btnLive').onclick=e=>{LIVE=!LIVE;e.currentTarget.setAttribute('aria-pressed',LIVE);};
+
+/* ── workareas + their assigned crew harnesses (one crew ↔ one workarea) ── */
+const WAS = [
+  {name:'metals-crew',     crew:'harness:metals-pricing',  r:10, speed:.085,ladder:'committed',        n:26, sim:false, y:0.6,  k:1, human:false},
+  {name:'supplier-quotes', crew:'harness:quote-scouts',    r:15, speed:.062,ladder:'development',      n:30, sim:false, y:-1.4, k:1, human:true},
+  {name:'logistics-sim',   crew:'harness:route-dreamers',  r:20, speed:.048,ladder:'development',      n:22, sim:true,  y:2.0,  k:1, human:false},
+  {name:'ontology-lab',    crew:'harness:term-curators',   r:25, speed:.036,ladder:'committed',        n:18, sim:false, y:-0.7, k:2, human:true},
+  {name:'frozen-archive',  crew:'harness:archivists',      r:30, speed:.026,ladder:'validated/frozen', n:30, sim:false, y:1.0,  k:1, human:false},
+];
+const productionAreas = ()=>WAS.filter(w=>w.ladder!=='development' && !w.sim);
+
+/* ── renderer + camera rig ─────────────────────────────────────────────── */
+const canvas=document.getElementById('gl');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setClearColor(0x05070f,1);
+const camera=new THREE.PerspectiveCamera(50,2,0.1,600);
+const st={theta:.6,phi:1.02,radius:34,min:8,max:90,target:new THREE.Vector3()};
+function applyCam(){
+  st.phi=Math.max(.15,Math.min(Math.PI-.15,st.phi));
+  st.radius=Math.max(st.min,Math.min(st.max,st.radius));
+  camera.position.set(
+    st.target.x+st.radius*Math.sin(st.phi)*Math.sin(st.theta),
+    st.target.y+st.radius*Math.cos(st.phi),
+    st.target.z+st.radius*Math.sin(st.phi)*Math.cos(st.theta));
+  camera.lookAt(st.target);
+}
+let lastW=0,lastH=0;
+function resize(){
+  const w=canvas.clientWidth,h=canvas.clientHeight;
+  if(w!==lastW||h!==lastH){lastW=w;lastH=h;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
+}
+const ptrs=new Map(); let pinch=0,dragged=false,down=[0,0];
+canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);down=[e.clientX,e.clientY];dragged=false;});
+canvas.addEventListener('pointermove',e=>{
+  if(!ptrs.has(e.pointerId))return;
+  const prev=ptrs.get(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  const ps=[...ptrs.values()];
+  if(ps.length===2){const d=Math.hypot(ps[0][0]-ps[1][0],ps[0][1]-ps[1][1]);if(pinch)st.radius*=pinch/d;pinch=d;applyCam();return;}
+  if(Math.abs(e.clientX-down[0])+Math.abs(e.clientY-down[1])>6)dragged=true;
+  st.theta-=(e.clientX-prev[0])*.006;st.phi-=(e.clientY-prev[1])*.006;applyCam();
+});
+const lift=e=>{ptrs.delete(e.pointerId);pinch=0;};
+canvas.addEventListener('pointerup',lift);canvas.addEventListener('pointercancel',lift);
+canvas.addEventListener('wheel',e=>{e.preventDefault();st.radius*=1+Math.sign(e.deltaY)*.08;applyCam();},{passive:false});
+applyCam();
+
+/* ── visual vocabulary: soft sprites, glows, flow pulses ───────────────── */
+function discTexture(stops){
+  const c=document.createElement('canvas');c.width=c.height=128;
+  const g=c.getContext('2d');const grad=g.createRadialGradient(64,64,0,64,64,64);
+  stops.forEach(([o,col])=>grad.addColorStop(o,col));
+  g.fillStyle=grad;g.fillRect(0,0,128,128);
+  return new THREE.CanvasTexture(c);
+}
+const SOFT=discTexture([[0,'rgba(255,255,255,1)'],[0.35,'rgba(255,255,255,.45)'],[1,'rgba(255,255,255,0)']]);
+const HALO=discTexture([[0,'rgba(255,255,255,.9)'],[0.2,'rgba(255,255,255,.25)'],[1,'rgba(255,255,255,0)']]);
+function glow(color,s=2,opacity=.9,map=SOFT){
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map,color,transparent:true,opacity,blending:THREE.AdditiveBlending,depthWrite:false}));
+  sp.scale.setScalar(s);return sp;
+}
+function ringLine(r,color,opacity=.5,y=0,seg=128){
+  const pts=[];for(let i=0;i<=seg;i++){const a=i/seg*Math.PI*2;pts.push(new THREE.Vector3(Math.cos(a)*r,y,Math.sin(a)*r));}
+  return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color,transparent:true,opacity}));
+}
+function softPoints(n,fill){ /* fill(i)->{p:[x,y,z], c:THREE.Color} */
+  const pos=new Float32Array(n*3),col=new Float32Array(n*3);
+  for(let i=0;i<n;i++){const {p,c}=fill(i);pos.set(p,i*3);col.set([c.r,c.g,c.b],i*3);}
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color',new THREE.BufferAttribute(col,3));
+  return new THREE.Points(g,new THREE.PointsMaterial({size:.8,map:SOFT,vertexColors:true,transparent:true,
+    opacity:.95,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true}));
+}
+function disposeGroup(g){g.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});}
+
+/* flow pulses: knowledge moving between places */
+function FlowField(group){
+  const flows=[],bursts=[];
+  return {
+    send(from,to,color,{arc=5,dur=1.6,onArrive}={}){
+      const mid=from.clone().add(to).multiplyScalar(.5);mid.y+=arc;
+      const curve=new THREE.QuadraticBezierCurve3(from.clone(),mid,to.clone());
+      const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(36)),
+        new THREE.LineBasicMaterial({color,transparent:true,opacity:.0}));
+      const head=glow(color,2.2,1);const tail=glow(color,1.1,.6);
+      group.add(line,head,tail);
+      flows.push({curve,t:0,dur,head,tail,line,onArrive,color});
+    },
+    burst(pos,color,s=3){const g=glow(color,s,1,HALO);g.position.copy(pos);group.add(g);bursts.push({g,t:0});},
+    frame(dt){
+      for(let i=flows.length-1;i>=0;i--){const f=flows[i];f.t+=dt/f.dur;
+        const k=Math.min(f.t,1);
+        f.head.position.copy(f.curve.getPoint(k));
+        f.tail.position.copy(f.curve.getPoint(Math.max(0,k-.07)));
+        f.line.material.opacity=.3*Math.sin(Math.PI*k);
+        if(f.t>=1){group.remove(f.head,f.tail,f.line);f.line.geometry.dispose();
+          this.burst(f.curve.getPoint(1),f.color,2.4);
+          if(f.onArrive)f.onArrive();flows.splice(i,1);}}
+      for(let i=bursts.length-1;i>=0;i--){const b=bursts[i];b.t+=dt*2.2;
+        b.g.scale.setScalar(b.g.scale.x*(1+dt*3));b.g.material.opacity=Math.max(0,1-b.t);
+        if(b.t>=1){group.remove(b.g);bursts.splice(i,1);}}
+    }
+  };
+}
+
+/* ── chrome ────────────────────────────────────────────────────────────── */
+const hud=document.getElementById('hud'),legend=document.getElementById('legend'),
+      panel=document.getElementById('panel'),stepsEl=document.getElementById('steps'),
+      hint=document.getElementById('hint'),fade=document.getElementById('fade'),
+      crumb=document.getElementById('crumbMode'),btnBack=document.getElementById('btnBack'),
+      labelsEl=document.getElementById('labels');
+function setLegend(items){legend.innerHTML=items.map(([c,t])=>`<span><i style="background:${c}"></i>${t}</span>`).join('');}
+function setHud(html){hud.innerHTML=html;}
+function clearLabels(){labelsEl.innerHTML='';}
+
+/* ── scene + mode manager ──────────────────────────────────────────────── */
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x05070f,.0085);
+/* starfield + nebula backdrop (shared) */
+{ const n=420,p=new Float32Array(n*3);for(let i=0;i<n;i++)p.set([rnd(-110,110),rnd(-60,60),rnd(-110,110)],i*3);
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));
+  scene.add(new THREE.Points(g,new THREE.PointsMaterial({size:.3,map:SOFT,color:0x5d6ca0,transparent:true,opacity:.7,depthWrite:false})));
+  [[0x16214a,-60,10,-70,90],[0x241a4d,70,-15,-50,110],[0x0e2a3f,20,25,80,100],[0x1a1333,-75,-20,60,85]]
+    .forEach(([c,x,y,z,s])=>{const nb=new THREE.Sprite(new THREE.SpriteMaterial({map:SOFT,color:c,transparent:true,opacity:.32,depthWrite:false}));
+      nb.position.set(x,y,z);nb.scale.setScalar(s);scene.add(nb);}); }
+
+let mode=null,modeName='';
+function switchMode(name,arg){
+  fade.classList.add('on');
+  setTimeout(()=>{
+    if(mode){mode.exit();disposeGroup(mode.group);scene.remove(mode.group);}
+    panel.hidden=true;stepsEl.hidden=true;clearLabels();
+    mode=MODES[name](arg);modeName=name;
+    crumb.textContent=name==='universe'?'universe'
+      :name==='reactor'?`universe ▸ ${arg.name} · admission`
+      :'universe ▸ tenant chain · ledger';
+    btnBack.hidden=name==='universe';
+    scene.add(mode.group);
+    Object.assign(st,mode.cam);applyCam();
+    setTimeout(()=>fade.classList.remove('on'),60);
+  },220);
+}
+btnBack.onclick=()=>switchMode('universe');
+addEventListener('keydown',e=>{if(e.key==='Escape'&&modeName!=='universe')switchMode('universe');});
+
+const ray=new THREE.Raycaster(),mvec=new THREE.Vector2();
+ray.params.Points.threshold=1.2;
+canvas.addEventListener('click',e=>{
+  if(dragged||!mode||!mode.onClick)return;
+  const b=canvas.getBoundingClientRect();
+  mvec.set(((e.clientX-b.left)/b.width)*2-1,-((e.clientY-b.top)/b.height)*2+1);
+  ray.setFromCamera(mvec,camera);
+  mode.onClick(ray);
+});
+
+/* ════════════════════════ MODE: universe ═══════════════════════════════ */
+function Universe(){
+  const group=new THREE.Group();
+  const flow=FlowField(group);
+
+  /* tenant core: layered glow */
+  const core=new THREE.Group();
+  const coreHit=new THREE.Mesh(new THREE.SphereGeometry(2.2,12,10),new THREE.MeshBasicMaterial({visible:false}));
+  core.add(coreHit, glow(0xffffff,3.2,.95), glow(0x7aa2ff,7,.4,HALO), glow(0x53e0c4,11,.14,HALO));
+  group.add(core);
+
+  WAS.forEach(w=>{
+    w.ring=ringLine(w.r,w.sim?CLR.sim:LADDER[w.ladder],w.sim?.4:.33,w.y);
+    group.add(w.ring);
+    w.group=new THREE.Group();w.angle=w.angle??rnd(0,Math.PI*2);
+    /* hub: invisible hit sphere + glow stack */
+    w.hub=new THREE.Mesh(new THREE.SphereGeometry(1.6,12,10),new THREE.MeshBasicMaterial({visible:false}));
+    w.glowMain=glow(w.sim?CLR.sim:LADDER[w.ladder],2.6,.95);
+    w.glowHalo=glow(w.sim?CLR.sim:LADDER[w.ladder],5.5,.3,HALO);
+    w.group.add(w.hub,w.glowMain,w.glowHalo);
+    if(w.ladder==='validated/frozen') w.cage=makeCage(w);
+    if(w.sim){const fence=new THREE.Mesh(new THREE.SphereGeometry(3.6,20,16),
+      new THREE.MeshBasicMaterial({color:CLR.sim,transparent:true,opacity:.09,side:THREE.DoubleSide}));
+      w.group.add(fence);}
+    /* memories: soft additive points */
+    w.statuses=[];
+    w.pts=softPoints(w.n,i=>{
+      const a=rnd(0,Math.PI*2),rr=rnd(1.4,3.0),yy=rnd(-.9,.9);
+      const s=w.sim?'sim':(Math.random()<.6?'prom':Math.random()<.55?'held':'sup');
+      w.statuses.push(s);
+      return {p:[Math.cos(a)*rr,yy,Math.sin(a)*rr],c:new THREE.Color(CLR[s])};
+    });
+    w.group.add(w.pts);
+    /* crew: three harness agents orbiting their OWN workarea — crews never leave */
+    w.agents=[];
+    for(let i=0;i<3;i++){const a=glow(CLR.agent,.9,.95);a._a=i/3*Math.PI*2;a._r=rnd(2.1,2.6);w.group.add(a);w.agents.push(a);}
+    /* progress toward ladder transitions (mock) */
+    w.promotions=0; w.ladderBurst=0;
+    group.add(w.group);
+    /* html label */
+    w.lbl=document.createElement('div');w.lbl.className='lbl';
+    labelsEl.appendChild(w.lbl);updateLbl(w);
+  });
+  function makeCage(w){
+    const cage=new THREE.Mesh(new THREE.SphereGeometry(1.5,10,8),
+      new THREE.MeshBasicMaterial({color:0x53e0c4,wireframe:true,transparent:true,opacity:.5}));
+    w.group.add(cage);return cage;
+  }
+  function updateLbl(w){
+    const dotColor='#'+new THREE.Color(w.sim?CLR.sim:LADDER[w.ladder]).getHexString();
+    w.lbl.innerHTML=`<span class="st" style="background:${dotColor}"></span>${w.name}<small>${w.crew} · ${w.ladder}</small>`;
+  }
+  const coreLbl=document.createElement('div');coreLbl.className='lbl';
+  coreLbl.innerHTML=`universe<small>tenant ${journal.tenant} · signed chain</small>`;labelsEl.appendChild(coreLbl);
+
+  /* integration lattice between production areas (committed + frozen) */
+  const lattice=new THREE.Group();group.add(lattice);
+  function drawLattice(){
+    lattice.children.forEach(l=>l.geometry.dispose());
+    lattice.clear();
+    const prod=productionAreas();
+    for(let i=0;i<prod.length;i++)for(let j=i+1;j<prod.length;j++){
+      const a=prod[i].group.position,b=prod[j].group.position;
+      const g=new THREE.BufferGeometry().setFromPoints([a.clone(),a.clone().add(b).multiplyScalar(.5).setY((a.y+b.y)/2+2.5),b.clone()]);
+      lattice.add(new THREE.Line(g,new THREE.LineBasicMaterial({color:CLR.integrate,transparent:true,opacity:.14})));
+    }
+  }
+
+  setHud(`<span class="tag">tenant <b>${journal.tenant}</b> · /v2 lab ring · chain head <b id="hudSeq">${journal.seq}</b></span>
+          <span class="tag" id="hudStory">crews recall from production, remember into their own area</span>`);
+  setLegend([['var(--recall)','recall (read from production)'],['var(--remember)','remember (write into own area)'],
+             ['var(--held)','held'],['var(--promoted)','promoted'],['var(--superseded)','superseded'],
+             ['var(--sim)','simulation (tainted)'],['#ffd166','integration lattice (production areas)']]);
+  hint.textContent='drag to orbit · scroll to zoom · click a workarea or the core';
+
+  /* ── the choreography: what a crew harness actually does ──────────────
+     recall  : pulse FROM a production area TO the crew's area (read path)
+     remember: agent pulse INTO own hub, a new held particle appears
+     supersede: recall first, then a promoted particle goes grey and a new
+                held one appears — modified with pulled evidence
+     promote : a held particle turns green (reviewed elsewhere: reactor mode)
+     ladder  : enough promotions → committed → validated/frozen → the area
+               joins the integration lattice with a golden handshake      */
+  function setParticle(w,i,status){
+    w.statuses[i]=status;const c=new THREE.Color(CLR[status]);
+    w.pts.geometry.attributes.color.set([c.r,c.g,c.b],i*3);
+    w.pts.geometry.attributes.color.needsUpdate=true;
+  }
+  function addParticle(w,status){
+    /* reuse a superseded slot if any, else recolor a random one (mock keeps n fixed) */
+    let i=w.statuses.indexOf('sup');if(i<0)i=(Math.random()*w.n)|0;
+    setParticle(w,i,status);return i;
+  }
+  function act(){
+    const w=pick(WAS.filter(x=>x.ladder==='development'||x.name==='metals-crew'));
+    const prod=productionAreas().filter(p=>p!==w);
+    const roll=Math.random();
+    if(roll<.4 && prod.length){ /* recall */
+      const src=pick(prod);
+      flow.send(src.group.position.clone(),w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:1.5});
+      journal.emit('recall',`${w.crew} ← wa:${src.name} · q:"${pick(CLAIMS)}"`,true);
+    } else if(roll<.68){ /* remember */
+      const a=pick(w.agents);
+      flow.send(w.group.position.clone().add(a.position),w.group.position.clone(),CLR.remember,{arc:1.6,dur:1,
+        onArrive:()=>{addParticle(w,'held');journal.emit('submission.remember',`${pick(CLAIMS)} · wa:${w.name} · by ${w.crew}`);}});
+    } else if(roll<.84 && prod.length){ /* supersede with pulled evidence */
+      const src=pick(prod);
+      flow.send(src.group.position.clone(),w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:1.4,
+        onArrive:()=>{
+          const i=w.statuses.indexOf('prom');
+          if(i>=0){setParticle(w,i,'sup');addParticle(w,'held');
+            journal.emit('memory.superseded',`${pick(CLAIMS)} · evidence ← wa:${src.name} · successor held for review`);}
+        }});
+    } else { /* promotion lands (the reactor's output, seen from orbit) */
+      const i=w.statuses.indexOf('held');
+      if(i>=0){setParticle(w,i,'prom');flow.burst(w.group.position.clone(),CLR.prom,3);
+        journal.emit('memory.promoted',`${pick(CLAIMS)} · wa:${w.name} · k=${w.k}`);
+        if(w.ladder==='development'){w.promotions++;checkLadder(w);}}
+    }
+    const el=document.getElementById('hudSeq');if(el)el.textContent=journal.seq;
+  }
+  function checkLadder(w){
+    if(w.ladder==='development'&&w.promotions>=6){
+      w.ladder='committed';transitionArea(w,'development → committed');
+    } else if(w.ladder==='committed'&&w.promotions>=11&&w.name==='supplier-quotes'){
+      w.ladder='validated/frozen';transitionArea(w,'committed → validated/frozen');
+      w.cage=makeCage(w);
+      /* integration handshake: golden pulses to every other production area */
+      productionAreas().filter(p=>p!==w).forEach((p,i)=>{
+        setTimeout(()=>flow.send(w.group.position.clone(),p.group.position.clone(),CLR.integrate,{arc:7,dur:1.8}),i*350);
+      });
+      journal.emit('workarea.transition',`wa:${w.name} integrated into the production lattice`);
+      const story=document.getElementById('hudStory');
+      if(story)story.innerHTML=`<b>${w.name}</b> is production now — other crews can recall from it`;
+    }
+  }
+  function transitionArea(w,detail){
+    const c=LADDER[w.ladder];
+    w.glowMain.material.color.set(c);w.glowHalo.material.color.set(c);
+    group.remove(w.ring);w.ring.geometry.dispose();
+    w.ring=ringLine(w.r,c,.33,w.y);group.add(w.ring);
+    flow.burst(w.group.position.clone(),c,6);
+    updateLbl(w);
+    journal.emit('workarea.transition',`wa:${w.name} · ${detail}`);
+  }
+
+  const v=new THREE.Vector3();
+  function placeLabel(el,pos){
+    v.copy(pos).project(camera);
+    if(v.z>1){el.style.display='none';return;}
+    el.style.display='';
+    el.style.left=((v.x*.5+.5)*lastW)+'px';
+    el.style.top=((-v.y*.5+.5)*lastH)+'px';
+  }
+
+  let acc=0;
+  return {
+    group,cam:{theta:.6,phi:1.02,radius:34,min:10,max:90,target:new THREE.Vector3()},
+    exit(){clearLabels();},
+    frame(t,dt){
+      WAS.forEach(w=>{
+        w.angle+=w.speed*(REDUCED?.25:1)*dt;
+        w.group.position.set(Math.cos(w.angle)*w.r,w.y,Math.sin(w.angle)*w.r);
+        w.pts.rotation.y=t*.14;
+        w.agents.forEach((a,i)=>{a._a+=dt*(.7+i*.13);
+          a.position.set(Math.cos(a._a)*a._r,Math.sin(a._a*1.7)*.5,Math.sin(a._a)*a._r);});
+        w.glowHalo.material.opacity=.26+Math.sin(t*1.3+w.r)*.06;
+        placeLabel(w.lbl,w.group.position);
+      });
+      placeLabel(coreLbl,core.position);
+      drawLattice();
+      flow.frame(dt);
+      core.rotation.y=t*.15;
+      if(LIVE&&(acc+=dt)>(REDUCED?3.4:1.9)){acc=0;act();}
+    },
+    onClick(ray){
+      const hitCore=ray.intersectObject(coreHit);
+      const hit=ray.intersectObjects(WAS.map(w=>w.hub));
+      if(hit.length){
+        const w=WAS.find(x=>x.hub===hit[0].object);
+        const c={held:0,prom:0,sup:0,sim:0};w.statuses.forEach(s=>c[s]++);
+        const prog=w.ladder==='development'?Math.min(100,w.promotions/6*100)
+                  :w.ladder==='committed'?Math.min(100,Math.max(0,(w.promotions-6))/5*100):100;
+        panel.innerHTML=`<h4>${w.name}</h4><p class="crew">${w.crew} — 3 agents, writer + dreamer keys, scoped to this workarea</p>
+          <table>
+          <tr><td>status ladder</td><td>${w.ladder}</td></tr>
+          <tr><td>memories</td><td>${w.n}</td></tr>
+          <tr><td>promoted</td><td>${c.prom}</td></tr><tr><td>held</td><td>${c.held}</td></tr>
+          <tr><td>superseded</td><td>${c.sup}</td></tr>
+          ${w.sim?`<tr><td>tainted (sim)</td><td>${c.sim}</td></tr>`:''}
+          <tr><td>review policy</td><td>k=${w.k}${w.human?' · human gate':''}</td></tr>
+          <tr><td>reads</td><td>own + production areas</td></tr>
+          <tr><td>writes</td><td>own area only</td></tr></table>
+          <div class="bar"><i style="width:${prog}%"></i></div>
+          <small>${w.ladder==='validated/frozen'?'integrated — other crews recall from here':'progress toward next ladder stage (mock)'}</small>
+          <button class="go" id="goReactor">enter admission reactor →</button>`;
+        panel.hidden=false;
+        document.getElementById('goReactor').onclick=()=>switchMode('reactor',w);
+      } else if(hitCore.length){ switchMode('ledger'); }
+      else panel.hidden=true;
+    }
+  };
+}
+
+/* ════════════════════════ MODE: reactor (per workarea) ═════════════════ */
+function Reactor(w){
+  const group=new THREE.Group();
+  const flow=FlowField(group);
+  const lane=new THREE.Mesh(new THREE.BoxGeometry(46,.18,10),new THREE.MeshBasicMaterial({color:0x10172f}));
+  lane.position.y=-2.4;group.add(lane);
+  const scanWall=new THREE.Mesh(new THREE.PlaneGeometry(9,7),
+    new THREE.MeshBasicMaterial({color:CLR.agent,transparent:true,opacity:.13,side:THREE.DoubleSide}));
+  scanWall.rotation.y=Math.PI/2;scanWall.position.x=-8;group.add(scanWall);
+  const scanGlow=glow(CLR.agent,6,.18,HALO);scanGlow.position.set(-8,1,0);group.add(scanGlow);
+  const holdRing=ringLine(3.4,CLR.held,.55,0);group.add(holdRing);
+  const revRing=ringLine(3.2,CLR.agent,.55,0);revRing.position.x=10;group.add(revRing);
+  const humanGate=glow(CLR.human,1.8,.95);humanGate.position.set(10,6,0);group.add(humanGate);
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(10,.4,0),new THREE.Vector3(10,5.4,0)]),
+    new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:.22})));
+  const dreamers=[];for(let i=0;i<3;i++){const d=glow(CLR.agent,1.2,.95);d._a=i/3*Math.PI*2;group.add(d);dreamers.push(d);}
+  const shelf=new THREE.Group();shelf.position.set(20,-1.9,0);group.add(shelf);let shelfN=0;
+  const claims=new Set();
+  let humanOn=w.human,kNeed=w.k;
+  const counts={held:0,prom:0,rej:0};
+
+  setHud(`<span class="tag">workarea <b>${w.name}</b> · ${w.crew}</span>
+    <span class="tag">held <b id="rHeld">0</b> · promoted <b id="rProm">0</b> · rejected <b id="rRej">0</b></span>
+    <button id="rHuman" aria-pressed="${humanOn}">human_required: secret.*</button>
+    <button id="rK" aria-pressed="${kNeed===2}">k = 2 reviews</button>`);
+  document.getElementById('rHuman').onclick=e=>{humanOn=!humanOn;e.currentTarget.setAttribute('aria-pressed',humanOn);};
+  document.getElementById('rK').onclick=e=>{kNeed=kNeed===2?1:2;e.currentTarget.setAttribute('aria-pressed',kNeed===2);};
+  setLegend([['var(--held)','claim (held)'],['var(--promoted)','promoted'],['var(--rejected)','scan veto / reject'],
+             ['var(--accent)','dreamer'],['#fff','human reviewer']]);
+  hint.textContent=`the write path of ${w.name} · R4: rejects are journalled, never vanished · Esc to go back`;
+
+  const els={held:document.getElementById('rHeld'),prom:document.getElementById('rProm'),rej:document.getElementById('rRej')};
+  function spawn(){
+    const c=glow(CLR.held,1.1,.98);c._phase='intake';c._t=0;c._name=pick(CLAIMS);
+    c._secret=Math.random()<.18;c._veto=Math.random()<.12;c._reviews=0;
+    c.position.set(-22,0,rnd(-3,3));group.add(c);claims.add(c);
+    if(LIVE)journal.emit('submission.remember',`${c._name} · wa:${w.name} · by ${w.crew}${c._secret?' · finding secret.token':''}`);
+  }
+  let spawnAcc=0;
+  return {
+    group,cam:{theta:0,phi:1.25,radius:30,min:12,max:60,target:new THREE.Vector3(0,0,0)},
+    exit(){},
+    frame(t,dt){
+      dreamers.forEach(d=>{d._a+=1.2*dt;d.position.set(10+Math.cos(d._a)*3.2,.2,Math.sin(d._a)*3.2);});
+      humanGate.position.y=6+Math.sin(t*1.4)*.15;
+      flow.frame(dt);
+      if((spawnAcc+=dt)>(REDUCED?4:1.6)){spawnAcc=0;if(claims.size<26)spawn();}
+      claims.forEach(c=>{
+        c._t+=dt;
+        switch(c._phase){
+          case 'intake': c.position.x+=5.6*dt;if(c.position.x>=-8){
+              if(c._veto){c._phase='drop';c.material.color.set(CLR.rej);counts.rej++;els.rej.textContent=counts.rej;
+                if(LIVE)journal.emit('review.verdict',`${c._name} · submission.scan_veto`);}
+              else{c._phase='held';c._a=rnd(0,Math.PI*2);counts.held++;els.held.textContent=counts.held;}}break;
+          case 'held': c._a+=1.5*dt;c.position.set(Math.cos(c._a)*3.4,0,Math.sin(c._a)*3.4);
+              if(c._t>rnd(4,7)){c._phase='review';c._t=0;}break;
+          case 'review':{const tx=10+Math.cos(c._a)*2.2,tz=Math.sin(c._a)*2.2;
+              c.position.x+=(tx-c.position.x)*.06;c.position.z+=(tz-c.position.z)*.06;
+              if(c._t>1.8){c._reviews++;
+                if(c._reviews<kNeed){c._t=0;break;}
+                if(c._secret&&humanOn){c._phase='human';c._t=0;}
+                else{c._phase='out';c.material.color.set(CLR.prom);counts.held--;counts.prom++;
+                  els.held.textContent=counts.held;els.prom.textContent=counts.prom;
+                  if(LIVE)journal.emit('memory.promoted',`${c._name} · k=${kNeed} · wa:${w.name}`);}}break;}
+          case 'human': c.position.y+=(5.6-c.position.y)*.08;
+              if(c._t>2.2){c._phase='out';c.material.color.set(CLR.prom);counts.held--;counts.prom++;
+                els.held.textContent=counts.held;els.prom.textContent=counts.prom;
+                if(LIVE)journal.emit('review.verdict',`${c._name} · held_by:human approve`);}break;
+          case 'out': c.position.x+=7.5*dt;c.position.y*=.92;
+              if(c.position.x>=20){claims.delete(c);group.remove(c);
+                const s=glow(CLR.prom,.9,.9);s.position.set(rnd(-1.4,1.4),.4+(shelfN%5)*.85,rnd(-2.4,2.4));
+                shelf.add(s);if(++shelfN>42)shelf.remove(shelf.children[0]);}break;
+          case 'drop': c.position.y-=7*dt;c.material.opacity=Math.max(0,1-c._t*.5);
+              if(c.position.y<-6){claims.delete(c);group.remove(c);}break;
+        }
+      });
+    },
+    onClick(){}
+  };
+}
+
+/* ════════════════════════ MODE: ledger ═════════════════════════════════ */
+const VERIFY_STEPS=[
+  'genesis: prev_hash is 32 zero bytes','seq is contiguous from 1','canonical form (RFC 8785) rebuilds',
+  'prev_hash links to the prior hash','hash = SHA-256(signed_bytes)','Ed25519 signature verifies',
+  'signing key is in the trusted set','provider-chain reference (if any)','stored head matches the last event'];
+function Ledger(){
+  const group=new THREE.Group();
+  const HELIX_R=7,STEP=1.15,TURN=.62;
+  let blocks=[],links=[],broken=-1,erased=false,growAcc=0;
+  const KINDS=[['tenant.genesis',0xffffff],['workarea.create',CLR.agent],['key.issued',CLR.agent],
+    ['submission.remember',CLR.held],['review.verdict',CLR.sim],['memory.promoted',CLR.prom],
+    ['memory.superseded',CLR.sup],['submission.remember',CLR.held],['memory.promoted',CLR.prom]];
+  const posAt=i=>{const a=i*TURN;return new THREE.Vector3(Math.cos(a)*HELIX_R,i*STEP-8,Math.sin(a)*HELIX_R);};
+  const helix=new THREE.Group();group.add(helix);
+  function addBlock(kind,color){
+    const i=blocks.length;
+    const b=new THREE.Mesh(new THREE.BoxGeometry(.9,.9,.9),new THREE.MeshBasicMaterial({color}));
+    b.position.copy(posAt(i));b._kind=kind;
+    const h=glow(color,2.2,.4,HALO);h.position.copy(b.position);helix.add(h);b._halo=h;
+    helix.add(b);blocks.push(b);
+    if(i>0){const g=new THREE.BufferGeometry().setFromPoints([posAt(i-1),posAt(i)]);
+      const l=new THREE.Line(g,new THREE.LineBasicMaterial({color:CLR.prom,transparent:true,opacity:.85}));
+      helix.add(l);links.push(l);}
+  }
+  function thread(i,j){
+    const a=posAt(i),b=posAt(j),mid=a.clone().add(b).multiplyScalar(.5).setLength(HELIX_R*1.9);
+    const curve=new THREE.CatmullRomCurve3([a,mid,b]);
+    helix.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(24)),
+      new THREE.LineBasicMaterial({color:CLR.held,transparent:true,opacity:.6})));
+  }
+  function build(){
+    helix.traverse(o=>{if(o.geometry)o.geometry.dispose();});
+    helix.clear();blocks=[];links=[];broken=-1;erased=false;
+    KINDS.forEach(([k,c])=>addBlock(k,c));
+    thread(3,5);thread(5,6);
+    setVerdict(true);
+  }
+  function setVerdict(ok,atSeq){
+    const el=document.getElementById('lVerdict');
+    if(el)el.innerHTML=ok?'chain <b style="color:var(--promoted)">verified</b>'
+      :`chain <b style="color:var(--rejected)">broken at seq ${atSeq}</b>`;
+    [...stepsEl.querySelectorAll('li')].forEach((li,i)=>li.classList.toggle('bad',!ok&&i===3));
+  }
+  setHud(`<span class="tag" id="lVerdict">chain <b style="color:var(--promoted)">verified</b></span>
+    <button id="lTamper">tamper seq 7</button>
+    <button id="lErase">erase artifact</button>
+    <button id="lHeal">restore</button>`);
+  stepsEl.innerHTML=`<h4>verifier sweep</h4><ol>${VERIFY_STEPS.map(s=>`<li>${s}</li>`).join('')}</ol>
+    <div class="src">paraphrased — the normative procedure is <a href="../data/chain-format/">chain-format.md</a></div>`;
+  stepsEl.hidden=false;
+  setLegend([['var(--accent)','journal event'],['var(--promoted)','verified link'],['var(--rejected)','broken link'],
+             ['var(--superseded)','erased payload (chain intact)'],['var(--held)','lineage thread']]);
+  hint.textContent='412 → 399 USD/t lineage hangs off the helix · Esc to go back';
+  build();
+  document.getElementById('lTamper').onclick=()=>{
+    if(broken>=0)return;
+    broken=6;
+    links.forEach((l,i)=>l.material.color.set(i>=broken?CLR.rej:CLR.prom));
+    blocks.forEach((b,i)=>{if(i>broken){b.material.color.offsetHSL(0,0,-.18);b._halo.material.opacity=.15;}});
+    blocks[broken].material.color.set(CLR.rej);blocks[broken]._halo.material.color.set(CLR.rej);
+    setVerdict(false,broken+1);
+    journal.emit('audit.verify',`FAIL — recomputed hash ≠ prev_hash at seq ${broken+1}; refusing ${broken+1}..head`);
+  };
+  document.getElementById('lErase').onclick=()=>{
+    if(erased)return;erased=true;
+    const b=blocks[3];b.material.transparent=true;b.material.opacity=.22;b.material.color.set(CLR.sup);
+    b._halo.material.opacity=.1;
+    const haloBox=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2),new THREE.MeshBasicMaterial({color:CLR.sup,wireframe:true}));
+    haloBox.position.copy(b.position);helix.add(haloBox);
+    journal.emit('lifecycle.erase','accra-metals-price-anchor · DEK destroyed · digests + signature intact');
+    if(broken<0)setVerdict(true);
+  };
+  document.getElementById('lHeal').onclick=build;
+  return {
+    group,cam:{theta:.9,phi:1.15,radius:26,min:10,max:55,target:new THREE.Vector3(0,0,0)},
+    exit(){stepsEl.hidden=true;},
+    frame(t,dt){
+      helix.rotation.y=t*(REDUCED?.02:.07);
+      if(LIVE&&broken<0&&(growAcc+=dt)>3.2&&blocks.length<26){growAcc=0;
+        const [k,c]=pick(KINDS.slice(2));addBlock(k,c);
+        journal.emit(k,`signed · head sha256:${hex8()}…`);}
+      const sweep=(t*.5)%Math.max(blocks.length,1);
+      blocks.forEach((b,i)=>{const d=Math.abs(i-sweep);b.scale.setScalar(d<1?1+(1-d)*.35:1);});
+      const li=stepsEl.querySelectorAll('li');
+      const on=Math.floor(t*.9)%VERIFY_STEPS.length;
+      li.forEach((l,i)=>l.classList.toggle('on',i===on&&broken<0));
+    },
+    onClick(){}
+  };
+}
+
+const MODES={universe:Universe,reactor:Reactor,ledger:Ledger};
+
+/* ── main loop ─────────────────────────────────────────────────────────── */
+mode=MODES.universe();modeName='universe';scene.add(mode.group);
+Object.assign(st,mode.cam);applyCam();
+let prev=performance.now();
+(function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min(.05,(now-prev)/1000);prev=now;
+  resize();
+  if(mode)mode.frame(now/1000,dt);
+  renderer.render(scene,camera);
+})(prev);
+})();
+</script>
+</body>
+</html>
