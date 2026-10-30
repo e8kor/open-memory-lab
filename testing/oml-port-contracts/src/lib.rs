@@ -123,6 +123,37 @@ impl ChainRig {
         }
     }
 
+    /// Seal `links` one on the next and commit them as one chain; advance
+    /// the rig head past the last on success, leave it where it was on a
+    /// refusal.
+    pub async fn commit_chain<S: JournalStore>(
+        &mut self,
+        store: &S,
+        links: Vec<(&str, Value, MetadataFold)>,
+    ) -> Result<CommitReceipt, StoreError> {
+        let (head, n) = (self.head.clone(), self.n);
+        let mut reqs = Vec::new();
+        for (event_type, payload, fold) in links {
+            let event = self.next_event(event_type, payload);
+            self.head = Some(event.clone());
+            reqs.push(CommitRequest {
+                outbox: OutboxRow {
+                    event_id: event.envelope.event_id,
+                    topic: event.envelope.event_type.clone(),
+                    payload: json!({ "seq": event.envelope.seq }),
+                },
+                event,
+                fold,
+                idempotency: None,
+            });
+        }
+        let receipt = store.commit_chain(reqs).await;
+        if receipt.is_err() {
+            (self.head, self.n) = (head, n);
+        }
+        receipt
+    }
+
     /// Commit one `workarea.create` folding `workarea`.
     pub async fn create_workarea<S: JournalStore>(
         &mut self,
@@ -332,8 +363,9 @@ async fn supersede_tip<S: JournalStore>(
             "new_artifact_id": successor.to_string(),
             "replaces_artifact_id": replaced.to_string(),
         }),
-        MetadataFold::MemoryPromoted {
-            memory_id: successor,
+        MetadataFold::TipSuperseded {
+            successor,
+            replaced,
         },
         None,
     )
@@ -1122,6 +1154,88 @@ pub async fn journal_idempotency_roundtrip<S: JournalStore>(store: &S) {
     assert_eq!(store.idempotency_get(&other).await.expect("get"), None);
 }
 
+/// One scope holds one record: a commit carrying a second record under a
+/// recorded scope is refused whole, so an attempt that looked the key up
+/// before a concurrent one committed journals nothing, and the first record
+/// stands (http-api.md idempotency; ADR-0025 d10).
+pub async fn a_second_record_under_one_idempotency_scope_commits_nothing<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(26);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB26);
+    let scope = IdempotencyScope {
+        tenant_id: rig.tenant_id,
+        key_id: Uuid::from_u128(0xD26),
+        workarea_id: Uuid::nil(),
+        idem_key: "sup-1".to_owned(),
+    };
+    let put = |memory: &MemoryRecord| IdempotencyPut {
+        scope: scope.clone(),
+        record: IdempotencyRecord {
+            request_digest: "sha256:aa".to_owned(),
+            response: json!({ "artifact_id": memory.memory_id.to_string() }),
+        },
+    };
+    let winner = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC26),
+        "wanda",
+        scope.key_id,
+        "the canary drains first",
+    );
+    let loser = MemoryRecord {
+        memory_id: Uuid::from_u128(0xC27),
+        claim_key: "another-claim".to_owned(),
+        ..winner.clone()
+    };
+    let held = |memory: &MemoryRecord| MetadataFold::MemoryHeld {
+        memory: memory.clone(),
+        enqueue: true,
+    };
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({}),
+        held(&winner),
+        Some(put(&winner)),
+    )
+    .await
+    .expect("the first record");
+    let head = store.chain_head(rig.tenant_id).await.expect("head");
+
+    let err = rig
+        .commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({}),
+            held(&loser),
+            Some(put(&loser)),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, StoreError::IdempotencyRecorded), "{err:?}");
+    assert_eq!(
+        store.chain_head(rig.tenant_id).await.expect("head"),
+        head,
+        "nothing is journalled"
+    );
+    assert_eq!(
+        store
+            .memory(rig.tenant_id, loser.memory_id)
+            .await
+            .expect("memory"),
+        None,
+        "nothing is folded"
+    );
+    assert_eq!(
+        store.idempotency_get(&scope).await.expect("get"),
+        Some(put(&winner).record),
+        "the first record stands"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Grants, denials and the workarea tree (ADR-0025 d1, d2, d14)
 // ---------------------------------------------------------------------------
@@ -1827,9 +1941,16 @@ pub async fn promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its
         read(v1.memory_id).await.is_tip,
         "a held successor moves nothing"
     );
-    promote(&mut rig, store, v2.memory_id)
+    let receipt = supersede_tip(&mut rig, store, v2.memory_id, v1.memory_id)
         .await
-        .expect("promote v2");
+        .expect("ratify v2");
+    let at = store
+        .events_range(rig.tenant_id, receipt.seq, 1)
+        .await
+        .expect("range")
+        .remove(0)
+        .envelope
+        .at;
     let replaced = read(v1.memory_id).await;
     assert_eq!(
         replaced.status,
@@ -1837,7 +1958,253 @@ pub async fn promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its
         "no superseded state"
     );
     assert!(!replaced.is_tip, "the replaced version is history");
-    assert!(read(v2.memory_id).await.is_tip);
+    let tip = read(v2.memory_id).await;
+    assert!(tip.is_tip);
+    assert_eq!(tip.status, MemoryStatus::Promoted);
+    assert_eq!(tip.promoted_at, Some(at), "the ratifying event's at");
+    assert_eq!(
+        store
+            .claim_tip(rig.tenant_id, wa, &v1.claim_key)
+            .await
+            .expect("claim_tip")
+            .map(|m| m.memory_id),
+        Some(v2.memory_id),
+        "the claim's one served tip"
+    );
+}
+
+/// The compare-and-set of ratification: a successor takes the tip only
+/// while the version it replaces is still the promoted tip under the
+/// successor's own workarea and claim_key; a lost compare-and-set commits
+/// nothing, journal row included, and leaves the successor held
+/// (audit-and-lineage.md supersession chains; ADR-0025 d10).
+pub async fn tip_superseded_refuses_when_the_target_is_no_longer_tip<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(25);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB27);
+    let v1 = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC2B),
+        "wanda",
+        Uuid::from_u128(0xD25),
+        "v1",
+    );
+    let successor = |id: u128, version: u32| MemoryRecord {
+        memory_id: Uuid::from_u128(id),
+        version,
+        replaces: Some(v1.memory_id),
+        body: format!("v{version}"),
+        ..v1.clone()
+    };
+    let (first, rival) = (successor(0xC2C, 2), successor(0xC2D, 3));
+    let rekeyed = MemoryRecord {
+        claim_key: "another-claim".to_owned(),
+        ..successor(0xC2E, 1)
+    };
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    for m in [&first, &rival, &rekeyed] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    let tenant = rig.tenant_id;
+    let read = |id| async move {
+        store
+            .memory(tenant, id)
+            .await
+            .expect("memory")
+            .expect("the row exists")
+    };
+    let mut held = store
+        .held_successors(tenant, v1.memory_id)
+        .await
+        .expect("held_successors")
+        .into_iter()
+        .map(|m| m.memory_id)
+        .collect::<Vec<_>>();
+    held.sort();
+    let mut expected = vec![first.memory_id, rival.memory_id, rekeyed.memory_id];
+    expected.sort();
+    assert_eq!(held, expected, "every held successor of the tip");
+
+    // A successor re-keyed away from its target fails the compare-and-set.
+    let head = store.chain_head(tenant).await.expect("head");
+    assert!(matches!(
+        supersede_tip(&mut rig, store, rekeyed.memory_id, v1.memory_id).await,
+        Err(StoreError::TipMoved { .. })
+    ));
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert!(read(v1.memory_id).await.is_tip);
+
+    // The first ratified takes the tip; its rival then commits nothing.
+    supersede_tip(&mut rig, store, first.memory_id, v1.memory_id)
+        .await
+        .expect("ratify the first successor");
+    let head = store.chain_head(tenant).await.expect("head");
+    assert!(matches!(
+        supersede_tip(&mut rig, store, rival.memory_id, v1.memory_id).await,
+        Err(StoreError::TipMoved { .. })
+    ));
+    assert_eq!(
+        store.chain_head(tenant).await.expect("head"),
+        head,
+        "a lost compare-and-set journals nothing"
+    );
+    let stale = read(rival.memory_id).await;
+    assert_eq!(stale.status, MemoryStatus::Held, "it stays held");
+    assert!(!stale.is_tip);
+    assert!(read(first.memory_id).await.is_tip);
+    assert!(!read(v1.memory_id).await.is_tip);
+    assert_eq!(
+        store
+            .held_successors(tenant, v1.memory_id)
+            .await
+            .expect("held_successors")
+            .len(),
+        2,
+        "the ratified successor is no longer held"
+    );
+}
+
+/// An approving verdict and the ratification it triggers commit as one
+/// chain, each link extending the one before; a chain whose ratification
+/// loses the compare-and-set writes neither event, nor does a chain whose
+/// second link does not extend the first (ADR-0002 d1; ADR-0025 d10).
+pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_verdict<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(60);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let v1 = held_memory(
+        tenant,
+        Uuid::from_u128(0xB60),
+        Uuid::from_u128(0xC60),
+        "wanda",
+        Uuid::from_u128(0xD60),
+        "v1",
+    );
+    let successor = |id: u128, version: u32| MemoryRecord {
+        memory_id: Uuid::from_u128(id),
+        version,
+        replaces: Some(v1.memory_id),
+        body: format!("v{version}"),
+        ..v1.clone()
+    };
+    let (first, rival) = (successor(0xC61, 2), successor(0xC62, 3));
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    for m in [&first, &rival] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    let ratify = |m: &MemoryRecord| {
+        vec![
+            (
+                event_types::REVIEW_APPROVE,
+                json!({ "artifact_id": m.memory_id.to_string() }),
+                MetadataFold::VerdictRecorded {
+                    memory_id: m.memory_id,
+                    reviewer_key_id: Uuid::from_u128(0xD61),
+                },
+            ),
+            (
+                event_types::LIFECYCLE_SUPERSEDE,
+                json!({ "new_artifact_id": m.memory_id.to_string() }),
+                MetadataFold::TipSuperseded {
+                    successor: m.memory_id,
+                    replaced: v1.memory_id,
+                },
+            ),
+        ]
+    };
+    let types_after = |seq: u64| async move {
+        store
+            .events_range(tenant, seq + 1, 10)
+            .await
+            .expect("range")
+            .into_iter()
+            .map(|e| e.envelope.event_type)
+            .collect::<Vec<_>>()
+    };
+
+    let before = store
+        .chain_head(tenant)
+        .await
+        .expect("head")
+        .expect("a head");
+    let receipt = rig
+        .commit_chain(store, ratify(&first))
+        .await
+        .expect("the first ratified takes the tip");
+    assert_eq!(
+        receipt.seq,
+        before.seq + 2,
+        "the receipt names the last link"
+    );
+    assert_eq!(
+        types_after(before.seq).await,
+        vec![
+            event_types::REVIEW_APPROVE,
+            event_types::LIFECYCLE_SUPERSEDE
+        ]
+    );
+    let head = store.chain_head(tenant).await.expect("head");
+    assert_eq!(
+        head.as_ref().map(|h| (h.seq, h.hash)),
+        Some((receipt.seq, receipt.hash))
+    );
+    let read = |id| async move {
+        store
+            .memory(tenant, id)
+            .await
+            .expect("memory")
+            .expect("the row exists")
+    };
+    assert!(read(first.memory_id).await.is_tip);
+
+    // The rival's verdict lands with its ratification or not at all.
+    assert!(matches!(
+        rig.commit_chain(store, ratify(&rival)).await,
+        Err(StoreError::TipMoved { .. })
+    ));
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert!(
+        types_after(receipt.seq).await.is_empty(),
+        "a lost compare-and-set journals no verdict"
+    );
+    assert_eq!(read(rival.memory_id).await.status, MemoryStatus::Held);
+
+    // A second link that does not extend the first refuses the first too.
+    let request = |event: SignedEnvelope| CommitRequest {
+        outbox: OutboxRow {
+            event_id: event.envelope.event_id,
+            topic: event.envelope.event_type.clone(),
+            payload: json!({ "seq": event.envelope.seq }),
+        },
+        event,
+        fold: MetadataFold::TenantGenesis,
+        idempotency: None,
+    };
+    let filler = || json!({ "body_digest": "sha256:00" });
+    let (a, b) = (
+        rig.next_event(event_types::SUBMISSION_REMEMBER, filler()),
+        rig.next_event(event_types::SUBMISSION_REMEMBER, filler()),
+    );
+    assert!(matches!(
+        store.commit_chain(vec![request(a), request(b)]).await,
+        Err(StoreError::SeqConflict { .. })
+    ));
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert!(
+        store.commit_chain(Vec::new()).await.is_err(),
+        "an empty chain is refused"
+    );
 }
 
 /// The tenant a rig built with `seed` writes under.
@@ -2325,6 +2692,7 @@ where
     journal_key_lookup_by_hash(&new_store().await).await;
     a_revoked_key_no_longer_resolves_by_its_hash(&new_store().await).await;
     journal_idempotency_roundtrip(&new_store().await).await;
+    a_second_record_under_one_idempotency_scope_commits_nothing(&new_store().await).await;
     grants_and_denials_round_trip_through_their_folds_and_key_access(&new_store().await).await;
     a_grant_epoch_is_its_event_seq(&new_store().await).await;
     a_grant_or_denial_the_schema_refuses_commits_nothing(&new_store().await).await;
@@ -2337,6 +2705,9 @@ where
     promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
         .await;
     a_second_served_tip_of_one_claim_commits_nothing(&new_store().await).await;
+    tip_superseded_refuses_when_the_target_is_no_longer_tip(&new_store().await).await;
+    a_chain_whose_ratification_loses_the_compare_and_set_journals_no_verdict(&new_store().await)
+        .await;
     a_second_live_version_with_one_ordinal_commits_nothing(&new_store().await).await;
     claim_key_state_counts_every_version_and_only_live_ones_hold_the_key(&new_store().await).await;
     an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_nodes(&new_store().await)

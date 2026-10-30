@@ -832,23 +832,61 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_envelope(&body, "access.verb_ceiling");
 
+    // The body is closed: a field the server does not serve is refused.
+    let (status, _, body) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{artifact}/supersede"),
+        Call::auth(&writer)
+            .idem("sup-x")
+            .body(json!({"body": "revised", "claim_key": "elsewhere"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+
+    let supersede_call = Call::auth(&writer).idem("sup-1").body(json!({
+        "body": "Supplier Accra Metals revised the quote to 408 USD/t.",
+        "reason": "supplier issued a revised quote",
+    }));
     let (status, _, successor) = send(
         router,
         "POST",
         &format!("/v1/memories/{artifact}/supersede"),
-        Call::auth(&writer).idem("sup-1").body(json!({
-            "body": "Supplier Accra Metals revised the quote to 408 USD/t.",
-            "reason": "supplier issued a revised quote",
-        })),
+        supersede_call.clone(),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
     assert_eq!(successor["state"], "held");
     assert_eq!(successor["claim_key"], "supplier-quote-am-7741");
+    assert_eq!(successor["version"], 2);
+    assert_eq!(successor["retirement"], false);
+    assert_eq!(
+        successor["replaces"],
+        json!({ "artifact_id": accepted["artifact_id"], "version": 1 })
+    );
+    assert_eq!(successor["workarea_id"], json!(crew));
     assert_ne!(successor["artifact_id"], accepted["artifact_id"]);
 
-    // The old tip flipped in the same journalled act; supersession adds no
-    // state, so the replaced version reads promoted (ADR-0025 d10).
+    // A replay answers the stored response, flagged, and writes nothing.
+    let (status, headers, replay) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{artifact}/supersede"),
+        supersede_call,
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{replay}");
+    assert_eq!(replay, successor);
+    assert_eq!(
+        headers
+            .get("idempotency-replay")
+            .and_then(|v| v.to_str().ok()),
+        Some("true")
+    );
+
+    // The old tip reads state promoted and tip true until ratification,
+    // and stays the reader's hit (ADR-0025 d10).
     let (status, _, body) = send(
         router,
         "GET",
@@ -858,20 +896,22 @@ async fn full_happy_path_over_http() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["state"], "promoted");
-    assert_eq!(body["tip"], false);
-
-    // A second supersession of the same target: not the current tip.
-    let (status, _, body) = send(
+    assert_eq!(body["tip"], true);
+    let (status, _, recall) = send(
         router,
         "POST",
-        &format!("/v1/memories/{artifact}/supersede"),
-        Call::auth(&writer)
-            .idem("sup-2")
-            .body(json!({"body": "again"})),
+        "/v1/memories/recall",
+        Call::auth(&reader).body(json!({"query": "Accra Metals", "k": 8})),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_envelope(&body, "submission.tip_conflict");
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    let hits: Vec<&Value> = recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| &h["memory"]["artifact_id"])
+        .collect();
+    assert_eq!(hits, vec![&accepted["artifact_id"]], "{recall}");
 
     // The successor rides the ordinary review pipeline to promotion.
     let (status, _, serve) = send(
@@ -896,7 +936,8 @@ async fn full_happy_path_over_http() {
     assert_eq!(verdict["state"], "promoted");
 
     // The ratified successor is the claim's one hit; the version it replaced
-    // is never a hit (retrieval.md; ADR-0025 d8).
+    // is never a hit (retrieval.md; ADR-0025 d8), and reads promoted, tip
+    // false.
     let (status, _, recall) = send(
         router,
         "POST",
@@ -912,6 +953,34 @@ async fn full_happy_path_over_http() {
         .map(|h| &h["memory"]["artifact_id"])
         .collect();
     assert_eq!(hits, vec![&successor["artifact_id"]], "{recall}");
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{artifact}"),
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["state"], "promoted");
+    assert_eq!(body["tip"], false);
+
+    // Superseding the replaced version now: not the current tip, and the
+    // refusal names the tip the writer can read (ADR-0025 d10, d16).
+    let (status, _, body) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{artifact}/supersede"),
+        Call::auth(&writer)
+            .idem("sup-2")
+            .body(json!({"body": "again"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_envelope(&body, "submission.tip_conflict");
+    assert_eq!(
+        body["error"]["details"]["current_tip"],
+        json!({ "artifact_id": successor["artifact_id"], "version": 2 })
+    );
 
     // X-OML-Workarea: the explicit per-request override (ADR-0022 d4),
     // honored within the key's grants — a child of the granted node is
@@ -2849,5 +2918,319 @@ async fn claim_key_filter_lists_one_claims_versions() {
         assert_eq!(item["claim_key"], "quote-am-7741", "{item}");
     }
 
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// Supersession over HTTP: the serve, retirement and the verdict-time
+// compare-and-set (ADR-0025 d10, d11)
+// ---------------------------------------------------------------------------
+
+/// A writer key with writer and reader on `crew`, a dreamer key with
+/// dreamer and reader there, and a reader key: (writer, dreamer, reader).
+async fn supersession_keys(router: &Router, admin: &str, crew: Uuid) -> (String, String, String) {
+    let value = |body: Value| body["value"].as_str().expect("value").to_owned();
+    let writer = value(
+        issue_key_with(
+            router,
+            admin,
+            "writer",
+            "crew/agent-7",
+            json!([
+                { "workarea_node_id": crew, "role": "writer" },
+                { "workarea_node_id": crew, "role": "reader" },
+            ]),
+        )
+        .await,
+    );
+    let dreamer = value(
+        issue_key_with(
+            router,
+            admin,
+            "dreamer",
+            "crew/reviewer-3",
+            json!([
+                { "workarea_node_id": crew, "role": "dreamer" },
+                { "workarea_node_id": crew, "role": "reader" },
+            ]),
+        )
+        .await,
+    );
+    let reader = issue_key(router, admin, "reader", "crew/agent-recall", crew).await;
+    (writer, dreamer, reader)
+}
+
+/// Submits `body` as `writer` under `claim_key` and has `dreamer` approve it
+/// through a serve: the promoted first version's id.
+async fn promoted_over_http(
+    router: &Router,
+    writer: &str,
+    dreamer: &str,
+    claim_key: &str,
+    body: &str,
+) -> String {
+    let (status, _, accepted) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(writer)
+            .idem(&format!("s-{claim_key}"))
+            .body(json!({
+                "verb": "remember", "claim_key": claim_key, "kind": "memory", "body": body,
+            })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    let id = accepted["artifact_id"].as_str().expect("id").to_owned();
+    approve_over_http(router, dreamer, &id).await;
+    id
+}
+
+/// `dreamer` takes the next serve, which must be `id`, and approves it.
+async fn approve_over_http(router: &Router, dreamer: &str, id: &str) -> Value {
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(dreamer).idem(&format!("r-{id}")).body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    assert_eq!(serve["item"]["artifact_id"], id, "{serve}");
+    let (status, _, verdict) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Call::auth(dreamer).idem(&format!("v-{id}")).body(json!({
+            "serve_id": serve["serve_id"], "verdict": "approve",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    verdict
+}
+
+/// The artifact ids `key`'s recall answers for `query`, in rank order.
+async fn recalled(router: &Router, key: &str, query: &str) -> Vec<String> {
+    let (status, _, recall) = send(
+        router,
+        "POST",
+        "/v1/memories/recall",
+        Call::auth(key).body(json!({ "query": query })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| h["memory"]["artifact_id"].as_str().expect("id").to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_review_serve_of_a_supersession_carries_the_replaced_version() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let (writer, dreamer, _reader) = supersession_keys(router, &admin, crew).await;
+
+    let first = promoted_over_http(
+        router,
+        &writer,
+        &dreamer,
+        "quote",
+        "Accra Metals quoted 412 USD/t.",
+    )
+    .await;
+    let (_, _, target) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{first}"),
+        Call::auth(&dreamer),
+    )
+    .await;
+    let (status, _, successor) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{first}/supersede"),
+        Call::auth(&writer)
+            .idem("sup-1")
+            .body(json!({"body": "Accra Metals revised the quote to 408 USD/t."})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
+
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer).idem("r-sup").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    assert_eq!(serve["item"]["artifact_id"], successor["artifact_id"]);
+    assert_eq!(
+        serve["item"]["replaces"],
+        json!({ "artifact_id": first, "version": 1 })
+    );
+    assert_eq!(serve["replaces"]["artifact_id"], first.as_str());
+    assert_eq!(serve["replaces"]["version"], 1);
+    assert_eq!(serve["replaces"]["tip"], true, "still the tip while held");
+    assert_eq!(serve["replaces"]["body"], "Accra Metals quoted 412 USD/t.");
+    assert_eq!(
+        serve["served_digests"]["replaces"], target["plaintext_digest"],
+        "the serve records the replaced version's digest"
+    );
+    assert_eq!(
+        serve["served_digests"]["body"],
+        successor["plaintext_digest"]
+    );
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_ratified_retirement_over_http_leaves_recall_and_journals_lifecycle_supersede() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let (writer, dreamer, reader) = supersession_keys(router, &admin, crew).await;
+
+    let first = promoted_over_http(
+        router,
+        &writer,
+        &dreamer,
+        "runbook",
+        "Drain the canary before promotion.",
+    )
+    .await;
+    let (status, _, proposal) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{first}/supersede"),
+        Call::auth(&writer).idem("ret-1").body(json!({
+            "body": "Superseded by the 2026 canary runbook; stop serving.",
+            "retirement": true,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+    assert_eq!(proposal["retirement"], true);
+    assert_eq!(
+        recalled(router, &reader, "canary").await,
+        vec![first.clone()],
+        "a held retirement changes no recall"
+    );
+
+    let retirement = proposal["artifact_id"].as_str().expect("id").to_owned();
+    approve_over_http(router, &dreamer, &retirement).await;
+    assert!(recalled(router, &reader, "canary").await.is_empty());
+    for (id, tip) in [(&first, false), (&retirement, true)] {
+        let (status, _, body) = send(
+            router,
+            "GET",
+            &format!("/v1/memories/{id}"),
+            Call::auth(&reader),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "promoted");
+        assert_eq!(body["tip"], tip, "{body}");
+    }
+
+    let head = head_seq(&rig, tenant).await;
+    let flip = rig
+        .store
+        .events_range(tenant, head, 1)
+        .await
+        .expect("range")
+        .remove(0)
+        .envelope;
+    assert_eq!(flip.event_type, "lifecycle.supersede");
+    assert_eq!(flip.payload["retirement"], true);
+    assert_eq!(flip.payload["new_artifact_id"], retirement.as_str());
+    assert_eq!(flip.payload["replaces_artifact_id"], first.as_str());
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_approval_whose_target_lost_the_tip_is_tip_conflict_and_journals_nothing() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let (writer, dreamer, _reader) = supersession_keys(router, &admin, crew).await;
+    let editor = issue_key_with(
+        router,
+        &admin,
+        "dreamer",
+        "crew/editor-5",
+        json!([
+            { "workarea_node_id": crew, "role": "dreamer" },
+            { "workarea_node_id": crew, "role": "reader" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("value")
+        .to_owned();
+
+    let first = promoted_over_http(router, &writer, &dreamer, "quote", "412 USD/t").await;
+    let propose = |key: &str, idem: &str, body: &str| {
+        let call = Call::auth(key).idem(idem).body(json!({ "body": body }));
+        let path = format!("/v1/memories/{first}/supersede");
+        async move { send(router, "POST", &path, call).await }
+    };
+    let (status, _, revision) = propose(&writer, "sup-w", "408 USD/t").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{revision}");
+    let (status, _, edit) = propose(&editor, "sup-e", "409 USD/t").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{edit}");
+    assert_eq!(
+        edit["version"], 3,
+        "rival successors take distinct ordinals"
+    );
+
+    let revision_id = revision["artifact_id"].as_str().expect("id").to_owned();
+    approve_over_http(router, &dreamer, &revision_id).await;
+
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer).idem("r-edit").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    assert_eq!(serve["item"]["artifact_id"], edit["artifact_id"]);
+    let head = head_seq(&rig, tenant).await;
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Call::auth(&dreamer).idem("v-edit").body(json!({
+            "serve_id": serve["serve_id"], "verdict": "approve",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_envelope(&body, "submission.tip_conflict");
+    assert_eq!(
+        body["error"]["details"]["current_tip"],
+        json!({ "artifact_id": revision_id, "version": 2 })
+    );
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing is journalled");
+
+    // The serve is not consumed: the stale successor is still the
+    // reviewer's to reject.
+    let (status, _, verdict) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Call::auth(&dreamer).idem("v-edit-2").body(json!({
+            "serve_id": serve["serve_id"], "verdict": "reject", "reason": "stale",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    assert_eq!(verdict["state"], "rejected");
     drop_db(&rig.db_name).await;
 }
