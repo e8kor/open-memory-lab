@@ -972,6 +972,7 @@ async fn workarea_unresolved_is_422() {
         principal: "crew/no-default".to_owned(),
         held_by: oml_app::domain::HeldBy::Agent,
         default_workarea: None,
+        issued_by: None,
         key_hash: sha256_digest_string(token.as_bytes()),
     };
     rig.store

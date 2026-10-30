@@ -1,7 +1,8 @@
 //! The IDENTICAL port-contract suite against the real adapter (workspace-
 //! plan.md M1 step 3), plus the adapter-specific laws: concurrent commits to
 //! one tenant serialize, the journal refuses UPDATE/DELETE by mechanism
-//! (ADR-0002 d4), and the fork check verifies the stored head (ADR-0002 d7).
+//! (ADR-0002 d4), the fork check verifies the stored head (ADR-0002 d7), and
+//! grants and denials stay inside their tenant under row-level security.
 //!
 //! Each law runs against a throwaway database (`oml_test_<pid>_<n>`) created
 //! through `DATABASE_URL` (the role needs CREATEDB), migrated by the embedded
@@ -10,15 +11,20 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use oml_app::domain::{Envelope, EventTime, KeySet, Sha256Hash, event_types, sign, verify_chain};
+use oml_app::domain::access::{Grant, KeyDenial};
+use oml_app::domain::{
+    Envelope, EventTime, KeySet, Role, Sha256Hash, event_types, sign, verify_chain,
+};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, JournalStore, MetadataFold, OutboxRow, StoreError,
 };
 use oml_pg::{ForkCheckError, PgStore};
-use oml_port_contracts::{ChainRig, run_journal_store_suite, test_signing_key};
+use oml_port_contracts::{
+    ChainRig, key_record, run_journal_store_suite, test_signing_key, workarea_record,
+};
 use serde_json::json;
 use sqlx::postgres::PgConnection;
-use sqlx::{Connection, Executor};
+use sqlx::{Connection, Executor, Row};
 use uuid::Uuid;
 
 fn base_url() -> String {
@@ -233,6 +239,124 @@ async fn journal_refuses_update_and_delete() {
         .expect_err("DELETE on journal is refused");
     assert!(err.to_string().contains("append-only"), "got: {err}");
     drop(tx);
+    drop_dbs(&created).await;
+}
+
+/// Rows of `grants` and `key_denials` this session sees with `oml.tenant_id`
+/// set to `tenant` (or unset). A role that bypasses row-level security — the
+/// superuser CI's service container connects as — reads as
+/// `pg_read_all_data` instead, which reads every table and which the
+/// policies bind; the local owner role is bound by FORCE as it is.
+async fn visible_access_rows(store: &PgStore, tenant: Option<Uuid>) -> (i64, i64) {
+    let mut tx = store.pool().begin().await.expect("begin");
+    let bypasses: bool =
+        sqlx::query("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("role attributes")
+            .get(0);
+    if bypasses {
+        sqlx::query("SET LOCAL ROLE pg_read_all_data")
+            .execute(&mut *tx)
+            .await
+            .expect("a role the policies bind");
+    }
+    if let Some(tenant) = tenant {
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+    }
+    let row =
+        sqlx::query("SELECT (SELECT count(*) FROM grants), (SELECT count(*) FROM key_denials)")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("counts");
+    let counts = (row.get(0), row.get(1));
+    tx.rollback().await.expect("rollback");
+    counts
+}
+
+/// `grants` and `key_denials` carry 0001's FORCE `tenant_isolation`
+/// policy: under another tenant's `oml.tenant_id`, or none, neither table
+/// shows a row, and `key_access` answers nothing across tenants
+/// (postgres-schema.md row-level security; security.md).
+#[tokio::test]
+async fn grants_of_another_tenant_are_invisible_under_rls() {
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut a = ChainRig::new(92);
+    a.seed_chain(&store, 0).await;
+    let node = Uuid::from_u128(0xB92);
+    a.create_workarea(&store, workarea_record(a.tenant_id, node, None, "universe"))
+        .await;
+    let key = key_record(a.tenant_id, Uuid::from_u128(0xD92), Role::Writer, None);
+    a.issue_key(&store, key.clone()).await;
+    a.issue_grant(
+        &store,
+        key.key_id,
+        Grant {
+            grant_id: Uuid::from_u128(0xF92),
+            node,
+            role: Role::Reader,
+            deny: Vec::new(),
+        },
+    )
+    .await
+    .expect("grant");
+    a.deny_key(
+        &store,
+        key.key_id,
+        KeyDenial {
+            denial_id: Uuid::from_u128(0xF93),
+            node,
+        },
+        key.key_id,
+    )
+    .await
+    .expect("denial");
+    let mut b = ChainRig::new(93);
+    b.seed_chain(&store, 0).await;
+
+    assert_eq!(
+        store.key_access(b.tenant_id, key.key_id).await,
+        Ok(None),
+        "another tenant's key_access answers nothing"
+    );
+    let flags: Vec<(String, bool, bool)> = sqlx::query(
+        "SELECT relname::text, relrowsecurity, relforcerowsecurity FROM pg_class \
+         WHERE relname IN ('grants', 'key_denials') ORDER BY relname",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("table flags")
+    .iter()
+    .map(|r| (r.get(0), r.get(1), r.get(2)))
+    .collect();
+    assert_eq!(
+        flags,
+        vec![
+            ("grants".to_owned(), true, true),
+            ("key_denials".to_owned(), true, true),
+        ],
+        "row-level security is enabled and forced on both tables"
+    );
+    assert_eq!(
+        visible_access_rows(&store, Some(a.tenant_id)).await,
+        (1, 1),
+        "the owning tenant sees its rows"
+    );
+    assert_eq!(
+        visible_access_rows(&store, Some(b.tenant_id)).await,
+        (0, 0),
+        "another tenant sees none"
+    );
+    assert_eq!(
+        visible_access_rows(&store, None).await,
+        (0, 0),
+        "no tenant context sees none"
+    );
     drop_dbs(&created).await;
 }
 

@@ -1,5 +1,6 @@
 //! Application-layer records and use-case request/response shapes.
 
+use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryStatus, Role, TransitionError,
     VerdictError, VerifyError,
@@ -19,17 +20,68 @@ pub struct KeyRecord {
     pub principal: String,
     pub held_by: HeldBy,
     pub default_workarea: Option<Uuid>,
+    /// The key that issued this one; `None` for the bootstrap ceremony's
+    /// first admin key, which no key issues (postgres-schema.md
+    /// `api_keys.issued_by`).
+    pub issued_by: Option<Uuid>,
     /// `sha256:<hex>` of the full key string, prefix included.
     pub key_hash: String,
 }
 
-/// A workarea node (the PoC slice: id, parent, name — no status ladder yet).
+/// A stored grant row: the domain grant and its epoch, the journal seq of
+/// the `grant.issued` that wrote it (postgres-schema.md `grants`;
+/// workareas.md permission epoch; ADR-0025 d14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantRecord {
+    pub grant: Grant,
+    pub epoch: u64,
+}
+
+/// A stored global per-key denial: the domain denial, the key that
+/// journalled it, and its epoch, the journal seq of its `key.denied`
+/// (postgres-schema.md `key_denials`; ADR-0025 d2, d14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DenialRecord {
+    pub denial: KeyDenial,
+    pub created_by: Uuid,
+    pub epoch: u64,
+}
+
+/// What effective access is computed from for one key, read in one
+/// snapshot: the floor of its permission epoch, its grants and its global
+/// denials, each list in epoch order (workareas.md effective access and
+/// permission epoch; ADR-0025 d1, d14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyAccess {
+    /// The journal seq of the key's `key.issued`.
+    pub issued_seq: u64,
+    pub grants: Vec<GrantRecord>,
+    pub denials: Vec<DenialRecord>,
+}
+
+/// A workarea's crew: recorded, not operated — OML never contacts the
+/// external manager (openapi.yaml `CrewRecord`; event-catalog.md
+/// `workarea.create`). An absent member is stored and served absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Crew {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub charter_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_manager: Option<String>,
+}
+
+/// A workarea node (the PoC slice: id, parent, name and crew — no status
+/// ladder yet).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkareaRecord {
     pub workarea_id: Uuid,
     pub tenant_id: Uuid,
     pub parent_id: Option<Uuid>,
     pub name: String,
+    /// `None` when the create named no crew.
+    pub crew: Option<Crew>,
 }
 
 /// The metadata row of one memory version. The body lives here, never in the

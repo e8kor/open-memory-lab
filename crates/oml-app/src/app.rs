@@ -183,6 +183,7 @@ where
         tenant_id: Uuid,
         req: &IssueKeyRequest,
         default_workarea: Option<Uuid>,
+        issued_by: Option<Uuid>,
     ) -> (KeyRecord, String) {
         let secret = self.ids.new_secret();
         let value = format!("oml_{}", base62_43(&secret));
@@ -193,6 +194,7 @@ where
             principal: req.principal.clone(),
             held_by: req.held_by,
             default_workarea,
+            issued_by,
             key_hash: sha256_digest_string(value.as_bytes()),
         };
         (record, value)
@@ -238,6 +240,7 @@ where
             tenant_id,
             parent_id: None,
             name: "root".to_owned(),
+            crew: None,
         };
         let event = self.seal(
             Some(&prev),
@@ -261,7 +264,7 @@ where
             held_by: oml_domain::HeldBy::Human,
             default_workarea: Some(root_workarea_id),
         };
-        let (record, value) = self.mint_key(tenant_id, &issue, Some(root_workarea_id));
+        let (record, value) = self.mint_key(tenant_id, &issue, Some(root_workarea_id), None);
         let key_id = record.key_id;
         let event = self.seal(
             Some(&prev),
@@ -302,7 +305,8 @@ where
             });
         }
         let default_workarea = req.default_workarea.or(issuer.default_workarea);
-        let (record, value) = self.mint_key(issuer.tenant_id, req, default_workarea);
+        let (record, value) =
+            self.mint_key(issuer.tenant_id, req, default_workarea, Some(issuer.key_id));
         let key_id = record.key_id;
         let prev = self.head_event(issuer.tenant_id).await?;
         let event = self.seal(
@@ -331,6 +335,7 @@ where
             tenant_id: key.tenant_id,
             parent_id,
             name: name.to_owned(),
+            crew: None,
         };
         let prev = self.head_event(key.tenant_id).await?;
         let event = self.seal(

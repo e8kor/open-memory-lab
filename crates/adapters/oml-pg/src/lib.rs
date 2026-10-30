@@ -10,6 +10,7 @@
 //! Every query is the sqlx runtime API — no compile-time checked macros, so
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
+use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
     VerifyError, verify_chain,
@@ -19,8 +20,10 @@ use oml_app::ports::{
     CommitReceipt, CommitRequest, IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold,
     StoreError,
 };
-use oml_app::types::{KeyRecord, MemoryRecord};
-use serde_json::Value;
+use oml_app::types::{
+    DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
+};
+use serde_json::{Value, json};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -105,6 +108,26 @@ impl PgStore {
             from_seq += n as u64;
         }
         Ok(verify_chain(&events, keys, Some(&stated))?)
+    }
+
+    /// One workarea read under the tenant's RLS context: `sql` binds the
+    /// tenant as `$1` and a node id as `$2` and selects [`WORKAREA_COLUMNS`].
+    async fn workarea_rows(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        sql: &str,
+    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(sql)
+            .bind(tenant_id)
+            .bind(workarea_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(workarea_from_row).collect()
     }
 }
 
@@ -220,6 +243,54 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
     })
+}
+
+/// The workarea columns every workarea read selects (unqualified: the
+/// recursive walks select them from their CTE).
+const WORKAREA_COLUMNS: &str = "id, tenant_id, parent_id, name, crew";
+
+fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
+    let crew: Option<Value> = row.try_get("crew").map_err(backend)?;
+    Ok(WorkareaRecord {
+        workarea_id: row.try_get("id").map_err(backend)?,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        parent_id: row.try_get("parent_id").map_err(backend)?,
+        name: row.try_get("name").map_err(backend)?,
+        crew: crew
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(backend)?,
+    })
+}
+
+/// A grant's deny list as `grants.deny` stores it: the `grant.issued`
+/// spelling, `[{"subtree_node_id": …}]`, in the grant's order.
+fn deny_to_json(deny: &[Uuid]) -> Value {
+    Value::Array(
+        deny.iter()
+            .map(|node| json!({ "subtree_node_id": node.to_string() }))
+            .collect(),
+    )
+}
+
+fn deny_from_json(deny: &Value) -> Result<Vec<Uuid>, StoreError> {
+    let malformed = || StoreError::Backend(format!("stored grant deny list is malformed: {deny}"));
+    deny.as_array()
+        .ok_or_else(malformed)?
+        .iter()
+        .map(|entry| {
+            let node = entry
+                .get("subtree_node_id")
+                .and_then(Value::as_str)
+                .ok_or_else(malformed)?;
+            Uuid::parse_str(node).map_err(backend)
+        })
+        .collect()
+}
+
+fn seq_from_column(row: &PgRow, column: &str) -> Result<u64, StoreError> {
+    let seq: i64 = row.try_get(column).map_err(backend)?;
+    u64::try_from(seq).map_err(backend)
 }
 
 fn json_str<'a>(v: &'a Value, name: &str) -> Result<&'a str, StoreError> {
@@ -365,11 +436,13 @@ async fn set_memory_status(
 
 /// Applies the metadata fold rows of one commit (ADR-0002 d1: same
 /// transaction as the journal insert; `memories.created_event_id` references
-/// the journal row, so this runs after it).
+/// the journal row, so this runs after it). `seq` is the commit's event seq:
+/// a key's `issued_seq` and a grant's or denial's epoch.
 async fn apply_fold(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     event_id: Uuid,
+    seq: i64,
     fold: MetadataFold,
 ) -> Result<(), StoreError> {
     match fold {
@@ -379,14 +452,21 @@ async fn apply_fold(
         MetadataFold::WorkareaCreated(w) => {
             // 0001's ladder floor: the PoC WorkareaRecord carries no status,
             // so every node lands 'development' (workareas.md ladder start).
+            let crew = w
+                .crew
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(backend)?;
             sqlx::query(
-                "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
-                 VALUES ($1, $2, $3, $4, 'development')",
+                "INSERT INTO workareas (id, tenant_id, parent_id, name, status, crew) \
+                 VALUES ($1, $2, $3, $4, 'development', $5)",
             )
             .bind(w.workarea_id)
             .bind(w.tenant_id)
             .bind(w.parent_id)
             .bind(&w.name)
+            .bind(crew)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -400,7 +480,8 @@ async fn apply_fold(
             })?;
             sqlx::query(
                 "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
-                 default_workarea_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                 default_workarea_id, issued_by, issued_seq) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .bind(k.key_id)
             .bind(k.tenant_id)
@@ -409,6 +490,45 @@ async fn apply_fold(
             .bind(&k.principal)
             .bind(k.held_by.as_str())
             .bind(k.default_workarea)
+            .bind(k.issued_by)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        // The schema's foreign keys and role CHECK refuse a grant or denial
+        // on a row the tenant does not hold; the error aborts the commit.
+        MetadataFold::GrantIssued { key_id, grant } => {
+            sqlx::query(
+                "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, deny, epoch) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(grant.grant_id)
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(grant.role.as_str())
+            .bind(grant.node)
+            .bind(deny_to_json(&grant.deny))
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::KeyDenied {
+            key_id,
+            denial,
+            created_by,
+        } => {
+            sqlx::query(
+                "INSERT INTO key_denials (id, tenant_id, key_id, workarea_node_id, epoch, \
+                 created_by) VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(denial.denial_id)
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(denial.node)
+            .bind(seq)
+            .bind(created_by)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -551,7 +671,7 @@ impl JournalStore for PgStore {
         .await
         .map_err(backend)?;
 
-        apply_fold(&mut tx, tenant_id, env.event_id, req.fold).await?;
+        apply_fold(&mut tx, tenant_id, env.event_id, seq, req.fold).await?;
 
         // Outbox: kind 'bronze-event' (0001's drain-kind set); the port
         // row's event id, topic and digest-only payload ride in the jsonb
@@ -758,8 +878,8 @@ impl JournalStore for PgStore {
             .await
             .map_err(backend)?;
         let row = sqlx::query(
-            "SELECT id, tenant_id, role, principal, held_by, default_workarea_id, hash \
-             FROM api_keys WHERE hash = $1",
+            "SELECT id, tenant_id, role, principal, held_by, default_workarea_id, issued_by, \
+             hash FROM api_keys WHERE hash = $1",
         )
         .bind(&hash)
         .fetch_optional(&mut *tx)
@@ -786,8 +906,168 @@ impl JournalStore for PgStore {
             principal: row.try_get("principal").map_err(backend)?,
             held_by: held_by_from_str(&held_by)?,
             default_workarea: row.try_get("default_workarea_id").map_err(backend)?,
+            issued_by: row.try_get("issued_by").map_err(backend)?,
             key_hash: format!("sha256:{}", hex::encode(stored_hash)),
         }))
+    }
+
+    async fn key_access(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Option<KeyAccess>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // One snapshot for the three reads, so the epochs they return label
+        // one journalled state (ADR-0025 d14). SET TRANSACTION must precede
+        // every other statement of the transaction.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let key = sqlx::query("SELECT issued_seq FROM api_keys WHERE tenant_id = $1 AND id = $2")
+            .bind(tenant_id)
+            .bind(key_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let Some(key) = key else {
+            tx.commit().await.map_err(backend)?;
+            return Ok(None);
+        };
+        let grants = sqlx::query(
+            "SELECT id, role, workarea_node_id, deny, epoch FROM grants \
+             WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let denials = sqlx::query(
+            "SELECT id, workarea_node_id, created_by, epoch FROM key_denials \
+             WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+
+        let grants = grants
+            .iter()
+            .map(|row| {
+                let role: String = row.try_get("role").map_err(backend)?;
+                let deny: Value = row.try_get("deny").map_err(backend)?;
+                Ok(GrantRecord {
+                    grant: Grant {
+                        grant_id: row.try_get("id").map_err(backend)?,
+                        node: row.try_get("workarea_node_id").map_err(backend)?,
+                        role: role_from_str(&role)?,
+                        deny: deny_from_json(&deny)?,
+                    },
+                    epoch: seq_from_column(row, "epoch")?,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?;
+        let denials = denials
+            .iter()
+            .map(|row| {
+                Ok(DenialRecord {
+                    denial: KeyDenial {
+                        denial_id: row.try_get("id").map_err(backend)?,
+                        node: row.try_get("workarea_node_id").map_err(backend)?,
+                    },
+                    created_by: row.try_get("created_by").map_err(backend)?,
+                    epoch: seq_from_column(row, "epoch")?,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?;
+        Ok(Some(KeyAccess {
+            issued_seq: seq_from_column(&key, "issued_seq")?,
+            grants,
+            denials,
+        }))
+    }
+
+    async fn workarea(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Option<WorkareaRecord>, StoreError> {
+        let sql =
+            format!("SELECT {WORKAREA_COLUMNS} FROM workareas WHERE tenant_id = $1 AND id = $2");
+        Ok(self
+            .workarea_rows(tenant_id, workarea_id, &sql)
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    async fn workarea_ancestry(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Option<Vec<WorkareaRecord>>, StoreError> {
+        // Up the parent_id links from the node; the depth orders the walk.
+        let sql = format!(
+            "WITH RECURSIVE up AS ( \
+                 SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
+                  WHERE tenant_id = $1 AND id = $2 \
+                 UNION ALL \
+                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, up.depth + 1 \
+                   FROM workareas w JOIN up ON w.id = up.parent_id \
+                  WHERE w.tenant_id = $1 \
+             ) SELECT {WORKAREA_COLUMNS} FROM up ORDER BY depth ASC"
+        );
+        let ancestry = self.workarea_rows(tenant_id, workarea_id, &sql).await?;
+        let Some(top) = ancestry.last() else {
+            return Ok(None);
+        };
+        // A walk that stops short of a root left the tenant (a parent_id the
+        // foreign key admits across tenants); it would drop ancestors'
+        // grants and denials, so it is refused.
+        if let Some(parent_id) = top.parent_id {
+            return Err(StoreError::Backend(format!(
+                "the ancestry of {workarea_id} names parent {parent_id}, \
+                 which this tenant does not hold"
+            )));
+        }
+        Ok(Some(ancestry))
+    }
+
+    async fn workarea_subtree(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        let sql = format!(
+            "WITH RECURSIVE down AS ( \
+                 SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
+                  WHERE tenant_id = $1 AND id = $2 \
+                 UNION ALL \
+                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, down.depth + 1 \
+                   FROM workareas w JOIN down ON w.parent_id = down.id \
+                  WHERE w.tenant_id = $1 \
+             ) SELECT {WORKAREA_COLUMNS} FROM down ORDER BY depth ASC, id ASC"
+        );
+        self.workarea_rows(tenant_id, workarea_id, &sql).await
+    }
+
+    async fn workarea_children(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        // COLLATE "C" compares the UTF-8 bytes, whatever the database's
+        // locale, and uuid compares its 16 bytes.
+        let sql = format!(
+            "SELECT {WORKAREA_COLUMNS} FROM workareas \
+             WHERE tenant_id = $1 AND parent_id = $2 \
+             ORDER BY name COLLATE \"C\" ASC, id ASC"
+        );
+        self.workarea_rows(tenant_id, workarea_id, &sql).await
     }
 
     async fn idempotency_get(

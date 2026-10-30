@@ -11,9 +11,10 @@ use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde_json::Value;
 use uuid::Uuid;
 
+use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope, key_fingerprint};
 
-use crate::types::{KeyRecord, MemoryRecord, WorkareaRecord};
+use crate::types::{KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord};
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
@@ -30,11 +31,34 @@ pub enum StoreError {
 /// The metadata fold committed atomically with a journal event: what the
 /// event does to the read-side rows, applied in the same transaction
 /// (ADR-0002's one-transaction commit point).
+///
+/// A key row's `issued_seq` and a grant or denial row's epoch are never
+/// carried here: the store writes the seq of the event this fold commits
+/// with, so the row cannot disagree with its event (workareas.md permission
+/// epoch; ADR-0025 d14).
 #[derive(Debug, Clone)]
 pub enum MetadataFold {
     TenantGenesis,
     WorkareaCreated(WorkareaRecord),
+    /// `key.issued`: the key row, its `issued_seq` this commit's seq.
     KeyIssued(KeyRecord),
+    /// `grant.issued`: one grant row on `key_id`, its epoch this commit's
+    /// seq. The store refuses a grant on a key or node it does not hold, and
+    /// a grant role other than reader, writer or dreamer (postgres-schema.md
+    /// `grants`).
+    GrantIssued {
+        key_id: Uuid,
+        grant: Grant,
+    },
+    /// `key.denied`: one global per-key denial row on `key_id`, journalled
+    /// by `created_by`, its epoch this commit's seq. The store refuses a
+    /// denial on a key or node it does not hold (postgres-schema.md
+    /// `key_denials`).
+    KeyDenied {
+        key_id: Uuid,
+        denial: KeyDenial,
+        created_by: Uuid,
+    },
     /// A captured submission: the row lands `held` (or `rejected` on a scan
     /// veto, with `enqueue: false` — nothing waits in the queue).
     MemoryHeld {
@@ -168,6 +192,50 @@ pub trait JournalStore: Send + Sync {
         &self,
         key_hash: &str,
     ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send;
+
+    /// The key's `issued_seq`, grants and global denials, read in one
+    /// snapshot so their epochs label one journalled state; `None` for a key
+    /// this tenant does not hold. This is the one grants read effective
+    /// access costs per request (workareas.md effective access; ADR-0025 d1,
+    /// d14).
+    fn key_access(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<KeyAccess>, StoreError>> + Send;
+
+    fn workarea(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Option<WorkareaRecord>, StoreError>> + Send;
+
+    /// The node and each parent in turn, from the node to the root, by
+    /// `parent_id`; `None` for a node this tenant does not hold. This is the
+    /// one ancestry walk effective access costs per request (workareas.md;
+    /// ADR-0025 d1).
+    fn workarea_ancestry(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Vec<WorkareaRecord>>, StoreError>> + Send;
+
+    /// The node and every descendant, each once: the node first, then each
+    /// depth in id order, so a parent always precedes its children; empty for
+    /// a node this tenant does not hold (ADR-0025 d1, subtree(scope)).
+    fn workarea_subtree(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send;
+
+    /// The node's immediate children, ordered by name in byte order, then
+    /// id: the order the workarea read serves them in (ADR-0025 d14).
+    fn workarea_children(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send;
 
     fn idempotency_get(
         &self,
