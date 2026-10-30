@@ -1,6 +1,6 @@
 ---
 name: oml-memory
-description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_remember, oml_learn, oml_recall, oml_my_work, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, and why a write is not visible right away.
+description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_remember, oml_learn, oml_recall, oml_get, oml_supersede, oml_my_work, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
 ---
 
 # Working with Open Memory Lab memory
@@ -13,12 +13,14 @@ than writing the same fact twice.
 ## Two connections, one server
 
 The plugin connects twice. The `oml` connection uses the agent's writer key, so call
-`oml_remember`, `oml_learn` and `oml_my_work` there. The `oml-recall` connection uses a
-reader key, so call `oml_recall`, `oml_workarea_info` and `oml_events_tail` there. Each
-connection lists all six tools, and a tool called on the wrong connection is refused:
-`oml_remember` and `oml_learn` with `access.verb_ceiling` on the reader key, and the three
-reads with `access.not_found` on a writer key that holds no reader grant. `oml_my_work` is
-answered on either connection, but only with the writes of the key behind it.
+`oml_remember`, `oml_learn`, `oml_supersede` and `oml_my_work` there. The `oml-recall`
+connection uses a reader key, so call `oml_recall`, `oml_workarea_info` and
+`oml_events_tail` there. Each connection lists all eight tools, and a tool called on the
+wrong connection is refused: `oml_remember`, `oml_learn` and `oml_supersede` with
+`access.verb_ceiling` on the reader key, and the three reads with `access.not_found` on a
+writer key that holds no reader grant. `oml_my_work` and `oml_get` answer on either
+connection for the writes of the key behind it; `oml_get` of another key's approved memory
+needs the `oml-recall` connection.
 
 ## Check what a workarea allows
 
@@ -49,6 +51,15 @@ null, pass it back as `cursor` for the next page. A cursor works only for the ke
 received it and expires; when one is refused with `request.validation`, start again from
 the first page.
 
+## Read one memory back
+
+Call `oml_get` with an `artifact_id` to read one version with its `text`. Your own writes
+are answered in any state, so you can check a held memory before anyone approves it;
+another key's memory is answered only once approved, and anything else is refused with
+`access.not_found`. `tip: true` marks the version recall serves for its claim. An older
+version stays readable with `tip: false`, and `replaces` names the version a revision
+replaced.
+
 ## Remember one claim at a time
 
 - `claim_key` names the claim inside its workarea, for example
@@ -63,6 +74,20 @@ the first page.
 Use `oml_learn` for a conclusion drawn from memories you already hold. It requires
 `derives_from`, the `artifact_id`s it rests on. Declared lineage keeps a memory's author
 out of the review of anything derived from it.
+
+## Revise or retire a memory
+
+Call `oml_supersede` to propose a new version of a claim whose current version your key
+wrote. Pass the `artifact_id` of the version recall serves now, the one with `tip: true`,
+the whole new `text`, and optionally a `reason`. The new version is held like any write,
+and recall keeps serving the old one until a different identity approves the new one. If
+another version took the tip first, the refusal `submission.tip_conflict` names it in
+`details.current_tip`; read it with `oml_get` before you propose again. Keep the same
+`idempotency_key` when you retry the same proposal.
+
+To retire a claim that no longer holds, pass `retirement: true` with a `text` that says
+why. Once approved, recall stops serving the claim, and every version stays readable with
+`oml_get`.
 
 ## What the tools cannot do
 

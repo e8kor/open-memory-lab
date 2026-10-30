@@ -328,6 +328,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::TermRetirement => ApiError::validation(
             "a term is never retired: terms deprecate, through a supersession with term_status deprecated",
         ),
+        AppError::VocabularyTarget(kind) => ApiError::validation(format!(
+            "a {} target is superseded on the HTTP API: oml_supersede carries no vocabulary fields",
+            kind.as_str()
+        )),
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
             "submission.claim_key_conflict",
