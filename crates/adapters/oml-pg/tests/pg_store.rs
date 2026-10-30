@@ -735,7 +735,7 @@ async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_serve
         .await
         .expect("recall");
     assert_eq!(
-        hits.iter().map(|(m, _)| m.memory_id).collect::<Vec<_>>(),
+        hits.iter().map(|c| c.memory_id).collect::<Vec<_>>(),
         vec![quote]
     );
     let hits = store
@@ -743,7 +743,7 @@ async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_serve
         .await
         .expect("recall");
     assert_eq!(
-        hits.iter().map(|(m, _)| m.memory_id).collect::<Vec<_>>(),
+        hits.iter().map(|c| c.memory_id).collect::<Vec<_>>(),
         vec![note_next]
     );
 

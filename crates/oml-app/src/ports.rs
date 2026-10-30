@@ -16,7 +16,7 @@ use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, k
 
 use crate::types::{
     ClaimKeyState, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
-    WorkareaRecord,
+    RecallCandidate, WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -221,16 +221,27 @@ pub trait JournalStore: Send + Sync {
         memory_id: Uuid,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
-    /// Full-text recall: each matched hit with its score, at most `k`, in
-    /// the total order of hits — score descending, then `artifact_id`
-    /// ascending (retrieval.md, the recall-ordering contract; ADR-0025 d8).
-    /// Hits are served tips (tip and state promoted) of kind `memory` or
-    /// `derived_fact` that `kinds` names, never retirement versions, so
-    /// neither a replaced version nor any version of a retired claim is a
-    /// hit; steering never is, whatever `kinds` names. The search covers
-    /// exactly the `readable` workarea nodes — subtree(scope) ∩ the nodes
-    /// where reader is effective, computed by the use-case. An empty set
-    /// searches nothing: there is no tenant-wide fallback (ADR-0025 d1).
+    /// The rows of `memory_ids` this tenant holds, read set-wise in one
+    /// statement, in the order named; an id no row has is absent. Recall
+    /// hydrates exactly the rows it serves this way, after the `k` and
+    /// budget cuts, never one read per hit (retrieval.md token budgets;
+    /// ADR-0024 d4, ADR-0025 d7).
+    fn memories(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
+    /// Full-text recall: each matched hit as a candidate with its score, at
+    /// most `k`, in the total order of hits — score descending, then
+    /// `artifact_id` ascending (retrieval.md, the recall-ordering contract;
+    /// ADR-0025 d8). Hits are served tips (tip and state promoted) of kind
+    /// `memory` or `derived_fact` that `kinds` names, never retirement
+    /// versions, so neither a replaced version nor any version of a retired
+    /// claim is a hit; steering never is, whatever `kinds` names. The search
+    /// covers exactly the `readable` workarea nodes — subtree(scope) ∩ the
+    /// nodes where reader is effective, computed by the use-case. An empty
+    /// set searches nothing: there is no tenant-wide fallback (ADR-0025 d1).
     fn recall_fts(
         &self,
         tenant_id: Uuid,
@@ -238,7 +249,28 @@ pub trait JournalStore: Send + Sync {
         query: &str,
         kinds: &[MemoryKind],
         k: usize,
-    ) -> impl Future<Output = Result<Vec<(MemoryRecord, f32)>, StoreError>> + Send;
+    ) -> impl Future<Output = Result<Vec<RecallCandidate>, StoreError>> + Send;
+
+    /// Own held recall: the held rows whose author is one of
+    /// `author_key_ids`, of kind `memory` or `derived_fact` that `kinds`
+    /// names, never retirement versions and never steering, on exactly the
+    /// `readable` nodes, matched by the query and scored as
+    /// [`recall_fts`](Self::recall_fts) scores, at most `k` in the same
+    /// total order (retrieval.md, own held rows in recall; ADR-0025 d4). The
+    /// state and the author predicate are the store's own, never a filter
+    /// the caller may forget, so no other key's held text is ever matched.
+    /// The designed form reads a `held_fts` table fenced by an author policy
+    /// instead; the PoC stores bodies inline and reads them here (retrieval.md,
+    /// held text containment; ADR-0025 d5).
+    fn recall_own_held(
+        &self,
+        tenant_id: Uuid,
+        author_key_ids: &[Uuid],
+        readable: &[Uuid],
+        query: &str,
+        kinds: &[MemoryKind],
+        k: usize,
+    ) -> impl Future<Output = Result<Vec<RecallCandidate>, StoreError>> + Send;
 
     /// Applicable steering over `nodes`, the scope's ancestors the key reads,
     /// listed from the `universe` root down: every promoted served tip of

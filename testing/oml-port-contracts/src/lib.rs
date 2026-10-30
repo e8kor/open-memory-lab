@@ -25,7 +25,7 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     ClaimKeyState, Crew, DenialRecord, GrantRecord, KeyAccess, KeyRecord, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, WorkareaRecord,
+    ListingPosition, ListingScope, MemoryRecord, RecallCandidate, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -620,9 +620,9 @@ fn successor_of(
     }
 }
 
-/// The ids of recall hits, in the order served.
-fn hit_ids(hits: &[(MemoryRecord, f32)]) -> Vec<Uuid> {
-    hits.iter().map(|(m, _)| m.memory_id).collect()
+/// The ids of recall candidates, in the order served.
+fn hit_ids(hits: &[RecallCandidate]) -> Vec<Uuid> {
+    hits.iter().map(|c| c.memory_id).collect()
 }
 
 /// The hit kinds recall admits by default (retrieval.md: vocabulary kinds
@@ -751,21 +751,21 @@ pub async fn hits_that_tie_on_score_are_ordered_by_artifact_id<S: JournalStore>(
     assert_eq!(hits.len(), 4, "{hits:?}");
     assert!(
         hits.windows(2).all(|w| {
-            let ((a, a_score), (b, b_score)) = (&w[0], &w[1]);
-            a_score > b_score || (a_score == b_score && a.memory_id < b.memory_id)
+            let (a, b) = (&w[0], &w[1]);
+            a.score > b.score || (a.score == b.score && a.memory_id < b.memory_id)
         }),
         "score descending, then artifact_id ascending: {hits:?}"
     );
-    let tied: Vec<&(MemoryRecord, f32)> = hits
+    let tied: Vec<&RecallCandidate> = hits
         .iter()
-        .filter(|(m, _)| ties.contains(&m.memory_id))
+        .filter(|c| ties.contains(&c.memory_id))
         .collect();
     assert_eq!(
-        tied.iter().map(|(m, _)| m.memory_id).collect::<Vec<_>>(),
+        tied.iter().map(|c| c.memory_id).collect::<Vec<_>>(),
         [0xC41_u128, 0xC42, 0xC43].map(Uuid::from_u128),
         "equal texts tie, and the tie breaks by artifact_id"
     );
-    assert!(tied.iter().all(|(_, score)| *score == tied[0].1));
+    assert!(tied.iter().all(|c| c.score == tied[0].score));
     let first_two = store
         .recall_fts(rig.tenant_id, &[wa], "canary", &HIT_KINDS, 2)
         .await
@@ -948,6 +948,215 @@ pub async fn steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifac
     assert!(
         in_force(Vec::new()).await.is_empty(),
         "no node serves nothing"
+    );
+}
+
+/// Own held recall reads only the held rows of the author key set it is
+/// handed, whatever the query matches: never another key's held row, never
+/// a promoted, rejected, steering or retirement row of its own, and never a
+/// row off the readable nodes; it admits the kinds it is handed, ranks in
+/// the total order of hits and honours `k` (retrieval.md, own held rows in
+/// recall and held text containment; ADR-0025 d4, d5).
+pub async fn recall_own_held_never_returns_another_keys_row_whatever_the_query<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(44);
+    rig.seed_chain(store, 0).await;
+    let [wa, elsewhere] = [0xB440_u128, 0xB441].map(Uuid::from_u128);
+    let [own, other] = [0xD440_u128, 0xD441].map(Uuid::from_u128);
+    let row = |wa: Uuid, id: u128, author: Uuid, kind: MemoryKind, body: &str| MemoryRecord {
+        kind,
+        ..held_memory(
+            rig_tenant(44),
+            wa,
+            Uuid::from_u128(id),
+            "wanda",
+            author,
+            body,
+        )
+    };
+    let held = row(wa, 0xC440, own, MemoryKind::Memory, "the canary held");
+    let derived = row(
+        wa,
+        0xC441,
+        own,
+        MemoryKind::DerivedFact,
+        "the canary derived and held",
+    );
+    let steering = row(
+        wa,
+        0xC442,
+        own,
+        MemoryKind::Steering,
+        "canary steering, held",
+    );
+    let target = row(wa, 0xC443, own, MemoryKind::Memory, "the canary promoted");
+    let retirement = successor_of(
+        &target,
+        Uuid::from_u128(0xC444),
+        "retired: the canary lapsed",
+        true,
+    );
+    let rejected = row(wa, 0xC445, own, MemoryKind::Memory, "the canary rejected");
+    let away = row(
+        elsewhere,
+        0xC446,
+        own,
+        MemoryKind::Memory,
+        "the canary away",
+    );
+    let theirs = row(
+        wa,
+        0xC447,
+        other,
+        MemoryKind::Memory,
+        "the canary held by another key: canary, canary",
+    );
+    let their_own_words = row(wa, 0xC448, other, MemoryKind::Memory, "zebra quartz");
+    for memory in [&held, &derived, &steering, &away, &theirs, &their_own_words] {
+        hold(&mut rig, store, memory.clone()).await.expect("hold");
+    }
+    hold_and_promote(&mut rig, store, target).await;
+    hold(&mut rig, store, retirement).await.expect("hold");
+    hold(&mut rig, store, rejected.clone()).await.expect("hold");
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+
+    let every_kind = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Steering,
+    ];
+    let recall = |keys: Vec<Uuid>, readable: Vec<Uuid>, query: &'static str| async move {
+        store
+            .recall_own_held(rig_tenant(44), &keys, &readable, query, &every_kind, 10)
+            .await
+            .expect("own held recall")
+    };
+    let mine = [held.memory_id, derived.memory_id];
+    for query in [
+        "canary",
+        "zebra quartz",
+        "canary another key held derived steering promoted retired rejected away zebra",
+        "",
+    ] {
+        let hits = recall(vec![own], vec![wa], query).await;
+        assert!(
+            hits.iter().all(|c| mine.contains(&c.memory_id)),
+            "query {query:?} reached a row that is not the key's own held: {hits:?}"
+        );
+        assert!(
+            hits.windows(2).all(|w| {
+                let (a, b) = (&w[0], &w[1]);
+                a.score > b.score || (a.score == b.score && a.memory_id < b.memory_id)
+            }),
+            "score descending, then artifact_id ascending: {hits:?}"
+        );
+    }
+    let mut served = hit_ids(&recall(vec![own], vec![wa], "canary").await);
+    served.sort();
+    assert_eq!(served, mine, "the key's own held memory and derived fact");
+    assert!(
+        recall(vec![own], vec![wa], "zebra quartz").await.is_empty(),
+        "another key's text matches nothing for this key"
+    );
+    assert_eq!(
+        hit_ids(&recall(vec![other], vec![wa], "canary").await),
+        vec![theirs.memory_id],
+        "each key set reads its own"
+    );
+    assert!(
+        recall(Vec::new(), vec![wa], "canary").await.is_empty(),
+        "an empty key set reads nothing"
+    );
+    assert_eq!(
+        hit_ids(&recall(vec![own], vec![elsewhere], "canary").await),
+        vec![away.memory_id],
+        "exactly the readable nodes are searched"
+    );
+    assert!(
+        recall(vec![own], Vec::new(), "canary").await.is_empty(),
+        "an empty readable set searches nothing"
+    );
+
+    let narrowed = store
+        .recall_own_held(
+            rig_tenant(44),
+            &[own],
+            &[wa],
+            "canary",
+            &[MemoryKind::DerivedFact],
+            10,
+        )
+        .await
+        .expect("own held recall");
+    assert_eq!(hit_ids(&narrowed), vec![derived.memory_id], "kinds narrows");
+    assert_eq!(
+        narrowed[0].body_bytes, derived.body_bytes,
+        "a candidate carries its body_bytes"
+    );
+    let all = recall(vec![own], vec![wa], "canary").await;
+    let first = store
+        .recall_own_held(rig_tenant(44), &[own], &[wa], "canary", &every_kind, 1)
+        .await
+        .expect("own held recall");
+    assert_eq!(first, all[..1], "k keeps the prefix of the order");
+}
+
+/// The set-wise read returns the rows named, in the order named; an id no
+/// row of this tenant has is absent, not an error (ADR-0024 d4, ADR-0025
+/// d7).
+pub async fn memories_reads_the_named_rows_in_the_order_named<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(45);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB45);
+    let [a, b, c] = [0xC451_u128, 0xC452, 0xC453].map(|id| {
+        held_memory(
+            rig_tenant(45),
+            wa,
+            Uuid::from_u128(id),
+            "wanda",
+            Uuid::from_u128(0xD45),
+            "drain the canary",
+        )
+    });
+    for memory in [&a, &b, &c] {
+        hold(&mut rig, store, memory.clone()).await.expect("hold");
+    }
+    let read = store
+        .memories(
+            rig.tenant_id,
+            &[c.memory_id, a.memory_id, Uuid::from_u128(0xFF), b.memory_id],
+        )
+        .await
+        .expect("memories");
+    assert_eq!(
+        read.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        vec![c.memory_id, a.memory_id, b.memory_id]
+    );
+    for m in &read {
+        let one = store
+            .memory(rig.tenant_id, m.memory_id)
+            .await
+            .expect("memory")
+            .expect("the row");
+        assert_eq!(*m, one, "the set-wise read and the single read agree");
+    }
+    assert!(
+        store
+            .memories(rig_tenant(46), &[a.memory_id])
+            .await
+            .expect("memories")
+            .is_empty(),
+        "another tenant's rows are absent"
+    );
+    assert!(
+        store
+            .memories(rig.tenant_id, &[])
+            .await
+            .expect("memories")
+            .is_empty()
     );
 }
 
@@ -2692,6 +2901,8 @@ where
     retired_claims_are_absent_from_recall_and_steering(&new_store().await).await;
     steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifact_id(&new_store().await)
         .await;
+    recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await).await;
+    memories_reads_the_named_rows_in_the_order_named(&new_store().await).await;
     journal_review_claim_laws(&new_store().await).await;
     journal_key_lookup_by_hash(&new_store().await).await;
     a_revoked_key_no_longer_resolves_by_its_hash(&new_store().await).await;
