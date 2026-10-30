@@ -5,7 +5,7 @@
 //! The doubles are deterministic — fixed clock, counting id generator — so
 //! every test chain is reproducible byte for byte.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -39,6 +39,8 @@ struct TenantState {
     keys_by_hash: BTreeMap<String, KeyRecord>,
     /// Per key id, in commit order — which is epoch order.
     access: BTreeMap<Uuid, KeyAccess>,
+    /// Keys `key.revoked` folded: they resolve by hash no more.
+    revoked: BTreeSet<Uuid>,
     queue: Vec<QueueEntry>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
@@ -46,16 +48,29 @@ struct TenantState {
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
 /// assignment is serialized exactly as the Postgres adapter will serialize
-/// it (ADR-0002 one chain head per tenant).
-#[derive(Debug, Default)]
+/// it (ADR-0002 one chain head per tenant). A clone is another handle on the
+/// same state, as a second `PgStore` handle is on the same database, so a
+/// test can read through the port what the use-case it drives committed.
+#[derive(Debug, Default, Clone)]
 pub struct MemStore {
-    tenants: Mutex<BTreeMap<Uuid, Arc<Mutex<TenantState>>>>,
+    tenants: Arc<Mutex<BTreeMap<Uuid, Arc<Mutex<TenantState>>>>>,
+    /// The event type whose next commit is refused, then forgotten.
+    refuse_next: Arc<Mutex<Option<&'static str>>>,
 }
 
 impl MemStore {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Refuses the next commit of an `event_type` event with
+    /// `StoreError::Backend`, changing nothing, then commits normally again:
+    /// a storage failure in the middle of a multi-commit use-case, on demand.
+    #[must_use]
+    pub fn refusing_next_commit_of(self, event_type: &'static str) -> Self {
+        *self.refuse_next.lock().expect("refusal lock") = Some(event_type);
+        self
     }
 
     fn tenant(&self, tenant_id: Uuid) -> Arc<Mutex<TenantState>> {
@@ -148,6 +163,14 @@ fn apply_fold(state: &mut TenantState, fold: MetadataFold, seq: u64) -> Result<(
                 });
             }
         }
+        MetadataFold::KeyRevoked { key_id } => {
+            if !state.access.contains_key(&key_id) || state.revoked.contains(&key_id) {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant"
+                )));
+            }
+            state.revoked.insert(key_id);
+        }
         MetadataFold::MemoryHeld { memory, enqueue } => {
             if enqueue {
                 state.queue.push(QueueEntry {
@@ -190,6 +213,16 @@ fn apply_fold(state: &mut TenantState, fold: MetadataFold, seq: u64) -> Result<(
 
 impl JournalStore for MemStore {
     async fn commit(&self, req: CommitRequest) -> Result<CommitReceipt, StoreError> {
+        {
+            let mut refuse = self.refuse_next.lock().expect("refusal lock");
+            if *refuse == Some(req.event.envelope.event_type.as_str()) {
+                *refuse = None;
+                return Err(StoreError::Backend(format!(
+                    "the double refused this {} commit on request",
+                    req.event.envelope.event_type
+                )));
+            }
+        }
         let tenant = self.tenant(req.event.envelope.tenant_id);
         // The per-tenant lock IS the serialization point the real adapter
         // provides with a row lock on the chain head (ADR-0002).
@@ -268,7 +301,7 @@ impl JournalStore for MemStore {
     async fn recall_fts(
         &self,
         tenant_id: Uuid,
-        workarea_id: Option<Uuid>,
+        readable: &[Uuid],
         query: &str,
         k: usize,
     ) -> Result<Vec<MemoryRecord>, StoreError> {
@@ -281,7 +314,7 @@ impl JournalStore for MemStore {
             .memories
             .values()
             .filter(|m| m.status == MemoryStatus::Promoted && m.superseded_by.is_none())
-            .filter(|m| workarea_id.is_none_or(|w| m.workarea_id == w))
+            .filter(|m| readable.contains(&m.workarea_id))
             .filter(|m| m.body.to_lowercase().contains(&needle))
             .take(k)
             .cloned()
@@ -293,6 +326,7 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
+        workareas: &[Uuid],
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
@@ -308,6 +342,9 @@ impl JournalStore for MemStore {
             let Some(memory) = memories.get(&entry.memory_id) else {
                 continue;
             };
+            if !workareas.contains(&memory.workarea_id) {
+                continue;
+            }
             // Never serve a row the reviewer's lineage excludes
             // (admission.md review; R2 is re-checked at verdict time).
             if memory
@@ -333,12 +370,11 @@ impl JournalStore for MemStore {
             .cloned()
             .collect();
         for tenant in tenants {
-            if let Some(key) = tenant
-                .lock()
-                .expect("tenant lock")
-                .keys_by_hash
-                .get(key_hash)
-            {
+            let state = tenant.lock().expect("tenant lock");
+            if let Some(key) = state.keys_by_hash.get(key_hash) {
+                if state.revoked.contains(&key.key_id) {
+                    return Ok(None);
+                }
                 return Ok(Some(key.clone()));
             }
         }

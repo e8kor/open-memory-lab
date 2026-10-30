@@ -5,10 +5,10 @@
 //! (errors.md "Implementation mapping").
 //!
 //! The PoC slice: submit / get / recall / supersede on `/v1`; review next,
-//! verdicts, key issuance, workarea creation, the events tail and the
-//! bootstrap claim on `/v2`; `/healthz` and `/readyz` unversioned and
-//! unauthenticated (http-api.md "Health"); `/mcp`, the agent plugin's
-//! stateless facade over those rings ([`mcp`]).
+//! verdicts, key issuance, global per-key denials, workarea creation, the
+//! events tail and the bootstrap claim on `/v2`; `/healthz` and `/readyz`
+//! unversioned and unauthenticated (http-api.md "Health"); `/mcp`, the agent
+//! plugin's stateless facade over those rings ([`mcp`]).
 
 #![forbid(unsafe_code)]
 
@@ -36,8 +36,8 @@ use oml_app::App;
 use oml_app::domain::{HeldBy, Role, SignedEnvelope, sha256_digest_string};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
-    AppError, BootstrapRequest, IssueKeyRequest, MemoryRecord, RecallRequest, SubmitRequest,
-    SupersedeRequest, Verdict,
+    AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey, MemoryRecord,
+    RecallRequest, SubmitRequest, SupersedeRequest, Verdict,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -123,6 +123,7 @@ where
             .route("/v2/review/next", post(Self::review_next))
             .route("/v2/review/verdicts", post(Self::review_verdicts))
             .route("/v2/keys", post(Self::issue_key))
+            .route("/v2/keys/{key_id}/denials", post(Self::deny_key))
             .route("/v2/workareas", post(Self::create_workarea))
             .route("/v2/events", get(Self::events_tail))
             .route("/v2/bootstrap/claim", post(Self::bootstrap_claim))
@@ -486,6 +487,8 @@ where
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
+        // The body is closed, nested objects included: a field the server
+        // does not serve is refused, never dropped (ADR-0025 d16).
         let req: KeyIssueBody = parse_json(headers, body)?;
         if req.tenant_id.is_some() {
             return Err(ApiError::validation(
@@ -493,73 +496,87 @@ where
             ));
         }
         let role = parse_role(&req.role)?;
-        // The two-key rule: a key never combines admin with dreamer-class
-        // grants (errors.md access.role_exclusive).
-        if role == Role::Admin && req.grants.iter().any(|g| g.role == "dreamer") {
-            return Err(ApiError::new(
-                StatusCode::FORBIDDEN,
-                "access.role_exclusive",
-                "Admin is never a reviewer (D9): a key never combines admin with dreamer verbs.",
-                "a key holding the admin role never carries dreamer-class grants",
-            ));
-        }
-        let held_by = match req.held_by.as_deref().unwrap_or("agent") {
-            "agent" => HeldBy::Agent,
-            "human" => HeldBy::Human,
-            "service" => HeldBy::Service,
-            other => {
+        let held_by = match req.held_by.as_deref() {
+            None => None,
+            Some("agent") => Some(HeldBy::Agent),
+            Some("human") => Some(HeldBy::Human),
+            Some("service") => Some(HeldBy::Service),
+            Some(other) => {
                 return Err(ApiError::validation(format!(
                     "held_by must be agent, human or service, not {other:?}"
                 )));
             }
         };
+        let grants = req
+            .grants
+            .iter()
+            .map(|g| {
+                Ok(GrantRequest {
+                    node: g.workarea_node_id,
+                    role: parse_grant_role(&g.role)?,
+                    deny: g.deny.iter().map(|d| d.subtree_node_id).collect(),
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
         let principal = req
             .principal
             .clone()
             .or_else(|| req.label.clone())
             .unwrap_or_else(|| "unnamed".to_owned());
-        // ADR-0022 d4: the key's journalled default workarea is the provider
-        // ring's target; the PoC maps the first grant's node to it.
-        let default_workarea = req
-            .default_workarea_id
-            .or_else(|| req.grants.first().map(|g| g.workarea_node_id));
         let issue = IssueKeyRequest {
             role,
-            principal: principal.clone(),
+            principal,
             held_by,
-            default_workarea,
+            default_workarea: req.default_workarea_id,
+            grants,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let grants: Vec<Value> = req
-            .grants
-            .iter()
-            .map(|g| {
-                json!({
-                    "workarea_node_id": g.workarea_node_id,
-                    "role": g.role,
-                    "grant_id": format!("gr_{}", new_uuid().simple()),
-                    "epoch": 1,
-                })
-            })
-            .collect();
+        Ok(json_response(
+            StatusCode::CREATED,
+            &key_issued_json(&issued, req.label.as_deref()),
+        ))
+    }
+
+    async fn deny_key(
+        State(st): State<Self>,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(
+            &rid,
+            Self::deny_key_inner(&st, &key_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key_id}/denials`: one journalled `key.denied`, its
+    /// epoch its own seq (http-api.md keys, grants, denials; ADR-0025 d2).
+    async fn deny_key_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        // Ids are opaque; one that can name no key is absent.
+        let key_id = Uuid::parse_str(key_id).map_err(|_| ApiError::not_found())?;
+        let req: DenialBody = parse_json(headers, body)?;
+        let denial = retry_chain(|| st.app.deny_key(&token, key_id, req.workarea_node_id))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::CREATED,
             &json!({
-                "key_id": issued.key_id,
-                "role": req.role,
-                "principal": principal,
-                "label": req.label,
-                "expiry": Value::Null,
-                "revoked_at": Value::Null,
-                "rotated_from": Value::Null,
-                "grants": grants,
-                "denials": [],
-                "epoch": 1,
-                // Show-once: the value appears exactly here, journalled as
-                // issued-without-value (D14).
-                "value": issued.value,
+                "denial_id": denial.denial.denial_id,
+                "workarea_node_id": denial.denial.node,
+                "epoch": denial.epoch,
+                // Lifting is not built (ADR-0025 d2).
+                "lifted": false,
             }),
         ))
     }
@@ -692,12 +709,11 @@ where
                 None => return Err(ApiError::auth_invalid("consumed")),
             }
         };
-        let principal = req
-            .admin_principal
-            .unwrap_or_else(|| "bootstrap/admin".to_owned());
         let boot = BootstrapRequest {
             tenant_name: req.tenant_name.unwrap_or_else(|| "default".to_owned()),
-            admin_principal: principal.clone(),
+            admin_principal: req
+                .admin_principal
+                .unwrap_or_else(|| "bootstrap/admin".to_owned()),
         };
         match st.app.bootstrap_tenant(&boot).await {
             Err(e) => {
@@ -707,26 +723,19 @@ where
                 }
                 Err(map_app_error(e, ErrorContext::Write))
             }
-            Ok(result) => Ok(json_response(
-                StatusCode::CREATED,
-                &json!({
-                    "key_id": result.admin_key.key_id,
-                    // The PoC ceremony mints the tenant's first ADMIN key
-                    // directly (the spec's operator tier is out of slice).
-                    "role": "admin",
-                    "principal": principal,
-                    "label": "root admin key",
-                    "expiry": Value::Null,
-                    "revoked_at": Value::Null,
-                    "rotated_from": Value::Null,
-                    "grants": [],
-                    "denials": [],
-                    "epoch": 1,
-                    "value": result.admin_key.value,
-                    "tenant_id": result.tenant_id,
-                    "root_workarea_id": result.root_workarea_id,
-                }),
-            )),
+            Ok(result) => {
+                // The PoC ceremony mints the tenant's first ADMIN key
+                // directly (the spec's operator tier is out of slice).
+                let mut body = key_issued_json(&result.admin_key, Some("root admin key"));
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("tenant_id".to_owned(), json!(result.tenant_id));
+                    obj.insert(
+                        "root_workarea_id".to_owned(),
+                        json!(result.root_workarea_id),
+                    );
+                }
+                Ok(json_response(StatusCode::CREATED, &body))
+            }
         }
     }
 }
@@ -793,12 +802,22 @@ struct VerdictBody {
 }
 
 #[derive(Deserialize)]
-struct GrantBody {
-    workarea_node_id: Uuid,
-    role: String,
+#[serde(deny_unknown_fields)]
+struct DenyBody {
+    subtree_node_id: Uuid,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantBody {
+    workarea_node_id: Uuid,
+    role: String,
+    #[serde(default)]
+    deny: Vec<DenyBody>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct KeyIssueBody {
     role: String,
     #[serde(default)]
@@ -814,6 +833,18 @@ struct KeyIssueBody {
     held_by: Option<String>,
     default_workarea_id: Option<Uuid>,
     tenant_id: Option<String>,
+}
+
+/// openapi.yaml `DenialRequest`, which the contract leaves open.
+#[derive(Deserialize)]
+struct DenialBody {
+    workarea_node_id: Uuid,
+    #[serde(default)]
+    #[allow(
+        dead_code,
+        reason = "key.denied journals no reason (event-catalog.md); the text is accepted, not stored"
+    )]
+    reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -960,6 +991,62 @@ fn parse_role(role: &str) -> Result<Role, ApiError> {
             "role must be one of reader, writer, dreamer, admin, operator — not {other:?}"
         ))),
     }
+}
+
+/// A grant role is reader, writer or dreamer, never admin or operator
+/// (openapi.yaml `GrantRequest.role`); whether the key role admits it is the
+/// app's issuance check.
+fn parse_grant_role(role: &str) -> Result<Role, ApiError> {
+    match role {
+        "reader" => Ok(Role::Reader),
+        "writer" => Ok(Role::Writer),
+        "dreamer" => Ok(Role::Dreamer),
+        other => Err(ApiError::validation(format!(
+            "a grant role is one of reader, writer, dreamer — not {other:?}"
+        ))),
+    }
+}
+
+/// The spec's `KeyIssued` (openapi.yaml): the key as `key.issued` journalled
+/// it, each stored grant with its id and epoch, the key's permission epoch
+/// and the value, shown once (ADR-0025 d2).
+fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
+    let grants: Vec<Value> = issued
+        .access
+        .grants
+        .iter()
+        .map(|g| {
+            json!({
+                "grant_id": g.grant.grant_id,
+                "workarea_node_id": g.grant.node,
+                "role": g.grant.role.as_str(),
+                "deny": g
+                    .grant
+                    .deny
+                    .iter()
+                    .map(|d| json!({ "subtree_node_id": d }))
+                    .collect::<Vec<_>>(),
+                "epoch": g.epoch,
+            })
+        })
+        .collect();
+    json!({
+        "key_id": issued.key_id,
+        "role": issued.role.as_str(),
+        "principal": issued.principal,
+        "default_workarea_id": issued.default_workarea,
+        "held_by": issued.held_by.map(HeldBy::as_str),
+        "label": label,
+        "expiry": Value::Null,
+        "revoked_at": Value::Null,
+        "rotated_from": Value::Null,
+        "grants": grants,
+        "denials": [],
+        "epoch": issued.access.permission_epoch(),
+        // Show-once: the value appears exactly here, journalled as
+        // issued-without-value (D14).
+        "value": issued.value,
+    })
 }
 
 fn validate_kind(kind: &str) -> Result<(), ApiError> {

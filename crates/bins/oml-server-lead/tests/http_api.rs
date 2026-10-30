@@ -17,10 +17,8 @@ use sqlx::{Connection, Executor};
 use tower::ServiceExt as _;
 use uuid::Uuid;
 
-use oml_app::domain::{Envelope, EventTime, event_types, sha256_digest_string, sign};
 use oml_app::ed25519_dalek::SigningKey;
-use oml_app::ports::{CommitRequest, IdGen as _, JournalStore, MetadataFold, OutboxRow};
-use oml_app::types::KeyRecord;
+use oml_app::ports::{IdGen as _, JournalStore};
 use oml_pg::PgStore;
 use oml_server_lead::{OsIds, enumerate_tenants, lead_state, pg_ping, startup_fork_check};
 use oml_transport_http::DbPing;
@@ -212,25 +210,57 @@ async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
     (token, tenant, root)
 }
 
-/// Issues a key over HTTP under the admin token; returns the show-once value.
+/// Issues a key over HTTP under the admin token, its one grant its own role
+/// on `wa`; returns the show-once value.
 async fn issue_key(router: &Router, admin: &str, role: &str, principal: &str, wa: Uuid) -> String {
+    issue_key_with(
+        router,
+        admin,
+        role,
+        principal,
+        json!([{ "workarea_node_id": wa, "role": role }]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned()
+}
+
+/// Issues a key over HTTP carrying exactly `grants`; returns the 201 body.
+async fn issue_key_with(
+    router: &Router,
+    admin: &str,
+    role: &str,
+    principal: &str,
+    grants: Value,
+) -> Value {
     let (status, _, body) = send(
         router,
         "POST",
         "/v2/keys",
         Call::auth(admin)
             .idem(&format!("issue-{role}-{principal}"))
-            .body(json!({
-                "role": role,
-                "principal": principal,
-                "grants": [{ "workarea_node_id": wa, "role": role }],
-            })),
+            .body(json!({ "role": role, "principal": principal, "grants": grants })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "issue {role}: {body}");
     assert_eq!(body["role"], role);
-    assert_eq!(body["epoch"], 1);
-    body["value"].as_str().expect("show-once value").to_owned()
+    body
+}
+
+/// Creates a workarea under `parent` over HTTP; returns its id.
+async fn create_workarea(router: &Router, admin: &str, parent: Uuid, name: &str) -> Uuid {
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(admin)
+            .idem(&format!("wa-{name}"))
+            .body(json!({ "parent_id": parent, "name": name })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    Uuid::parse_str(body["id"].as_str().expect("workarea id")).expect("uuid")
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +442,7 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_envelope(&body, "access.role_exclusive");
 
+    let quotes = create_workarea(router, &admin, crew, "quotes").await;
     let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
     let dreamer = issue_key(router, &admin, "dreamer", "crew/reviewer-3", crew).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
@@ -736,7 +767,8 @@ async fn full_happy_path_over_http() {
             .starts_with("sha256:")
     );
 
-    // Roles do not nest: the writer key is not a reader.
+    // Roles do not nest: the writer key holds no reader grant, so its scope
+    // is not readable and recall answers as absence (ADR-0025 d1).
     let (status, _, body) = send(
         router,
         "POST",
@@ -744,8 +776,8 @@ async fn full_happy_path_over_http() {
         Call::auth(&writer).body(json!({"query": "quote"})),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_envelope(&body, "access.verb_ceiling");
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
 
     // Events tail: seq ascending from after_seq, head_seq for lag.
     let (status, _, events) = send(
@@ -874,7 +906,27 @@ async fn full_happy_path_over_http() {
         .collect();
     assert_eq!(hits, vec![&successor["artifact_id"]], "{recall}");
 
-    // X-OML-Workarea: the explicit per-request override (ADR-0022 d4).
+    // X-OML-Workarea: the explicit per-request override (ADR-0022 d4),
+    // honored within the key's grants — a child of the granted node is
+    // inside them, the root above it is not (ADR-0025 d1).
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&writer)
+            .idem("s-quotes")
+            .workarea(&quotes.to_string())
+            .body(json!({
+                "verb": "remember", "claim_key": "quotes-note", "kind": "memory",
+                "body": "a note written into the quotes workarea",
+            })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(
+        body["workarea_id"].as_str(),
+        Some(quotes.to_string().as_str())
+    );
     let (status, _, body) = send(
         router,
         "POST",
@@ -888,11 +940,8 @@ async fn full_happy_path_over_http() {
             })),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
-    assert_eq!(
-        body["workarea_id"].as_str(),
-        Some(root.to_string().as_str())
-    );
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
 
     // A malformed override is refused as validation, not guessed.
     let (status, _, body) = send(
@@ -940,54 +989,14 @@ async fn full_happy_path_over_http() {
 async fn workarea_unresolved_is_422() {
     let rig = fresh_rig().await;
     let router = &rig.router;
-    let (_admin, tenant, root) = bootstrap(router).await;
+    let (admin, _tenant, root) = bootstrap(router).await;
 
-    // A writer key with NO journalled default workarea. The use-case layer
-    // always inherits the issuer's default, so the fixture commits the
-    // KeyIssued fold directly — signed with the deployment key so the chain
-    // keeps verifying.
-    let token = "oml_fixture_key_without_default_workarea";
-    let head = rig
-        .store
-        .chain_head(tenant)
-        .await
-        .expect("head")
-        .expect("chain exists after bootstrap");
-    let envelope = Envelope {
-        tenant_id: tenant,
-        seq: head.seq + 1,
-        event_id: OsIds.new_id(),
-        event_type: event_types::KEY_ISSUED.to_owned(),
-        prev_hash: head.hash,
-        principal: "test-fixture".to_owned(),
-        api_key_id: None,
-        at: EventTime::parse("2026-10-30T00:00:00.000000Z").expect("fixture time"),
-        payload: json!({ "value_disclosed": false }),
-    };
-    let event = sign(envelope, &rig.signing).expect("signing");
-    let record = KeyRecord {
-        key_id: OsIds.new_id(),
-        tenant_id: tenant,
-        role: oml_app::domain::Role::Writer,
-        principal: "crew/no-default".to_owned(),
-        held_by: oml_app::domain::HeldBy::Agent,
-        default_workarea: None,
-        issued_by: None,
-        key_hash: sha256_digest_string(token.as_bytes()),
-    };
-    rig.store
-        .commit(CommitRequest {
-            outbox: OutboxRow {
-                event_id: event.envelope.event_id,
-                topic: event.envelope.event_type.clone(),
-                payload: json!({}),
-            },
-            event,
-            fold: MetadataFold::KeyIssued(record),
-            idempotency: None,
-        })
-        .await
-        .expect("fixture key commits");
+    // A zero-grant key has no default workarea, and never inherits the
+    // issuer's (ADR-0025 d2).
+    let issued = issue_key_with(router, &admin, "writer", "crew/no-default", json!([])).await;
+    assert_eq!(issued["default_workarea_id"], Value::Null, "{issued}");
+    assert_eq!(issued["grants"], json!([]), "{issued}");
+    let token = issued["value"].as_str().expect("show-once value");
 
     // No default, no X-OML-Workarea: refused, never guessed for.
     let submit = json!({
@@ -1003,7 +1012,7 @@ async fn workarea_unresolved_is_422() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_envelope(&body, "request.workarea_unresolved");
 
-    // The override resolves it.
+    // The override resolves a workarea, which no grant of the key covers.
     let (status, _, body) = send(
         router,
         "POST",
@@ -1014,11 +1023,360 @@ async fn workarea_unresolved_is_422() {
             .body(submit),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
+
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// Issuance with grants and denials (ADR-0025 d2, d16)
+// ---------------------------------------------------------------------------
+
+/// Bootstrap and one crew workarea: (admin token, tenant, crew).
+async fn crew_tenant(router: &Router) -> (String, Uuid, Uuid) {
+    let (admin, tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "metals-crew").await;
+    (admin, tenant, crew)
+}
+
+async fn head_seq(rig: &Rig, tenant: Uuid) -> u64 {
+    rig.store
+        .chain_head(tenant)
+        .await
+        .expect("head")
+        .expect("chain")
+        .seq
+}
+
+#[tokio::test]
+async fn the_issuance_response_echoes_stored_grant_ids_and_epochs() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": crew, "role": "reader" },
+        ]),
+    )
+    .await;
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
+    let stored = rig
+        .store
+        .key_access(tenant, key_id)
+        .await
+        .expect("read")
+        .expect("the key is stored");
+    let echoed: Vec<(String, u64)> = issued["grants"]
+        .as_array()
+        .expect("grants")
+        .iter()
+        .map(|g| {
+            (
+                g["grant_id"].as_str().expect("grant id").to_owned(),
+                g["epoch"].as_u64().expect("epoch"),
+            )
+        })
+        .collect();
+    let expected: Vec<(String, u64)> = stored
+        .grants
+        .iter()
+        .map(|g| (g.grant.grant_id.to_string(), g.epoch))
+        .collect();
+    assert_eq!(echoed, expected, "{issued}");
+    // key.issued, then one grant.issued per grant, each its own seq.
     assert_eq!(
-        body["workarea_id"].as_str(),
-        Some(root.to_string().as_str())
+        expected.iter().map(|(_, e)| *e).collect::<Vec<_>>(),
+        vec![stored.issued_seq + 1, stored.issued_seq + 2]
     );
+    assert_eq!(issued["epoch"].as_u64(), Some(stored.issued_seq + 2));
+    assert_eq!(head_seq(&rig, tenant).await, stored.issued_seq + 2);
+    assert_eq!(issued["grants"][0]["role"], "writer");
+    assert_eq!(issued["grants"][1]["role"], "reader");
+    assert_eq!(issued["grants"][0]["workarea_node_id"], crew.to_string());
+    // The default the server chose and the attestation as journalled: none
+    // was sent, so the first grant's node and null.
+    assert_eq!(issued["default_workarea_id"], crew.to_string());
+    assert_eq!(issued["held_by"], Value::Null);
+    assert_eq!(issued["denials"], json!([]));
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_deny_mask_on_issuance_is_stored_never_dropped() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let sealed = create_workarea(router, &admin, crew, "sealed").await;
+
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "writer", "deny": [{ "subtree_node_id": sealed }] },
+            { "workarea_node_id": crew, "role": "reader", "deny": [{ "subtree_node_id": sealed }] },
+        ]),
+    )
+    .await;
+    let mask = json!([{ "subtree_node_id": sealed.to_string() }]);
+    assert_eq!(issued["grants"][0]["deny"], mask, "{issued}");
+    assert_eq!(issued["grants"][1]["deny"], mask, "{issued}");
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
+    let stored = rig
+        .store
+        .key_access(tenant, key_id)
+        .await
+        .expect("read")
+        .expect("stored");
+    assert!(stored.grants.iter().all(|g| g.grant.deny == vec![sealed]));
+
+    // The mask holds: the key writes on the crew and is told nothing exists
+    // under the sealed subtree.
+    let token = issued["value"].as_str().expect("value");
+    let note = |claim_key: &str| json!({ "verb": "remember", "claim_key": claim_key, "kind": "memory", "body": "x" });
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(token).idem("m-1").body(note("open")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(token)
+            .idem("m-2")
+            .workarea(&sealed.to_string())
+            .body(note("sealed")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_unknown_issuance_field_is_request_validation() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let head = head_seq(&rig, tenant).await;
+
+    // Unknown at the top, in a grant, and in a deny entry: refused, never
+    // ignored, so no field the issuer meant is silently dropped (ADR-0025
+    // d16).
+    for (n, body) in [
+        json!({ "role": "writer", "scopes": ["all"] }),
+        json!({ "role": "writer", "grants": [{ "workarea_node_id": crew, "role": "writer", "expires": "never" }] }),
+        json!({ "role": "writer", "grants": [{ "workarea_node_id": crew, "role": "writer", "deny": [{ "node": crew }] }] }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&admin).idem(&format!("bad-{n}")).body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn access_refusals_carry_their_recovery_details() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let quotes = create_workarea(router, &admin, crew, "quotes").await;
+
+    // An inadmissible grant: the grant's role, the key role's admissible set
+    // and the grant's index.
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("k-1").body(json!({
+            "role": "writer",
+            "grants": [
+                { "workarea_node_id": crew, "role": "reader" },
+                { "workarea_node_id": crew, "role": "dreamer" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.issuer_ceiling");
+    assert_eq!(
+        body["error"]["details"],
+        json!({ "role": "dreamer", "admissible": ["reader", "writer"], "grant_index": 1 })
+    );
+    // A key role above the issuer's: the requested role and the issuable set.
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin)
+            .idem("k-2")
+            .body(json!({ "role": "operator" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.issuer_ceiling");
+    assert_eq!(
+        body["error"]["details"],
+        json!({ "role": "operator", "admissible": ["reader", "writer", "dreamer", "admin"] })
+    );
+    // A deny outside its grant, and a default no grant covers.
+    for (idem, body) in [
+        (
+            "k-3",
+            json!({ "role": "writer", "grants": [{ "workarea_node_id": quotes, "role": "writer", "deny": [{ "subtree_node_id": crew }] }] }),
+        ),
+        (
+            "k-4",
+            json!({ "role": "writer", "grants": [{ "workarea_node_id": quotes, "role": "writer" }], "default_workarea_id": crew }),
+        ),
+    ] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&admin).idem(idem).body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+
+    // Readable but not writable: the node and the missing role.
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "reader" },
+            { "workarea_node_id": quotes, "role": "writer" },
+        ]),
+    )
+    .await;
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(issued["value"].as_str().expect("value"))
+            .idem("s-1")
+            .body(json!({ "verb": "remember", "claim_key": "k", "kind": "memory", "body": "x" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.grant_refused");
+    assert_eq!(
+        body["error"]["details"],
+        json!({ "workarea_id": crew.to_string(), "needed_role": "writer" })
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subtree_away() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "reader",
+        "crew/agent-recall",
+        json!([{ "workarea_node_id": crew, "role": "reader" }]),
+    )
+    .await;
+    let reader = issued["value"].as_str().expect("value");
+    let key_id = issued["key_id"].as_str().expect("key id");
+    let recall = || {
+        send(
+            router,
+            "POST",
+            "/v1/memories/recall",
+            Call::auth(reader).body(json!({ "query": "anything" })),
+        )
+    };
+    let (status, _, body) = recall().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Only the admin key role journals a denial.
+    let path = format!("/v2/keys/{key_id}/denials");
+    let (status, _, body) = send(
+        router,
+        "POST",
+        &path,
+        Call::auth(reader)
+            .idem("d-0")
+            .body(json!({ "workarea_node_id": crew })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.verb_ceiling");
+    let (status, _, body) = send(
+        router,
+        "POST",
+        &path,
+        Call::auth(&admin).body(json!({ "workarea_node_id": crew })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.idempotency_key_required");
+    let (status, _, body) = send(
+        router,
+        "POST",
+        &format!("/v2/keys/{}/denials", Uuid::from_u128(0xBEEF)),
+        Call::auth(&admin)
+            .idem("d-1")
+            .body(json!({ "workarea_node_id": crew })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
+
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        &path,
+        Call::auth(&admin).idem("d-2").body(json!({
+            "workarea_node_id": crew,
+            "reason": "quarantine the crew during incident 44",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+    assert_eq!(denial["workarea_node_id"], crew.to_string());
+    assert_eq!(denial["lifted"], false);
+    assert!(denial["denial_id"].is_string(), "{denial}");
+    assert_eq!(denial["epoch"].as_u64(), Some(head_seq(&rig, tenant).await));
+
+    // Deny-wins: the key's own default scope is no longer readable.
+    let (status, _, body) = recall().await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
 
     drop_db(&rig.db_name).await;
 }

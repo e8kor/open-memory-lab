@@ -17,9 +17,9 @@ claude plugin install oml@open-memory-lab
 ```
 
 The plugin registers two MCP connections to the same endpoint: `oml` with the writer key
-for remembering and `oml-recall` with the reader key for recall. This release gives each
-key a single role, so one key cannot do both. When a key can carry writer and reader
-grants together, the second connection goes away. If `OML_RECALL_KEY` is unset, only
+for remembering and `oml-recall` with the reader key for recall. A writer key issued with
+both writer and reader grants on the workarea can do both, and the second connection goes
+away once the plugin is built around that one key. If `OML_RECALL_KEY` is unset, only
 `oml-recall` fails to connect.
 
 Give each agent its own key. Attribution, and the rule that a reviewer never reviews

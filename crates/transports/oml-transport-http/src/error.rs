@@ -206,16 +206,66 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("{verb} is outside the {} verb ceiling", role.as_str()),
         )
         .with_details(json!({ "verb": verb, "role": role.as_str() })),
-        AppError::IssuerCeiling { issuer, requested } => ApiError::new(
+        AppError::IssuerCeiling {
+            role,
+            admissible,
+            grant_index,
+        } => {
+            // One-hop recovery details (ADR-0025 d2, d16): the refused role,
+            // the set that would be admitted, and which grant it was.
+            let mut details = json!({
+                "role": role.as_str(),
+                "admissible": admissible.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+            });
+            if let (Some(index), Some(obj)) = (grant_index, details.as_object_mut()) {
+                obj.insert("grant_index".to_owned(), json!(index));
+            }
+            let message = match grant_index {
+                None => format!("the issuer may not issue a {} key", role.as_str()),
+                Some(index) => format!(
+                    "grant {index} has role {}, which the key role does not admit",
+                    role.as_str()
+                ),
+            };
+            ApiError::new(
+                StatusCode::FORBIDDEN,
+                "access.issuer_ceiling",
+                "A key is issued with a role no higher than the issuer's (D9).",
+                message,
+            )
+            .with_details(details)
+        }
+        AppError::RoleExclusive => ApiError::new(
             StatusCode::FORBIDDEN,
-            "access.issuer_ceiling",
-            "A key is issued with a role no higher than the issuer's (D9).",
-            format!(
-                "a {} key cannot issue a {} key",
-                issuer.as_str(),
-                requested.as_str()
-            ),
+            "access.role_exclusive",
+            "Admin is never a reviewer (D9): a key never combines admin with dreamer verbs.",
+            "a key holding the admin role never carries dreamer-class grants",
         ),
+        AppError::GrantRefused {
+            workarea_id,
+            needed_role,
+        } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.grant_refused",
+            "Effective access is the union of grants, each attenuated by its denies, deny-wins for global denials; what a grant does not confer, the key does not have (D7).",
+            format!(
+                "the key reads this workarea but holds no effective {} role on it",
+                needed_role.as_str()
+            ),
+        )
+        .with_details(json!({
+            "workarea_id": workarea_id.to_string(),
+            "needed_role": needed_role.as_str(),
+        })),
+        AppError::DenyOutsideGrant {
+            grant_index,
+            subtree_node_id,
+        } => ApiError::validation(format!(
+            "grant {grant_index}'s deny names {subtree_node_id}, which lies outside the grant's subtree"
+        )),
+        AppError::DefaultUncovered { workarea_id } => ApiError::validation(format!(
+            "default_workarea_id {workarea_id} is covered by no grant of the key"
+        )),
         AppError::WorkareaUnresolved => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "request.workarea_unresolved",

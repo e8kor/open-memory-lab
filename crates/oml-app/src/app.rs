@@ -1,29 +1,42 @@
 //! The use-cases: every verb the transports will front, enforcing the
 //! constitution here — verb ceilings (R1), reviewer-never-author (R2),
-//! promoted-only reads (R3) — never in an adapter (ADR-0019 d1).
+//! promoted-only reads (R3) — never in an adapter (ADR-0019 d1). Every
+//! workarea-scoped verb resolves effective access from the key's grants and
+//! denials on each request, in the one refusal order of roles-and-keys.md
+//! (ADR-0025 d1).
 
-use std::collections::BTreeSet;
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use oml_domain::access::{
+    AccessRefusal, Grant, IssuanceRefusal, KeyDenial, admissible_grant_roles, check_issuance,
+    effective_roles, resolve,
+};
 use oml_domain::{
-    ChainHead, EventDraft, KeySet, MemoryStatus, Role, Sha256Hash, SignedEnvelope, check_reviewer,
-    event_types, next_envelope, sha256_digest_string, transition,
+    ChainHead, EventDraft, HeldBy, KeySet, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
+    check_reviewer, event_types, next_envelope, sha256_digest_string, transition,
 };
 
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, OutboxRow, ScanOutcome,
-    Scanner, Signer,
+    Scanner, Signer, StoreError,
 };
 use crate::types::{
-    AppError, BootstrapRequest, BootstrapResult, IssueKeyRequest, IssuedKey, KeyRecord,
-    MemoryRecord, RecallRequest, RecallResult, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SupersedeOutcome, SupersedeRequest, Verdict, VerdictOutcome, WorkareaRecord,
+    AppError, BootstrapRequest, BootstrapResult, DenialRecord, GrantRecord, IssueKeyRequest,
+    IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult, SubmitOutcome,
+    SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest, Verdict, VerdictOutcome,
+    WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
+
+/// The fixed reason a failed issuance's `key.revoked` digests
+/// (roles-and-keys.md issuance order; ADR-0025 d2).
+const ISSUANCE_INCOMPLETE: &str = "issuance_incomplete";
 
 /// The application, generic over its driven ports.
 pub struct App<J, S, C, I, Sc> {
@@ -34,6 +47,30 @@ pub struct App<J, S, C, I, Sc> {
     scanner: Sc,
 }
 
+/// The authenticated key and what its effective access is computed from,
+/// read once per request and never cached (workareas.md effective access;
+/// ADR-0025 d1, d14).
+struct Caller {
+    key: KeyRecord,
+    grants: Vec<Grant>,
+    denials: Vec<KeyDenial>,
+}
+
+impl Caller {
+    /// `effective_roles` at the node whose ancestry, node to root, this is.
+    fn effective(&self, ancestry: &[Uuid]) -> BTreeSet<Role> {
+        effective_roles(&self.grants, &self.denials, ancestry)
+    }
+
+    /// Whether a global per-key denial covers the node: deny-wins, own rows
+    /// included (roles-and-keys.md#own).
+    fn denied(&self, ancestry: &[Uuid]) -> bool {
+        self.denials.iter().any(|d| ancestry.contains(&d.node))
+    }
+}
+
+/// An admin verb: checked on the key's own role, never on grants
+/// (roles-and-keys.md permission matrix; http-api.md authorization).
 fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), AppError> {
     if key.role == role {
         Ok(())
@@ -42,6 +79,63 @@ fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), A
             role: key.role,
             verb,
         })
+    }
+}
+
+/// Step 1 of the refusal order: the key's role must admit the grant role the
+/// verb needs. It reads no node, so it runs before the workarea resolves
+/// (roles-and-keys.md grant admissibility and refusal order; ADR-0025 d1).
+fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Result<(), AppError> {
+    if admissible_grant_roles(key.role).contains(&needed) {
+        Ok(())
+    } else {
+        Err(AppError::VerbCeiling {
+            role: key.role,
+            verb,
+        })
+    }
+}
+
+/// A `held_by: service` key is refused every review-class verb before any
+/// lookup: its dreamer grant confers them like any other, and this rule, not
+/// the grant, keeps it out of review (roles-and-keys.md; ADR-0025 d1).
+fn refuse_service(key: &KeyRecord, verb: &'static str) -> Result<(), AppError> {
+    if key.held_by == HeldBy::Service {
+        Err(AppError::VerbCeiling {
+            role: key.role,
+            verb,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+/// A refusal-order answer as the typed refusal; `node` is the workarea
+/// `access.grant_refused` names.
+fn access_refusal(refusal: AccessRefusal, node: Uuid, verb: &'static str) -> AppError {
+    match refusal {
+        AccessRefusal::VerbCeiling { role, .. } => AppError::VerbCeiling { role, verb },
+        AccessRefusal::GrantRefused { needed_role } => AppError::GrantRefused {
+            workarea_id: node,
+            needed_role,
+        },
+        AccessRefusal::NotFound => AppError::NotFound,
+    }
+}
+
+/// Issuance steps 1–3 as the typed refusal.
+fn issuance_refusal(refusal: IssuanceRefusal) -> AppError {
+    match refusal {
+        IssuanceRefusal::RoleExclusive => AppError::RoleExclusive,
+        IssuanceRefusal::IssuerCeiling {
+            role,
+            admissible,
+            grant_index,
+        } => AppError::IssuerCeiling {
+            role,
+            admissible,
+            grant_index,
+        },
     }
 }
 
@@ -98,12 +192,125 @@ where
 
     // -- internals ----------------------------------------------------------
 
-    async fn authenticate(&self, api_key: &str) -> Result<KeyRecord, AppError> {
+    /// The key the value names and the grants and denials of its effective
+    /// access: one hash lookup and one access read per request (workareas.md
+    /// effective access; ADR-0025 d1).
+    async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
         let hash = sha256_digest_string(api_key.as_bytes());
-        self.journal
+        let key = self
+            .journal
             .key_by_hash(&hash)
             .await?
-            .ok_or(AppError::Unauthorized)
+            .ok_or(AppError::Unauthorized)?;
+        // The access read answers nothing only for a key its own tenant
+        // does not hold: fail closed.
+        let access = self
+            .journal
+            .key_access(key.tenant_id, key.key_id)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        Ok(Caller {
+            key,
+            grants: access.grants.into_iter().map(|g| g.grant).collect(),
+            denials: access.denials.into_iter().map(|d| d.denial).collect(),
+        })
+    }
+
+    /// The node's ancestry as ids, node to root; empty for a node the tenant
+    /// does not hold, which confers nothing.
+    async fn ancestry(&self, tenant_id: Uuid, node: Uuid) -> Result<Vec<Uuid>, AppError> {
+        Ok(self
+            .journal
+            .workarea_ancestry(tenant_id, node)
+            .await?
+            .map(|ancestry| ancestry.into_iter().map(|w| w.workarea_id).collect())
+            .unwrap_or_default())
+    }
+
+    /// The refusal order for a verb needing grant role `needed` on `node`
+    /// (roles-and-keys.md; ADR-0025 d1): verb ceiling, allowed, grant
+    /// refused, not found.
+    async fn require_access(
+        &self,
+        caller: &Caller,
+        node: Uuid,
+        needed: Role,
+        verb: &'static str,
+    ) -> Result<(), AppError> {
+        let ancestry = self.ancestry(caller.key.tenant_id, node).await?;
+        resolve(caller.key.role, &caller.effective(&ancestry), needed)
+            .map_err(|refusal| access_refusal(refusal, node, verb))
+    }
+
+    /// Whether the caller can read `memory`: its own row in any state,
+    /// unless a global denial masks the row's workarea, or a promoted version
+    /// within its reader effective access (roles-and-keys.md#own; ADR-0025
+    /// d3). Own is the authoring key, never the principal.
+    async fn readable(&self, caller: &Caller, memory: &MemoryRecord) -> Result<bool, AppError> {
+        let ancestry = self
+            .ancestry(caller.key.tenant_id, memory.workarea_id)
+            .await?;
+        if memory.author_key_id == caller.key.key_id {
+            return Ok(!caller.denied(&ancestry));
+        }
+        Ok(memory.status == MemoryStatus::Promoted
+            && caller.effective(&ancestry).contains(&Role::Reader))
+    }
+
+    /// The nodes of the subtree at `root` where `role` is effective for the
+    /// caller, parent before child: subtree(root) ∩ effective access, each
+    /// node judged by the whole formula (ADR-0025 d1).
+    async fn nodes_with(
+        &self,
+        caller: &Caller,
+        root: Uuid,
+        role: Role,
+    ) -> Result<Vec<Uuid>, AppError> {
+        let tenant_id = caller.key.tenant_id;
+        let above = self.ancestry(tenant_id, root).await?;
+        if above.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut ancestries: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::from([(root, above)]);
+        let mut nodes = Vec::new();
+        // The subtree lists a parent before its children, so each node's
+        // ancestry is its parent's with the node in front.
+        for node in self.journal.workarea_subtree(tenant_id, root).await? {
+            let id = node.workarea_id;
+            if id != root {
+                let parent = node
+                    .parent_id
+                    .and_then(|p| ancestries.get(&p))
+                    .ok_or_else(|| {
+                        StoreError::Backend(format!(
+                            "the subtree of {root} lists {id} before its parent"
+                        ))
+                    })?;
+                let ancestry = std::iter::once(id).chain(parent.iter().copied()).collect();
+                ancestries.insert(id, ancestry);
+            }
+            if caller.effective(&ancestries[&id]).contains(&role) {
+                nodes.push(id);
+            }
+        }
+        Ok(nodes)
+    }
+
+    /// Every node where dreamer is effective for the caller: the union over
+    /// its dreamer grants' subtrees, a row outside which is never served
+    /// (ADR-0025 d1).
+    async fn dreamer_nodes(&self, caller: &Caller) -> Result<Vec<Uuid>, AppError> {
+        let roots: BTreeSet<Uuid> = caller
+            .grants
+            .iter()
+            .filter(|g| g.role == Role::Dreamer)
+            .map(|g| g.node)
+            .collect();
+        let mut nodes = BTreeSet::new();
+        for root in roots {
+            nodes.extend(self.nodes_with(caller, root, Role::Dreamer).await?);
+        }
+        Ok(nodes.into_iter().collect())
     }
 
     async fn head_event(&self, tenant_id: Uuid) -> Result<Option<SignedEnvelope>, AppError> {
@@ -192,7 +399,9 @@ where
             tenant_id,
             role: req.role,
             principal: req.principal.clone(),
-            held_by: req.held_by,
+            // The schema default when no attestation was sent
+            // (postgres-schema.md api_keys.held_by); the journal says null.
+            held_by: req.held_by.unwrap_or(HeldBy::Agent),
             default_workarea,
             issued_by,
             key_hash: sha256_digest_string(value.as_bytes()),
@@ -200,16 +409,92 @@ where
         (record, value)
     }
 
-    fn key_issued_payload(record: &KeyRecord) -> Value {
-        // Issued-without-value: key id, role, principal — never the value
-        // (roles-and-keys.md show-once rule).
+    /// The catalog payload of `key.issued` (event-catalog.md): never the
+    /// value (roles-and-keys.md show-once rule), and `held_by` as sent.
+    fn key_issued_payload(record: &KeyRecord, held_by: Option<HeldBy>) -> Value {
         json!({
             "key_id": record.key_id.to_string(),
             "role": record.role.as_str(),
             "principal": record.principal,
-            "held_by": record.held_by.as_str(),
+            "issued_by_key_id": record.issued_by.map(|k| k.to_string()),
+            "expiry": Value::Null,
             "value_disclosed": false,
+            "held_by": held_by.map(HeldBy::as_str),
+            "default_workarea_id": record.default_workarea.map(|w| w.to_string()),
         })
+    }
+
+    /// One `grant.issued` on `key_id`, sealed on `prev`: its payload's epoch
+    /// is its own seq (event-catalog.md `grant.issued`; ADR-0025 d2).
+    async fn commit_grant(
+        &self,
+        prev: &SignedEnvelope,
+        issuer: &KeyRecord,
+        key_id: Uuid,
+        grant: Grant,
+    ) -> Result<(SignedEnvelope, GrantRecord), AppError> {
+        let epoch = prev.envelope.seq + 1;
+        let event = self.seal(
+            Some(prev),
+            issuer.tenant_id,
+            event_types::GRANT_ISSUED,
+            &issuer.principal,
+            Some(issuer.key_id),
+            json!({
+                "grant_id": grant.grant_id.to_string(),
+                "key_id": key_id.to_string(),
+                "workarea_node_id": grant.node.to_string(),
+                "role": grant.role.as_str(),
+                "deny": grant
+                    .deny
+                    .iter()
+                    .map(|d| json!({ "subtree_node_id": d.to_string() }))
+                    .collect::<Vec<_>>(),
+                "epoch": epoch,
+            }),
+        )?;
+        let receipt = self
+            .commit(
+                event.clone(),
+                MetadataFold::GrantIssued {
+                    key_id,
+                    grant: grant.clone(),
+                },
+                None,
+            )
+            .await?;
+        Ok((
+            event,
+            GrantRecord {
+                grant,
+                epoch: receipt.seq,
+            },
+        ))
+    }
+
+    /// The `key.revoked` that follows an issuance which failed after its
+    /// `key.issued`, in a commit of its own, over the fixed reason
+    /// (roles-and-keys.md issuance order; ADR-0025 d2).
+    async fn revoke_incomplete(
+        &self,
+        issuer: &KeyRecord,
+        key_id: Uuid,
+    ) -> Result<CommitReceipt, AppError> {
+        let prev = self.head_event(issuer.tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            issuer.tenant_id,
+            event_types::KEY_REVOKED,
+            &issuer.principal,
+            Some(issuer.key_id),
+            json!({
+                "key_id": key_id.to_string(),
+                "revoked_by_key_id": issuer.key_id.to_string(),
+                "reason_digest": sha256_digest_string(ISSUANCE_INCOMPLETE.as_bytes()),
+            }),
+        )?;
+        self.commit(event, MetadataFold::KeyRevoked { key_id }, None)
+            .await
     }
 
     // -- use-cases ----------------------------------------------------------
@@ -261,8 +546,9 @@ where
         let issue = IssueKeyRequest {
             role: Role::Admin,
             principal: req.admin_principal.clone(),
-            held_by: oml_domain::HeldBy::Human,
+            held_by: Some(HeldBy::Human),
             default_workarea: Some(root_workarea_id),
+            grants: Vec::new(),
         };
         let (record, value) = self.mint_key(tenant_id, &issue, Some(root_workarea_id), None);
         let key_id = record.key_id;
@@ -272,54 +558,207 @@ where
             event_types::KEY_ISSUED,
             "operator",
             None,
-            Self::key_issued_payload(&record),
+            Self::key_issued_payload(&record, issue.held_by),
         )?;
-        self.commit(event, MetadataFold::KeyIssued(record), None)
+        let receipt = self
+            .commit(event, MetadataFold::KeyIssued(record), None)
             .await?;
 
         Ok(BootstrapResult {
             tenant_id,
             root_workarea_id,
-            admin_key: IssuedKey { key_id, value },
+            admin_key: IssuedKey {
+                key_id,
+                value,
+                role: issue.role,
+                principal: issue.principal,
+                held_by: issue.held_by,
+                default_workarea: issue.default_workarea,
+                access: KeyAccess {
+                    issued_seq: receipt.seq,
+                    grants: Vec::new(),
+                    denials: Vec::new(),
+                },
+            },
         })
     }
 
-    /// Issue a key under the issuer ceiling: only admin (and operator) keys
-    /// issue, and never a role above their own (roles-and-keys.md).
+    /// Issue a key with its grants, validated in the issuance order of
+    /// roles-and-keys.md (ADR-0025 d2): the two-key rule, the issuer ceiling,
+    /// grant admissibility, node existence, deny containment, the default's
+    /// coverage. `key.issued` commits first and one `grant.issued` per grant
+    /// follows; the value is returned only after the last of them commits.
+    /// An issuance that fails after `key.issued` journals `key.revoked` over
+    /// the fixed reason and answers the failure: the value was never
+    /// disclosed, so the key authenticates nothing either way.
     pub async fn issue_key(
         &self,
         api_key: &str,
         req: &IssueKeyRequest,
     ) -> Result<IssuedKey, AppError> {
-        let issuer = self.authenticate(api_key).await?;
+        let issuer = self.authenticate(api_key).await?.key;
         if issuer.role != Role::Admin && issuer.role != Role::Operator {
             return Err(AppError::VerbCeiling {
                 role: issuer.role,
                 verb: "issue_key",
             });
         }
-        if issuer.role == Role::Admin && req.role == Role::Operator {
-            return Err(AppError::IssuerCeiling {
-                issuer: issuer.role,
-                requested: req.role,
-            });
+        let tenant_id = issuer.tenant_id;
+        let grants: Vec<Grant> = req
+            .grants
+            .iter()
+            .map(|g| Grant {
+                grant_id: self.ids.new_id(),
+                node: g.node,
+                role: g.role,
+                deny: g.deny.clone(),
+            })
+            .collect();
+        // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
+        check_issuance(issuer.role, req.role, &grants).map_err(issuance_refusal)?;
+        // Step 4: every grant node and deny node is the tenant's.
+        let mut ancestries: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
+        for node in grants
+            .iter()
+            .flat_map(|g| std::iter::once(g.node).chain(g.deny.iter().copied()))
+        {
+            if let Entry::Vacant(slot) = ancestries.entry(node) {
+                let ancestry = self.ancestry(tenant_id, node).await?;
+                if ancestry.is_empty() {
+                    return Err(AppError::NotFound);
+                }
+                slot.insert(ancestry);
+            }
         }
-        let default_workarea = req.default_workarea.or(issuer.default_workarea);
-        let (record, value) =
-            self.mint_key(issuer.tenant_id, req, default_workarea, Some(issuer.key_id));
+        // Step 5: each deny node lies inside its own grant's subtree.
+        for (grant_index, grant) in grants.iter().enumerate() {
+            if let Some(&outside) = grant
+                .deny
+                .iter()
+                .find(|d| !ancestries[*d].contains(&grant.node))
+            {
+                return Err(AppError::DenyOutsideGrant {
+                    grant_index,
+                    subtree_node_id: outside,
+                });
+            }
+        }
+        // Step 6: a sent default lies in some grant's subtree and outside
+        // that grant's denies; absent, it is the first grant's node, and
+        // never the issuer's (workareas.md per-grant attenuation).
+        let default_workarea = match req.default_workarea {
+            None => grants.first().map(|g| g.node),
+            Some(workarea_id) => {
+                let ancestry = self.ancestry(tenant_id, workarea_id).await?;
+                let covered = grants.iter().any(|g| {
+                    ancestry.contains(&g.node) && !g.deny.iter().any(|d| ancestry.contains(d))
+                });
+                if !covered {
+                    return Err(AppError::DefaultUncovered { workarea_id });
+                }
+                Some(workarea_id)
+            }
+        };
+
+        let (record, value) = self.mint_key(tenant_id, req, default_workarea, Some(issuer.key_id));
         let key_id = record.key_id;
-        let prev = self.head_event(issuer.tenant_id).await?;
+        let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
-            issuer.tenant_id,
+            tenant_id,
             event_types::KEY_ISSUED,
             &issuer.principal,
             Some(issuer.key_id),
-            Self::key_issued_payload(&record),
+            Self::key_issued_payload(&record, req.held_by),
         )?;
-        self.commit(event, MetadataFold::KeyIssued(record), None)
+        let mut last = event.clone();
+        let receipt = self
+            .commit(event, MetadataFold::KeyIssued(record), None)
             .await?;
-        Ok(IssuedKey { key_id, value })
+        let mut stored = Vec::with_capacity(grants.len());
+        for grant in grants {
+            match self.commit_grant(&last, &issuer, key_id, grant).await {
+                Ok((event, record)) => {
+                    last = event;
+                    stored.push(record);
+                }
+                Err(failure) => {
+                    // The failure answers whether or not the revocation
+                    // commits: one that cannot leaves a key whose value
+                    // nobody holds, which authenticates nothing.
+                    let _revocation = self.revoke_incomplete(&issuer, key_id).await;
+                    return Err(failure);
+                }
+            }
+        }
+        Ok(IssuedKey {
+            key_id,
+            value,
+            role: req.role,
+            principal: req.principal.clone(),
+            held_by: req.held_by,
+            default_workarea,
+            access: KeyAccess {
+                issued_seq: receipt.seq,
+                grants: stored,
+                denials: Vec::new(),
+            },
+        })
+    }
+
+    /// Journal a global per-key denial on `key_id` over the subtree at
+    /// `node`: deny-wins across all of the key's grants, its epoch its own
+    /// `key.denied` seq. Admin key role only; a key or node the tenant does
+    /// not hold is absent (http-api.md keys, grants, denials; ADR-0025 d2).
+    pub async fn deny_key(
+        &self,
+        api_key: &str,
+        key_id: Uuid,
+        node: Uuid,
+    ) -> Result<DenialRecord, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "deny")?;
+        let tenant_id = admin.tenant_id;
+        if self.journal.key_access(tenant_id, key_id).await?.is_none()
+            || self.journal.workarea(tenant_id, node).await?.is_none()
+        {
+            return Err(AppError::NotFound);
+        }
+        let denial = KeyDenial {
+            denial_id: self.ids.new_id(),
+            node,
+        };
+        let prev = self.head_event(tenant_id).await?;
+        let epoch = prev.as_ref().map_or(1, |p| p.envelope.seq + 1);
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::KEY_DENIED,
+            &admin.principal,
+            Some(admin.key_id),
+            json!({
+                "denial_id": denial.denial_id.to_string(),
+                "key_id": key_id.to_string(),
+                "workarea_node_id": node.to_string(),
+                "epoch": epoch,
+            }),
+        )?;
+        let receipt = self
+            .commit(
+                event,
+                MetadataFold::KeyDenied {
+                    key_id,
+                    denial: denial.clone(),
+                    created_by: admin.key_id,
+                },
+                None,
+            )
+            .await?;
+        Ok(DenialRecord {
+            denial,
+            created_by: admin.key_id,
+            epoch: receipt.seq,
+        })
     }
 
     pub async fn create_workarea(
@@ -328,7 +767,7 @@ where
         name: &str,
         parent_id: Option<Uuid>,
     ) -> Result<WorkareaRecord, AppError> {
-        let key = self.authenticate(api_key).await?;
+        let key = self.authenticate(api_key).await?.key;
         require_role(&key, Role::Admin, "create_workarea")?;
         let workarea = WorkareaRecord {
             workarea_id: self.ids.new_id(),
@@ -355,19 +794,24 @@ where
         Ok(workarea)
     }
 
-    /// Submit a memory: writer ceiling, same-call deterministic scan, held
-    /// on arrival, idempotency record honored (admission.md, http-api.md).
+    /// Submit a memory: writer on the resolved node, which must exist, by
+    /// the refusal order (ADR-0025 d1); every `derives_from` target readable
+    /// (ADR-0025 d3); same-call deterministic scan, held on arrival,
+    /// idempotency record honored (admission.md, http-api.md).
     pub async fn submit_memory(
         &self,
         api_key: &str,
         req: &SubmitRequest,
     ) -> Result<SubmitOutcome, AppError> {
-        let key = self.authenticate(api_key).await?;
-        require_role(&key, Role::Writer, "submit")?;
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Writer, "submit")?;
         let workarea_id = req
             .workarea_id
             .or(key.default_workarea)
             .ok_or(AppError::WorkareaUnresolved)?;
+        self.require_access(&caller, workarea_id, Role::Writer, "submit")
+            .await?;
 
         let scope = IdempotencyScope {
             tenant_id: key.tenant_id,
@@ -403,7 +847,8 @@ where
         let vetoed = status == MemoryStatus::Rejected;
 
         // The lineage closure: the author plus every declared ancestor's
-        // closure — R2 runs over the whole of it (roles-and-keys.md).
+        // closure — R2 runs over the whole of it (roles-and-keys.md). An
+        // ancestor the key cannot read is indistinguishable from none.
         let mut principals = BTreeSet::from([key.principal.clone()]);
         let mut key_ids = BTreeSet::from([key.key_id]);
         for ancestor in &req.derives_from {
@@ -412,6 +857,9 @@ where
                 .memory(key.tenant_id, *ancestor)
                 .await?
                 .ok_or(AppError::LineageUnknown(*ancestor))?;
+            if !self.readable(&caller, &m).await? {
+                return Err(AppError::LineageUnknown(*ancestor));
+            }
             principals.extend(m.lineage_principals);
             key_ids.extend(m.lineage_key_ids);
         }
@@ -501,17 +949,24 @@ where
         })
     }
 
-    /// Serve the next reviewable held item to this dreamer, claiming it.
+    /// Serve the next reviewable held item to this dreamer, claiming it,
+    /// from the rows within its dreamer effective access only; a
+    /// `held_by: service` key is refused before any lookup (ADR-0025 d1).
     pub async fn review_next(&self, api_key: &str) -> Result<Option<MemoryRecord>, AppError> {
-        let key = self.authenticate(api_key).await?;
-        require_role(&key, Role::Dreamer, "review")?;
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Dreamer, "review")?;
+        refuse_service(key, "review")?;
+        let workareas = self.dreamer_nodes(&caller).await?;
         Ok(self
             .journal
-            .review_claim_next(key.tenant_id, &key.principal, key.key_id)
+            .review_claim_next(key.tenant_id, &key.principal, key.key_id, &workareas)
             .await?)
     }
 
-    /// Record a verdict. R2 runs here against the row's lineage closure
+    /// Record a verdict. Dreamer on the row's workarea by the refusal order,
+    /// with no exception for review, and never from a `held_by: service` key
+    /// (ADR-0025 d1); R2 runs here against the row's lineage closure
     /// (`check_reviewer`); with the PoC policy k = 1, an approval ratifies
     /// immediately — a separate journalled `lifecycle.promote` carrying the
     /// policy snapshot (admission.md review and ratification).
@@ -522,13 +977,17 @@ where
         verdict: Verdict,
         reason: Option<&str>,
     ) -> Result<VerdictOutcome, AppError> {
-        let key = self.authenticate(api_key).await?;
-        require_role(&key, Role::Dreamer, "verdict")?;
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Dreamer, "verdict")?;
+        refuse_service(key, "verdict")?;
         let memory = self
             .journal
             .memory(key.tenant_id, memory_id)
             .await?
             .ok_or(AppError::NotFound)?;
+        self.require_access(&caller, memory.workarea_id, Role::Dreamer, "verdict")
+            .await?;
         check_reviewer(
             key.role,
             &key.principal,
@@ -612,26 +1071,40 @@ where
         }
     }
 
-    /// Recall: reader ceiling, promoted rows only, steering segment ahead of
-    /// hits (retrieval.md; the PoC serves FTS hits with an empty steering
-    /// segment).
+    /// Recall: reader on the scope node by the refusal order, the search over
+    /// subtree(scope) ∩ the nodes where reader is effective, and no
+    /// tenant-wide fallback (ADR-0025 d1); promoted rows only, steering
+    /// segment ahead of hits (retrieval.md; the PoC serves FTS hits with an
+    /// empty steering segment).
     pub async fn recall(
         &self,
         api_key: &str,
         req: &RecallRequest,
     ) -> Result<RecallResult, AppError> {
-        let key = self.authenticate(api_key).await?;
-        require_role(&key, Role::Reader, "recall")?;
-        let workarea = req.workarea_id.or(key.default_workarea);
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Reader, "recall")?;
+        let scope = req
+            .workarea_id
+            .or(key.default_workarea)
+            .ok_or(AppError::WorkareaUnresolved)?;
+        self.require_access(&caller, scope, Role::Reader, "recall")
+            .await?;
+        let readable = self.nodes_with(&caller, scope, Role::Reader).await?;
         let hits = self
             .journal
-            .recall_fts(key.tenant_id, workarea, &req.query, req.k)
+            .recall_fts(key.tenant_id, &readable, &req.query, req.k)
             .await?
             .into_iter()
             // R3 defense in depth: the gate changed visibility; nothing
-            // unpromoted leaves the application layer, and a replaced version
-            // is promoted history, never a hit (ADR-0025 d8).
-            .filter(|m| m.status == MemoryStatus::Promoted && m.superseded_by.is_none())
+            // unpromoted or unreadable leaves the application layer, and a
+            // replaced version is promoted history, never a hit (ADR-0025
+            // d8).
+            .filter(|m| {
+                m.status == MemoryStatus::Promoted
+                    && m.superseded_by.is_none()
+                    && readable.contains(&m.workarea_id)
+            })
             .collect();
         Ok(RecallResult {
             steering: Vec::new(),
@@ -639,53 +1112,56 @@ where
         })
     }
 
-    /// Get one memory: the author sees its own rows in every state; everyone
-    /// else sees promoted rows, replaced versions included, under the reader
-    /// ceiling, and absence is indistinguishable from no-access (http-api.md).
+    /// Get one memory: the authoring key sees its own rows in every state,
+    /// with no grant needed and global denials still masking them; everyone
+    /// else sees promoted rows, replaced versions included, with reader
+    /// effective access on the row's workarea; anything else is absence,
+    /// indistinguishable from no row (http-api.md; ADR-0025 d3).
     pub async fn get_memory(
         &self,
         api_key: &str,
         memory_id: Uuid,
     ) -> Result<MemoryRecord, AppError> {
-        let key = self.authenticate(api_key).await?;
+        let caller = self.authenticate(api_key).await?;
         let memory = self
             .journal
-            .memory(key.tenant_id, memory_id)
+            .memory(caller.key.tenant_id, memory_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        if memory.author_principal == key.principal {
-            return Ok(memory);
-        }
-        match memory.status {
-            MemoryStatus::Promoted => require_role(&key, Role::Reader, "get")
-                .map_err(|_| AppError::NotFound)
-                .map(|()| memory),
-            MemoryStatus::Held
-            | MemoryStatus::Demoted
-            | MemoryStatus::Rejected
-            | MemoryStatus::Erased => Err(AppError::NotFound),
+        if self.readable(&caller, &memory).await? {
+            Ok(memory)
+        } else {
+            Err(AppError::NotFound)
         }
     }
 
     /// Supersede the caller's own promoted claim: one journalled
     /// `lifecycle.supersede` moves the tip off the target, which stays
     /// promoted, and admits the successor as a fresh held row queued for
-    /// review.
+    /// review. The target must be readable, then the caller's own by key id,
+    /// then writable on its workarea by the refusal order, and only then the
+    /// tip (ADR-0025 d10, steps 1–3 and 5).
     pub async fn supersede(
         &self,
         api_key: &str,
         req: &SupersedeRequest,
     ) -> Result<SupersedeOutcome, AppError> {
-        let key = self.authenticate(api_key).await?;
-        require_role(&key, Role::Writer, "supersede")?;
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Writer, "supersede")?;
         let target = self
             .journal
             .memory(key.tenant_id, req.target_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        if target.author_principal != key.principal {
+        if !self.readable(&caller, &target).await? {
+            return Err(AppError::NotFound);
+        }
+        if target.author_key_id != key.key_id {
             return Err(AppError::AuthorOnly);
         }
+        self.require_access(&caller, target.workarea_id, Role::Writer, "supersede")
+            .await?;
         // Only the promoted tip is a lawful target; supersession moves the
         // tip and changes no state (ADR-0025 d10).
         if target.status != MemoryStatus::Promoted || target.superseded_by.is_some() {
@@ -760,7 +1236,7 @@ where
     /// (chain-format.md steps 1–7 and 9). Admin ceiling (roles-and-keys.md:
     /// chain verification is an admin verb).
     pub async fn verify_chain(&self, api_key: &str) -> Result<ChainHead, AppError> {
-        let key = self.authenticate(api_key).await?;
+        let key = self.authenticate(api_key).await?.key;
         require_role(&key, Role::Admin, "verify_chain")?;
         let mut events = Vec::new();
         let mut from = 1_u64;
@@ -785,16 +1261,22 @@ where
         )?)
     }
 
-    /// The events tail: reader ceiling, `seq` ascending from `after_seq`
-    /// (http-api.md events tail; payloads are digest-only by construction).
+    /// The events tail: reader on the key's default workarea by the refusal
+    /// order (ADR-0025 d1), `seq` ascending from `after_seq` (http-api.md
+    /// events tail; payloads are digest-only by construction). The PoC tail
+    /// still serves the whole tenant journal.
     pub async fn tail_events(
         &self,
         api_key: &str,
         after_seq: u64,
         limit: usize,
     ) -> Result<Vec<SignedEnvelope>, AppError> {
-        let key = self.authenticate(api_key).await?;
-        require_role(&key, Role::Reader, "events_tail")?;
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Reader, "events_tail")?;
+        let scope = key.default_workarea.ok_or(AppError::WorkareaUnresolved)?;
+        self.require_access(&caller, scope, Role::Reader, "events_tail")
+            .await?;
         Ok(self
             .journal
             .events_range(key.tenant_id, after_seq + 1, limit)

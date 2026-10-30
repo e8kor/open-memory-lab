@@ -24,6 +24,9 @@ pub mod event_types {
     /// A global per-key denial, deny-wins; its seq is the denial's epoch
     /// (ADR-0025 d2).
     pub const KEY_DENIED: &str = "key.denied";
+    /// A key's revocation; journalled for a key whose issuance failed after
+    /// its `key.issued` (ADR-0025 d2, reason `issuance_incomplete`).
+    pub const KEY_REVOKED: &str = "key.revoked";
     /// A writer submits a memory; held on arrival.
     pub const SUBMISSION_REMEMBER: &str = "submission.remember";
     /// Approving verdict from a valid serve.

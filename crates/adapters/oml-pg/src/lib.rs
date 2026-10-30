@@ -537,6 +537,26 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
+        MetadataFold::KeyRevoked { key_id } => {
+            // The row stays as history; key_by_hash stops resolving it. A key
+            // the tenant does not hold matches no row under tenant_isolation,
+            // and that aborts the commit rather than journalling a
+            // revocation of nothing.
+            let revoked = sqlx::query(
+                "UPDATE api_keys SET revoked_at = now() \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if revoked.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant"
+                )));
+            }
+        }
         MetadataFold::MemoryHeld { memory, enqueue } => {
             insert_memory(tx, event_id, &memory).await?;
             if enqueue {
@@ -788,7 +808,7 @@ impl JournalStore for PgStore {
     async fn recall_fts(
         &self,
         tenant_id: Uuid,
-        workarea_id: Option<Uuid>,
+        readable: &[Uuid],
         query: &str,
         k: usize,
     ) -> Result<Vec<MemoryRecord>, StoreError> {
@@ -796,13 +816,14 @@ impl JournalStore for PgStore {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // Promoted tips only (retrieval.md R3 at the store; a replaced
-        // version is never a hit, ADR-0025 d8); the 'simple' configuration
-        // matches 0001's GIN expression index.
+        // version is never a hit, ADR-0025 d8), within the readable set
+        // alone — an empty array matches nothing (ADR-0025 d1); the 'simple'
+        // configuration matches 0001's GIN expression index.
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m \
              WHERE m.tenant_id = $1 AND m.status = 'promoted' \
                AND m.superseded_by IS NULL \
-               AND ($2::uuid IS NULL OR m.workarea_id = $2) \
+               AND m.workarea_id = ANY($2::uuid[]) \
                AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
              ORDER BY ts_rank(to_tsvector('simple', m.claim), \
                               plainto_tsquery('simple', $3)) DESC, m.id ASC \
@@ -810,7 +831,7 @@ impl JournalStore for PgStore {
         );
         let rows = sqlx::query(&sql)
             .bind(tenant_id)
-            .bind(workarea_id)
+            .bind(readable)
             .bind(query)
             .bind(k)
             .fetch_all(&mut *tx)
@@ -825,17 +846,20 @@ impl JournalStore for PgStore {
         tenant_id: Uuid,
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
+        workareas: &[Uuid],
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // Serve the oldest entry this reviewer may judge: skip rows another
-        // key claimed, and rows whose lineage closure contains the reviewer
+        // Serve the oldest entry this reviewer may judge: only rows within
+        // its dreamer access (ADR-0025 d1), skipping rows another key
+        // claimed and rows whose lineage closure contains the reviewer
         // (admission.md review; R2 proper re-runs at verdict time). A
         // re-claim by the same key matches its own held_by_key row again.
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM review_queue q \
              JOIN memories m ON m.id = q.memory_id \
              WHERE q.tenant_id = $1 \
+               AND m.workarea_id = ANY($4::uuid[]) \
                AND (q.held_by_key IS NULL OR q.held_by_key = $2) \
                AND NOT (m.lineage_principals @> ARRAY[$3]::text[]) \
                AND NOT (m.lineage_key_ids @> ARRAY[$2]::uuid[]) \
@@ -847,6 +871,7 @@ impl JournalStore for PgStore {
             .bind(tenant_id)
             .bind(reviewer_key_id)
             .bind(reviewer_principal)
+            .bind(workareas)
             .fetch_optional(&mut *tx)
             .await
             .map_err(backend)?;
@@ -883,7 +908,7 @@ impl JournalStore for PgStore {
             .map_err(backend)?;
         let row = sqlx::query(
             "SELECT id, tenant_id, role, principal, held_by, default_workarea_id, issued_by, \
-             hash FROM api_keys WHERE hash = $1",
+             hash FROM api_keys WHERE hash = $1 AND revoked_at IS NULL",
         )
         .bind(&hash)
         .fetch_optional(&mut *tx)

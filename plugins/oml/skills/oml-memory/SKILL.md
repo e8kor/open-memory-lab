@@ -15,7 +15,9 @@ than writing the same fact twice.
 The plugin connects twice. The `oml` connection uses the agent's writer key, so call
 `oml_remember` and `oml_learn` there. The `oml-recall` connection uses a reader key, so
 call `oml_recall` and `oml_events_tail` there. Each connection lists all four tools, and a
-tool called on the wrong connection is refused with `access.verb_ceiling`.
+tool called on the wrong connection is refused: `oml_remember` and `oml_learn` with
+`access.verb_ceiling` on the reader key, `oml_recall` and `oml_events_tail` with
+`access.not_found` on a writer key that holds no reader grant.
 
 ## Recall before you act
 
