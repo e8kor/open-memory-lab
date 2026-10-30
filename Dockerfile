@@ -7,6 +7,12 @@
 # Multi-stage: rust:1 (bookworm) builder -> debian:bookworm-slim runtime.
 # The binary is the workspace's oml-server-lead composition
 # (docs/engineering/workspace-plan.md).
+#
+# One file for both release platforms, linux/amd64 and linux/arm64: it
+# compiles for the platform it runs on and never cross-compiles, so each
+# platform builds on its own native runner and the release workflow merges
+# the two into one image index (docs/engineering/ci-and-toolchain.md
+# "Release artifacts"; .github/workflows/release.yml, jobs image and merge).
 
 FROM rust:1-bookworm AS builder
 WORKDIR /build
