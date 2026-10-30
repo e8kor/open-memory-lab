@@ -550,8 +550,10 @@ where
 
     // -- use-cases ----------------------------------------------------------
 
-    /// The operator ceremony: genesis event, root workarea, first admin key
-    /// (roles-and-keys.md bootstrap). Unauthenticated by design — the
+    /// The operator ceremony: genesis event, the `universe` root workarea,
+    /// first admin key (roles-and-keys.md bootstrap; workareas.md, one
+    /// universe per tenant). The root's name is the first segment of every
+    /// served `workarea_path` (ADR-0025 d14). Unauthenticated by design — the
     /// composition decides who may run it.
     pub async fn bootstrap_tenant(
         &self,
@@ -575,7 +577,7 @@ where
             workarea_id: root_workarea_id,
             tenant_id,
             parent_id: None,
-            name: "root".to_owned(),
+            name: "universe".to_owned(),
             crew: None,
         };
         let event = self.seal(

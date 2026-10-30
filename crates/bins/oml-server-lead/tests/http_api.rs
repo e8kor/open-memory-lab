@@ -1452,11 +1452,13 @@ async fn responses_carry_real_version_kind_tokens_and_workarea_path() {
         assert_eq!(status, StatusCode::OK, "{body}");
         body
     };
+    // The path walks parent names from the tenant's `universe` root
+    // (ADR-0025 d14; workareas.md, one universe per tenant).
     let assert_path = |item: &Value| {
-        let path = item["workarea_path"].as_str().expect("a derived path");
-        let segments: Vec<&str> = path.split('.').collect();
-        assert_eq!(segments.len(), 3, "root, crew, quotes: {path}");
-        assert_eq!(&segments[1..], ["metals-crew", "quotes"], "{path}");
+        assert_eq!(
+            item["workarea_path"], "universe.metals-crew.quotes",
+            "{item}"
+        );
     };
 
     let (status, _, accepted) = send(
