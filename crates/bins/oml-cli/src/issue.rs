@@ -15,7 +15,9 @@ use uuid::Uuid;
 /// beside every writer grant a reader grant on the same workarea, unless
 /// `write_only` or the request already names that reader grant (ADR-0028
 /// d2). A default of the CLI's alone; nothing here widens what the server
-/// would accept.
+/// would accept. No issuing verb takes a per-grant deny mask yet, so neither
+/// grant carries one; a verb that takes one copies the writer grant's masks
+/// onto its reader grant (ADR-0028 d2; cli/reference.md `oml keys`).
 #[must_use]
 pub fn with_reader_beside_writers(
     grants: &[(Uuid, String)],

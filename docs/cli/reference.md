@@ -102,8 +102,10 @@ revoke-and-reissue.
 **The reader grant beside a writer grant.** This paragraph is the single declaration site of the
 CLI's issuance default ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d2). `oml keys issue` and
 `oml keys issue-agent` send, beside every writer grant they are asked for, a reader grant on the
-same workarea, unless the request already names that reader grant or `--write-only` is passed.
-The default is the CLI's alone: `POST /v2/keys` takes exactly the grants it is sent
+same workarea with the same deny masks, unless the request already names that reader grant or
+`--write-only` is passed. Neither verb takes a per-grant deny mask yet, so today both grants are
+sent without one; the copy keeps the added grant from ever reading a subtree its writer grant is
+denied. The default is the CLI's alone: `POST /v2/keys` takes exactly the grants it is sent
 ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)), so the
 added grant is an ordinary grant in the request body, journalled as its own `grant.issued` and
 echoed in the `201` like any other; without `--json`, `oml keys issue` names each grant it adds on
