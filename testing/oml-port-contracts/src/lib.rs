@@ -2566,9 +2566,13 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
     for m in [&replaced, &tip, &held, &rejected, &off_set] {
         hold(&mut rig, store, m.clone()).await.expect("hold");
     }
-    for id in [replaced.memory_id, tip.memory_id, off_set.memory_id] {
+    for id in [replaced.memory_id, off_set.memory_id] {
         promote(&mut rig, store, id).await.expect("promote");
     }
+    // The successor takes the tip at its ratification (ADR-0025 d10).
+    supersede_tip(&mut rig, store, tip.memory_id, replaced.memory_id)
+        .await
+        .expect("ratify");
     reject(&mut rig, store, rejected.memory_id)
         .await
         .expect("reject");
