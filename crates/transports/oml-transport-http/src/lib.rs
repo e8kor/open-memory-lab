@@ -59,6 +59,49 @@ const SERVE_TTL_SECS: u64 = 900;
 pub type PingFuture = Pin<Box<dyn Future<Output = bool> + Send>>;
 pub type DbPing = Arc<dyn Fn() -> PingFuture + Send + Sync>;
 
+/// The build `/readyz` names (http-api.md "Health"). The composition supplies
+/// it; the transport knows no build system. A field nothing supplied is
+/// `unknown`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildInfo {
+    pub version: String,
+    pub commit: String,
+    pub commit_time: String,
+    pub build_time: String,
+    pub rustc: String,
+    pub target: String,
+    pub profile: String,
+}
+
+impl BuildInfo {
+    /// What a composition that supplies no build reports.
+    #[must_use]
+    pub fn unknown() -> Self {
+        let unknown = || "unknown".to_owned();
+        Self {
+            version: unknown(),
+            commit: unknown(),
+            commit_time: unknown(),
+            build_time: unknown(),
+            rustc: unknown(),
+            target: unknown(),
+            profile: unknown(),
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "version": self.version,
+            "commit": self.commit,
+            "commit_time": self.commit_time,
+            "build_time": self.build_time,
+            "rustc": self.rustc,
+            "target": self.target,
+            "profile": self.profile,
+        })
+    }
+}
+
 /// Everything the handlers share. `store` is a second handle on the journal
 /// port for the reads the use-case surface does not front (the events-tail
 /// `head_seq`); every invariant-bearing verb still goes through [`App`].
@@ -68,6 +111,7 @@ pub struct ApiState<J, S, C, I, Sc> {
     db_ping: DbPing,
     fork_check_ok: Arc<AtomicBool>,
     enrollment: Arc<Mutex<Option<String>>>,
+    build: Arc<BuildInfo>,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -78,6 +122,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             db_ping: Arc::clone(&self.db_ping),
             fork_check_ok: Arc::clone(&self.fork_check_ok),
             enrollment: Arc::clone(&self.enrollment),
+            build: Arc::clone(&self.build),
         }
     }
 }
@@ -106,7 +151,15 @@ where
             db_ping,
             fork_check_ok: Arc::new(AtomicBool::new(fork_check_ok)),
             enrollment: Arc::new(Mutex::new(enrollment_token)),
+            build: Arc::new(BuildInfo::unknown()),
         }
+    }
+
+    /// The build `/readyz` reports; without it every build field is `unknown`.
+    #[must_use]
+    pub fn with_build(mut self, build: BuildInfo) -> Self {
+        self.build = Arc::new(build);
+        self
     }
 
     /// The two rings plus the unversioned probes, as one axum router.
@@ -154,6 +207,8 @@ where
                 "postgres": if postgres_ok { "ok" } else { "unreachable" },
                 "fork_check": if fork_ok { "ok" } else { "failed" },
             },
+            // Ready or not, the probe names the build it belongs to.
+            "build": st.build.to_json(),
         });
         let status = if postgres_ok && fork_ok {
             StatusCode::OK
