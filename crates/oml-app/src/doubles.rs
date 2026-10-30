@@ -215,12 +215,10 @@ fn apply_fold(
         }
         MetadataFold::MemoryPromoted { memory_id } => {
             if let Some(promoted) = state.memories.get(&memory_id).cloned() {
-                // One served tip per claim: the replaced version gives the
-                // tip up, and any other tip refuses the commit, as
-                // `memories_served_tip` does (ADR-0025 d10).
+                // One served tip per claim: any other tip refuses the
+                // commit, as `memories_served_tip` does (ADR-0025 d10).
                 if state.memories.values().any(|m| {
                     m.memory_id != memory_id
-                        && Some(m.memory_id) != promoted.replaces
                         && m.workarea_id == promoted.workarea_id
                         && m.claim_key == promoted.claim_key
                         && m.is_tip
@@ -230,10 +228,6 @@ fn apply_fold(
                         "claim_key {:?} already has a served tip in this workarea",
                         promoted.claim_key
                     )));
-                }
-                if let Some(replaced) = promoted.replaces.and_then(|id| state.memories.get_mut(&id))
-                {
-                    replaced.is_tip = false;
                 }
                 if let Some(memory) = state.memories.get_mut(&memory_id) {
                     memory.status = MemoryStatus::Promoted;
@@ -249,21 +243,40 @@ fn apply_fold(
             }
             state.queue.retain(|e| e.memory_id != memory_id);
         }
-        MetadataFold::MemorySuperseded {
-            superseded,
+        MetadataFold::TipSuperseded {
             successor,
+            replaced,
         } => {
-            // The replaced version stays promoted; only the tip moves
-            // (ADR-0025 d10).
-            require_free_ordinal(state, &successor)?;
-            if let Some(memory) = state.memories.get_mut(&superseded) {
-                memory.is_tip = false;
+            // The compare-and-set: the successor is held and replaces
+            // `replaced`, which is still the promoted tip under the
+            // successor's own workarea and claim_key; anything else writes
+            // nothing (ADR-0025 d10).
+            let cas = match (
+                state.memories.get(&successor),
+                state.memories.get(&replaced),
+            ) {
+                (Some(s), Some(t)) => {
+                    s.status == MemoryStatus::Held
+                        && s.replaces == Some(replaced)
+                        && t.workarea_id == s.workarea_id
+                        && t.claim_key == s.claim_key
+                        && t.is_tip
+                        && t.status == MemoryStatus::Promoted
+                }
+                _ => false,
+            };
+            if !cas {
+                return Err(StoreError::TipMoved { replaced });
             }
-            state.queue.push(QueueEntry {
-                memory_id: successor.memory_id,
-                claimed_by: None,
-            });
-            state.memories.insert(successor.memory_id, successor);
+            if let Some(target) = state.memories.get_mut(&replaced) {
+                target.is_tip = false;
+            }
+            if let Some(memory) = state.memories.get_mut(&successor) {
+                memory.status = MemoryStatus::Promoted;
+                memory.is_tip = true;
+                memory.promoted_at = Some(at.clone());
+            }
+            state.queue.retain(|e| e.memory_id != successor);
         }
     }
     Ok(())
@@ -371,7 +384,9 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.status == MemoryStatus::Promoted && m.is_tip)
+            // A retired claim's tip is its retirement version, and recall
+            // serves nothing of it (ADR-0025 d11).
+            .filter(|m| m.status == MemoryStatus::Promoted && m.is_tip && !m.retirement)
             .filter(|m| readable.contains(&m.workarea_id))
             .filter(|m| m.body.to_lowercase().contains(&needle))
             .take(k)
@@ -397,6 +412,49 @@ impl JournalStore for MemStore {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
                 live: acc.live || LIVE.contains(&m.status),
             }))
+    }
+
+    async fn claim_tip(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+    ) -> Result<Option<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .find(|m| {
+                m.workarea_id == workarea_id
+                    && m.claim_key == claim_key
+                    && m.is_tip
+                    && m.status == MemoryStatus::Promoted
+            })
+            .cloned())
+    }
+
+    async fn held_successors(
+        &self,
+        tenant_id: Uuid,
+        replaced: Uuid,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut held: Vec<MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| m.status == MemoryStatus::Held && m.replaces == Some(replaced))
+            .cloned()
+            .collect();
+        held.sort_by(|a, b| {
+            (a.created_at.as_str(), a.memory_id).cmp(&(b.created_at.as_str(), b.memory_id))
+        });
+        Ok(held)
     }
 
     async fn review_claim_next(
@@ -430,6 +488,22 @@ impl JournalStore for MemStore {
                 .iter()
                 .any(|p| p == reviewer_principal)
                 || memory.lineage_key_ids.contains(&reviewer_key_id)
+            {
+                continue;
+            }
+            // Nor a held successor whose target has a held rival this
+            // reviewer authored (roles-and-keys.md rival successors;
+            // ADR-0025 d10).
+            if memory.replaces.is_some()
+                && memories.values().any(|r| {
+                    r.memory_id != memory.memory_id
+                        && r.status == MemoryStatus::Held
+                        && r.replaces == memory.replaces
+                        && r.workarea_id == memory.workarea_id
+                        && r.claim_key == memory.claim_key
+                        && (r.author_key_id == reviewer_key_id
+                            || r.author_principal == reviewer_principal)
+                })
             {
                 continue;
             }

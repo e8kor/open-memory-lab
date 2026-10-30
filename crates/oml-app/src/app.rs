@@ -16,8 +16,9 @@ use oml_domain::access::{
     effective_roles, resolve,
 };
 use oml_domain::{
-    ChainHead, EventDraft, HeldBy, KeySet, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
-    check_reviewer, event_types, next_envelope, nfc, sha256_digest_string, transition,
+    ChainHead, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
+    SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
+    sha256_digest_string, transition,
 };
 
 use crate::ports::{
@@ -28,8 +29,8 @@ use crate::ports::{
 use crate::types::{
     AppError, BootstrapRequest, BootstrapResult, DenialRecord, GrantRecord, IssueKeyRequest,
     IssuedKey, KeyAccess, KeyRecord, MemoryRecord, RecallRequest, RecallResult, ServedMemory,
-    SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeRequest, Verdict,
-    VerdictOutcome, VersionRef, WorkareaRecord,
+    SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeReceipt,
+    SupersedeRequest, Verdict, VerdictOutcome, VersionRef, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -173,6 +174,59 @@ fn submit_request_digest(req: &SubmitRequest, workarea_id: Uuid) -> String {
     sha256_digest_string(doc.to_string().as_bytes())
 }
 
+/// The request digest of a supersession: SHA-256 over the RFC 8785 JSON of
+/// the method, the route template, the path parameters and the parsed body,
+/// so one Idempotency-Key reused for two targets never replays the first
+/// (http-api.md idempotency; ADR-0025 d10).
+fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> {
+    let doc = json!({
+        "method": "POST",
+        "route": "/v1/memories/{artifact_id}/supersede",
+        "path_params": { "artifact_id": req.target_id.to_string() },
+        "body": {
+            "body": req.body,
+            "kind": req.kind.map(MemoryKind::as_str),
+            "retirement": req.retirement,
+            "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "reason": req.reason,
+        },
+    });
+    Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// The successor's kind: an omitted one is the target's; a `memory`,
+/// `derived_fact` or `steering` target admits any of those three, a
+/// vocabulary-kind target keeps its kind; a retirement keeps the target's
+/// kind and never retires a term, which deprecates instead
+/// (audit-and-lineage.md supersession chains; ADR-0025 d11).
+fn successor_kind(
+    target: MemoryKind,
+    sent: Option<MemoryKind>,
+    retirement: bool,
+) -> Result<MemoryKind, AppError> {
+    const CLASS: [MemoryKind; 3] = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Steering,
+    ];
+    if retirement && target == MemoryKind::Term {
+        return Err(AppError::TermRetirement);
+    }
+    let Some(sent) = sent else {
+        return Ok(target);
+    };
+    let admitted = if retirement || !CLASS.contains(&target) {
+        sent == target
+    } else {
+        CLASS.contains(&sent)
+    };
+    if admitted {
+        Ok(sent)
+    } else {
+        Err(AppError::KindChangeRefused { target, sent })
+    }
+}
+
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
     J: JournalStore,
@@ -256,6 +310,28 @@ where
         }
         Ok(memory.status == MemoryStatus::Promoted
             && caller.effective(&ancestry).contains(&Role::Reader))
+    }
+
+    /// The served tip of `claim_key` in the workarea as a refusal may name it:
+    /// only when the caller can read it (errors.md `submission.tip_conflict`
+    /// details; ADR-0025 d10, d16).
+    async fn readable_tip(
+        &self,
+        caller: &Caller,
+        workarea_id: Uuid,
+        claim_key: &str,
+    ) -> Result<Option<VersionRef>, AppError> {
+        match self
+            .journal
+            .claim_tip(caller.key.tenant_id, workarea_id, claim_key)
+            .await?
+        {
+            Some(tip) if self.readable(caller, &tip).await? => Ok(Some(VersionRef {
+                artifact_id: tip.memory_id,
+                version: tip.version,
+            })),
+            _ => Ok(None),
+        }
     }
 
     /// `memory` as served to the caller: `derives_from` keeps only the
@@ -1053,10 +1129,17 @@ where
 
     /// Record a verdict. Dreamer on the row's workarea by the refusal order,
     /// with no exception for review, and never from a `held_by: service` key
-    /// (ADR-0025 d1); R2 runs here against the row's lineage closure
-    /// (`check_reviewer`); with the PoC policy k = 1, an approval ratifies
-    /// immediately — a separate journalled `lifecycle.promote` carrying the
-    /// policy snapshot (admission.md review and ratification).
+    /// (ADR-0025 d1); R2 runs here against the row's reviewer-exclusion set
+    /// — its lineage closure plus, for a held successor, the authors of the
+    /// held rivals of its target (`check_reviewer`; ADR-0025 d10). With the
+    /// PoC policy k = 1 an approval ratifies immediately, as a separate
+    /// journalled event carrying the policy snapshot (admission.md review and
+    /// ratification): `lifecycle.promote` for a first version, and for a
+    /// successor `lifecycle.supersede`, which compare-and-sets that its
+    /// target is still the served tip of the successor's workarea and
+    /// `claim_key`. An approval whose target lost the tip is
+    /// `submission.tip_conflict`, journals nothing and leaves the row held
+    /// and queued (ADR-0025 d10).
     pub async fn post_verdict(
         &self,
         api_key: &str,
@@ -1075,12 +1158,21 @@ where
             .ok_or(AppError::NotFound)?;
         self.require_access(&caller, memory.workarea_id, Role::Dreamer, "verdict")
             .await?;
-        check_reviewer(
-            key.role,
-            &key.principal,
-            key.key_id,
-            &memory.lineage_closure(),
-        )?;
+        let mut exclusion = memory.lineage_closure();
+        if let Some(target) = memory.replaces
+            && memory.status == MemoryStatus::Held
+        {
+            for rival in self.journal.held_successors(key.tenant_id, target).await? {
+                if rival.memory_id != memory.memory_id
+                    && rival.workarea_id == memory.workarea_id
+                    && rival.claim_key == memory.claim_key
+                {
+                    exclusion.add_principal(rival.author_principal);
+                    exclusion.add_key_id(rival.author_key_id);
+                }
+            }
+        }
+        check_reviewer(key.role, &key.principal, key.key_id, &exclusion)?;
 
         let (verdict_type, target_status) = match verdict {
             Verdict::Approve => (event_types::REVIEW_APPROVE, MemoryStatus::Promoted),
@@ -1090,7 +1182,34 @@ where
         // row refuses here (admission.md lifecycle).
         let new_status = transition(memory.status, target_status)?;
 
+        // The head first, then the compare-and-set read: a commit landing
+        // in between moves the head, so the verdict conflicts and its retry
+        // reads the target again.
         let prev = self.head_event(key.tenant_id).await?;
+        let replaced = match (verdict, memory.replaces) {
+            (Verdict::Approve, Some(target_id)) => {
+                let target = self.journal.memory(key.tenant_id, target_id).await?;
+                match target {
+                    Some(t)
+                        if t.status == MemoryStatus::Promoted
+                            && t.is_tip
+                            && t.workarea_id == memory.workarea_id
+                            && t.claim_key == memory.claim_key =>
+                    {
+                        Some(t)
+                    }
+                    _ => {
+                        return Err(AppError::TipConflict {
+                            current_tip: self
+                                .readable_tip(&caller, memory.workarea_id, &memory.claim_key)
+                                .await?,
+                        });
+                    }
+                }
+            }
+            _ => None,
+        };
+
         let verdict_event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -1133,23 +1252,65 @@ where
                     None,
                 )
                 .await?;
-                // Ratification: the promotion event snapshots the policy it
-                // was decided under (admission.md).
-                let promote = self.seal(
+                // Ratification snapshots the policy it was decided under
+                // (admission.md). The PoC journals no review.ratify: at k = 1
+                // the approving verdict is the ratifying act, so
+                // ratification_event_id names it. Nothing is self-signed in
+                // the PoC (ADR-0025 d17).
+                let policy = json!({ "k": 1, "required_roles": ["dreamer"] });
+                let (event_type, payload, fold) = match replaced {
+                    None => (
+                        event_types::LIFECYCLE_PROMOTE,
+                        json!({
+                            "artifact_id": memory_id.to_string(),
+                            "version": memory.version,
+                            "workarea_id": memory.workarea_id.to_string(),
+                            "claim_key": memory.claim_key,
+                            "ratification_event_id": verdict_event_id.to_string(),
+                            "previous_tip_version": Value::Null,
+                            "self_signed": false,
+                            "policy": policy,
+                        }),
+                        MetadataFold::MemoryPromoted { memory_id },
+                    ),
+                    Some(target) => (
+                        event_types::LIFECYCLE_SUPERSEDE,
+                        json!({
+                            "claim_key": memory.claim_key,
+                            "workarea_id": memory.workarea_id.to_string(),
+                            "new_artifact_id": memory_id.to_string(),
+                            "new_version": memory.version,
+                            "replaces_artifact_id": target.memory_id.to_string(),
+                            "replaces_version": target.version,
+                            "retirement": memory.retirement,
+                            "ratification_event_id": verdict_event_id.to_string(),
+                            "self_signed": false,
+                            "policy": policy,
+                        }),
+                        MetadataFold::TipSuperseded {
+                            successor: memory_id,
+                            replaced: target.memory_id,
+                        },
+                    ),
+                };
+                let ratification = self.seal(
                     Some(&verdict_signed),
                     key.tenant_id,
-                    event_types::LIFECYCLE_PROMOTE,
+                    event_type,
                     "oml-server",
                     None,
-                    json!({
-                        "artifact_id": memory_id.to_string(),
-                        "policy": { "k": 1, "required_roles": ["dreamer"] },
-                        "verdict_event_id": verdict_event_id.to_string(),
-                    }),
+                    payload,
                 )?;
-                let receipt = self
-                    .commit(promote, MetadataFold::MemoryPromoted { memory_id }, None)
-                    .await?;
+                let receipt = match self.commit(ratification, fold, None).await {
+                    Err(AppError::Store(StoreError::TipMoved { .. })) => {
+                        return Err(AppError::TipConflict {
+                            current_tip: self
+                                .readable_tip(&caller, memory.workarea_id, &memory.claim_key)
+                                .await?,
+                        });
+                    }
+                    other => other?,
+                };
                 Ok(VerdictOutcome {
                     memory_id,
                     version: memory.version,
@@ -1189,9 +1350,13 @@ where
             // R3 defense in depth: the gate changed visibility; nothing
             // unpromoted or unreadable leaves the application layer, and a
             // replaced version is promoted history, never a hit (ADR-0025
-            // d8). Each hit names only the ancestors the caller can read
-            // (d3).
-            if m.status == MemoryStatus::Promoted && m.is_tip && readable.contains(&m.workarea_id) {
+            // d8), and a retired claim serves nothing (d11). Each hit names
+            // only the ancestors the caller can read (d3).
+            if m.status == MemoryStatus::Promoted
+                && m.is_tip
+                && !m.retirement
+                && readable.contains(&m.workarea_id)
+            {
                 hits.push(self.served(&caller, m).await?);
             }
         }
@@ -1225,12 +1390,20 @@ where
         }
     }
 
-    /// Supersede the caller's own promoted claim: one journalled
-    /// `lifecycle.supersede` moves the tip off the target, which stays
-    /// promoted, and admits the successor as a fresh held row queued for
-    /// review. The target must be readable, then the caller's own by key id,
-    /// then writable on its workarea by the refusal order, and only then the
-    /// tip (ADR-0025 d10, steps 1–3 and 5).
+    /// Propose a successor of the target's claim, held like any write: the
+    /// target stays the served tip, and stays in everyone's recall, until a
+    /// non-author ratifies the successor (ADR-0025 d10). With `retirement`
+    /// the successor proposes retiring the claim (d11). The supersede rule
+    /// runs in its order: a key role admitting writer or dreamer (step 1);
+    /// the idempotency record, scoped to the key with a nil workarea, looked
+    /// up next and replayed whatever the target's state now; the target
+    /// readable (step 2); a writer's own target and writer on its workarea
+    /// (step 3), or a dreamer's dreamer and reader there, whoever authored
+    /// it (step 4, edit-as-proposal); then the target-dependent refusals —
+    /// `X-OML-Workarea`, the served tip, the kind and retirement checks
+    /// (step 5); then the checks every submit runs. The successor takes the
+    /// next ordinal of the claim_key and journals `submission.remember`
+    /// (`submission.learn` for a `derived_fact`) naming what it replaces.
     pub async fn supersede(
         &self,
         api_key: &str,
@@ -1238,7 +1411,40 @@ where
     ) -> Result<SupersedeOutcome, AppError> {
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Writer, "supersede")?;
+        let admissible = admissible_grant_roles(key.role);
+        let dreamer = admissible.contains(&Role::Dreamer);
+        if !dreamer && !admissible.contains(&Role::Writer) {
+            return Err(AppError::VerbCeiling {
+                role: key.role,
+                verb: "supersede",
+            });
+        }
+
+        // The record is looked up between steps 1 and 2 and replays its
+        // stored response whatever the target or the key's access now: the
+        // response names only the caller's own successor (http-api.md
+        // idempotency). The scope's workarea is nil, so no target's
+        // workarea ever enters a record.
+        let scope = IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: req.idempotency_key.clone(),
+        };
+        let request_digest = supersede_request_digest(req)?;
+        if let Some(record) = self.journal.idempotency_get(&scope).await? {
+            if record.request_digest != request_digest {
+                return Err(AppError::IdempotencyDigestMismatch);
+            }
+            let receipt: SupersedeReceipt = serde_json::from_value(record.response)
+                .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+            return Ok(SupersedeOutcome {
+                receipt,
+                replayed: true,
+            });
+        }
+
+        // Step 2: an unreadable target is indistinguishable from none.
         let target = self
             .journal
             .memory(key.tenant_id, req.target_id)
@@ -1247,104 +1453,199 @@ where
         if !self.readable(&caller, &target).await? {
             return Err(AppError::NotFound);
         }
-        if target.author_key_id != key.key_id {
-            return Err(AppError::AuthorOnly);
-        }
-        self.require_access(&caller, target.workarea_id, Role::Writer, "supersede")
-            .await?;
-        // Only the promoted tip is a lawful target; supersession moves the
-        // tip and changes no state (ADR-0025 d10).
-        if target.status != MemoryStatus::Promoted || !target.is_tip {
-            return Err(AppError::TipConflict);
+        if dreamer {
+            // Step 4: edit-as-proposal needs dreamer and reader on the
+            // target's workarea, whoever authored it.
+            self.require_access(&caller, target.workarea_id, Role::Dreamer, "supersede")
+                .await?;
+            self.require_access(&caller, target.workarea_id, Role::Reader, "supersede")
+                .await?;
+        } else {
+            // Step 3: own is the target version's authoring key, never the
+            // claim's first version (roles-and-keys.md#own).
+            if target.author_key_id != key.key_id {
+                return Err(AppError::AuthorOnly);
+            }
+            self.require_access(&caller, target.workarea_id, Role::Writer, "supersede")
+                .await?;
         }
 
-        // The successor is a new submission: normalized to NFC and scanned
-        // like any write, under the target's kind, which an omitted kind
-        // inherits (admission.md capture; ADR-0025 d6, d11).
+        // Step 5, in its order: the scope is the target's workarea, the
+        // target is the served tip, the kind stays in its class and a
+        // retirement keeps the target's kind and never retires a term.
+        if let Some(workarea_id) = req.workarea_id
+            && workarea_id != target.workarea_id
+        {
+            return Err(AppError::WorkareaNotTarget { workarea_id });
+        }
+        if target.status != MemoryStatus::Promoted || !target.is_tip {
+            return Err(AppError::TipConflict {
+                current_tip: self
+                    .readable_tip(&caller, target.workarea_id, &target.claim_key)
+                    .await?,
+            });
+        }
+        let kind = successor_kind(target.kind, req.kind, req.retirement)?;
+
+        // The checks every submit runs: NFC first, then the scan, whose veto
+        // journals nothing, then every declared ancestor readable
+        // (admission.md capture; ADR-0025 d3, d6).
         let body = nfc(&req.body);
-        if let ScanOutcome::Veto(reason) = self.scanner.scan(&AdmissionEnvelope {
+        let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
-            kind: target.kind.as_str(),
+            kind: kind.as_str(),
             body: &body,
         }) {
-            return Err(AppError::ScanVeto(reason));
+            ScanOutcome::Pass => None,
+            ScanOutcome::Hold(reason) => Some(reason),
+            ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
+        };
+        // derives_from ⊇ {target}; the lineage closure is the proposer plus
+        // every ancestor's closure, the target's included (roles-and-keys.md).
+        let mut derives_from = vec![target.memory_id];
+        for ancestor in &req.derives_from {
+            if !derives_from.contains(ancestor) {
+                derives_from.push(*ancestor);
+            }
+        }
+        let mut principals = BTreeSet::from([key.principal.clone()]);
+        let mut key_ids = BTreeSet::from([key.key_id]);
+        principals.extend(target.lineage_principals.iter().cloned());
+        key_ids.extend(target.lineage_key_ids.iter().copied());
+        for ancestor in &derives_from[1..] {
+            let m = self
+                .journal
+                .memory(key.tenant_id, *ancestor)
+                .await?
+                .ok_or(AppError::LineageUnknown(*ancestor))?;
+            if !self.readable(&caller, &m).await? {
+                return Err(AppError::LineageUnknown(*ancestor));
+            }
+            principals.extend(m.lineage_principals);
+            key_ids.extend(m.lineage_key_ids);
         }
 
         // The head first, then the ordinal: 1 + the greatest version of the
-        // claim_key in the workarea, whatever its state (ADR-0025 d10).
+        // claim_key in the workarea, whatever its state; a capture that
+        // commits in between moves the head, and the retry reads both again
+        // (ADR-0025 d10, ordinals).
         let prev = self.head_event(key.tenant_id).await?;
-        let claim_key = req
-            .claim_key
-            .clone()
-            .unwrap_or_else(|| target.claim_key.clone());
         let version = self
             .journal
-            .claim_key_state(key.tenant_id, target.workarea_id, &claim_key)
+            .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)
             .await?
             .greatest_version
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| {
-                StoreError::Backend(format!("claim_key {claim_key:?} has no next ordinal"))
+                StoreError::Backend(format!(
+                    "claim_key {:?} has no next ordinal",
+                    target.claim_key
+                ))
             })?;
 
         let successor_id = self.ids.new_id();
         let body_digest = sha256_digest_string(body.as_bytes());
-        let mut lineage_principals: BTreeSet<String> =
-            target.lineage_principals.iter().cloned().collect();
-        lineage_principals.insert(key.principal.clone());
-        let mut lineage_key_ids: BTreeSet<Uuid> = target.lineage_key_ids.iter().copied().collect();
-        lineage_key_ids.insert(key.key_id);
+        let body_bytes = body.len() as u64;
+        let replaces = VersionRef {
+            artifact_id: target.memory_id,
+            version: target.version,
+        };
         let successor = MemoryRecord {
             memory_id: successor_id,
             tenant_id: key.tenant_id,
             workarea_id: target.workarea_id,
-            claim_key,
+            claim_key: target.claim_key.clone(),
             version,
-            kind: target.kind,
-            body_bytes: body.len() as u64,
+            kind,
             body,
             body_digest: body_digest.clone(),
+            body_bytes,
             status: MemoryStatus::Held,
             is_tip: false,
             promoted_at: None,
-            retirement: false,
-            replaces: Some(req.target_id),
+            retirement: req.retirement,
+            replaces: Some(target.memory_id),
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
-            derives_from: vec![req.target_id],
-            lineage_principals: lineage_principals.into_iter().collect(),
-            lineage_key_ids: lineage_key_ids.into_iter().collect(),
-            scan_finding: None,
+            derives_from: derives_from.clone(),
+            lineage_principals: principals.into_iter().collect(),
+            lineage_key_ids: key_ids.into_iter().collect(),
+            scan_finding: scan_finding.clone(),
             created_at: self.clock.now(),
         };
 
+        // The catalog payload of the submission, digest-only, plus what it
+        // replaces and whether it retires (event-catalog.md
+        // submission.remember; ADR-0025 d10, d11).
+        let event_type = if kind == MemoryKind::DerivedFact {
+            event_types::SUBMISSION_LEARN
+        } else {
+            event_types::SUBMISSION_REMEMBER
+        };
+        let payload = json!({
+            "artifact_id": successor_id.to_string(),
+            "workarea_id": target.workarea_id.to_string(),
+            "claim_key": target.claim_key,
+            "version": version,
+            "kind": kind.as_str(),
+            "plaintext_digest": body_digest,
+            "body_bytes": body_bytes,
+            "ciphertext_digest": Value::Null,
+            "attachments": [],
+            "derives_from": derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "provenance": "agent",
+            "simulation_id": Value::Null,
+            "replaces": {
+                "artifact_id": target.memory_id.to_string(),
+                "version": target.version,
+            },
+            "retirement": req.retirement,
+            "scan": {
+                "result": if scan_finding.is_some() { "hold" } else { "pass" },
+                "scanner_version": Value::Null,
+                "finding": scan_finding,
+            },
+        });
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
-            event_types::LIFECYCLE_SUPERSEDE,
+            event_type,
             &key.principal,
             Some(key.key_id),
-            json!({
-                "artifact_id": req.target_id.to_string(),
-                "successor_id": successor_id.to_string(),
-                "successor_body_digest": body_digest,
-            }),
+            payload,
         )?;
-        let receipt = self
-            .commit(
-                event,
-                MetadataFold::MemorySuperseded {
-                    superseded: req.target_id,
-                    successor,
-                },
-                None,
-            )
-            .await?;
+        let receipt = SupersedeReceipt {
+            memory_id: successor_id,
+            claim_key: target.claim_key.clone(),
+            version,
+            workarea_id: target.workarea_id,
+            state: MemoryStatus::Held.as_str().to_owned(),
+            retirement: req.retirement,
+            replaces,
+            journal_seq: event.envelope.seq,
+            body_digest,
+        };
+        let idempotency = Some(IdempotencyPut {
+            scope,
+            record: IdempotencyRecord {
+                request_digest,
+                response: serde_json::to_value(&receipt)
+                    .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+            },
+        });
+        self.commit(
+            event,
+            MetadataFold::MemoryHeld {
+                memory: successor,
+                enqueue: true,
+            },
+            idempotency,
+        )
+        .await?;
         Ok(SupersedeOutcome {
-            superseded_id: req.target_id,
-            successor_id,
-            journal_seq: receipt.seq,
+            receipt,
+            replayed: false,
         })
     }
 

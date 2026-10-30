@@ -475,26 +475,15 @@ async fn set_memory_status(
     Ok(())
 }
 
-/// Ratification: the version it replaces gives up the tip first, so that
-/// `memories_served_tip` refuses only a genuine second tip; then the version
-/// is promoted, made the tip and stamped with the event's `at` (ADR-0025
-/// d10).
+/// Ratification of a first version: it is promoted, made the tip and
+/// stamped with the event's `at`; `memories_served_tip` refuses a second tip
+/// of its claim (ADR-0025 d10).
 async fn promote_memory(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     memory_id: Uuid,
     at: &EventTime,
 ) -> Result<(), StoreError> {
-    sqlx::query(
-        "UPDATE memories t SET is_tip = false FROM memories s \
-         WHERE s.tenant_id = $1 AND s.id = $2 \
-           AND t.tenant_id = $1 AND t.id = s.replaces_artifact_id",
-    )
-    .bind(tenant_id)
-    .bind(memory_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(backend)?;
     sqlx::query(
         "UPDATE memories SET status = 'promoted', is_tip = true, \
          promoted_at = ($3)::timestamptz WHERE tenant_id = $1 AND id = $2",
@@ -512,6 +501,40 @@ async fn promote_memory(
         .await
         .map_err(backend)?;
     Ok(())
+}
+
+/// Ratification of a supersession: the compare-and-set takes the tip off
+/// `replaced` only while it is the promoted tip under the held successor's
+/// own workarea and `claim_key` and the successor replaces it, reading the
+/// successor's claim identity in the same statement; a zero row count
+/// refuses the commit, whose transaction then rolls back, journal row
+/// included. Only then is the successor promoted and made the tip
+/// (audit-and-lineage.md supersession chains; ADR-0025 d10).
+async fn supersede_tip(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    successor: Uuid,
+    replaced: Uuid,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    let flipped = sqlx::query(
+        "UPDATE memories t SET is_tip = false FROM memories s \
+         WHERE s.tenant_id = $1 AND s.id = $2 AND s.status = 'held' \
+           AND s.replaces_artifact_id = $3 \
+           AND t.tenant_id = $1 AND t.id = $3 \
+           AND t.workarea_id = s.workarea_id AND t.claim_key = s.claim_key \
+           AND t.is_tip AND t.status = 'promoted'",
+    )
+    .bind(tenant_id)
+    .bind(successor)
+    .bind(replaced)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if flipped.rows_affected() != 1 {
+        return Err(StoreError::TipMoved { replaced });
+    }
+    promote_memory(tx, tenant_id, successor, at).await
 }
 
 /// Applies the metadata fold rows of one commit (ADR-0002 d1: same
@@ -651,23 +674,11 @@ async fn apply_fold(
         MetadataFold::MemoryRejected { memory_id } => {
             set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Rejected).await?;
         }
-        MetadataFold::MemorySuperseded {
-            superseded,
+        MetadataFold::TipSuperseded {
             successor,
+            replaced,
         } => {
-            // The replaced version stays 'promoted'; only the tip moves, and
-            // the successor's replaces_artifact_id names it (ADR-0025 d10).
-            insert_memory(tx, event_id, &successor).await?;
-            enqueue_review(tx, tenant_id, successor.memory_id).await?;
-            sqlx::query(
-                "UPDATE memories SET is_tip = false \
-                 WHERE tenant_id = $1 AND id = $2",
-            )
-            .bind(tenant_id)
-            .bind(superseded)
-            .execute(&mut **tx)
-            .await
-            .map_err(backend)?;
+            supersede_tip(tx, tenant_id, successor, replaced, at).await?;
         }
     }
     Ok(())
@@ -895,12 +906,14 @@ impl JournalStore for PgStore {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // Promoted tips only (retrieval.md R3 at the store; a replaced
-        // version is never a hit, ADR-0025 d8), within the readable set
+        // version is never a hit, ADR-0025 d8), never a retired claim's
+        // retirement version (ADR-0025 d11), within the readable set
         // alone — an empty array matches nothing (ADR-0025 d1); the 'simple'
         // configuration matches 0001's GIN expression index.
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m \
              WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+               AND NOT m.retirement \
                AND m.workarea_id = ANY($2::uuid[]) \
                AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
              ORDER BY ts_rank(to_tsvector('simple', m.claim), \
@@ -951,6 +964,53 @@ impl JournalStore for PgStore {
         })
     }
 
+    async fn claim_tip(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+    ) -> Result<Option<MemoryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The memories_served_tip index answers this lookup.
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m \
+             WHERE m.tenant_id = $1 AND m.workarea_id = $2 AND m.claim_key = $3 \
+               AND m.is_tip AND m.status = 'promoted'"
+        );
+        let row = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(workarea_id)
+            .bind(claim_key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(memory_from_row).transpose()
+    }
+
+    async fn held_successors(
+        &self,
+        tenant_id: Uuid,
+        replaced: Uuid,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m \
+             WHERE m.tenant_id = $1 AND m.replaces_artifact_id = $2 AND m.status = 'held' \
+             ORDER BY m.created_at ASC, m.id ASC"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(replaced)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(memory_from_row).collect()
+    }
+
     async fn review_claim_next(
         &self,
         tenant_id: Uuid,
@@ -962,8 +1022,10 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         // Serve the oldest entry this reviewer may judge: only rows within
         // its dreamer access (ADR-0025 d1), skipping rows another key
-        // claimed and rows whose lineage closure contains the reviewer
-        // (admission.md review; R2 proper re-runs at verdict time). A
+        // claimed, rows whose lineage closure contains the reviewer, and
+        // held successors whose target has a held rival the reviewer
+        // authored (admission.md review; roles-and-keys.md rival
+        // successors, ADR-0025 d10; R2 proper re-runs at verdict time). A
         // re-claim by the same key matches its own held_by_key row again.
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM review_queue q \
@@ -973,6 +1035,12 @@ impl JournalStore for PgStore {
                AND (q.held_by_key IS NULL OR q.held_by_key = $2) \
                AND NOT (m.lineage_principals @> ARRAY[$3]::text[]) \
                AND NOT (m.lineage_key_ids @> ARRAY[$2]::uuid[]) \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM memories r \
+                   WHERE r.tenant_id = $1 AND r.id <> m.id AND r.status = 'held' \
+                     AND r.replaces_artifact_id = m.replaces_artifact_id \
+                     AND r.workarea_id = m.workarea_id AND r.claim_key = m.claim_key \
+                     AND (r.author_key_id = $2 OR r.author_principal = $3)) \
              ORDER BY q.held_since ASC, q.memory_id ASC \
              LIMIT 1 \
              FOR NO KEY UPDATE OF q SKIP LOCKED"

@@ -29,6 +29,9 @@ pub mod event_types {
     pub const KEY_REVOKED: &str = "key.revoked";
     /// A writer submits a memory; held on arrival.
     pub const SUBMISSION_REMEMBER: &str = "submission.remember";
+    /// A derived claim with its lineage; a supersession whose successor is
+    /// a `derived_fact` journals it too (ADR-0025 d10).
+    pub const SUBMISSION_LEARN: &str = "submission.learn";
     /// Approving verdict from a valid serve.
     pub const REVIEW_APPROVE: &str = "review.approve";
     /// Rejecting verdict from a valid serve — the act behind "rejected".
