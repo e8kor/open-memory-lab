@@ -1,0 +1,17 @@
+{
+  "name": "open-memory-lab",
+  "owner": {
+    "name": "e8kor"
+  },
+  "metadata": {
+    "description": "Agent plugins for Open Memory Lab: memory where every write is held, reviewed by another identity, and only then shared."
+  },
+  "plugins": [
+    {
+      "name": "oml",
+      "source": "./plugins/oml",
+      "description": "Remember and recall through an Open Memory Lab server over MCP. Writes are held until a different identity ratifies them.",
+      "category": "memory"
+    }
+  ]
+}
