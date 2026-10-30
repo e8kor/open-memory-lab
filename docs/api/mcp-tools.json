@@ -8,7 +8,6 @@
     "pending_design": {
       "oml_remember": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
       "oml_learn": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_recall": "ADR-0025 d4, d7, d8, d12, d16: include_own_held and max_tokens inputs; the caller's own held rows among the hits; steering never among the hits; the claim-item output with tokens; the budget object; refusal of unknown and unbuilt fields by name.",
       "oml_events_tail": "ADR-0025 d15: the scope input (the ring's workarea_id, defaulting to the key's default workarea, request.workarea_unresolved for a key with none); per-family visibility; next_after_seq; the subject and workarea output fields; idle; request.validation for an after_seq beyond head_seq."
     }
   },
@@ -76,7 +75,7 @@
     },
     {
       "name": "oml_recall",
-      "description": "Search promoted memories within a workarea subtree; steering rows precede hits and are never ranked. Hits are promoted rows only - the caller's own held rows do not appear (use oml_my_work). Every recall is logged to the read log. Rides POST /v1/memories/recall.",
+      "description": "Search promoted memories within a workarea subtree and, with include_own_held, the calling key's own held rows, flagged state held; steering rows precede hits, are never ranked and are never cut by a max_tokens budget. Every item carries its text and its budget tokens; budget reports the cut when max_tokens was sent. Every recall is logged to the read log. Rides POST /v1/memories/recall.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -93,6 +92,16 @@
             "minimum": 1,
             "maximum": 100,
             "description": "How many hits to return, at most 100 as on the ring."
+          },
+          "include_own_held": {
+            "type": "boolean",
+            "default": false,
+            "description": "Optional, default false. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held; they count against k and max_tokens."
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional budget in budget tokens (counter oml-tc/1, not a model's count). Steering is never cut; the hits served are the longest rank prefix that fits, and the cut is reported in budget."
           }
         },
         "required": ["query"],
