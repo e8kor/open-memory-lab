@@ -1,12 +1,43 @@
-//! Transition-function refusals (admission.md lifecycle; ADR-0025 d10), the
-//! capture normalization to NFC (admission.md, capture; ADR-0025 d6) and the
-//! R2 reviewer check (ADR-0001 d2).
+//! The claim kinds (http-api.md submit), transition-function refusals
+//! (admission.md lifecycle; ADR-0025 d10), the capture normalization to NFC
+//! (admission.md, capture; ADR-0025 d6) and the R2 reviewer check
+//! (ADR-0001 d2).
 
 use oml_domain::{
-    LineageClosure, MemoryStatus, Role, TransitionError, VerdictError, check_reviewer, nfc,
-    transition,
+    LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError, check_reviewer,
+    nfc, transition,
 };
 use uuid::Uuid;
+
+#[test]
+fn the_claim_kinds_are_the_submit_enum_and_each_name_parses_back() {
+    let kinds = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Steering,
+        MemoryKind::Term,
+        MemoryKind::TermMapping,
+        MemoryKind::VocabRelease,
+    ];
+    let names: Vec<&str> = kinds.iter().map(|k| k.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "memory",
+            "derived_fact",
+            "steering",
+            "term",
+            "term_mapping",
+            "vocab_release"
+        ],
+        "openapi.yaml SubmitRequest.kind"
+    );
+    for kind in kinds {
+        assert_eq!(MemoryKind::parse(kind.as_str()), Some(kind));
+    }
+    assert_eq!(MemoryKind::parse("dataset_manifest"), None, "unbuilt");
+    assert_eq!(MemoryKind::parse("Memory"), None, "names are exact");
+}
 
 const ALL: [MemoryStatus; 5] = [
     MemoryStatus::Held,

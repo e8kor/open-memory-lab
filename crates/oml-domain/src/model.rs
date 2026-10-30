@@ -1,5 +1,5 @@
-//! The M1 domain model slice: roles, key holders, the claim state set and
-//! its transition function, capture's NFC normalization, and the
+//! The M1 domain model slice: roles, key holders, the claim kinds, the claim
+//! state set and its transition function, capture's NFC normalization, and the
 //! constitution's R2 reviewer check (ADR-0001 d2, admission.md).
 
 use std::collections::BTreeSet;
@@ -48,6 +48,48 @@ impl HeldBy {
             HeldBy::Agent => "agent",
             HeldBy::Human => "human",
             HeldBy::Service => "service",
+        }
+    }
+}
+
+/// A claim's kind, as a submission declares it and `memories.kind` stores it
+/// (http-api.md submit; postgres-schema.md `memories`; ADR-0025 d8). A
+/// successor's kind changes only within its class (audit-and-lineage.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryKind {
+    Memory,
+    DerivedFact,
+    Steering,
+    Term,
+    TermMapping,
+    VocabRelease,
+}
+
+impl MemoryKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MemoryKind::Memory => "memory",
+            MemoryKind::DerivedFact => "derived_fact",
+            MemoryKind::Steering => "steering",
+            MemoryKind::Term => "term",
+            MemoryKind::TermMapping => "term_mapping",
+            MemoryKind::VocabRelease => "vocab_release",
+        }
+    }
+
+    /// The kind an exact name spells; `None` for any other string, which a
+    /// caller refuses rather than coerces (errors.md, unknown enum values).
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "memory" => Some(MemoryKind::Memory),
+            "derived_fact" => Some(MemoryKind::DerivedFact),
+            "steering" => Some(MemoryKind::Steering),
+            "term" => Some(MemoryKind::Term),
+            "term_mapping" => Some(MemoryKind::TermMapping),
+            "vocab_release" => Some(MemoryKind::VocabRelease),
+            _ => None,
         }
     }
 }

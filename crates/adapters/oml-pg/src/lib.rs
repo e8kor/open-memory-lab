@@ -12,8 +12,8 @@
 
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::{
-    ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
-    VerifyError, verify_chain,
+    ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
+    SignedEnvelope, VerifyError, verify_chain,
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
@@ -21,7 +21,7 @@ use oml_app::ports::{
     StoreError,
 };
 use oml_app::types::{
-    DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
+    ClaimKeyState, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
@@ -182,15 +182,27 @@ fn hash32(bytes: &[u8]) -> Result<Sha256Hash, StoreError> {
     Ok(Sha256Hash(arr))
 }
 
+/// The states 0005's CHECK admits (postgres-schema.md `memories`); demote
+/// and erase are unbuilt, so no fold writes 'demoted' or 'erased' yet.
 fn status_from_str(s: &str) -> Result<MemoryStatus, StoreError> {
     match s {
         "held" => Ok(MemoryStatus::Held),
         "promoted" => Ok(MemoryStatus::Promoted),
+        "demoted" => Ok(MemoryStatus::Demoted),
         "rejected" => Ok(MemoryStatus::Rejected),
+        "erased" => Ok(MemoryStatus::Erased),
         other => Err(StoreError::Backend(format!(
             "unknown memory status {other:?}"
         ))),
     }
+}
+
+/// An integer column as the port's unsigned value; a negative one is not a
+/// row this adapter wrote, so it fails closed.
+fn unsigned<T: TryFrom<i32>>(row: &PgRow, column: &str) -> Result<T, StoreError> {
+    let value: i32 = row.try_get(column).map_err(backend)?;
+    T::try_from(value)
+        .map_err(|_| StoreError::Backend(format!("stored {column} {value} is negative")))
 }
 
 fn role_from_str(s: &str) -> Result<Role, StoreError> {
@@ -213,33 +225,50 @@ fn held_by_from_str(s: &str) -> Result<HeldBy, StoreError> {
     }
 }
 
-/// The m-qualified memory column list every memory read shares. `created_at`
-/// comes back through `to_char` in the fixed-width signed form so
-/// `EventTime` round-trips exactly (timestamptz(6) holds the microseconds).
-const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.claim, \
-     m.claim_digest, m.status, m.author_principal, m.author_key_id, m.derives_from, \
-     m.lineage_principals, m.lineage_key_ids, m.superseded_by, m.scan_finding, \
+/// The m-qualified memory column list every memory read shares.
+/// `created_at` and `promoted_at` come back through `to_char` in the
+/// fixed-width signed form so `EventTime` round-trips exactly
+/// (timestamptz(6) holds the microseconds).
+const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.version, \
+     m.kind, m.claim, m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, \
+     m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
+     m.lineage_principals, m.lineage_key_ids, m.scan_finding, \
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
-     AS created_at_signed";
+     AS created_at_signed, \
+     to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS promoted_at_signed";
 
 fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
     let status: String = row.try_get("status").map_err(backend)?;
+    let kind: String = row.try_get("kind").map_err(backend)?;
     let claim_digest: Vec<u8> = row.try_get("claim_digest").map_err(backend)?;
     let created: String = row.try_get("created_at_signed").map_err(backend)?;
+    let promoted: Option<String> = row.try_get("promoted_at_signed").map_err(backend)?;
     Ok(MemoryRecord {
         memory_id: row.try_get("id").map_err(backend)?,
         tenant_id: row.try_get("tenant_id").map_err(backend)?,
         workarea_id: row.try_get("workarea_id").map_err(backend)?,
         claim_key: row.try_get("claim_key").map_err(backend)?,
+        version: unsigned(row, "version")?,
+        kind: MemoryKind::parse(&kind)
+            .ok_or_else(|| StoreError::Backend(format!("unknown memory kind {kind:?}")))?,
         body: row.try_get("claim").map_err(backend)?,
         body_digest: hash32(&claim_digest)?.to_prefixed(),
+        body_bytes: unsigned(row, "body_bytes")?,
         status: status_from_str(&status)?,
+        is_tip: row.try_get("is_tip").map_err(backend)?,
+        promoted_at: promoted
+            .as_deref()
+            .map(EventTime::parse)
+            .transpose()
+            .map_err(backend)?,
+        retirement: row.try_get("retirement").map_err(backend)?,
+        replaces: row.try_get("replaces_artifact_id").map_err(backend)?,
         author_principal: row.try_get("author_principal").map_err(backend)?,
         author_key_id: row.try_get("author_key_id").map_err(backend)?,
         derives_from: row.try_get("derives_from").map_err(backend)?,
         lineage_principals: row.try_get("lineage_principals").map_err(backend)?,
         lineage_key_ids: row.try_get("lineage_key_ids").map_err(backend)?,
-        superseded_by: row.try_get("superseded_by").map_err(backend)?,
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
     })
@@ -369,12 +398,18 @@ async fn insert_memory(
     // claim_digest stores the raw 32 bytes of the record's prefixed digest
     // string; reads reconstruct the `sha256:<hex>` spelling.
     let digest = Sha256Hash::from_prefixed(&m.body_digest).map_err(backend)?;
+    // Integer columns hold the ordinal and the byte count; a value they
+    // cannot hold is refused, never truncated.
+    let version = i32::try_from(m.version).map_err(backend)?;
+    let body_bytes = i32::try_from(m.body_bytes).map_err(backend)?;
+    let promoted_at = m.promoted_at.as_ref().map(EventTime::as_str);
     sqlx::query(
         "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, \
-         created_event_id, superseded_by, created_at, claim_key, author_principal, \
-         author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ($9)::timestamptz, $10, $11, $12, $13, $14, \
-         $15, $16)",
+         created_event_id, created_at, claim_key, author_principal, \
+         author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
+         version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22)",
     )
     .bind(m.memory_id)
     .bind(m.tenant_id)
@@ -383,15 +418,21 @@ async fn insert_memory(
     .bind(digest.0.to_vec())
     .bind(m.status.as_str())
     .bind(created_event_id)
-    .bind(m.superseded_by)
     .bind(m.created_at.as_str())
-    .bind(m.claim_key.as_deref())
+    .bind(&m.claim_key)
     .bind(&m.author_principal)
     .bind(m.author_key_id)
     .bind(m.derives_from.clone())
     .bind(m.lineage_principals.clone())
     .bind(m.lineage_key_ids.clone())
     .bind(m.scan_finding.as_deref())
+    .bind(version)
+    .bind(m.kind.as_str())
+    .bind(body_bytes)
+    .bind(m.is_tip)
+    .bind(promoted_at)
+    .bind(m.retirement)
+    .bind(m.replaces)
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
@@ -434,15 +475,56 @@ async fn set_memory_status(
     Ok(())
 }
 
+/// Ratification: the version it replaces gives up the tip first, so that
+/// `memories_served_tip` refuses only a genuine second tip; then the version
+/// is promoted, made the tip and stamped with the event's `at` (ADR-0025
+/// d10).
+async fn promote_memory(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    memory_id: Uuid,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "UPDATE memories t SET is_tip = false FROM memories s \
+         WHERE s.tenant_id = $1 AND s.id = $2 \
+           AND t.tenant_id = $1 AND t.id = s.replaces_artifact_id",
+    )
+    .bind(tenant_id)
+    .bind(memory_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    sqlx::query(
+        "UPDATE memories SET status = 'promoted', is_tip = true, \
+         promoted_at = ($3)::timestamptz WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(memory_id)
+    .bind(at.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    sqlx::query("DELETE FROM review_queue WHERE tenant_id = $1 AND memory_id = $2")
+        .bind(tenant_id)
+        .bind(memory_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
 /// Applies the metadata fold rows of one commit (ADR-0002 d1: same
 /// transaction as the journal insert; `memories.created_event_id` references
-/// the journal row, so this runs after it). `seq` is the commit's event seq:
-/// a key's `issued_seq` and a grant's or denial's epoch.
+/// the journal row, so this runs after it). `seq` and `at` are the commit's
+/// event seq and time: a key's `issued_seq`, a grant's or denial's epoch and
+/// a memory's `promoted_at`.
 async fn apply_fold(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     event_id: Uuid,
     seq: i64,
+    at: &EventTime,
     fold: MetadataFold,
 ) -> Result<(), StoreError> {
     match fold {
@@ -564,7 +646,7 @@ async fn apply_fold(
             }
         }
         MetadataFold::MemoryPromoted { memory_id } => {
-            set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Promoted).await?;
+            promote_memory(tx, tenant_id, memory_id, at).await?;
         }
         MetadataFold::MemoryRejected { memory_id } => {
             set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Rejected).await?;
@@ -573,19 +655,16 @@ async fn apply_fold(
             superseded,
             successor,
         } => {
-            // Successor first: the target's superseded_by FK points at it.
-            // The replaced version stays 'promoted'; only the tip moves
-            // (ADR-0025 d10).
-            let successor_id = successor.memory_id;
+            // The replaced version stays 'promoted'; only the tip moves, and
+            // the successor's replaces_artifact_id names it (ADR-0025 d10).
             insert_memory(tx, event_id, &successor).await?;
-            enqueue_review(tx, tenant_id, successor_id).await?;
+            enqueue_review(tx, tenant_id, successor.memory_id).await?;
             sqlx::query(
-                "UPDATE memories SET superseded_by = $3 \
+                "UPDATE memories SET is_tip = false \
                  WHERE tenant_id = $1 AND id = $2",
             )
             .bind(tenant_id)
             .bind(superseded)
-            .bind(successor_id)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -695,7 +774,7 @@ impl JournalStore for PgStore {
         .await
         .map_err(backend)?;
 
-        apply_fold(&mut tx, tenant_id, env.event_id, seq, req.fold).await?;
+        apply_fold(&mut tx, tenant_id, env.event_id, seq, &env.at, req.fold).await?;
 
         // Outbox: kind 'bronze-event' (0001's drain-kind set); the port
         // row's event id, topic and digest-only payload ride in the jsonb
@@ -821,8 +900,7 @@ impl JournalStore for PgStore {
         // configuration matches 0001's GIN expression index.
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m \
-             WHERE m.tenant_id = $1 AND m.status = 'promoted' \
-               AND m.superseded_by IS NULL \
+             WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
                AND m.workarea_id = ANY($2::uuid[]) \
                AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
              ORDER BY ts_rank(to_tsvector('simple', m.claim), \
@@ -839,6 +917,38 @@ impl JournalStore for PgStore {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         rows.iter().map(memory_from_row).collect()
+    }
+
+    async fn claim_key_state(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+    ) -> Result<ClaimKeyState, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(
+            "SELECT max(version) AS greatest, \
+                    coalesce(bool_or(status IN ('held', 'promoted', 'demoted')), false) AS live \
+             FROM memories WHERE tenant_id = $1 AND workarea_id = $2 AND claim_key = $3",
+        )
+        .bind(tenant_id)
+        .bind(workarea_id)
+        .bind(claim_key)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let greatest: Option<i32> = row.try_get("greatest").map_err(backend)?;
+        Ok(ClaimKeyState {
+            greatest_version: greatest
+                .map(|v| {
+                    u32::try_from(v)
+                        .map_err(|_| StoreError::Backend(format!("stored version {v} is negative")))
+                })
+                .transpose()?,
+            live: row.try_get("live").map_err(backend)?,
+        })
     }
 
     async fn review_claim_next(

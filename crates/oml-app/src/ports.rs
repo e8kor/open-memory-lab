@@ -14,7 +14,7 @@ use uuid::Uuid;
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope, key_fingerprint};
 
-use crate::types::{KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord};
+use crate::types::{ClaimKeyState, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord};
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
@@ -32,10 +32,10 @@ pub enum StoreError {
 /// event does to the read-side rows, applied in the same transaction
 /// (ADR-0002's one-transaction commit point).
 ///
-/// A key row's `issued_seq` and a grant or denial row's epoch are never
-/// carried here: the store writes the seq of the event this fold commits
-/// with, so the row cannot disagree with its event (workareas.md permission
-/// epoch; ADR-0025 d14).
+/// A key row's `issued_seq`, a grant or denial row's epoch and a memory's
+/// `promoted_at` are never carried here: the store writes the seq or the
+/// `at` of the event this fold commits with, so the row cannot disagree with
+/// its event (workareas.md permission epoch; ADR-0025 d10, d14).
 #[derive(Debug, Clone)]
 pub enum MetadataFold {
     TenantGenesis,
@@ -65,8 +65,10 @@ pub enum MetadataFold {
     KeyRevoked {
         key_id: Uuid,
     },
-    /// A captured submission: the row lands `held` (or `rejected` on a scan
-    /// veto, with `enqueue: false` — nothing waits in the queue).
+    /// A captured submission: the row lands `held` and, with `enqueue`,
+    /// waits in the review queue. The store refuses a second held, promoted
+    /// or demoted version of one ordinal under one `claim_key` in one
+    /// workarea (postgres-schema.md `memories_claim_version`).
     MemoryHeld {
         memory: MemoryRecord,
         enqueue: bool,
@@ -77,15 +79,20 @@ pub enum MetadataFold {
         memory_id: Uuid,
         reviewer_key_id: Uuid,
     },
+    /// Ratification: the version is promoted and becomes its claim's tip,
+    /// the version it replaces stops being the tip, and `promoted_at` is the
+    /// event's `at`. The store refuses a second promoted tip of one
+    /// `claim_key` in one workarea (postgres-schema.md
+    /// `memories_served_tip`; ADR-0025 d10).
     MemoryPromoted {
         memory_id: Uuid,
     },
     MemoryRejected {
         memory_id: Uuid,
     },
-    /// The old tip stays promoted and stops being the tip (its
-    /// `superseded_by` names the successor, ADR-0025 d10); the successor
-    /// enters held and is queued for review like any write.
+    /// The old tip stays promoted and stops being the tip; the successor,
+    /// whose `replaces` names it, enters held and is queued for review like
+    /// any write (ADR-0025 d10).
     MemorySuperseded {
         superseded: Uuid,
         successor: MemoryRecord,
@@ -171,8 +178,9 @@ pub trait JournalStore: Send + Sync {
         memory_id: Uuid,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
-    /// Promoted-only full-text recall (retrieval.md: reads return promoted
-    /// rows only) over exactly the `readable` workarea nodes — subtree(scope)
+    /// Full-text recall over promoted tips only (retrieval.md: reads return
+    /// promoted rows only; a replaced version is never a hit, ADR-0025 d8)
+    /// over exactly the `readable` workarea nodes — subtree(scope)
     /// ∩ the nodes where reader is effective, computed by the use-case. An
     /// empty set searches nothing: there is no tenant-wide fallback
     /// (ADR-0025 d1).
@@ -183,6 +191,17 @@ pub trait JournalStore: Send + Sync {
         query: &str,
         k: usize,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
+    /// The greatest version of `claim_key` in the workarea in any state, and
+    /// whether a held, promoted or demoted version holds it: a capture's
+    /// pre-`BEGIN` read (audit-and-lineage.md supersession chains; ADR-0025
+    /// d10, d18).
+    fn claim_key_state(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+    ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
 
     /// Claim the next reviewable queue entry for this reviewer among the rows
     /// whose workarea is in `workareas`, the nodes where the reviewer's

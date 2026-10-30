@@ -6,13 +6,13 @@
 use oml_app::App;
 use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::{
-    HeldBy, MemoryStatus, Role, SignedEnvelope, event_types, sha256_digest_string,
+    HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types, sha256_digest_string,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
     AppError, BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, IssuedKey,
-    RecallRequest, SubmitRequest, SupersedeRequest, Verdict,
+    RecallRequest, SubmitRequest, SupersedeRequest, Verdict, VersionRef,
 };
 use uuid::Uuid;
 
@@ -119,10 +119,13 @@ async fn agent(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> Issue
     .await
 }
 
+/// A first version of a claim of its own: the claim_key follows the
+/// idempotency key, so distinct submissions never collide (ADR-0025 d18).
 fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
         idempotency_key: idem.to_owned(),
-        claim_key: Some("deploy-runbook".to_owned()),
+        claim_key: format!("claim-{idem}"),
+        kind: MemoryKind::Memory,
         body: body.to_owned(),
         workarea_id: None,
         derives_from: Vec::new(),
@@ -152,10 +155,13 @@ async fn served_lineage(app: &TestApp, key: &str, id: Uuid, query: &str) -> Vec<
     let hit = recall
         .hits
         .iter()
-        .find(|m| m.memory_id == id)
+        .find(|m| m.memory.memory_id == id)
         .expect("the row is a recall hit");
-    assert_eq!(got.derives_from, hit.derives_from, "get and recall agree");
-    got.derives_from
+    assert_eq!(
+        got.memory.derives_from, hit.memory.derives_from,
+        "get and recall agree"
+    );
+    got.memory.derives_from
 }
 
 /// Submit as `writer` and have `dreamer` approve: the promoted row's id.
@@ -201,7 +207,7 @@ async fn happy_path_end_to_end() {
         .get_memory(&writer.value, memory_id)
         .await
         .expect("own-work read");
-    assert_eq!(own.status, MemoryStatus::Held);
+    assert_eq!(own.memory.status, MemoryStatus::Held);
 
     // Recall before promotion finds nothing.
     let recall = app
@@ -216,7 +222,7 @@ async fn happy_path_end_to_end() {
         .await
         .expect("review next")
         .expect("an item waits");
-    assert_eq!(served.memory_id, memory_id);
+    assert_eq!(served.memory.memory_id, memory_id);
     let outcome = app
         .post_verdict(&dreamer.value, memory_id, Verdict::Approve, None)
         .await
@@ -230,7 +236,7 @@ async fn happy_path_end_to_end() {
         .expect("recall");
     assert!(recall.steering.is_empty());
     assert_eq!(recall.hits.len(), 1);
-    assert_eq!(recall.hits[0].memory_id, memory_id);
+    assert_eq!(recall.hits[0].memory.memory_id, memory_id);
 
     // Supersede the promoted tip.
     let superseded = app
@@ -251,13 +257,14 @@ async fn happy_path_end_to_end() {
         .expect("get old tip");
     // Supersession adds no state: the replaced version stays promoted and
     // only loses the tip (ADR-0025 d10).
-    assert_eq!(old.status, MemoryStatus::Promoted);
-    assert_eq!(old.superseded_by, Some(superseded.successor_id));
+    assert_eq!(old.memory.status, MemoryStatus::Promoted);
+    assert!(!old.memory.is_tip);
     let successor = app
         .get_memory(&writer.value, superseded.successor_id)
         .await
         .expect("author reads own held successor");
-    assert_eq!(successor.status, MemoryStatus::Held);
+    assert_eq!(successor.memory.status, MemoryStatus::Held);
+    assert_eq!(successor.memory.replaces, Some(memory_id));
 
     // The whole chain verifies: genesis, root, admin key, crew, three keys
     // of one grant each (a key.issued and a grant.issued apiece), submit,
@@ -280,7 +287,7 @@ async fn happy_path_end_to_end() {
         submit_event.payload.get("body").is_none(),
         "digest-only payloads"
     );
-    assert!(submit_event.payload.get("body_digest").is_some());
+    assert!(submit_event.payload.get("plaintext_digest").is_some());
 }
 
 #[tokio::test]
@@ -320,7 +327,7 @@ async fn a_ratified_successor_is_the_one_hit_and_the_version_it_replaced_stays_p
         .recall(&reader.value, &recall_req("canary"))
         .await
         .expect("recall");
-    let hits: Vec<_> = recall.hits.iter().map(|m| m.memory_id).collect();
+    let hits: Vec<_> = recall.hits.iter().map(|m| m.memory.memory_id).collect();
     assert_eq!(hits, vec![second]);
 
     // It stays fetchable by id as history, still promoted (ADR-0025 d10).
@@ -328,8 +335,8 @@ async fn a_ratified_successor_is_the_one_hit_and_the_version_it_replaced_stays_p
         .get_memory(&reader.value, first)
         .await
         .expect("get the replaced version");
-    assert_eq!(old.status, MemoryStatus::Promoted);
-    assert_eq!(old.superseded_by, Some(second));
+    assert_eq!(old.memory.status, MemoryStatus::Promoted);
+    assert!(!old.memory.is_tip);
 }
 
 #[tokio::test]
@@ -519,11 +526,14 @@ async fn idempotent_submit_replays_the_first_result() {
 }
 
 #[tokio::test]
-async fn scan_veto_is_a_journalled_rejection() {
-    let app = app();
+async fn a_scan_veto_journals_nothing_and_leaves_no_row() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let writer = issue(&app, &boot.admin_key.value, Role::Writer, "wanda", crew).await;
     let dreamer = issue(&app, &boot.admin_key.value, Role::Dreamer, "dana", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let outbox = store.outbox_len(boot.tenant_id);
 
     let err = app
         .submit_memory(
@@ -534,15 +544,22 @@ async fn scan_veto_is_a_journalled_rejection() {
         .unwrap_err();
     assert!(matches!(err, AppError::ScanVeto(_)));
 
-    // The rejection was journalled (admission.md: a veto is a journalled
-    // rejection, not a dropped request) and nothing waits in the queue.
-    let head = app
-        .verify_chain(&boot.admin_key.value)
-        .await
-        .expect("verify");
-    assert_eq!(head.seq, 9, "the vetoed submission is event 9");
+    // A veto is a refusal like any other: no event, so no fold and no row,
+    // and nothing waits in the queue (admission.md; errors.md
+    // submission.scan_veto).
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    assert_eq!(store.outbox_len(boot.tenant_id), outbox);
     let served = app.review_next(&dreamer.value).await.expect("review next");
     assert!(served.is_none(), "nothing waits in the queue after a veto");
+
+    // No idempotency record either: the same key with a clean body is new
+    // work, not a digest mismatch, and its claim_key is free.
+    let clean = app
+        .submit_memory(&writer.value, &submit_req("idem-1", "a clean body"))
+        .await
+        .expect("the retry is a fresh capture");
+    assert!(!clean.replayed);
+    assert_eq!(clean.receipt.version, 1);
 }
 
 #[tokio::test]
@@ -603,6 +620,327 @@ async fn supersede_is_author_only_and_tip_only() {
 }
 
 // ---------------------------------------------------------------------------
+// Claim conformance: kind, version, NFC, the claim_key (ADR-0025 d6, d10,
+// d18)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let library = workarea(&app, admin, "library", boot.root_workarea_id).await;
+    let writer = issue_with(
+        &app,
+        admin,
+        Role::Writer,
+        "wanda",
+        vec![grant(crew, Role::Writer), grant(library, Role::Writer)],
+    )
+    .await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let fleet = |idem: &str, workarea: Uuid| SubmitRequest {
+        claim_key: "fleet-order".to_owned(),
+        ..submit_into(idem, "the fleet follows the canary", workarea)
+    };
+
+    let first = app
+        .submit_memory(&writer.value, &fleet("i1", crew))
+        .await
+        .expect("a new claim")
+        .receipt;
+    assert_eq!(first.version, 1);
+
+    // A held version holds the key: another version 1 collides, and the
+    // refusal journals nothing.
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .submit_memory(&writer.value, &fleet("i2", crew))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ClaimKeyConflict), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+
+    // So does a promoted one.
+    app.post_verdict(&dreamer.value, first.memory_id, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    let err = app
+        .submit_memory(&writer.value, &fleet("i3", crew))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ClaimKeyConflict), "{err:?}");
+
+    // A claim_key is namespaced by workarea.
+    let elsewhere = app
+        .submit_memory(&writer.value, &fleet("i4", library))
+        .await
+        .expect("another workarea's claim")
+        .receipt;
+    assert_eq!(elsewhere.version, 1);
+}
+
+#[tokio::test]
+async fn a_rejected_first_version_releases_its_claim_key() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let fleet = |idem: &str| SubmitRequest {
+        claim_key: "fleet-order".to_owned(),
+        ..submit_req(idem, "the fleet follows the canary")
+    };
+
+    let rejected = app
+        .submit_memory(&writer.value, &fleet("i1"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    app.post_verdict(
+        &dreamer.value,
+        rejected,
+        Verdict::Reject,
+        Some("the canary is gone"),
+    )
+    .await
+    .expect("reject");
+
+    // Never promoted, the rejection releases the key for a fresh version 1
+    // (audit-and-lineage.md; ADR-0025 d18).
+    let fresh = app
+        .submit_memory(&writer.value, &fleet("i2"))
+        .await
+        .expect("the released key takes a fresh claim")
+        .receipt;
+    assert_ne!(fresh.memory_id, rejected);
+    assert_eq!(fresh.version, 1);
+    let old = app
+        .get_memory(&writer.value, rejected)
+        .await
+        .expect("the author still reads its rejected row");
+    assert_eq!(old.memory.status, MemoryStatus::Rejected);
+    assert_eq!(old.memory.claim_key, "fleet-order");
+    assert_eq!(old.memory.version, 1);
+}
+
+#[tokio::test]
+async fn submission_digests_nfc_text() {
+    let decomposed = "the cafe\u{301} quote holds";
+    let composed = "the caf\u{e9} quote holds";
+    assert_ne!(decomposed, composed, "two spellings of one text");
+
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Writer, "wanda", crew).await;
+
+    let first = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                kind: MemoryKind::DerivedFact,
+                ..submit_req("i1", decomposed)
+            },
+        )
+        .await
+        .expect("submit")
+        .receipt;
+    let second = app
+        .submit_memory(&writer.value, &submit_req("i2", composed))
+        .await
+        .expect("submit")
+        .receipt;
+
+    // Capture normalizes before the digest: both spellings digest as the
+    // NFC text (admission.md capture; ADR-0025 d6).
+    let nfc_digest = sha256_digest_string(composed.as_bytes());
+    assert_eq!(first.body_digest, nfc_digest);
+    assert_eq!(second.body_digest, nfc_digest);
+    let stored = app
+        .get_memory(&writer.value, first.memory_id)
+        .await
+        .expect("own read")
+        .memory;
+    assert_eq!(stored.body, composed, "the NFC text is what is stored");
+    assert_eq!(stored.body_bytes, composed.len() as u64);
+    assert_eq!(stored.kind, MemoryKind::DerivedFact);
+    assert_eq!(stored.version, 1);
+
+    // The submission event carries the catalog payload: the NFC digest and
+    // byte count, the version and the kind (event-catalog.md).
+    let event = journal(&store, boot.tenant_id)
+        .await
+        .into_iter()
+        .find(|e| e.envelope.event_type == event_types::SUBMISSION_REMEMBER)
+        .expect("the submission is journalled")
+        .envelope;
+    assert_eq!(event.payload["plaintext_digest"], nfc_digest.as_str());
+    assert_eq!(event.payload["body_bytes"], composed.len());
+    assert_eq!(event.payload["version"], 1);
+    assert_eq!(event.payload["kind"], "derived_fact");
+    assert_eq!(event.payload["retirement"], false);
+    assert!(event.payload["replaces"].is_null());
+    assert!(event.payload.get("body").is_none(), "digest-only payloads");
+
+    // The scan sees the NFC text too: a rule on the composed spelling
+    // vetoes the decomposed one.
+    let scanning = App::new(
+        MemStore::new(),
+        MemSigner::new(TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner {
+            veto_marker: "caf\u{e9}".to_owned(),
+            hold_marker: "[needs-human]".to_owned(),
+        },
+    );
+    let (boot, crew) = tenant(&scanning).await;
+    let writer = issue(
+        &scanning,
+        &boot.admin_key.value,
+        Role::Writer,
+        "wanda",
+        crew,
+    )
+    .await;
+    let err = scanning
+        .submit_memory(&writer.value, &submit_req("i1", decomposed))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_successor_takes_the_next_version_and_the_targets_kind() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &SubmitRequest {
+            kind: MemoryKind::DerivedFact,
+            ..submit_req("i1", "the canary drains first")
+        },
+    )
+    .await;
+    let successor = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                target_id: first,
+                body: "the canary drains and settles first".to_owned(),
+                claim_key: None,
+            },
+        )
+        .await
+        .expect("supersede")
+        .successor_id;
+    let read = app
+        .get_memory(&writer.value, successor)
+        .await
+        .expect("own read")
+        .memory;
+    assert_eq!(read.version, 2, "1 + the greatest version of the claim_key");
+    assert_eq!(
+        read.kind,
+        MemoryKind::DerivedFact,
+        "an omitted kind is the target's"
+    );
+    assert_eq!(read.claim_key, "claim-i1");
+    assert_eq!(read.replaces, Some(first));
+    assert!(!read.is_tip, "a held successor is not the tip");
+}
+
+#[tokio::test]
+async fn replaces_names_the_replaced_version_only_to_a_key_that_can_read_it() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let approver = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    // Dreamer only: it reviews on crew but reads nothing there.
+    let blind = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let sighted = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dina",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+
+    // Two claims, each with a held successor: the queue serves them in
+    // capture order, one to each reviewer.
+    let mut pairs = Vec::new();
+    for idem in ["i1", "i2"] {
+        let first = promoted(
+            &app,
+            &writer.value,
+            &approver.value,
+            &submit_req(idem, "the canary drains first"),
+        )
+        .await;
+        let successor = app
+            .supersede(
+                &writer.value,
+                &SupersedeRequest {
+                    target_id: first,
+                    body: "the canary drains and settles first".to_owned(),
+                    claim_key: None,
+                },
+            )
+            .await
+            .expect("supersede")
+            .successor_id;
+        pairs.push((first, successor));
+    }
+    let replaced = |first| {
+        Some(VersionRef {
+            artifact_id: first,
+            version: 1,
+        })
+    };
+
+    // The author reads its own target: replaces names it with its version.
+    let (first, successor) = pairs[0];
+    let own = app
+        .get_memory(&writer.value, successor)
+        .await
+        .expect("own read");
+    assert_eq!(own.replaces, replaced(first));
+
+    // A reviewer that cannot read the target is served the successor with
+    // replaces null, as its derives_from hides the target too (ADR-0025 d3).
+    let served = app
+        .review_next(&blind.value)
+        .await
+        .expect("review next")
+        .expect("a successor waits");
+    assert_eq!(served.memory.memory_id, successor);
+    assert_eq!(served.replaces, None);
+    assert!(served.memory.derives_from.is_empty());
+
+    // One that can read it is served replaces with the version.
+    let (first, successor) = pairs[1];
+    let served = app
+        .review_next(&sighted.value)
+        .await
+        .expect("review next")
+        .expect("a successor waits");
+    assert_eq!(served.memory.memory_id, successor);
+    assert_eq!(served.replaces, replaced(first));
+    assert_eq!(served.memory.derives_from, vec![first]);
+}
+
+// ---------------------------------------------------------------------------
 // Effective access on every verb (ADR-0025 d1, d3)
 // ---------------------------------------------------------------------------
 
@@ -626,7 +964,11 @@ async fn one_writer_key_with_writer_and_reader_grants_remembers_and_recalls() {
         .await
         .expect("the one key recalls what it remembered");
     assert_eq!(
-        recall.hits.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        recall
+            .hits
+            .iter()
+            .map(|m| m.memory.memory_id)
+            .collect::<Vec<_>>(),
         vec![id]
     );
 }
@@ -791,7 +1133,11 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
         .await
         .expect("recall");
     assert_eq!(
-        after.hits.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        after
+            .hits
+            .iter()
+            .map(|m| m.memory.memory_id)
+            .collect::<Vec<_>>(),
         vec![kept],
         "deny-wins over the reader grant"
     );
@@ -893,7 +1239,7 @@ async fn a_dreamer_is_served_only_held_rows_inside_its_dreamer_grants() {
         .await
         .expect("review next")
         .expect("the row inside waits");
-    assert_eq!(served.memory_id, inside);
+    assert_eq!(served.memory.memory_id, inside);
     app.post_verdict(&dreamer.value, inside, Verdict::Approve, None)
         .await
         .expect("approve");
@@ -1084,7 +1430,7 @@ async fn an_unreadable_derives_from_target_is_not_found() {
         .receipt
         .memory_id;
     let derive = |idem: &str| SubmitRequest {
-        claim_key: Some(format!("derived-{idem}")),
+        claim_key: format!("derived-{idem}"),
         derives_from: vec![held],
         ..submit_req(idem, "a derived fact")
     };
@@ -1141,7 +1487,7 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
         &author.value,
         &dreamer.value,
         &SubmitRequest {
-            claim_key: Some("fleet-order".to_owned()),
+            claim_key: "fleet-order".to_owned(),
             derives_from: vec![held],
             ..submit_req("i2", "the fleet follows the canary")
         },

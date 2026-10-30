@@ -33,11 +33,12 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::App;
-use oml_app::domain::{HeldBy, Role, SignedEnvelope, sha256_digest_string};
+use oml_app::domain::budget::budget_tokens;
+use oml_app::domain::{HeldBy, MemoryKind, Role, SignedEnvelope, nfc, sha256_digest_string};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
-    AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey, MemoryRecord,
-    RecallRequest, SubmitRequest, SupersedeRequest, Verdict,
+    AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey, RecallRequest,
+    ServedMemory, SubmitRequest, SupersedeRequest, Verdict,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -176,7 +177,7 @@ where
         let token = bearer(headers)?;
         let idem_key = idempotency_key(headers)?;
         let req: SubmitBody = parse_json(headers, body)?;
-        validate_kind(&req.kind)?;
+        let kind = parse_kind(&req.kind)?;
         match req.verb.as_str() {
             "remember" => {}
             // learn asserts a derived claim: lineage is required, never
@@ -196,7 +197,10 @@ where
                 )));
             }
         }
-        if req.body.len() > MAX_BODY_BYTES {
+        // The limit counts the NFC body, the form capture stores
+        // (http-api.md limits; ADR-0025 d6).
+        let text = nfc(&req.body);
+        if text.len() > MAX_BODY_BYTES {
             return Err(ApiError::payload_too_large("the claim body"));
         }
         refuse_attachments(&req.attachments)?;
@@ -205,8 +209,9 @@ where
 
         let app_req = SubmitRequest {
             idempotency_key: idem_key,
-            claim_key: Some(req.claim_key),
-            body: req.body,
+            claim_key: req.claim_key,
+            kind,
+            body: text,
             workarea_id,
             derives_from: req.derives_from,
         };
@@ -216,14 +221,18 @@ where
         let r = &outcome.receipt;
         let mut response = json_response(
             StatusCode::ACCEPTED,
+            // SubmitAccepted: a submit captures a new claim, never a
+            // supersession, so it replaces nothing and retires nothing.
             &json!({
                 "artifact_id": r.memory_id,
                 "claim_key": r.claim_key,
-                "version": 1,
+                "version": r.version,
                 "state": r.state,
                 "plaintext_digest": r.body_digest,
                 "journal_seq": r.journal_seq,
                 "workarea_id": r.workarea_id,
+                "retirement": false,
+                "replaces": Value::Null,
             }),
         );
         if outcome.replayed {
@@ -340,7 +349,7 @@ where
         let _idem = idempotency_key(headers)?;
         let target_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let req: SupersedeBody = parse_json(headers, body)?;
-        if req.body.len() > MAX_BODY_BYTES {
+        if nfc(&req.body).len() > MAX_BODY_BYTES {
             return Err(ApiError::payload_too_large("the claim body"));
         }
         refuse_attachments(&req.attachments)?;
@@ -360,14 +369,15 @@ where
             .get_memory(&token, outcome.successor_id)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let m = &successor.memory;
         Ok(json_response(
             StatusCode::ACCEPTED,
             &json!({
                 "artifact_id": outcome.successor_id,
-                "claim_key": successor.claim_key,
-                "version": 1,
+                "claim_key": m.claim_key,
+                "version": m.version,
                 "state": "held",
-                "plaintext_digest": successor.body_digest,
+                "plaintext_digest": m.body_digest,
                 "journal_seq": outcome.journal_seq,
             }),
         ))
@@ -409,11 +419,11 @@ where
                     // The PoC serve binding is the claimed row itself
                     // (review_queue.held_by_key); the id round-trips the
                     // memory id rather than naming a serve table row.
-                    "serve_id": format!("srv_{}", memory.memory_id.simple()),
+                    "serve_id": format!("srv_{}", memory.memory.memory_id.simple()),
                     "expires_at": system_event_time_plus(SERVE_TTL_SECS).as_str(),
                     "item": memory_json(&memory, true),
                     "served_digests": {
-                        "body": memory.body_digest,
+                        "body": memory.memory.body_digest,
                         "attachments": [],
                     },
                 }),
@@ -465,7 +475,7 @@ where
             StatusCode::OK,
             &json!({
                 "artifact_id": outcome.memory_id,
-                "version": 1,
+                "version": outcome.version,
                 "verdict": req.verdict,
                 "state": outcome.state.as_str(),
                 "ratification_event_id": Value::Null,
@@ -1054,20 +1064,10 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
     })
 }
 
-fn validate_kind(kind: &str) -> Result<(), ApiError> {
-    const KINDS: [&str; 6] = [
-        "memory",
-        "derived_fact",
-        "steering",
-        "term",
-        "term_mapping",
-        "vocab_release",
-    ];
-    if KINDS.contains(&kind) {
-        Ok(())
-    } else {
-        Err(ApiError::validation(format!("unknown kind {kind:?}")))
-    }
+/// The submit body's kind, stored as sent (http-api.md submit; ADR-0025
+/// d8); an unknown one is refused, never coerced to `memory`.
+fn parse_kind(kind: &str) -> Result<MemoryKind, ApiError> {
+    MemoryKind::parse(kind).ok_or_else(|| ApiError::validation(format!("unknown kind {kind:?}")))
 }
 
 /// No upload sessions exist in the PoC, so every attachment digest fails the
@@ -1113,18 +1113,22 @@ where
     }
 }
 
-/// The spec's `Memory` object (openapi.yaml components.schemas.Memory) from
-/// the PoC record. Fields the slice does not model are emitted at their
-/// fixed PoC values rather than omitted, so clients see the full shape.
+/// The spec's `Memory` object (openapi.yaml components.schemas.Memory) as
+/// the calling key is served it (ADR-0025 d3, d12). Fields the slice does
+/// not model — provenance, simulation, self-signing, attachments, held-item
+/// expiry — are emitted at their fixed PoC values rather than omitted, so
+/// clients see the full shape.
 #[must_use]
-pub fn memory_json(m: &MemoryRecord, include_body: bool) -> Value {
+pub fn memory_json(served: &ServedMemory, include_body: bool) -> Value {
+    let m = &served.memory;
     let mut value = json!({
         "artifact_id": m.memory_id,
         "claim_key": m.claim_key,
-        "version": 1,
-        "tip": m.superseded_by.is_none(),
+        "version": m.version,
+        "tip": m.is_tip,
         "workarea_id": m.workarea_id,
-        "kind": "memory",
+        "workarea_path": served.workarea_path,
+        "kind": m.kind.as_str(),
         "state": m.status.as_str(),
         "principal": m.author_principal,
         "provenance": "agent",
@@ -1133,8 +1137,18 @@ pub fn memory_json(m: &MemoryRecord, include_body: bool) -> Value {
         "plaintext_digest": m.body_digest,
         "derives_from": m.derives_from,
         "attachments": [],
+        // Budget tokens of the body under oml-tc/1, whether or not a budget
+        // was sent (retrieval.md token budgets; ADR-0025 d6).
+        "tokens": budget_tokens(m.body_bytes),
+        "retirement": m.retirement,
+        "replaces": served.replaces.map(|r| json!({
+            "artifact_id": r.artifact_id,
+            "version": r.version,
+        })),
+        // Held-item expiry is unbuilt (ADR-0025 d13).
+        "held_expires_at": Value::Null,
         "created_at": m.created_at.as_str(),
-        "promoted_at": Value::Null,
+        "promoted_at": m.promoted_at.as_ref().map(|at| at.as_str()),
     });
     if include_body && let Some(obj) = value.as_object_mut() {
         obj.insert("body".to_owned(), Value::String(m.body.clone()));

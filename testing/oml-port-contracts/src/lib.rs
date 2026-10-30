@@ -14,8 +14,8 @@ use core::future::Future;
 
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::{
-    EventDraft, EventTime, HeldBy, KeySet, MemoryStatus, Role, SignedEnvelope, event_types,
-    key_fingerprint, next_envelope, sha256_digest_string, sign, verify_chain,
+    EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
+    event_types, key_fingerprint, next_envelope, sha256_digest_string, sign, verify_chain,
 };
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
@@ -24,7 +24,8 @@ use oml_app::ports::{
     Scanner, Signer, StoreError,
 };
 use oml_app::types::{
-    Crew, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord, WorkareaRecord,
+    ClaimKeyState, Crew, DenialRecord, GrantRecord, KeyAccess, KeyRecord, MemoryRecord,
+    WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -245,7 +246,8 @@ impl ChainRig {
     }
 }
 
-/// A held fixture memory with its one-author lineage closure.
+/// A held fixture memory with its one-author lineage closure: the first
+/// version of a claim of its own, kind `memory`.
 #[must_use]
 pub fn held_memory(
     tenant_id: Uuid,
@@ -259,19 +261,76 @@ pub fn held_memory(
         memory_id,
         tenant_id,
         workarea_id,
-        claim_key: None,
+        claim_key: format!("claim-{}", memory_id.simple()),
+        version: 1,
+        kind: MemoryKind::Memory,
         body: body.to_owned(),
         body_digest: oml_app::domain::sha256_digest_string(body.as_bytes()),
+        body_bytes: body.len() as u64,
         status: MemoryStatus::Held,
+        is_tip: false,
+        promoted_at: None,
+        retirement: false,
+        replaces: None,
         author_principal: author_principal.to_owned(),
         author_key_id,
         derives_from: Vec::new(),
         lineage_principals: vec![author_principal.to_owned()],
         lineage_key_ids: vec![author_key_id],
-        superseded_by: None,
         scan_finding: None,
         created_at: EventTime::parse("2026-10-29T13:00:00.000000Z").expect("fixture time"),
     }
+}
+
+/// Commits `memory` held through the rig, enqueued for review.
+async fn hold<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    memory: MemoryRecord,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": memory.memory_id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue: true,
+        },
+        None,
+    )
+    .await
+}
+
+/// Commits the promotion of `memory_id` through the rig.
+async fn promote<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    memory_id: Uuid,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_PROMOTE,
+        json!({ "artifact_id": memory_id.to_string() }),
+        MetadataFold::MemoryPromoted { memory_id },
+        None,
+    )
+    .await
+}
+
+/// Commits the rejection of `memory_id` through the rig.
+async fn reject<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    memory_id: Uuid,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::REVIEW_REJECT,
+        json!({ "artifact_id": memory_id.to_string() }),
+        MetadataFold::MemoryRejected { memory_id },
+        None,
+    )
+    .await
 }
 
 /// A fixture workarea node with no crew.
@@ -1349,6 +1408,312 @@ pub async fn crew_round_trips_through_workarea_created<S: JournalStore>(store: &
     );
 }
 
+/// Every claim field a capture stores — kind, version, the NFC byte count,
+/// the retirement mark and the replaced version — reads back as committed
+/// (postgres-schema.md `memories`; ADR-0025 d6, d10, d11).
+pub async fn kind_version_and_body_bytes_round_trip_through_memory_held<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(20);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB20);
+    let first = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC20),
+        "wanda",
+        Uuid::from_u128(0xD20),
+        "drain the canary",
+    );
+    let successor = MemoryRecord {
+        memory_id: Uuid::from_u128(0xC21),
+        claim_key: first.claim_key.clone(),
+        version: 7,
+        kind: MemoryKind::Steering,
+        body: "retire: the canary is gone".to_owned(),
+        body_bytes: 4_000_000,
+        retirement: true,
+        replaces: Some(first.memory_id),
+        derives_from: vec![first.memory_id],
+        scan_finding: Some("marker finding".to_owned()),
+        ..first.clone()
+    };
+    for memory in [first, successor] {
+        hold(&mut rig, store, memory.clone())
+            .await
+            .expect("commit held");
+        assert_eq!(
+            store
+                .memory(rig.tenant_id, memory.memory_id)
+                .await
+                .expect("memory"),
+            Some(memory),
+            "every stored field reads back"
+        );
+    }
+}
+
+/// A promotion makes the version its claim's tip, stamps `promoted_at` with
+/// the promoting event's `at`, and takes the tip off the version it
+/// replaces, which stays promoted (ADR-0025 d10).
+pub async fn promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(21);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB21);
+    let v1 = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC22),
+        "wanda",
+        Uuid::from_u128(0xD21),
+        "v1",
+    );
+    let v2 = MemoryRecord {
+        memory_id: Uuid::from_u128(0xC23),
+        version: 2,
+        replaces: Some(v1.memory_id),
+        body: "v2".to_owned(),
+        ..v1.clone()
+    };
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    let read = |id| async move {
+        store
+            .memory(rig_tenant(21), id)
+            .await
+            .expect("memory")
+            .expect("the row exists")
+    };
+    let held = read(v1.memory_id).await;
+    assert!(!held.is_tip, "a held version is never the tip");
+    assert_eq!(held.promoted_at, None);
+
+    let receipt = promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    let at = store
+        .events_range(rig.tenant_id, receipt.seq, 1)
+        .await
+        .expect("range")
+        .remove(0)
+        .envelope
+        .at;
+    let tip = read(v1.memory_id).await;
+    assert_eq!(tip.status, MemoryStatus::Promoted);
+    assert!(tip.is_tip);
+    assert_eq!(tip.promoted_at, Some(at), "the promoting event's at");
+
+    hold(&mut rig, store, v2.clone()).await.expect("hold v2");
+    assert!(
+        read(v1.memory_id).await.is_tip,
+        "a held successor moves nothing"
+    );
+    promote(&mut rig, store, v2.memory_id)
+        .await
+        .expect("promote v2");
+    let replaced = read(v1.memory_id).await;
+    assert_eq!(
+        replaced.status,
+        MemoryStatus::Promoted,
+        "no superseded state"
+    );
+    assert!(!replaced.is_tip, "the replaced version is history");
+    assert!(read(v2.memory_id).await.is_tip);
+}
+
+/// The tenant a rig built with `seed` writes under.
+fn rig_tenant(seed: u64) -> Uuid {
+    ChainRig::new(seed).tenant_id
+}
+
+/// One claim has one served tip: promoting a second version that replaces
+/// nothing while the first is the tip is refused, and the refused commit
+/// changes nothing (postgres-schema.md `memories_served_tip`).
+pub async fn a_second_served_tip_of_one_claim_commits_nothing<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(22);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB22);
+    let first = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC24),
+        "wanda",
+        Uuid::from_u128(0xD22),
+        "first",
+    );
+    let rival = MemoryRecord {
+        memory_id: Uuid::from_u128(0xC25),
+        version: 2,
+        body: "rival".to_owned(),
+        ..first.clone()
+    };
+    hold(&mut rig, store, first.clone()).await.expect("hold");
+    promote(&mut rig, store, first.memory_id)
+        .await
+        .expect("promote");
+    hold(&mut rig, store, rival.clone())
+        .await
+        .expect("hold rival");
+    let head = store.chain_head(rig.tenant_id).await.expect("head");
+
+    assert!(
+        promote(&mut rig, store, rival.memory_id).await.is_err(),
+        "a second tip of one claim is refused"
+    );
+    assert_eq!(store.chain_head(rig.tenant_id).await.expect("head"), head);
+    let still = store
+        .memory(rig.tenant_id, rival.memory_id)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(still.status, MemoryStatus::Held);
+    assert!(!still.is_tip);
+    assert!(
+        store
+            .memory(rig.tenant_id, first.memory_id)
+            .await
+            .expect("memory")
+            .expect("row")
+            .is_tip
+    );
+}
+
+/// No two held, promoted or demoted versions of one `claim_key` in one
+/// workarea share an ordinal; a rejected version leaves its ordinal free
+/// (postgres-schema.md `memories_claim_version`; ADR-0025 d18).
+pub async fn a_second_live_version_with_one_ordinal_commits_nothing<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(23);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB23);
+    let first = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC26),
+        "wanda",
+        Uuid::from_u128(0xD23),
+        "first",
+    );
+    let twin = MemoryRecord {
+        memory_id: Uuid::from_u128(0xC27),
+        body: "twin".to_owned(),
+        ..first.clone()
+    };
+    hold(&mut rig, store, first.clone()).await.expect("hold");
+    let head = store.chain_head(rig.tenant_id).await.expect("head");
+    assert!(
+        hold(&mut rig, store, twin.clone()).await.is_err(),
+        "a second live version 1 is refused"
+    );
+    assert_eq!(store.chain_head(rig.tenant_id).await.expect("head"), head);
+    assert_eq!(
+        store
+            .memory(rig.tenant_id, twin.memory_id)
+            .await
+            .expect("memory"),
+        None,
+        "the refused commit stored no row"
+    );
+
+    // Elsewhere the ordinal is free: another workarea, another claim_key.
+    let elsewhere = MemoryRecord {
+        memory_id: Uuid::from_u128(0xC28),
+        workarea_id: Uuid::from_u128(0xB24),
+        ..twin.clone()
+    };
+    hold(&mut rig, store, elsewhere)
+        .await
+        .expect("another workarea's claim_key is another claim");
+
+    // A rejected version 1 releases its ordinal.
+    reject(&mut rig, store, first.memory_id)
+        .await
+        .expect("reject");
+    hold(&mut rig, store, twin)
+        .await
+        .expect("a fresh version 1 after the rejection");
+}
+
+/// A capture reads the greatest version of a `claim_key` in any state, and
+/// whether a held, promoted or demoted version holds it, within one
+/// workarea (audit-and-lineage.md supersession chains; ADR-0025 d10, d18).
+pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_key<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(24);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB25);
+    let v1 = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC29),
+        "wanda",
+        Uuid::from_u128(0xD24),
+        "v1",
+    );
+    let key = v1.claim_key.clone();
+    let state = |workarea| {
+        let key = key.clone();
+        async move {
+            store
+                .claim_key_state(rig_tenant(24), workarea, &key)
+                .await
+                .expect("claim_key_state")
+        }
+    };
+    assert_eq!(state(wa).await, ClaimKeyState::default(), "an unused key");
+
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    assert_eq!(
+        state(wa).await,
+        ClaimKeyState {
+            greatest_version: Some(1),
+            live: true,
+        },
+        "a held version holds the key"
+    );
+    assert_eq!(
+        state(Uuid::from_u128(0xB26)).await,
+        ClaimKeyState::default(),
+        "claim_key is namespaced by workarea"
+    );
+
+    reject(&mut rig, store, v1.memory_id)
+        .await
+        .expect("reject v1");
+    assert_eq!(
+        state(wa).await,
+        ClaimKeyState {
+            greatest_version: Some(1),
+            live: false,
+        },
+        "a rejected version is counted and releases the key"
+    );
+
+    let v3 = MemoryRecord {
+        memory_id: Uuid::from_u128(0xC2A),
+        version: 3,
+        body: "v3".to_owned(),
+        ..v1.clone()
+    };
+    hold(&mut rig, store, v3.clone()).await.expect("hold v3");
+    promote(&mut rig, store, v3.memory_id)
+        .await
+        .expect("promote v3");
+    assert_eq!(
+        state(wa).await,
+        ClaimKeyState {
+            greatest_version: Some(3),
+            live: true,
+        },
+        "a promoted version holds the key"
+    );
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
@@ -1373,6 +1738,12 @@ where
     workarea_subtree_lists_every_descendant_once(&new_store().await).await;
     workarea_children_are_immediate_and_ordered_by_name_bytes_then_id(&new_store().await).await;
     crew_round_trips_through_workarea_created(&new_store().await).await;
+    kind_version_and_body_bytes_round_trip_through_memory_held(&new_store().await).await;
+    promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
+        .await;
+    a_second_served_tip_of_one_claim_commits_nothing(&new_store().await).await;
+    a_second_live_version_with_one_ordinal_commits_nothing(&new_store().await).await;
+    claim_key_state_counts_every_version_and_only_live_ones_hold_the_key(&new_store().await).await;
 }
 
 // ---------------------------------------------------------------------------
