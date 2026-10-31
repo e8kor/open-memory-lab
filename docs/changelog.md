@@ -39,18 +39,17 @@ records on other branches hold. It binds nothing before its acceptance, and no a
 changes until then.
 
 - **Proposed, not built:** kind `deliverable` (d1); the file manifest and
-  `submission.file_manifest_invalid` (d2); download-only attachment fetch (d3); the two attachment
-  forms and `oml attach put` (d4); descriptors, counter `oml-tc/2` and `include_text` (d5); the
-  forms described per key and selected by the harness (d6); several deliverables in one workarea
-  (d7); declared lineage and the descendants read (d8); withdrawal, `lifecycle.withdraw` and
-  `lifecycle.not_held` (d9); the object-store and KMS ports with one DEK per stored object (d10);
-  three vocabulary rows (d11); the build order after iteration 3 (d12).
+  `submission.file_manifest_invalid` (d2); download-only attachment fetch naming its version (d3);
+  the two attachment forms and `oml attach put` (d4); descriptors, counter `oml-tc/2` and
+  `include_text` (d5); the forms described per key and selected by the harness (d6); several
+  deliverables in one workarea (d7); declared lineage and the descendants read (d8); the
+  object-store and KMS ports with one DEK per stored object, and their copy classes (d9); two
+  vocabulary rows (d10); the build order after iteration 3 (d11).
 - **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-40 to FR-42 on
   the roadmap, each marked proposed. No contract page changes, so `info.version` stays
   `0.2.0-design`.
-- **Amends, on acceptance:** ADR-0004 (d3, d4), ADR-0005 (d1), ADR-0012 (d5), ADR-0014 (d2),
-  ADR-0018 (d4) and ADR-0025 (d4, d6, d8, d11, d12, d14); their Status lines gain the back-pointer
-  then.
+- **Amends, on acceptance:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4) and ADR-0025
+  (d4, d6, d8, d11, d12, d14); their Status lines gain the back-pointer then.
 
 ### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
 
