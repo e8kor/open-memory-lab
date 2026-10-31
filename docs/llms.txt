@@ -78,4 +78,5 @@
 
 ## Decisions
 
-- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0025, ADR-0028 and the proposed ADR-0029, what each decides, and which page owns which decision
+- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0025, ADR-0028, ADR-0029, and the proposed ADR-0034, what each decides, and which page owns which decision
+- [ADR-0034](https://e8kor.github.io/open-memory-lab/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing/): proposed, not accepted — the lead would migrate as an owner role and serve as a role that owns nothing, refuse to start on one database URL, and leave `_sqlx_migrations` the one table without row-level security, reachable by the owner alone
