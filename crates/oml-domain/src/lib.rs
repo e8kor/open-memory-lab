@@ -8,7 +8,11 @@
 //! (ADR-0001 d2). `access` holds grant admissibility, effective access, the
 //! refusal order, effective verbs and content-tail visibility (ADR-0025 d1,
 //! d2, d14, d15); `budget` holds the budget token, the budget cut and the
-//! recall order (ADR-0025 d6, d7, d8).
+//! recall order (ADR-0025 d6, d7, d8); `oauth` holds the pure core of
+//! connections — the connect code, PKCE, the redirect allowlist, client
+//! identity, the fetch-address allow-list, discovery, token formats,
+//! rotation with reuse detection and the connection lifecycle (ADR-0031,
+//! proposed).
 
 #![forbid(unsafe_code)]
 
@@ -19,6 +23,7 @@ pub mod envelope;
 pub mod jcs;
 pub mod keys;
 pub mod model;
+pub mod oauth;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,
