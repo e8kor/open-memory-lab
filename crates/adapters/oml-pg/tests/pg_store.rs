@@ -1328,8 +1328,17 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
         };
-        let sql = format!("SELECT '{table} ' || ({row})::text FROM {table} t");
+        // Row-level security does not bind a superuser, as CI's Postgres role
+        // is, so the tenant is also named in the query: either role counts the
+        // same rows.
+        let owner = if table == "tenants" {
+            "id"
+        } else {
+            "tenant_id"
+        };
+        let sql = format!("SELECT '{table} ' || ({row})::text FROM {table} t WHERE t.{owner} = $1");
         let texts: Vec<String> = sqlx::query_scalar(&sql)
+            .bind(tenant)
             .fetch_all(&mut *tx)
             .await
             .unwrap_or_else(|e| panic!("{table}: {e}"));
