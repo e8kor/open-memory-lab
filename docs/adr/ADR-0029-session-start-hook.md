@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0029-session-start-hook
 tier: engineering
-status: proposed
+status: accepted design
 answers: how the oml agent plugin starts every Claude Code session from what OML holds for its key; what `oml hook session-start` reads over the HTTP rings and with which key; which query it recalls with and under which budget; how it fails open; what context it injects; how the plugin wires it; and how a user lets the plugin's tools run without a prompt
 -->
 
 # ADR-0029 — The agent plugin starts every session from what OML holds for its key, through `oml hook session-start`
 
-**Status:** proposed · 2026-10-31
+**Status:** accepted design · 2026-10-31
 
 ## Context
 

@@ -31,7 +31,7 @@ implementation milestone where it changes what the repository holds.
 
 ### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
 
-The proposed [ADR-0029](adr/ADR-0029-session-start-hook.md) records what the maintainer decided on
+[ADR-0029](adr/ADR-0029-session-start-hook.md), accepted by the maintainer on 2026-10-31 with release v0.2.2, records what the maintainer decided on
 2026-10-31, and this change builds it: the `oml` plugin ships a SessionStart hook that runs a Rust
 subcommand of the `oml` CLI, on by default and bounded by a token budget. Numbers 0026 and 0027
 are taken by records on other branches. It amends no record.
