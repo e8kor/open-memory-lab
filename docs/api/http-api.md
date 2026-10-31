@@ -500,7 +500,9 @@ serialized as stored — the server serializes the graph, it does not compute an
 `redacted: true`, so the shape of the closure is visible without leaking content. A redacted
 node still discloses that the version exists and its id — another author's held or rejected
 ancestor of a promoted version included — which is the residual
-[FR-31](../product/roadmap.md) tracks.
+[FR-31](../product/roadmap.md) tracks. Proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md)
+d4): a closure member or edge endpoint that fails ADR-0030's boundary test at the subject's node
+is omitted, never elided, and an edge is served only when both of its endpoints pass.
 
 ### Supersede — `POST /v1/memories/{artifact_id}/supersede`
 
@@ -598,8 +600,8 @@ pipeline ([admission.md](../architecture/admission.md)).
 
 - `GET /v2/claim-edges?workarea_id=…&artifact_id=…` — paginated graph read, pending and ratified,
   scoped to read access. Proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d4, d9): scoped outside an in-progress
-  subtree it serves no claim and no edge from inside it until its commit; scoped inside, it also
-  serves the held claims ADR-0030 d5 admits.
+  subtree it serves no claim from inside it and no edge with an endpoint inside it until its
+  commit; scoped inside, it also serves the held claims ADR-0030 d5 admits.
 - `POST /v2/claim-edges` — `{from_artifact_id, to_artifact_id, label}` under dreamer(propose) →
   `202`, pending. The label vocabulary for claim edges is not fixed by the design (the closed
   label set exists for workarea edges only); fixing it is an open detail for the
@@ -608,7 +610,9 @@ pipeline ([admission.md](../architecture/admission.md)).
   endpoints pass readability, each read at its own node.
 - `POST /v2/claim-edges/{edge_id}/ratify` — dreamer(review), never the proposer, and refused when
   the ratifying key or principal appears in either endpoint's lineage closure
-  (`review.author_in_lineage`).
+  (`review.author_in_lineage`). Proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md)
+  d2): an edge whose endpoints have different in-progress roots is refused with
+  `workarea.in_progress_refused` once both endpoints pass readability, as at its proposal.
 
 ## Vocabularies
 

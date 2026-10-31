@@ -623,7 +623,7 @@ paths:
       tags: [claim-edges]
       operationId: listClaimEdges
       summary: Paginated claim-graph read, pending and ratified, scoped to read access.
-      description: 'Requires: reader effective access. Proposed (ADR-0030 d4, d9): scoped outside an in-progress subtree it serves no claim and no edge from inside it until its commit; scoped inside, it also serves the held claims ADR-0030 d5 admits.'
+      description: 'Requires: reader effective access. Proposed (ADR-0030 d4, d9): scoped outside an in-progress subtree it serves no claim from inside it and no edge with an endpoint inside it until its commit; scoped inside, it also serves the held claims ADR-0030 d5 admits.'
       parameters:
         - { name: workarea_id, in: query, schema: { type: string } }
         - { name: artifact_id, in: query, schema: { type: string } }
@@ -687,7 +687,7 @@ paths:
       tags: [claim-edges]
       operationId: ratifyClaimEdge
       summary: Ratify a proposed claim edge.
-      description: 'Requires: dreamer(review); never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage) — R2. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
+      description: 'Requires: dreamer(review); never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage) — R2. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). Proposed (ADR-0030 d2): an edge whose endpoints have different in-progress roots is refused with workarea.in_progress_refused once both endpoints pass readability.'
       parameters:
         - { name: edge_id, in: path, required: true, schema: { type: string } }
         - { $ref: '#/components/parameters/IdempotencyKey' }

@@ -9,7 +9,7 @@ answers: what an in-progress workarea is and how an admin marks one; the one bou
 
 **Status:** proposed · 2026-10-31
 
-**Amends:** ADR-0001 (d3, d5), ADR-0008 (d4, d6), ADR-0009 (d1, d2, d3), ADR-0012 (d1), ADR-0013 (d1, d4), ADR-0018 (d4), ADR-0019 (d1), ADR-0022 (d2), ADR-0024 (d1), ADR-0025 (d1, d2, d3, d4, d5, d8, d9, d12, d13, d14, d15), ADR-0028 (d1, d2)
+**Amends:** ADR-0001 (d3, d5), ADR-0008 (d4, d6), ADR-0009 (d1, d2, d3), ADR-0012 (d1), ADR-0013 (d1, d4), ADR-0018 (d4), ADR-0019 (d1), ADR-0022 (d2), ADR-0024 (d1), ADR-0025 (d1, d2, d3, d4, d5, d8, d9, d12, d13, d14, d15), ADR-0028 (d1, d2), ADR-0029 (Context, d2)
 
 ## Context
 
@@ -67,8 +67,9 @@ take. Proposed, not built.
     - a re-parent of a node whose subtree holds no root that changes its root, and a re-parent of
       a node whose subtree holds a root to a destination that has one: subtrees never nest;
     - a child created under a node that has a root, with `in_progress: true` or a `prefix`;
-    - a claim-edge proposal whose endpoints have different roots, answered after both endpoints
-      pass readability, each read at its own node (d4), since a proposal resolves no workarea.
+    - a claim-edge proposal or ratification whose endpoints have different roots, answered after
+      both endpoints pass readability, each read at its own node (d4), since neither act resolves
+      a workarea.
 
     A `derives_from` target inside, named by a submission outside, needs no rule (maintainer's
     reading): a submission reads its ancestors at its resolved workarea, so d4 hides the target and
@@ -80,8 +81,7 @@ take. Proposed, not built.
   in-progress subtree only, and R2 holds there without exception.** "Nothing is readable by
   others until it is ratified" holds everywhere outside; inside, the keys d5 admits read held
   claims, marked, and nothing inside reaches a read scoped outside until the commit (d4). "Review
-  never reorders results" holds inside too (d7, d8). Self-signing stays as ADR-0001 d5 states it,
-  amended by ADR-0025 d17; this record restates none of it.
+  never reorders results" holds inside too (d7, d8).
 
     R2 is kept (maintainer's reading): a promotion, by `lifecycle.promote` or
     `lifecycle.supersede`, of a version inside counts at least one non-author verdict, applies
@@ -101,10 +101,12 @@ take. Proposed, not built.
   the row's own node, which always passes, and d5 decides who reads a held row. Related rows, a
   lineage closure's and every read's `derives_from` and `replaces`, take the decision at the
   subject's node or the scope node, and a submission reads its `derives_from` targets at its
-  resolved workarea. Grants, denials, the simulation predicate
-  ([ADR-0013](ADR-0013-reads-served-from-postgres.md) d3) and the `self_signed` scope apply
-  beside it. The key's own rows obey it too: scoped outside, `include_own_held` and the listing
-  serve none from inside, while get and `own=true` still do.
+  resolved workarea. A closure member or edge endpoint that fails the boundary test is omitted,
+  never elided to a redacted id, and an edge is served only when both of its endpoints pass.
+  Grants, denials, the simulation predicate ([ADR-0013](ADR-0013-reads-served-from-postgres.md)
+  d3) and the `self_signed` scope apply beside it. The key's own rows obey it too: scoped
+  outside, `include_own_held` and the listing serve none from inside, while get and `own=true`
+  still do.
 
     `oml-domain` holds it as one pure function beside `effective_roles`, giving the decision for
     the roots of N and D and the served node set over a list of nodes; every read path in
@@ -160,8 +162,9 @@ take. Proposed, not built.
     post-filtering a shared scan, and must score a held row inside as it will once promoted.
     Property **`P-R3-BOUNDARY`** states the result: a read scoped outside an in-progress subtree
     returns the same rows, count (`hits_omitted` and the budget counts included), order and scores
-    whatever rows inside it are added, changed or removed. This amends ADR-0013 d4, whose indexer
-    read promoted text only.
+    whatever rows inside it are added, changed or removed; for the events tail it holds over the
+    served events in order, leaving out their `seq`, each page's fill, `head_seq` and
+    `next_after_seq` (d12). This amends ADR-0013 d4, whose indexer read promoted text only.
 
 - **d8 — Recall's `include_unreviewed` defaults to `true` and can only narrow; held hits rank and
   count like every hit.** This is the maintainer's reading. `RecallRequest` and `oml_recall`
@@ -173,17 +176,21 @@ take. Proposed, not built.
   error. The added hits join ADR-0025 d8's total order, score descending then `artifact_id`
   ascending, with `state: "held"`, `tip: false` and `reviewed: false`, counting against `k` and
   `max_tokens`; a held successor is served beside the tip it would replace. Steering stays
-  promoted only. The read log records the held ids served, and the request digest carries
+  promoted only. The session-start hook's recall ([ADR-0029](ADR-0029-session-start-hook.md) d2)
+  takes the default like any recall, and its hit lines already mark each held claim by its state
+  (ADR-0029 d6). The read log records the held ids served, and the request digest carries
   `include_unreviewed` with its default applied. This amends ADR-0025 d4 (own held rows inside
   reach scopes inside only), d8 (hits gain held versions), d9 (the digest) and d12 (`oml_recall`
-  gains the field and the claim item `reviewed`; the catalog stays twelve tools).
+  gains the field and the claim item `reviewed`; the catalog stays twelve tools), and ADR-0029's
+  Context and d2 (the hook's recall serves other keys' held claims inside).
 
 - **d9 — The listings, the graph reads, get and the attachment fetch take d4 and d5, and nothing
   else.** Inside, the scoped listing lists every held version d5 admits beside the promoted
   served tips, marked by `state` and `reviewed`, and `state=promoted` narrows it; the graph reads
   (`GET /v2/claim-edges`, `oml_graph`) serve the held claims d5 admits; get and the attachment
   fetch of a held version serve the keys d5 admits on its workarea. Scoped outside, each serves
-  nothing from inside. This amends ADR-0025 d13 (the scoped listing).
+  no claim from inside and no edge with an endpoint that fails d4 at the scope. This amends
+  ADR-0025 d13 (the scoped listing).
 
 - **d10 — The events tail is a scoped read at its `workarea_id` (d4), and inside, get's test
   decides a `lifecycle.*` event.** This is the maintainer's reading. A `lifecycle.*`,
@@ -223,8 +230,9 @@ take. Proposed, not built.
     the former subtree has a root, so its promoted claims reach every scope and its nodes are
     ordinary `development` workareas. The refusal tells a proposer that some version in the
     subtree is held, possibly where it cannot read, a signal [FR-31](../product/roadmap.md) gains
-    at acceptance. This amends ADR-0009 d3 (the precondition) and d1 (a `development` workarea's
-    only relaxation was self-signing).
+    at acceptance, beside the in-progress form of its event-feed count: an outside tail's `seq`
+    numbering and each page's fill count the events inside. This amends ADR-0009 d3 (the
+    precondition) and d1 (a `development` workarea's only relaxation was self-signing).
 
 - **d13 — Two codes, the wire, the version and the vocabulary.**
     - **Codes**, each `409`, in the [errors](../api/errors.md) tables and the `ErrorCode` enum:
@@ -285,6 +293,7 @@ take. Proposed, not built.
       kept text, as ADR-0012 d1's "(wording amended 2026-10-30 — …)" does: ADR-0001 d5, which per
       its last sentence takes the second relaxation with a pointer to d3, and its H1 and
       `answers`; ADR-0009 d1 and ADR-0019 d1 ("the one bounded … exception"); ADR-0018 d4's table;
+      ADR-0029's Context ("no other key's held row (R3)");
     - the pages: workareas (a section linking d4, the refusal matrix), roles and keys (the
       permission matrix linking d5, d6), retrieval (d7, d8), admission (d3), the overview's R3 row,
       simulations, security (d10), the Postgres schema and event catalog (d13), the CLI reference,
