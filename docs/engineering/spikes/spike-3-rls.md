@@ -18,16 +18,21 @@ controls, recorded failures) are on the [M0 spikes](index.md) page.
 roles. The connecting role therefore owned the database and every table, ran S3.1, S3.3 and
 S3.4 as that owner, and could not run S3.2's mechanism. The pin is `pgvector/pgvector:pg17`. CI
 job `rls-spike` runs every scenario there as an owner role and a separate service role, and
-that job has not run yet. None of the verdicts below is a pg17 result, and none of them is a
-result for a non-owner role.
+its first run, on PostgreSQL 17.11 on 2026-10-31, is recorded in the last column below. It
+settles two points. The role split closes the `pg_stats` channel, because the service role sees
+no row of it. It does not close EXPLAIN's row estimate, which the per-tenant FTS index of the
+decision below is for. That run also observed that cross-tenant foreign keys are accepted:
+`workareas.parent_id`, `memories.created_event_id` and `review_queue.memory_id` reference a bare
+id, so a tenant can store, and test for, another tenant's ids. That is an implementation fix for
+the same work: foreign keys that carry `tenant_id`.
 
 | Scenario | Verdict on 18.6 (owner role) | Pinned pg17, owner and service roles |
 |---|---|---|
-| [S3.1](#s31) FORCE binds the owner | **fail**: table reads are filtered, planner statistics are not | not yet run (CI `rls-spike`) |
-| [S3.2 (mechanism)](#s32-mechanism) a non-owner without BYPASSRLS stays inside the policy | **inconclusive**: not run here, the role cannot create roles | not yet run (CI `rls-spike`) |
+| [S3.1](#s31) FORCE binds the owner | **fail**: table reads are filtered, planner statistics are not | **fail** for the owner, as on 18.6 (17.11, 2026-10-31) |
+| [S3.2 (mechanism)](#s32-mechanism) a non-owner without BYPASSRLS stays inside the policy | **inconclusive**: not run here, the role cannot create roles | **pass** (17.11, 2026-10-31) |
 | [S3.2 (OML's roles)](#s32-oml-roles) OML's roles are split, none holds BYPASSRLS | **inconclusive**: not testable, no deployment's roles are specified | the same: not testable in CI either |
-| [S3.3](#s33) SET LOCAL across pooled transactions | **pass**: a read with no tenant returns 0 rows | not yet run (CI `rls-spike`) |
-| [S3.4](#s34) hostile cross-tenant probe | **fail**: every read shape of the fold tables returns 0 rows; `pg_stats` and EXPLAIN's row estimate do not | not yet run (CI `rls-spike`) |
+| [S3.3](#s33) SET LOCAL across pooled transactions | **pass**: a read with no tenant returns 0 rows | **pass** for both roles (17.11, 2026-10-31) |
+| [S3.4](#s34) hostile cross-tenant probe | **fail**: every read shape of the fold tables returns 0 rows; `pg_stats` and EXPLAIN's row estimate do not | **fail**: every read shape returns 0 rows for both roles; the service role sees 0 `pg_stats` rows, and EXPLAIN's row estimate still tells it whether another tenant holds a word (17.11, 2026-10-31) |
 
 The two failures are one fact, seen from two scenarios: the statistics of
 `memories_claim_fts`, one expression index over every tenant's claims. They reach a session set

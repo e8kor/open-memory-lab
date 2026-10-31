@@ -94,6 +94,7 @@ RECORDED_FAILURES = {
     "S3.1/owner/pg_stats": "spike-3-rls.md#s31",
     "S3.4/owner/pg_stats": "spike-3-rls.md#s34",
     "S3.4/owner/estimate": "spike-3-rls.md#s34",
+    "S3.4/service/estimate": "spike-3-rls.md#s34",
 }
 
 # The tables the seeders below wrote rows into, filled by seed_insert as they run. A table a
