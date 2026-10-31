@@ -1624,14 +1624,21 @@ struct Crew {
 
 impl Crew {
     async fn start() -> Self {
-        Self::start_in("metals").await
+        Self::start_in(&["metals"]).await
     }
 
-    /// The crew in a workarea named `name` under the root.
-    async fn start_in(name: &str) -> Self {
+    /// The crew in the last of `names`, each workarea a child of the one
+    /// before it and the first a child of the root.
+    async fn start_in(names: &[&str]) -> Self {
         let lab = Lab::start().await;
-        let (code, created, log) = lab.json(None, &["workareas", "create", &lab.root, name]);
-        assert_eq!(code, 0, "workareas create: {log}");
+        let mut created = Value::Null;
+        let mut parent = lab.root.clone();
+        for name in names {
+            let (code, child, log) = lab.json(None, &["workareas", "create", &parent, name]);
+            assert_eq!(code, 0, "workareas create: {log}");
+            parent = child["id"].as_str().expect("workarea id").to_owned();
+            created = child;
+        }
         let wa = created["id"].as_str().expect("workarea id").to_owned();
         let path = created["path"].as_str().expect("workarea path").to_owned();
         let (code, issued, log) = lab.json(
@@ -1639,6 +1646,7 @@ impl Crew {
             &[
                 "keys",
                 "issue-agent",
+                "crew-agent-7",
                 "--principal",
                 "crew/agent-7",
                 "--workarea",
@@ -1647,16 +1655,19 @@ impl Crew {
         );
         assert_eq!(code, 0, "issue-agent: {log}");
         let agent = issued["value"].as_str().expect("agent value").to_owned();
-        let dreamer = lab.issue(&[
-            "--role",
-            "dreamer",
-            "--held-by",
-            "human",
-            "--principal",
-            "crew/reviewer-1",
-            "--grant",
-            &format!("{wa}:dreamer"),
-        ])["value"]
+        let dreamer = lab.issue(
+            "crew-reviewer-1",
+            &[
+                "--role",
+                "dreamer",
+                "--held-by",
+                "human",
+                "--principal",
+                "crew/reviewer-1",
+                "--grant",
+                &format!("{wa}:dreamer"),
+            ],
+        )["value"]
             .as_str()
             .expect("dreamer value")
             .to_owned();
@@ -1670,16 +1681,19 @@ impl Crew {
     }
 
     /// A writer key on the crew workarea for another principal, with its
-    /// reader grant.
+    /// reader grant, named after the principal with `/` spelled `-`.
     fn writer(&self, principal: &str) -> String {
-        self.lab.issue(&[
-            "--role",
-            "writer",
-            "--principal",
-            principal,
-            "--grant",
-            &format!("{}:writer", self.wa),
-        ])["value"]
+        self.lab.issue(
+            &principal.replace('/', "-"),
+            &[
+                "--role",
+                "writer",
+                "--principal",
+                principal,
+                "--grant",
+                &format!("{}:writer", self.wa),
+            ],
+        )["value"]
             .as_str()
             .expect("writer value")
             .to_owned()
@@ -2207,15 +2221,18 @@ async fn the_hook_prints_nothing_and_exits_0_when_the_server_refuses() {
 
     // A write-only key reads its own work, and recall refuses it: the
     // context is whole or absent, never the listing alone.
-    let write_only = crew.lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-9",
-        "--grant",
-        &format!("{}:writer", crew.wa),
-        "--write-only",
-    ])["value"]
+    let write_only = crew.lab.issue(
+        "crew-agent-9",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-9",
+            "--grant",
+            &format!("{}:writer", crew.wa),
+            "--write-only",
+        ],
+    )["value"]
         .as_str()
         .expect("write-only value")
         .to_owned();
@@ -2558,14 +2575,17 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
         )]
     );
 
-    // A workarea path in which the key value straddles the cut, reached
-    // through a child of the agent's workarea that its newest row names.
-    let name = format!("{}{}-{}", "w".repeat(80), crew.agent, "t".repeat(40));
-    let (code, child, log) = crew
-        .lab
-        .json(None, &["workareas", "create", &crew.wa, &name]);
-    assert_eq!(code, 0, "workareas create: {log}");
-    let child_path = child["path"].as_str().expect("child path").to_owned();
+    // A workarea path in which the key value straddles the cut, named by the
+    // newest own row. A workarea name is a lowercase RFC 1035 label and a
+    // key value carries `_`, so no path the lead serves holds one (ADR-0026
+    // d2); the hook redacts whatever a server sends (ADR-0029 d4), so a stub
+    // serves this path.
+    let child_path = format!(
+        "universe/{}{}-{}",
+        "w".repeat(100),
+        crew.agent,
+        "t".repeat(40)
+    );
     let key_at = child_path
         .find(crew.agent.as_str())
         .expect("the key in the path");
@@ -2573,21 +2593,35 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
         key_at < 119 && key_at + crew.agent.len() > 119,
         "the key straddles the cut: {child_path}"
     );
-    let (code, accepted, log) = crew.lab.json(
-        Some(&crew.agent),
-        &[
-            "submit",
-            "--claim",
-            "Metals lot E: 40 tonnes, Tema, Saturday.",
-            "--claim-key",
-            "metals-lot-e",
-            "--workarea",
-            child["id"].as_str().expect("child id"),
-        ],
+    let own = json!({
+        "items": [{
+            "claim_key": "metals-lot-e",
+            "state": "held",
+            "version": 1,
+            "workarea_path": child_path,
+        }],
+        "next_cursor": null,
+    });
+    let stub = axum::Router::new()
+        .route(
+            "/v1/memories",
+            axum::routing::get(move || {
+                let own = own.clone();
+                async move { axum::Json(own) }
+            }),
+        )
+        .route(
+            "/v1/memories/recall",
+            axum::routing::post(|| async {
+                axum::Json(json!({ "steering": [], "hits": [], "query_digest": "sha256:00" }))
+            }),
+        );
+    let (url, task) = serve_stub(stub).await;
+    let (code, stdout, stderr) = hook(
+        &[("OML_URL", &url), ("OML_API_KEY", crew.agent.as_str())],
+        &stdin,
     );
-    assert_eq!(code, 0, "submit into the child: {log}");
-    assert_eq!(accepted["state"], "held", "{log}");
-    let (code, stdout, stderr) = crew.hook(&[], &stdin);
+    task.abort();
     assert_eq!(code, 0, "{stderr}");
     let context = context_of(&stdout);
     assert_eq!(windows(&context), None, "no part of the key: {context}");
@@ -2596,8 +2630,7 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
         context.lines().next(),
         Some(
             format!(
-                "OML memory for this session, from {}, workarea {}….",
-                crew.lab.server,
+                "OML memory for this session, from {url}, workarea {}….",
                 shown.chars().take(119).collect::<String>()
             )
             .as_str()
@@ -2611,7 +2644,9 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
 async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() {
     // Neither a claim key nor the path counts toward the budget, so each is
     // cut where it is printed, and the record line comes before them all.
-    let crew = Crew::start_in(&"metals".repeat(30)).await;
+    // A name is at most 63 characters and unique in the tenant (ADR-0026 d1,
+    // d2), so the path passes 120 through a child of a child.
+    let crew = Crew::start_in(&[&"metals".repeat(10), &"stocks".repeat(10)]).await;
     let claim_key = format!("metals-{}", "k".repeat(300));
     crew.submit(
         &crew.agent,

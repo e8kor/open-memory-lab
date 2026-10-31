@@ -78,7 +78,8 @@ def sync_detailed(
      Requires: admin key role.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (RevokeKeyBody | Unset):
 
@@ -116,7 +117,8 @@ def sync(
      Requires: admin key role.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (RevokeKeyBody | Unset):
 
@@ -149,7 +151,8 @@ async def asyncio_detailed(
      Requires: admin key role.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (RevokeKeyBody | Unset):
 
@@ -185,7 +188,8 @@ async def asyncio(
      Requires: admin key role.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (RevokeKeyBody | Unset):
 

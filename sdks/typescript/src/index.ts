@@ -32,6 +32,7 @@ export {
   IdempotencyError,
   LifecycleError,
   LimitError,
+  NamingError,
   NotBuiltError,
   OmlError,
   RequestError,

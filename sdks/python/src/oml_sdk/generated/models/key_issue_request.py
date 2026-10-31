@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -22,21 +22,32 @@ class KeyIssueRequest:
     """
     Attributes:
         role (Role):
-        grants (list[GrantRequest] | Unset):
-        default_workarea_id (str | Unset): The provider-ring target (ADR-0022 d4); its validation and its default when
-            omitted are declared in the issuance order of docs/architecture/roles-and-keys.md.
+        name (str): A new name, in a creation body: the creation grammar. A lowercase RFC 1035 label, 1-63 characters,
+            that is not in the id form, not 32 hexadecimal digits and not the derived form, which only rows that predate
+            names hold; a creation that sends that form is request.validation. Unique in its namespace, immutable, never
+            released; compared byte for byte, never lowercased (docs/api/http-api.md, Names and ids; ADR-0026 d1, d2).
+            References use NameRef.
+        grants (list[GrantRequest] | Unset): Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's
+            reader grant beside a writer grant is sent here like any other (ADR-0028 d2).
+        default_workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check
+            that reads state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is
+            refused (request.validation).
         held_by (KeyIssueRequestHeldBy | Unset): The issuing admin's journalled attestation (ADR-0021); never verified
             as fact.
+        crew (str | Unset): A crew record, by its id or its name, resolved server-side like every reference (ADR-0026
+            d4).
         expiry (datetime.datetime | Unset):
-        label (str | Unset):
-        principal (str | Unset):
-        tenant_id (str | Unset): Operator keys only, for a tenant's first admin key.
+        label (str | Unset): A free-text note; unique nowhere.
+        principal (str | Unset): Who acts — the attribution identity
+        tenant_id (str | Unset): A tenant, by its id or its name, resolved in the deployment's namespace (ADR-0026 d4).
     """
 
     role: Role
+    name: str
     grants: list[GrantRequest] | Unset = UNSET
     default_workarea_id: str | Unset = UNSET
     held_by: KeyIssueRequestHeldBy | Unset = UNSET
+    crew: str | Unset = UNSET
     expiry: datetime.datetime | Unset = UNSET
     label: str | Unset = UNSET
     principal: str | Unset = UNSET
@@ -45,6 +56,8 @@ class KeyIssueRequest:
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
 
+        name = self.name
+
         grants: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.grants, Unset):
             grants = []
@@ -52,11 +65,21 @@ class KeyIssueRequest:
                 grants_item = grants_item_data.to_dict()
                 grants.append(grants_item)
 
-        default_workarea_id = self.default_workarea_id
+        default_workarea_id: str | Unset
+        if isinstance(self.default_workarea_id, Unset):
+            default_workarea_id = UNSET
+        else:
+            default_workarea_id = self.default_workarea_id
 
         held_by: str | Unset = UNSET
         if not isinstance(self.held_by, Unset):
             held_by = self.held_by.value
+
+        crew: str | Unset
+        if isinstance(self.crew, Unset):
+            crew = UNSET
+        else:
+            crew = self.crew
 
         expiry: str | Unset = UNSET
         if not isinstance(self.expiry, Unset):
@@ -66,13 +89,18 @@ class KeyIssueRequest:
 
         principal = self.principal
 
-        tenant_id = self.tenant_id
+        tenant_id: str | Unset
+        if isinstance(self.tenant_id, Unset):
+            tenant_id = UNSET
+        else:
+            tenant_id = self.tenant_id
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
                 "role": role,
+                "name": name,
             }
         )
         if grants is not UNSET:
@@ -81,6 +109,8 @@ class KeyIssueRequest:
             field_dict["default_workarea_id"] = default_workarea_id
         if held_by is not UNSET:
             field_dict["held_by"] = held_by
+        if crew is not UNSET:
+            field_dict["crew"] = crew
         if expiry is not UNSET:
             field_dict["expiry"] = expiry
         if label is not UNSET:
@@ -99,6 +129,8 @@ class KeyIssueRequest:
         d = dict(src_dict)
         role = Role(d.pop("role"))
 
+        name = d.pop("name")
+
         _grants = d.pop("grants", UNSET)
         grants: list[GrantRequest] | Unset = UNSET
         if _grants is not UNSET:
@@ -108,7 +140,14 @@ class KeyIssueRequest:
 
                 grants.append(grants_item)
 
-        default_workarea_id = d.pop("default_workarea_id", UNSET)
+        def _parse_default_workarea_id(data: object) -> str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(str | Unset, data)
+
+        default_workarea_id = _parse_default_workarea_id(
+            d.pop("default_workarea_id", UNSET)
+        )
 
         _held_by = d.pop("held_by", UNSET)
         held_by: KeyIssueRequestHeldBy | Unset
@@ -116,6 +155,13 @@ class KeyIssueRequest:
             held_by = UNSET
         else:
             held_by = KeyIssueRequestHeldBy(_held_by)
+
+        def _parse_crew(data: object) -> str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(str | Unset, data)
+
+        crew = _parse_crew(d.pop("crew", UNSET))
 
         _expiry = d.pop("expiry", UNSET)
         expiry: datetime.datetime | Unset
@@ -128,13 +174,20 @@ class KeyIssueRequest:
 
         principal = d.pop("principal", UNSET)
 
-        tenant_id = d.pop("tenant_id", UNSET)
+        def _parse_tenant_id(data: object) -> str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(str | Unset, data)
+
+        tenant_id = _parse_tenant_id(d.pop("tenant_id", UNSET))
 
         key_issue_request = cls(
             role=role,
+            name=name,
             grants=grants,
             default_workarea_id=default_workarea_id,
             held_by=held_by,
+            crew=crew,
             expiry=expiry,
             label=label,
             principal=principal,

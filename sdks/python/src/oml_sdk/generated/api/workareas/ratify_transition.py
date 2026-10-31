@@ -74,7 +74,9 @@ def sync_detailed(
     lookup (ADR-0025 d1).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         transition_id (str):
         idempotency_key (str):
 
@@ -113,7 +115,9 @@ def sync(
     lookup (ADR-0025 d1).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         transition_id (str):
         idempotency_key (str):
 
@@ -147,7 +151,9 @@ async def asyncio_detailed(
     lookup (ADR-0025 d1).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         transition_id (str):
         idempotency_key (str):
 
@@ -184,7 +190,9 @@ async def asyncio(
     lookup (ADR-0025 d1).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         transition_id (str):
         idempotency_key (str):
 

@@ -95,6 +95,12 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
   skill's `issue-agent` run does not name its key right after the verb with a name the creation
   grammar admits, or if a command on a plugin page passes `--workarea` anything but a workarea
   name or `<workarea>`.
+- **SDKs and the chart** (d1, d10, d12). Both generated layers of the [SDKs](engineering/sdks.md)
+  are regenerated from this `openapi.yaml`, as their regeneration rule asks; both wrappers raise
+  `NamingError` for the `name` family, named so beside Python's `NameError`; and both test harnesses
+  name the keys they claim and issue. The Helm chart's install notes and the
+  [deployment](operations/deployment.md) page's claim through a port-forward run
+  `oml bootstrap claim <key-name>`.
 - **Checks:** `crates/oml-domain/tests/names.rs`, the port contracts of
   `testing/oml-port-contracts`, which both stores run, `crates/adapters/oml-pg/tests/pg_store.rs`,
   `crates/oml-app/tests/use_cases.rs`, `crates/bins/oml-server-lead/tests/http_api.rs` and
@@ -120,7 +126,9 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
   synopsis); [mcp-tools.json](api/mcp-tools.json) and the [CLI reference](cli/reference.md)
   change with the code that serves them; outside `docs/`, `README.md` (the honest status),
   `plugins/oml/README.md`, `plugins/oml/skills/oml-memory/SKILL.md`,
-  `plugins/oml-admin/skills/issue-agent-key/SKILL.md` and `scripts/check_plugin.py`.
+  `plugins/oml-admin/skills/issue-agent-key/SKILL.md` and `scripts/check_plugin.py`; and, with
+  the SDKs and the chart, [SDKs](engineering/sdks.md), [deployment](operations/deployment.md),
+  `sdks/` and `deploy/helm/oml/templates/NOTES.txt`.
 
 ### 2026-10-30 — names as keys (ADR-0026)
 

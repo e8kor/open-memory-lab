@@ -82,7 +82,9 @@ def sync_detailed(
     and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
             — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
             are refused (request.validation).
@@ -123,7 +125,9 @@ def sync(
     and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
             — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
             are refused (request.validation).
@@ -159,7 +163,9 @@ async def asyncio_detailed(
     and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
             — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
             are refused (request.validation).
@@ -198,7 +204,9 @@ async def asyncio(
     and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
             — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
             are refused (request.validation).

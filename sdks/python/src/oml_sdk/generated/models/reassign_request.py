@@ -15,7 +15,9 @@ T = TypeVar("T", bound="ReassignRequest")
 class ReassignRequest:
     """
     Attributes:
-        workarea_id (str): Destination node.
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any check that reads
+            state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+            (request.validation).
         re_key (None | str | Unset): New claim_key when the move would collide at the destination.
         dry_run (bool | Unset):  Default: False.
     """
@@ -26,6 +28,7 @@ class ReassignRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        workarea_id: str
         workarea_id = self.workarea_id
 
         re_key: None | str | Unset
@@ -53,7 +56,11 @@ class ReassignRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        workarea_id = d.pop("workarea_id")
+
+        def _parse_workarea_id(data: object) -> str:
+            return cast(str, data)
+
+        workarea_id = _parse_workarea_id(d.pop("workarea_id"))
 
         def _parse_re_key(data: object) -> None | str | Unset:
             if data is None:

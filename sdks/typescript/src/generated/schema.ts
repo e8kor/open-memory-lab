@@ -321,13 +321,13 @@ export interface paths {
         };
         /**
          * Resolve a workarea node by derived path (grants bind to node ids, never paths).
-         * @description Requires: reader effective access on the node.
+         * @description Requires: reader effective access on the node, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         get: operations["resolveWorkarea"];
         put?: never;
         /**
          * Create a child workarea in development.
-         * @description Requires: admin key role. Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.
+         * @description Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.
          */
         post: operations["createWorkarea"];
         delete?: never;
@@ -345,7 +345,7 @@ export interface paths {
         };
         /**
          * One node — id, parent, derived path, status, crew record — with the calling key's view of it.
-         * @description Requires: reader effective access (access.not_found otherwise). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). One call carries all of it.
+         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). One call carries all of it.
          */
         get: operations["getWorkarea"];
         put?: never;
@@ -365,7 +365,7 @@ export interface paths {
         };
         /**
          * The subtree, paginated; nodes outside read scope are omitted.
-         * @description Requires: reader effective access.
+         * @description Requires: reader effective access, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         get: operations["getWorkareaTree"];
         put?: never;
@@ -385,7 +385,7 @@ export interface paths {
         };
         /**
          * Labelled related edges touching the node, pending and ratified; edges confer zero access.
-         * @description Requires: reader effective access.
+         * @description Requires: reader effective access, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         get: operations["listWorkareaEdges"];
         put?: never;
@@ -429,7 +429,7 @@ export interface paths {
         };
         /**
          * Status, the review policy object in force, pending transitions.
-         * @description Requires: reader effective access.
+         * @description Requires: reader effective access, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         get: operations["getWorkareaStatus"];
         put?: never;
@@ -470,10 +470,74 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Journalled crew-metadata update; allowed on validated areas (freeze covers claims, not metadata).
-         * @description Requires: admin key role.
+         * Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on validated areas (freeze covers claims, not metadata).
+         * @description Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew that names no crew record of the tenant answers access.not_found, checked after the workarea. The crew record itself is updated at POST /v2/crews/{crew_id}/update.
          */
         post: operations["updateCrewMetadata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/crews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tenant's crew records, paginated.
+         * @description Requires: admin key role. A crew is recorded, not operated (docs/architecture/workareas.md, Crews); an agent key reads a workarea's crew only in the workarea read.
+         */
+        get: operations["listCrews"];
+        put?: never;
+        /**
+         * Create a named crew record; journalled crew.created.
+         * @description Requires: admin key role. name must be unique in the tenant (409 name.taken, checked after every other check) and never changes (ADR-0026 d1, d8).
+         */
+        post: operations["createCrew"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/crews/{crew_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One crew record, by id or name.
+         * @description Requires: admin key role.
+         */
+        get: operations["getCrew"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/crews/{crew_id}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Journalled crew-record update (crew.updated) — charter URI and external manager; the name never changes.
+         * @description Requires: admin key role. A crew record has no status, so the update is admitted whatever the status of the workareas that name it (ADR-0026 d8).
+         */
+        post: operations["updateCrew"];
         delete?: never;
         options?: never;
         head?: never;
@@ -715,7 +779,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description Requires: admin key role; operator only with tenant_id, for a tenant's first admin key. Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).
          */
         post: operations["issueKey"];
         delete?: never;
@@ -775,7 +839,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled records); the old key enters a bounded grace window, then is revoked.
-         * @description Requires: admin key role. One journalled act (key.rotated) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Per key in v1; bulk crew rotation is open — FR-6.
+         * @description Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor's name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The successor takes its own name (409 name.taken when held), since both keys are live through the grace window, and carries the old key's crew (ADR-0026 d9). Per key in v1; bulk crew rotation is open — FR-6.
          */
         post: operations["rotateKey"];
         delete?: never;
@@ -794,7 +858,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Bind the key to a workarea node id (never a path) with optional per-grant deny masks; epoch bump.
+         * Bind the key to a workarea node, by id or name (never a path), with optional per-grant deny masks; epoch bump.
          * @description Requires: admin key role. A grant's role must be admissible under the key's role (the admissibility table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible} otherwise — one grant, so no grant_index); a dreamer-class grant on an admin key is refused first (access.role_exclusive — the two-key rule). The grant's epoch is its grant.issued journal seq.
          */
         post: operations["addGrant"];
@@ -835,7 +899,7 @@ export interface paths {
         put?: never;
         /**
          * Create or extend the key's global deny object — deny-wins across all its grants.
-         * @description Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq.
+         * @description Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. A denial on an admin key is refused with request.validation, details.field key_id: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
         delete?: never;
@@ -983,7 +1047,7 @@ export interface paths {
         put?: never;
         /**
          * Exchange the deployment's single-use enrollment token for the root operator key — the bootstrap ceremony's one API call.
-         * @description Authenticated by the enrollment token itself (no API key exists yet). The token is minted by the Helm bootstrap job, consumed on first use; a consumed, expired or unknown token answers auth.invalid with details.reason naming which. Journalled as issued-without-value in the provider chain.
+         * @description Authenticated by the enrollment token itself (no API key exists yet). The token is minted by the Helm bootstrap job, consumed on first use; a consumed, expired or unknown token answers auth.invalid with details.reason naming which. The token is checked first; only then is name checked against the creation grammar (request.validation) and the provider's namespace (409 name.taken), and a refusal after the token check consumes no token and journals nothing (ADR-0026 d5). Journalled as issued-without-value in the provider chain.
          */
         post: operations["bootstrapClaim"];
         delete?: never;
@@ -1166,8 +1230,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Create a tenant; the operator then issues its first admin key and nothing else.
-         * @description Requires: operator key role. Operator keys never read, write or review content (access.verb_ceiling).
+         * Create a tenant and its universe root; the operator then issues its first admin key and nothing else.
+         * @description Requires: operator key role. name must be unique in the deployment (409 name.taken — ADR-0026 d1, d5); the tenant's root workarea is created with the name universe (ADR-0026 d6). Operator keys never read, write or review content (access.verb_ceiling).
          */
         post: operations["createTenant"];
         delete?: never;
@@ -1216,13 +1280,27 @@ export interface components {
     schemas: {
         /** @description SHA-256 of plaintext unless a field says ciphertext. */
         Digest: string;
+        /** @description The id of a workarea, crew, key or tenant: RFC 9562 section 4 hex-and-dash UUID text, either case accepted, lowercase served, whose version digit (the first of the third group) is not 8. The server mints these ids as version 4; version 8 is reserved for the unresolved value of a name that names no row, so a hex-and-dash value of version 8 is neither an id nor a name and is refused (request.validation). A value in this form is always an id (docs/api/http-api.md, Names and ids; ADR-0026 d3, d4). */
+        Id: string;
+        /** @description A new name, in a creation body: the creation grammar. A lowercase RFC 1035 label, 1-63 characters, that is not in the id form, not 32 hexadecimal digits and not the derived form, which only rows that predate names hold; a creation that sends that form is request.validation. Unique in its namespace, immutable, never released; compared byte for byte, never lowercased (docs/api/http-api.md, Names and ids; ADR-0026 d1, d2). References use NameRef. */
+        Name: string;
+        /** @description A name in a reference: the reference grammar. A lowercase RFC 1035 label, 1-63 characters, that is not in the id form and not 32 hexadecimal digits. The derived form (tenant-, wa-, crew- or key- followed by 32 hexadecimal digits) is a name here: it addresses the row ADR-0026 d11 named (docs/api/http-api.md, Names and ids; ADR-0026 d2, d3). */
+        NameRef: string;
+        /** @description A workarea, by its node id or its name. Resolved server-side before any check that reads state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused (request.validation). */
+        WorkareaRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
+        /** @description A crew record, by its id or its name, resolved server-side like every reference (ADR-0026 d4). */
+        CrewRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
+        /** @description A key, by its id or its name, resolved server-side like every reference; a revoked or expired key's name still resolves (ADR-0026 d4, d10). */
+        KeyRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
+        /** @description A tenant, by its id or its name, resolved in the deployment's namespace (ADR-0026 d4). */
+        TenantRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
         /** @enum {string} */
         Role: "reader" | "writer" | "dreamer" | "admin" | "operator";
         /**
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction.
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1505,8 +1583,8 @@ export interface components {
             }[];
         };
         ReassignRequest: {
-            /** @description Destination node. */
-            workarea_id: string;
+            /** @description Destination node */
+            workarea_id: components["schemas"]["WorkareaRef"];
             /** @description New claim_key when the move would collide at the destination. */
             re_key?: string | null;
             /** @default false */
@@ -1524,7 +1602,7 @@ export interface components {
             dry_run?: boolean;
         };
         TipOverrideRequest: {
-            workarea_id: string;
+            workarea_id: components["schemas"]["WorkareaRef"];
             claim_key: string;
             to_version: number;
             reason: string;
@@ -1586,27 +1664,51 @@ export interface components {
             items: components["schemas"]["ClaimEdge"][];
             next_cursor: string | null;
         };
-        /** @description Recorded, not operated — OML never contacts the external manager. */
-        CrewRecord: {
-            name?: string;
+        /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workareas.md, Crews; ADR-0026 d8). */
+        Crew: {
+            crew_id: string;
+            /** @description Unique in the tenant and never changed. */
+            name: string;
+            charter_uri?: string | null;
+            external_manager?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        CrewCreate: {
+            name: components["schemas"]["Name"];
             charter_uri?: string;
             external_manager?: string;
         };
+        /** @description At least one field; the name is not updatable. */
+        CrewUpdate: {
+            charter_uri?: string;
+            external_manager?: string;
+        };
+        CrewPage: {
+            items: components["schemas"]["Crew"][];
+            next_cursor: string | null;
+        };
+        WorkareaCrewUpdate: {
+            crew: components["schemas"]["CrewRef"];
+        };
         Workarea: {
             id: string;
+            /** @description Unique in the tenant and never changed; universe for the root (ADR-0026 d1, d6). */
+            name: string;
             /** @description Null only for the tenant universe root. */
             parent_id: string | null;
-            /** @description Derived ltree path; never the grant target. */
+            /** @description Derived ltree path, the names from universe joined with "."; never the grant target, and never accepted as a reference. */
             path: string;
             /** @enum {string} */
             status: "development" | "committed" | "validated";
-            crew?: components["schemas"]["CrewRecord"];
+            /** @description The crew record the workarea names, or null. */
+            crew?: components["schemas"]["Crew"] | null;
             /** Format: date-time */
             created_at?: string;
         };
         /** @description One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14). */
         WorkareaView: components["schemas"]["Workarea"] & {
-            /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id. */
+            /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name. */
             children: {
                 id: string;
                 path_leaf: string;
@@ -1629,10 +1731,10 @@ export interface components {
             permission_epoch: number;
         };
         WorkareaCreate: {
-            parent_id: string;
-            name: string;
-            crew?: components["schemas"]["CrewRecord"];
-            /** @description Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew. */
+            parent_id: components["schemas"]["WorkareaRef"];
+            name: components["schemas"]["Name"];
+            crew?: components["schemas"]["CrewRef"];
+            /** @description Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew record. */
             prefix?: string;
         };
         WorkareaPage: {
@@ -1640,7 +1742,7 @@ export interface components {
             next_cursor: string | null;
         };
         WorkareaEdgeProposal: {
-            to_workarea_id: string;
+            to_workarea_id: components["schemas"]["WorkareaRef"];
             /** @enum {string} */
             label: "relates_to" | "continues" | "derived_from" | "mirrors";
         };
@@ -1675,7 +1777,7 @@ export interface components {
             pending_transitions?: components["schemas"]["Transition"][];
         };
         ReparentRequest: {
-            new_parent_id: string;
+            new_parent_id: components["schemas"]["WorkareaRef"];
             /** @default false */
             dry_run?: boolean;
         };
@@ -1833,8 +1935,8 @@ export interface components {
             reason: string;
         };
         GrantRequest: {
-            /** @description Node id, never a path. */
-            workarea_node_id: string;
+            /** @description The node, by id or name, never a path; stored as the id. */
+            workarea_node_id: components["schemas"]["WorkareaRef"];
             /**
              * @description A grant role, admissible under the key's role (the admissibility table in docs/architecture/roles-and-keys.md); never admin or operator.
              * @enum {string}
@@ -1842,7 +1944,7 @@ export interface components {
             role: "reader" | "writer" | "dreamer";
             /** @description Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise). */
             deny?: {
-                subtree_node_id: string;
+                subtree_node_id: components["schemas"]["WorkareaRef"];
             }[];
         };
         /** @description A stored grant, as echoed at issuance and listed on a key. */
@@ -1859,7 +1961,7 @@ export interface components {
             epoch: number;
         };
         DenialRequest: {
-            workarea_node_id: string;
+            workarea_node_id: components["schemas"]["WorkareaRef"];
             reason?: string;
         };
         Denial: {
@@ -1870,25 +1972,42 @@ export interface components {
         };
         KeyIssueRequest: {
             role: components["schemas"]["Role"];
+            /** @description The key's name: unique in its namespace (409 name.taken), never changed, never released; distinct from principal and label (ADR-0026 d9). */
+            name: components["schemas"]["Name"];
+            /** @description Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2). */
             grants?: components["schemas"]["GrantRequest"][];
-            /** @description The provider-ring target (ADR-0022 d4); its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md. */
-            default_workarea_id?: string;
+            /** @description The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md. */
+            default_workarea_id?: components["schemas"]["WorkareaRef"];
             /**
              * @description The issuing admin's journalled attestation (ADR-0021); never verified as fact.
              * @enum {string}
              */
             held_by?: "agent" | "human" | "service";
+            /** @description The key's crew record, by id or name, journalled as crew_id and fixed for the key's life; one that names no crew record of the tenant answers access.not_found at step 4 of the issuance order (ADR-0026 d8). */
+            crew?: components["schemas"]["CrewRef"];
             /** Format: date-time */
             expiry?: string;
+            /** @description A free-text note; unique nowhere. */
             label?: string;
+            /** @description Who acts — the attribution identity */
             principal?: string;
-            /** @description Operator keys only, for a tenant's first admin key. */
-            tenant_id?: string;
+            /** @description Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant_id, and its name is in the provider's namespace (ADR-0026 d4, d5). */
+            tenant_id?: components["schemas"]["TenantRef"];
+        };
+        KeyRotateRequest: {
+            /** @description The successor's own name; both keys are live through the grace window, so it cannot be the old key's (ADR-0026 d9). */
+            name: components["schemas"]["Name"];
+            /** @description Bounded grace window before the old key is revoked, e.g. "72h". */
+            grace?: string;
         };
         Key: {
             key_id: string;
+            /** @description Unique in the key's namespace, never changed, never released (ADR-0026 d1, d10). */
+            name: string;
             role: components["schemas"]["Role"];
             principal?: string;
+            /** @description The key's crew record, as key.issued journals it; null when none was named (ADR-0026 d8). */
+            crew_id?: string | null;
             /** @description The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when no X-OML-Workarea is sent (ADR-0022 d4). */
             default_workarea_id: string | null;
             /**
@@ -1962,14 +2081,14 @@ export interface components {
         };
         SimulationCreate: {
             audience: {
-                key_id?: string;
+                key_id?: components["schemas"]["KeyRef"];
                 grant_ref?: string;
             }[];
             label?: string;
         };
-        /** @description Exactly one of key_id / grant_ref names the audience member. */
+        /** @description Exactly one of key_id / grant_ref names the audience member; key_id takes a key's id or name. */
         AudienceEntry: {
-            key_id?: string;
+            key_id?: components["schemas"]["KeyRef"];
             grant_ref?: string;
         };
         Simulation: {
@@ -2187,15 +2306,16 @@ export interface components {
     parameters: {
         /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
         IdempotencyKey: string;
-        /** @description Workarea node-id override for the provider ring (ADR-0022 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-        XOMLWorkarea: string;
+        /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
+        XOMLWorkarea: components["schemas"]["WorkareaRef"];
         /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
         Limit: number;
         /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
         Cursor: string;
         ArtifactId: string;
-        WorkareaId: string;
-        KeyId: string;
+        WorkareaId: components["schemas"]["WorkareaRef"];
+        KeyId: components["schemas"]["KeyRef"];
+        CrewId: components["schemas"]["CrewRef"];
         Curie: components["schemas"]["Curie"];
     };
     requestBodies: never;
@@ -2212,8 +2332,8 @@ export interface operations {
     searchMemories: {
         parameters: {
             query?: {
-                /** @description A subtree filter that must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it. Without own, a node where reader is effective; the listing is the intersection of its subtree with the scope's, and the scope still resolves from the token (request.workarea_unresolved for a key with neither a default nor X-OML-Workarea). */
-                workarea_id?: string;
+                /** @description A subtree filter, by id or name, that must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it. Without own, a node where reader is effective; the listing is the intersection of its subtree with the scope's, and the scope still resolves from the token (request.workarea_unresolved for a key with neither a default nor X-OML-Workarea). */
+                workarea_id?: components["schemas"]["WorkareaRef"];
                 claim_key?: string;
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
@@ -2226,7 +2346,7 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
             };
             header?: {
-                /** @description Workarea node-id override for the provider ring (ADR-0022 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
+                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
                 "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
             };
             path?: never;
@@ -2249,7 +2369,7 @@ export interface operations {
                      *           "claim_key": "supplier-quote-am-7741",
                      *           "version": 1,
                      *           "tip": true,
-                     *           "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "workarea_path": "universe.procurement.metals-crew",
                      *           "kind": "memory",
                      *           "state": "promoted",
@@ -2292,7 +2412,7 @@ export interface operations {
             header: {
                 /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Workarea node-id override for the provider ring (ADR-0022 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
+                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
                 "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
             };
             path?: never;
@@ -2331,7 +2451,7 @@ export interface operations {
                      *       "claim_key": "supplier-quote-am-7741",
                      *       "version": 1,
                      *       "state": "held",
-                     *       "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "retirement": false,
                      *       "replaces": null,
                      *       "plaintext_digest": "sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310",
@@ -2356,7 +2476,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description Workarea node-id override for the provider ring (ADR-0022 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
+                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
                 "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
             };
             path?: never;
@@ -2389,7 +2509,7 @@ export interface operations {
                      *           "claim_key": "quote-validity-steering",
                      *           "version": 1,
                      *           "tip": true,
-                     *           "workarea_id": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+                     *           "workarea_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                      *           "workarea_path": "universe.procurement",
                      *           "kind": "steering",
                      *           "state": "promoted",
@@ -2409,7 +2529,7 @@ export interface operations {
                      *             "claim_key": "supplier-quote-am-7741",
                      *             "version": 1,
                      *             "tip": true,
-                     *             "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *             "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *             "workarea_path": "universe.procurement.metals-crew",
                      *             "kind": "memory",
                      *             "state": "promoted",
@@ -2474,7 +2594,7 @@ export interface operations {
                      *       "claim_key": "supplier-quote-am-7741",
                      *       "version": 1,
                      *       "tip": true,
-                     *       "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "workarea_path": "universe.procurement.metals-crew",
                      *       "kind": "memory",
                      *       "state": "promoted",
@@ -2576,7 +2696,7 @@ export interface operations {
             header: {
                 /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Workarea node-id override for the provider ring (ADR-0022 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
+                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
                 "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
             };
             path: {
@@ -2603,7 +2723,7 @@ export interface operations {
                      *       "claim_key": "supplier-quote-am-7741",
                      *       "version": 2,
                      *       "state": "held",
-                     *       "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "retirement": false,
                      *       "replaces": {
                      *         "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
@@ -2637,7 +2757,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "workarea_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                 *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                  *       "dry_run": false
                  *     }
                  */
@@ -2787,7 +2907,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                 *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                  *       "claim_key": "supplier-quote-am-7741",
                  *       "to_version": 1,
                  *       "reason": "revised quote promoted in error; serve v1 while it is re-reviewed"
@@ -2968,7 +3088,7 @@ export interface operations {
     listClaimEdges: {
         parameters: {
             query?: {
-                workarea_id?: string;
+                workarea_id?: components["schemas"]["WorkareaRef"];
                 artifact_id?: string;
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
@@ -2997,7 +3117,7 @@ export interface operations {
                      *           "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
                      *           "label": "supports",
                      *           "state": "pending",
-                     *           "proposer_key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+                     *           "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *           "ratifier_key_id": null
                      *         }
                      *       ],
@@ -3047,7 +3167,7 @@ export interface operations {
                      *       "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
                      *       "label": "supports",
                      *       "state": "pending",
-                     *       "proposer_key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *       "ratifier_key_id": null
                      *     }
                      */
@@ -3086,8 +3206,8 @@ export interface operations {
                      *       "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
                      *       "label": "supports",
                      *       "state": "ratified",
-                     *       "proposer_key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
-                     *       "ratifier_key_id": "key_01JB2WV7C9E2G4J6L8N1QS3UWZ"
+                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "ratifier_key_id": "54b2d035-b438-47f7-9055-67199237d5d7"
                      *     }
                      */
                     "application/json": components["schemas"]["ClaimEdge"];
@@ -3100,7 +3220,7 @@ export interface operations {
     resolveWorkarea: {
         parameters: {
             query: {
-                /** @description Derived ltree path. */
+                /** @description Derived ltree path. The one lookup by path: no reference field accepts a path (ADR-0026 d7). */
                 path: string;
             };
             header?: never;
@@ -3118,11 +3238,13 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-                     *       "parent_id": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+                     *       "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "name": "metals-crew",
+                     *       "parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                      *       "path": "universe.procurement.metals-crew",
                      *       "status": "committed",
                      *       "crew": {
+                     *         "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *         "name": "metals-crew",
                      *         "charter_uri": "https://crews.example.com/metals/charter.md",
                      *         "external_manager": "crewd.example.com"
@@ -3151,13 +3273,9 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "parent_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                 *       "parent_id": "metals-crew",
                  *       "name": "q1-2027",
-                 *       "crew": {
-                 *         "name": "metals-crew",
-                 *         "charter_uri": "https://crews.example.com/metals/charter.md",
-                 *         "external_manager": "crewd.example.com"
-                 *       }
+                 *       "crew": "metals-crew"
                  *     }
                  */
                 "application/json": components["schemas"]["WorkareaCreate"];
@@ -3173,11 +3291,13 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
-                     *       "parent_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *       "id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *       "name": "q1-2027",
+                     *       "parent_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "path": "universe.procurement.metals-crew.q1-2027",
                      *       "status": "development",
                      *       "crew": {
+                     *         "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *         "name": "metals-crew",
                      *         "charter_uri": "https://crews.example.com/metals/charter.md",
                      *         "external_manager": "crewd.example.com"
@@ -3213,11 +3333,13 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-                     *       "parent_id": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+                     *       "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "name": "metals-crew",
+                     *       "parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                      *       "path": "universe.procurement.metals-crew",
                      *       "status": "committed",
                      *       "crew": {
+                     *         "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *         "name": "metals-crew",
                      *         "charter_uri": "https://crews.example.com/metals/charter.md",
                      *         "external_manager": "crewd.example.com"
@@ -3225,7 +3347,7 @@ export interface operations {
                      *       "created_at": "2026-09-02T09:14:33Z",
                      *       "children": [
                      *         {
-                     *           "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *           "id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *           "path_leaf": "q1-2027",
                      *           "status": "development"
                      *         }
@@ -3233,8 +3355,8 @@ export interface operations {
                      *       "edges": [
                      *         {
                      *           "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-                     *           "from": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-                     *           "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX",
+                     *           "from": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "to": "7724e9d7-ddd6-4b94-8855-aad97c28224c",
                      *           "label": "continues",
                      *           "state": "ratified"
                      *         }
@@ -3286,11 +3408,13 @@ export interface operations {
                      * @example {
                      *       "items": [
                      *         {
-                     *           "id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-                     *           "parent_id": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+                     *           "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "name": "metals-crew",
+                     *           "parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                      *           "path": "universe.procurement.metals-crew",
                      *           "status": "committed",
                      *           "crew": {
+                     *             "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *             "name": "metals-crew",
                      *             "charter_uri": "https://crews.example.com/metals/charter.md",
                      *             "external_manager": "crewd.example.com"
@@ -3298,11 +3422,13 @@ export interface operations {
                      *           "created_at": "2026-09-02T09:14:33Z"
                      *         },
                      *         {
-                     *           "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
-                     *           "parent_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *           "name": "q1-2027",
+                     *           "parent_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "path": "universe.procurement.metals-crew.q1-2027",
                      *           "status": "development",
                      *           "crew": {
+                     *             "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *             "name": "metals-crew",
                      *             "charter_uri": "https://crews.example.com/metals/charter.md",
                      *             "external_manager": "crewd.example.com"
@@ -3347,11 +3473,11 @@ export interface operations {
                      *       "items": [
                      *         {
                      *           "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-                     *           "from_workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-                     *           "to_workarea_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *           "from_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *           "label": "continues",
                      *           "state": "pending",
-                     *           "proposer_key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+                     *           "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *           "ratifier_key_id": null
                      *         }
                      *       ],
@@ -3380,7 +3506,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "to_workarea_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                 *       "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                  *       "label": "continues"
                  *     }
                  */
@@ -3398,11 +3524,11 @@ export interface operations {
                     /**
                      * @example {
                      *       "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-                     *       "from_workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-                     *       "to_workarea_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *       "from_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "label": "continues",
                      *       "state": "pending",
-                     *       "proposer_key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *       "ratifier_key_id": null
                      *     }
                      */
@@ -3437,12 +3563,12 @@ export interface operations {
                     /**
                      * @example {
                      *       "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-                     *       "from_workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-                     *       "to_workarea_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *       "from_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "label": "continues",
                      *       "state": "ratified",
-                     *       "proposer_key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
-                     *       "ratifier_key_id": "key_01JB2WV7C9E2G4J6L8N1QS3UWZ"
+                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "ratifier_key_id": "54b2d035-b438-47f7-9055-67199237d5d7"
                      *     }
                      */
                     "application/json": components["schemas"]["WorkareaEdge"];
@@ -3472,7 +3598,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "status": "committed",
                      *       "policy": {
                      *         "k": 1,
@@ -3511,7 +3637,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "new_parent_id": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+                 *       "new_parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                  *       "dry_run": true
                  *     }
                  */
@@ -3561,12 +3687,10 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "name": "metals-crew",
-                 *       "charter_uri": "https://crews.example.com/metals/charter-v2.md",
-                 *       "external_manager": "crewd.example.com"
+                 *       "crew": "metals-crew"
                  *     }
                  */
-                "application/json": components["schemas"]["CrewRecord"];
+                "application/json": components["schemas"]["WorkareaCrewUpdate"];
             };
         };
         responses: {
@@ -3579,11 +3703,13 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-                     *       "parent_id": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+                     *       "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "name": "metals-crew",
+                     *       "parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                      *       "path": "universe.procurement.metals-crew",
                      *       "status": "committed",
                      *       "crew": {
+                     *         "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *         "name": "metals-crew",
                      *         "charter_uri": "https://crews.example.com/metals/charter.md",
                      *         "external_manager": "crewd.example.com"
@@ -3594,6 +3720,175 @@ export interface operations {
                     "application/json": components["schemas"]["Workarea"];
                 };
             };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listCrews: {
+        parameters: {
+            query?: {
+                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of crew records. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
+                     *           "name": "metals-crew",
+                     *           "charter_uri": "https://crews.example.com/metals/charter.md",
+                     *           "external_manager": "crewd.example.com",
+                     *           "created_at": "2026-09-02T09:10:05Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CrewPage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createCrew: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "name": "metals-crew",
+                 *       "charter_uri": "https://crews.example.com/metals/charter.md",
+                 *       "external_manager": "crewd.example.com"
+                 *     }
+                 */
+                "application/json": components["schemas"]["CrewCreate"];
+            };
+        };
+        responses: {
+            /** @description The crew record. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
+                     *       "name": "metals-crew",
+                     *       "charter_uri": "https://crews.example.com/metals/charter.md",
+                     *       "external_manager": "crewd.example.com",
+                     *       "created_at": "2026-09-02T09:10:05Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Crew"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getCrew: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                crew_id: components["parameters"]["CrewId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The crew record. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
+                     *       "name": "metals-crew",
+                     *       "charter_uri": "https://crews.example.com/metals/charter.md",
+                     *       "external_manager": "crewd.example.com",
+                     *       "created_at": "2026-09-02T09:10:05Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Crew"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateCrew: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                crew_id: components["parameters"]["CrewId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "charter_uri": "https://crews.example.com/metals/charter-v2.md"
+                 *     }
+                 */
+                "application/json": components["schemas"]["CrewUpdate"];
+            };
+        };
+        responses: {
+            /** @description The updated crew record. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
+                     *       "name": "metals-crew",
+                     *       "charter_uri": "https://crews.example.com/metals/charter-v2.md",
+                     *       "external_manager": "crewd.example.com",
+                     *       "created_at": "2026-09-02T09:10:05Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Crew"];
+                };
+            };
+            404: components["responses"]["NotFound"];
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };
@@ -3631,10 +3926,10 @@ export interface operations {
                     /**
                      * @example {
                      *       "transition_id": "tr_01JB2YF7H9K2M4P6R8TA1CV3EY",
-                     *       "workarea_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "to": "committed",
                      *       "state": "pending",
-                     *       "proposed_by_key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+                     *       "proposed_by_key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *       "ratified_by_key_id": null
                      *     }
                      */
@@ -3671,11 +3966,11 @@ export interface operations {
                     /**
                      * @example {
                      *       "transition_id": "tr_01JB2YF7H9K2M4P6R8TA1CV3EY",
-                     *       "workarea_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "to": "committed",
                      *       "state": "ratified",
-                     *       "proposed_by_key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
-                     *       "ratified_by_key_id": "key_01JB2WV7C9E2G4J6L8N1QS3UWZ",
+                     *       "proposed_by_key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "ratified_by_key_id": "54b2d035-b438-47f7-9055-67199237d5d7",
                      *       "policy_snapshot": {
                      *         "k": 1,
                      *         "required_roles": [
@@ -3703,7 +3998,7 @@ export interface operations {
                 /** @description Resume point: events return in seq ascending order — the journal's order, not created_at descending. Pass back next_after_seq verbatim. */
                 after_seq?: number;
                 /** @description A subtree filter within reader effective access; defaults to the key's default workarea (request.workarea_unresolved when the key has none). */
-                workarea_id?: string;
+                workarea_id?: components["schemas"]["WorkareaRef"];
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
             };
@@ -3737,7 +4032,7 @@ export interface operations {
                      *             "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
                      *             "claim_key": "supplier-quote-am-7741",
                      *             "version": 1,
-                     *             "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *             "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *             "plaintext_digest": "sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310"
                      *           }
                      *         }
@@ -3758,7 +4053,7 @@ export interface operations {
             query: {
                 q: string;
                 /** @description Restrict to one vocabulary workarea. */
-                workarea_id?: string;
+                workarea_id?: components["schemas"]["WorkareaRef"];
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
                 /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
@@ -3822,7 +4117,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "curie": "proc:supplier-quote",
-                     *       "workarea_id": "wa_01JB2Z1C3E5G7J9L2N4Q6S8UWY",
+                     *       "workarea_id": "408324c0-55dd-4eb7-b39f-2d7f7147dc66",
                      *       "version": 4,
                      *       "term_status": "deprecated",
                      *       "definition_state": "present",
@@ -3937,7 +4232,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Subtree filter. */
-                workarea?: string;
+                workarea?: components["schemas"]["WorkareaRef"];
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
                 /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
@@ -3960,7 +4255,7 @@ export interface operations {
                      * @example {
                      *       "items": [
                      *         {
-                     *           "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "workarea_path": "universe.procurement.metals-crew",
                      *           "held": 3,
                      *           "oldest_age_seconds": 5411
@@ -3990,12 +4285,11 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND"
+                 *       "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286"
                  *     }
                  */
                 "application/json": {
-                    /** @description Subtree filter. */
-                    workarea?: string;
+                    workarea?: components["schemas"]["WorkareaRef"];
                 };
             };
         };
@@ -4016,7 +4310,7 @@ export interface operations {
                      *         "claim_key": "accra-metals-price-anchor",
                      *         "version": 1,
                      *         "tip": false,
-                     *         "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *         "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *         "workarea_path": "universe.procurement.metals-crew",
                      *         "kind": "derived_fact",
                      *         "state": "held",
@@ -4181,10 +4475,12 @@ export interface operations {
                      * @example {
                      *       "items": [
                      *         {
-                     *           "key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+                     *           "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *           "name": "metals-reviewer-3",
                      *           "role": "dreamer",
                      *           "principal": "crew-review/agent-3",
-                     *           "default_workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "crew_id": null,
+                     *           "default_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "held_by": "agent",
                      *           "label": "metals review agent",
                      *           "expiry": null,
@@ -4192,7 +4488,7 @@ export interface operations {
                      *           "rotated_from": null,
                      *           "grants": [
                      *             {
-                     *               "workarea_node_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *               "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *               "role": "dreamer",
                      *               "grant_id": "gr_01JB2YG8J1L3N5Q7S9UA2CW4FZ",
                      *               "epoch": 41
@@ -4226,18 +4522,20 @@ export interface operations {
                 /**
                  * @example {
                  *       "role": "writer",
+                 *       "name": "procure-agent-7",
                  *       "grants": [
                  *         {
-                 *           "workarea_node_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                 *           "workarea_node_id": "metals-crew",
                  *           "role": "writer"
                  *         },
                  *         {
-                 *           "workarea_node_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                 *           "workarea_node_id": "metals-crew",
                  *           "role": "reader"
                  *         }
                  *       ],
-                 *       "default_workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                 *       "default_workarea_id": "metals-crew",
                  *       "held_by": "agent",
+                 *       "crew": "metals-crew",
                  *       "label": "procure agent 7",
                  *       "principal": "crew-procure/agent-7"
                  *     }
@@ -4255,10 +4553,12 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "key_id": "key_01JB2WR4A6C8E1G3J5L7N9QSUW",
+                     *       "key_id": "4b155359-710a-4417-811c-904cc3959fcc",
+                     *       "name": "procure-agent-7",
                      *       "role": "writer",
                      *       "principal": "crew-procure/agent-7",
-                     *       "default_workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *       "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
+                     *       "default_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "held_by": "agent",
                      *       "label": "procure agent 7",
                      *       "expiry": null,
@@ -4266,13 +4566,13 @@ export interface operations {
                      *       "rotated_from": null,
                      *       "grants": [
                      *         {
-                     *           "workarea_node_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "role": "writer",
                      *           "grant_id": "gr_01JB2YQ6R8TA1CW3EY5G7J9LN2",
                      *           "epoch": 814
                      *         },
                      *         {
-                     *           "workarea_node_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "role": "reader",
                      *           "grant_id": "gr_01JB2YQ7S9UB2DX4FZ6H8K1MP3",
                      *           "epoch": 815
@@ -4311,10 +4611,12 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "metals-reviewer-3",
                      *       "role": "dreamer",
                      *       "principal": "crew-review/agent-3",
-                     *       "default_workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *       "crew_id": null,
+                     *       "default_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "held_by": "agent",
                      *       "label": "metals review agent",
                      *       "expiry": null,
@@ -4322,7 +4624,7 @@ export interface operations {
                      *       "rotated_from": null,
                      *       "grants": [
                      *         {
-                     *           "workarea_node_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "role": "dreamer",
                      *           "grant_id": "gr_01JB2YG8J1L3N5Q7S9UA2CW4FZ",
                      *           "epoch": 41
@@ -4397,17 +4699,15 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 /**
                  * @example {
+                 *       "name": "procure-agent-7-r2",
                  *       "grace": "72h"
                  *     }
                  */
-                "application/json": {
-                    /** @description Bounded grace window before the old key is revoked, e.g. "72h". */
-                    grace?: string;
-                };
+                "application/json": components["schemas"]["KeyRotateRequest"];
             };
         };
         responses: {
@@ -4420,18 +4720,20 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "key_id": "key_01JB2WX8D1F3H5K7M9P2R4TVXZ",
+                     *       "key_id": "080b4bed-308d-48f7-8b3e-90b6f403e2e3",
+                     *       "name": "procure-agent-7-r2",
                      *       "role": "writer",
                      *       "principal": "crew-procure/agent-7",
-                     *       "default_workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *       "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
+                     *       "default_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "held_by": "agent",
                      *       "label": "procure agent 7",
                      *       "expiry": null,
                      *       "revoked_at": null,
-                     *       "rotated_from": "key_01JB2WR4A6C8E1G3J5L7N9QSUW",
+                     *       "rotated_from": "4b155359-710a-4417-811c-904cc3959fcc",
                      *       "grants": [
                      *         {
-                     *           "workarea_node_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "role": "writer",
                      *           "grant_id": "gr_01JB2YX3EY5G7J9LN2Q4S6U8W1",
                      *           "epoch": 8
@@ -4465,7 +4767,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "workarea_node_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                 *       "workarea_node_id": "q1-2027",
                  *       "role": "writer"
                  *     }
                  */
@@ -4482,7 +4784,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "workarea_node_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *       "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "role": "writer",
                      *       "grant_id": "gr_01JB2YQ6R8TA1CW3EY5G7J9LN2",
                      *       "epoch": 9
@@ -4546,7 +4848,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "workarea_node_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                 *       "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                  *       "reason": "quarantine the q1-2027 subtree during incident 44"
                  *     }
                  */
@@ -4564,7 +4866,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "denial_id": "dn_01JB2YH9K2M4P6R8TA1CV3EX5G",
-                     *       "workarea_node_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *       "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "epoch": 10,
                      *       "lifted": false
                      *     }
@@ -4614,7 +4916,7 @@ export interface operations {
     getEffectiveAccess: {
         parameters: {
             query?: {
-                workarea?: string;
+                workarea?: components["schemas"]["WorkareaRef"];
             };
             header?: never;
             path: {
@@ -4633,17 +4935,17 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "key_id": "key_01JB2WR4A6C8E1G3J5L7N9QSUW",
+                     *       "key_id": "4b155359-710a-4417-811c-904cc3959fcc",
                      *       "epoch": 10,
                      *       "entries": [
                      *         {
-                     *           "workarea_node_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "path": "universe.procurement.metals-crew",
                      *           "role": "writer",
                      *           "masked_by": null
                      *         },
                      *         {
-                     *           "workarea_node_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+                     *           "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *           "path": "universe.procurement.metals-crew.q1-2027",
                      *           "role": "writer",
                      *           "masked_by": "dn_01JB2YH9K2M4P6R8TA1CV3EX5G"
@@ -4686,7 +4988,7 @@ export interface operations {
                      *           "subject_kind": "principal",
                      *           "subject": "crew-procure/agent-4",
                      *           "reason": "repeated fabricated quote references",
-                     *           "imposed_by_key_id": "key_01JB2WT6B8D1F3H5K7M9P2RTVX",
+                     *           "imposed_by_key_id": "8dbd2549-9218-4b87-8df3-965e4110c137",
                      *           "imposed_at": "2026-10-29T16:20:00Z",
                      *           "lifted_by_key_id": null,
                      *           "lifted_at": null
@@ -4735,11 +5037,11 @@ export interface operations {
                     /**
                      * @example {
                      *       "keys_affected": [
-                     *         "key_01JB2X0A2C4E6G8J1L3N5Q7SUX"
+                     *         "be45850c-8461-413d-bc65-332fbeae5453"
                      *       ],
                      *       "held_refusals": 2,
                      *       "workareas_touched": [
-                     *         "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND"
+                     *         "fbbb41c5-9630-4274-ae53-166f562f5286"
                      *       ]
                      *     }
                      */
@@ -4759,7 +5061,7 @@ export interface operations {
                      *       "subject_kind": "principal",
                      *       "subject": "crew-procure/agent-4",
                      *       "reason": "repeated fabricated quote references",
-                     *       "imposed_by_key_id": "key_01JB2WT6B8D1F3H5K7M9P2RTVX",
+                     *       "imposed_by_key_id": "8dbd2549-9218-4b87-8df3-965e4110c137",
                      *       "imposed_at": "2026-10-29T16:20:00Z",
                      *       "lifted_by_key_id": null,
                      *       "lifted_at": null
@@ -4799,9 +5101,9 @@ export interface operations {
                      *       "subject_kind": "principal",
                      *       "subject": "crew-procure/agent-4",
                      *       "reason": "repeated fabricated quote references",
-                     *       "imposed_by_key_id": "key_01JB2WT6B8D1F3H5K7M9P2RTVX",
+                     *       "imposed_by_key_id": "8dbd2549-9218-4b87-8df3-965e4110c137",
                      *       "imposed_at": "2026-10-29T16:20:00Z",
-                     *       "lifted_by_key_id": "key_01JB2WT6B8D1F3H5K7M9P2RTVX",
+                     *       "lifted_by_key_id": "8dbd2549-9218-4b87-8df3-965e4110c137",
                      *       "lifted_at": "2026-10-30T09:00:00Z"
                      *     }
                      */
@@ -4841,10 +5143,10 @@ export interface operations {
                      *           "state": "open",
                      *           "audience": [
                      *             {
-                     *               "key_id": "key_01JB2WR4A6C8E1G3J5L7N9QSUW"
+                     *               "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
                      *             },
                      *             {
-                     *               "key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW"
+                     *               "key_id": "d405428e-4c99-426d-8826-76d28436e423"
                      *             }
                      *           ],
                      *           "label": "q1-2027 negotiation dry run",
@@ -4878,10 +5180,10 @@ export interface operations {
                  * @example {
                  *       "audience": [
                  *         {
-                 *           "key_id": "key_01JB2WR4A6C8E1G3J5L7N9QSUW"
+                 *           "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
                  *         },
                  *         {
-                 *           "key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW"
+                 *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
                  *         }
                  *       ],
                  *       "label": "q1-2027 negotiation dry run"
@@ -4904,10 +5206,10 @@ export interface operations {
                      *       "state": "open",
                      *       "audience": [
                      *         {
-                     *           "key_id": "key_01JB2WR4A6C8E1G3J5L7N9QSUW"
+                     *           "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
                      *         },
                      *         {
-                     *           "key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW"
+                     *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
                      *         }
                      *       ],
                      *       "label": "q1-2027 negotiation dry run",
@@ -4947,10 +5249,10 @@ export interface operations {
                      *       "state": "open",
                      *       "audience": [
                      *         {
-                     *           "key_id": "key_01JB2WR4A6C8E1G3J5L7N9QSUW"
+                     *           "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
                      *         },
                      *         {
-                     *           "key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW"
+                     *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
                      *         }
                      *       ],
                      *       "label": "q1-2027 negotiation dry run",
@@ -4977,11 +5279,14 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "enrollment_token": "enr_01JB2W9Z8X7V6T5S4R3Q2P1N0M"
+                 *       "enrollment_token": "enr_01JB2W9Z8X7V6T5S4R3Q2P1N0M",
+                 *       "name": "root-operator"
                  *     }
                  */
                 "application/json": {
                     enrollment_token: string;
+                    /** @description The root operator key's name, in the provider's namespace (409 name.taken when held — ADR-0026 d9). */
+                    name: components["schemas"]["Name"];
                 };
             };
         };
@@ -4995,9 +5300,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "key_id": "key_01JB2WZ9E2G4J6L8N1Q3S5UWYA",
+                     *       "key_id": "05491d43-375e-4adc-ac9a-12743320641f",
+                     *       "name": "root-operator",
                      *       "role": "operator",
                      *       "principal": "platform-team/bootstrap",
+                     *       "crew_id": null,
                      *       "default_workarea_id": null,
                      *       "held_by": null,
                      *       "label": "root operator key",
@@ -5036,7 +5343,7 @@ export interface operations {
                  * @example {
                  *       "add": [
                  *         {
-                 *           "key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW"
+                 *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
                  *         }
                  *       ],
                  *       "remove": [],
@@ -5064,10 +5371,10 @@ export interface operations {
                      *       "state": "open",
                      *       "audience": [
                      *         {
-                     *           "key_id": "key_01JB2WR4A6C8E1G3J5L7N9QSUW"
+                     *           "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
                      *         },
                      *         {
-                     *           "key_id": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW"
+                     *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
                      *         }
                      *       ],
                      *       "label": "q1-2027 negotiation dry run",
@@ -5429,7 +5736,7 @@ export interface operations {
                  *     }
                  */
                 "application/json": {
-                    name: string;
+                    name: components["schemas"]["Name"];
                 };
             };
         };
@@ -5443,16 +5750,17 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "tenant_id": "tn_01JB2YJ1L3N5Q7S9UB2DX4FZ6H",
+                     *       "tenant_id": "ccbc07d6-0481-4dc4-bce9-534f55f58b91",
                      *       "name": "acme-industrial"
                      *     }
                      */
                     "application/json": {
-                        tenant_id?: string;
-                        name?: string;
+                        tenant_id: string;
+                        name: string;
                     };
                 };
             };
+            409: components["responses"]["Conflict"];
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };

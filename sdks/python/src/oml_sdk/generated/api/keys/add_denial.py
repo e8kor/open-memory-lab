@@ -74,10 +74,13 @@ def sync_detailed(
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
      Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the
-    denial's epoch is that event's journal seq.
+    denial's epoch is that event's journal seq. A denial on an admin key is refused with
+    request.validation, details.field key_id: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (DenialRequest):
 
@@ -112,10 +115,13 @@ def sync(
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
      Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the
-    denial's epoch is that event's journal seq.
+    denial's epoch is that event's journal seq. A denial on an admin key is refused with
+    request.validation, details.field key_id: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (DenialRequest):
 
@@ -145,10 +151,13 @@ async def asyncio_detailed(
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
      Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the
-    denial's epoch is that event's journal seq.
+    denial's epoch is that event's journal seq. A denial on an admin key is refused with
+    request.validation, details.field key_id: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (DenialRequest):
 
@@ -181,10 +190,13 @@ async def asyncio(
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
      Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the
-    denial's epoch is that event's journal seq.
+    denial's epoch is that event's journal seq. A denial on an admin key is refused with
+    request.validation, details.field key_id: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (DenialRequest):
 

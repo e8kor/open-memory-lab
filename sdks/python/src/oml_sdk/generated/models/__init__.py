@@ -20,7 +20,10 @@ from .claim_edge_proposal import ClaimEdgeProposal
 from .claim_edge_state import ClaimEdgeState
 from .create_tenant_body import CreateTenantBody
 from .create_tenant_response_201 import CreateTenantResponse201
-from .crew_record import CrewRecord
+from .crew import Crew
+from .crew_create import CrewCreate
+from .crew_page import CrewPage
+from .crew_update import CrewUpdate
 from .demote_request import DemoteRequest
 from .denial import Denial
 from .denial_request import DenialRequest
@@ -57,6 +60,7 @@ from .key_issue_request import KeyIssueRequest
 from .key_issue_request_held_by import KeyIssueRequestHeldBy
 from .key_issued import KeyIssued
 from .key_page import KeyPage
+from .key_rotate_request import KeyRotateRequest
 from .lineage import Lineage
 from .lineage_edges_item import LineageEdgesItem
 from .lineage_edges_item_kind import LineageEdgesItemKind
@@ -88,7 +92,6 @@ from .review_queue_page import ReviewQueuePage
 from .review_queue_page_items_item import ReviewQueuePageItemsItem
 from .revoke_key_body import RevokeKeyBody
 from .role import Role
-from .rotate_key_body import RotateKeyBody
 from .search_memories_kind import SearchMemoriesKind
 from .search_memories_state import SearchMemoriesState
 from .serve import Serve
@@ -158,6 +161,7 @@ from .vocab_term_successors_item import VocabTermSuccessorsItem
 from .vocab_term_successors_item_relation import VocabTermSuccessorsItemRelation
 from .vocab_term_term_status import VocabTermTermStatus
 from .workarea_create import WorkareaCreate
+from .workarea_crew_update import WorkareaCrewUpdate
 from .workarea_edge import WorkareaEdge
 from .workarea_edge_label import WorkareaEdgeLabel
 from .workarea_edge_page import WorkareaEdgePage
@@ -188,7 +192,10 @@ __all__ = (
     "ClaimEdgeState",
     "CreateTenantBody",
     "CreateTenantResponse201",
-    "CrewRecord",
+    "Crew",
+    "CrewCreate",
+    "CrewPage",
+    "CrewUpdate",
     "DemoteRequest",
     "Denial",
     "DenialRequest",
@@ -225,6 +232,7 @@ __all__ = (
     "KeyIssueRequestHeldBy",
     "KeyIssued",
     "KeyPage",
+    "KeyRotateRequest",
     "Lineage",
     "LineageEdgesItem",
     "LineageEdgesItemKind",
@@ -256,7 +264,6 @@ __all__ = (
     "ReviewQueuePageItemsItem",
     "RevokeKeyBody",
     "Role",
-    "RotateKeyBody",
     "SearchMemoriesKind",
     "SearchMemoriesState",
     "Serve",
@@ -322,6 +329,7 @@ __all__ = (
     "VocabTermSuccessorsItemRelation",
     "VocabTermTermStatus",
     "WorkareaCreate",
+    "WorkareaCrewUpdate",
     "WorkareaEdge",
     "WorkareaEdgeLabel",
     "WorkareaEdgePage",

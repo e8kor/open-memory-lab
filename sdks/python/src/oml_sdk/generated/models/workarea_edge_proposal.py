@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -15,7 +15,9 @@ T = TypeVar("T", bound="WorkareaEdgeProposal")
 class WorkareaEdgeProposal:
     """
     Attributes:
-        to_workarea_id (str):
+        to_workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any check that reads
+            state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+            (request.validation).
         label (WorkareaEdgeProposalLabel):
     """
 
@@ -24,6 +26,7 @@ class WorkareaEdgeProposal:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        to_workarea_id: str
         to_workarea_id = self.to_workarea_id
 
         label = self.label.value
@@ -42,7 +45,11 @@ class WorkareaEdgeProposal:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        to_workarea_id = d.pop("to_workarea_id")
+
+        def _parse_to_workarea_id(data: object) -> str:
+            return cast(str, data)
+
+        to_workarea_id = _parse_to_workarea_id(d.pop("to_workarea_id"))
 
         label = WorkareaEdgeProposalLabel(d.pop("label"))
 

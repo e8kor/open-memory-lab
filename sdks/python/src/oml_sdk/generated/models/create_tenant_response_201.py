@@ -6,8 +6,6 @@ from typing import Any, Self, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
-
 T = TypeVar("T", bound="CreateTenantResponse201")
 
 
@@ -15,12 +13,12 @@ T = TypeVar("T", bound="CreateTenantResponse201")
 class CreateTenantResponse201:
     """
     Attributes:
-        tenant_id (str | Unset):
-        name (str | Unset):
+        tenant_id (str):
+        name (str):
     """
 
-    tenant_id: str | Unset = UNSET
-    name: str | Unset = UNSET
+    tenant_id: str
+    name: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -30,20 +28,21 @@ class CreateTenantResponse201:
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if tenant_id is not UNSET:
-            field_dict["tenant_id"] = tenant_id
-        if name is not UNSET:
-            field_dict["name"] = name
+        field_dict.update(
+            {
+                "tenant_id": tenant_id,
+                "name": name,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        tenant_id = d.pop("tenant_id", UNSET)
+        tenant_id = d.pop("tenant_id")
 
-        name = d.pop("name", UNSET)
+        name = d.pop("name")
 
         create_tenant_response_201 = cls(
             tenant_id=tenant_id,
