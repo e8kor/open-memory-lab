@@ -32,22 +32,24 @@ ADR-0037's; they appear here only so the ranking is complete.
 ## Hook points by harness
 
 What each harness offers at the moments a claim could be delivered or checked. Sources are in
-[the table below](#sources); "—" means none was found in the pages fetched.
+[the table below](#sources); "—" means none was found in the pages fetched, and a cell marked
+*unverified* has no quoted source, so no decision rests on it.
 
 | Moment | Claude Code | Codex | Gemini CLI | Cursor | Copilot CLI |
 |---|---|---|---|---|---|
-| Session start, context string | SessionStart: `startup`, `resume`, `clear`, `compact`, `fork` | SessionStart, same five | SessionStart: `startup`, `resume`, `clear` | `sessionStart` `additional_context` | `sessionStart` `additionalContext` |
+| Session start, context string | SessionStart: `startup`, `resume`, `clear`, `compact`, `fork` | SessionStart, *unverified* | SessionStart, *unverified* | `sessionStart` `additional_context` | `sessionStart` `additionalContext` |
 | Helper agent start | SubagentStart, context only | — | — | — | — |
-| Each user turn, context string | UserPromptSubmit | UserPromptSubmit | BeforeAgent, this turn only | `beforeSubmitPrompt` blocks, adds nothing | `userPromptSubmitted` output dropped |
-| Before a tool call, deny | PreToolUse; deny wins | PreToolUse; `ask` not supported | BeforeTool | shell and MCP hooks; deny wins | `preToolUse`; `ask` read as deny in the cloud agent |
-| After a tool call, context string | PostToolUse | — | AfterTool | — | — |
+| Each user turn, context string | UserPromptSubmit | UserPromptSubmit, *unverified* | BeforeAgent, this turn only | `beforeSubmitPrompt`, *unverified* | `userPromptSubmitted`, *unverified* |
+| Before a tool call, deny | PreToolUse; deny wins | PreToolUse, *unverified* | BeforeTool, *unverified* | shell and MCP hooks, *unverified* | `preToolUse`, *unverified* |
+| After a tool call, context string | PostToolUse | — | AfterTool, *unverified* | — | — |
 | Turn end, can continue | Stop, SubagentStop | — | — | — | — |
-| Compaction | PreCompact (can block), PostCompact (`compact_summary`) | — | PreCompress, advisory | — | — |
+| Compaction | PreCompact (can block), PostCompact (`compact_summary`) | — | PreCompress, *unverified* | — | — |
 | Session end | SessionEnd: no decision, 1.5 s default | — | — | — | — |
 
-Cline and Windsurf were found to read rule files only; Claude's apps run no hooks, and an MCP
-server reaches them through tools and user-invoked prompts. Instruction files are context in
-every harness, and only a tool-call hook or the harness's own settings can stop an action.
+Cline and Windsurf were found to read rule files only. Whether Claude's apps run any hook is
+*unverified*; an MCP server reaches them through tools and user-invoked prompts. Instruction
+files are context in every harness, and only a tool-call hook or the harness's own settings can
+stop an action.
 
 ## The catalogue
 
@@ -124,19 +126,23 @@ under the data frame of the memory hook and never under the guardrail frame.
 
 ## The export bridge
 
-Proposed in ADR-0037 d11: `oml guardrails export --format agents-md | claude-md |
-cursor-rules` writes promoted guardrails, with a header naming the server, scope, reach and set
-digest, and `--check` reports drift. It reaches every harness that reads AGENTS.md, a
-`.claude/rules/` file or a Cursor rule file, which is all of those above but Gemini CLI. Its
-costs, stated there: a copy no erasure or demotion reaches (FR-54), readers widened from OML's
-grants to the repository's, and staleness until the next export. Conventions with an
-`applies_to` glob (FR-58) would map to Claude Code `paths`, Copilot `applyTo` and Cursor globs.
+Proposed in ADR-0037 d11: `oml guardrails export --format agents-md | claude-md` writes
+promoted guardrails, with a header naming the server, scope, reach and set digest, and
+`--check` reports drift. It reaches every harness that reads AGENTS.md or a `.claude/rules/`
+file, which is all of those above but Gemini CLI. Its costs, stated there: a copy no erasure
+or demotion reaches (FR-54), readers widened from OML's grants to the repository's, and
+staleness until the next export. Conventions with an
+`applies_to` glob (FR-58) would map to Claude Code `paths`; other harnesses' path-scoped rule
+fields are *unverified*.
 
 ## What every hook here keeps
 
-ADR-0029's discipline holds for each: a Rust subcommand of `oml`, the `command -v oml || exit 0`
-guard, a budget, the key value redacted, the agent's own key alone, one stated failure mode, and
-no act performed by the hook. Only a tool-call check may block, and it may only deny or ask.
+ADR-0029's discipline holds for each: a Rust subcommand of `oml`, a budget, the key value
+redacted, the agent's own key alone, one stated failure mode, and no act performed by the hook.
+Every hook that only adds context keeps ADR-0029 d7's whole guard, `command -v oml` before the
+verb and `|| exit 0` after it. The tool-call check keeps the first half and replaces the second
+with a probe for its verb (ADR-0037 d9), since a failure of the check must block. Only a
+tool-call check may block, and it may only deny or ask.
 
 ## Sources
 
@@ -165,6 +171,13 @@ found, and no decision rests on it.
 | A failing hook can block | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "To block the action instead, set `\"onFailure\": \"block\"` on a `command` or `http` hook. Requires Claude Code v2.1.295 or later." |
 | systemMessage reaches the user | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "To surface a message to the user on any platform, return `systemMessage` in JSON output." |
 | Every hook gets the session id | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "`session_id`: Current session identifier" |
+| A matcher with other characters is a regular expression | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "Contains any other character \| JavaScript regular expression, unanchored" |
+| Every hook gets the working directory | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "`cwd` \| Current working directory when the hook is invoked" |
+| Exit 2 from PreToolUse blocks | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "a `PreToolUse` hook blocks the tool call" |
+| PreToolUse tool inputs | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | the `tool_input` tables: `Bash` `command`; `Write`, `Edit` and `Read` `file_path`; `Glob` and `Grep` `path`; `WebFetch` `url`; and a `PowerShell` tool with `command` |
+| `NotebookEdit` is an edit tool | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "`Edit.*` matches both `Edit` and `NotebookEdit`"; *unverified*: its `tool_input` fields, which the page does not list |
+| PostToolUse adds context | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "String added to Claude's context alongside the tool result." (its `additionalContext` row) |
+| PreCompact can block and cannot speak to the user; SessionEnd decides nothing | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "Blocks compaction" (the exit-code row naming PreCompact) / "Claude Code discards a PreCompact hook's `systemMessage` and `continue` fields." / "No decision control. Used for side effects like logging or cleanup." (the row naming SessionEnd) |
 | SubagentStart injects context | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "SubagentStart hooks can't block subagent creation, but they can inject context into the subagent." |
 | UserPromptSubmit adds, never rewrites | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "UserPromptSubmit: can't replace the prompt; it only injects additionalContext alongside it." |
 | Stop can continue the turn, with a cap | [Claude Code hooks](https://code.claude.com/docs/en/hooks) | "the `stop_hook_active` input and the 8-consecutive-continuation cap" |
