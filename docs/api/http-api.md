@@ -832,10 +832,27 @@ show/validate/apply shape and the retired-key refusal.
   startup fork check passed (the stored chain head verifies against the last signed head;
   [storage.md](../architecture/storage.md)). Otherwise `503` with per-check detail. While a
   replica refuses writes after a failed fork check, API writes on either ring answer
-  `system.unavailable`.
+  `system.unavailable`. Ready or not, the body names the build that answered, in a `build`
+  object:
+
+  | Field | Value |
+  |---|---|
+  | `version` | the workspace version the binary was built at |
+  | `commit` | the full 40-hex commit it was built from |
+  | `commit_time` | that commit's committer time |
+  | `build_time` | when the build captured these fields; `SOURCE_DATE_EPOCH`, when the build sets it, fixes this value so a pinned build stays reproducible |
+  | `rustc` | the compiler's `rustc -V` line |
+  | `target` | the target triple |
+  | `profile` | `release` or `debug` |
+
+  Times are UTC, `YYYY-MM-DDTHH:MM:SSZ`. A field nothing could supply reads `unknown`, never a
+  guess: a build from a source tree with no git metadata and no `OML_BUILD_COMMIT` /
+  `OML_BUILD_COMMIT_TIME` build arguments reports both as `unknown`.
 
 Both are unauthenticated, carry no tenant data, and are the probe targets the Helm chart wires up
-([deployment.md](../operations/deployment.md)).
+([deployment.md](../operations/deployment.md)). The cost of `build`: anyone who can reach
+`/readyz` learns the exact build a replica runs. For a released version, that is already public
+on the release page; a deployment that wants it hidden keeps `/readyz` off its public route.
 
 ## Limits
 

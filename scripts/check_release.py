@@ -10,7 +10,10 @@ disagreement found:
   `docker buildx imagetools create`;
 - that merge job signs the index digest with `cosign sign --recursive`, after it
   has asserted both platforms with `docker buildx imagetools inspect --raw`, and
-  no build job signs a single-platform digest.
+  no build job signs a single-platform digest;
+- every image build passes OML_BUILD_COMMIT and OML_BUILD_COMMIT_TIME, since the
+  image context has no .git and /readyz names the build it serves
+  (docs/api/http-api.md "Health").
 
 Dependencies: stdlib + PyYAML.
 """
@@ -27,6 +30,7 @@ PLATFORMS = {"linux/amd64", "linux/arm64"}
 BUILD_ACTION = "docker/build-push-action@"
 MATRIX_REF = re.compile(r"^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$")
 COSIGN_SIGN = re.compile(r"\bcosign\s+sign(?=\s)")
+BUILD_ARGS = ("OML_BUILD_COMMIT", "OML_BUILD_COMMIT_TIME")
 
 
 def main() -> int:
@@ -45,6 +49,10 @@ def main() -> int:
             built |= platforms_of(job, given.get("platforms", ""))
             if "push-by-digest=true" not in str(given.get("outputs", "")):
                 errors.append(f"job {name}: the image build does not push by digest")
+            build_args = str(given.get("build-args", ""))
+            for arg in BUILD_ARGS:
+                if f"{arg}=" not in build_args:
+                    errors.append(f"job {name}: the image build does not pass {arg}, so /readyz would report it unknown")
         if any(COSIGN_SIGN.search(run) for run in runs(job)):
             errors.append(f"job {name}: signs a single-platform digest, not the index")
     for platform in sorted(PLATFORMS - built):

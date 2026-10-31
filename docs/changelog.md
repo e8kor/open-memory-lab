@@ -31,9 +31,9 @@ implementation milestone where it changes what the repository holds.
 
 ### 2026-10-31 — The agent-only memory surface (implementation)
 
-An implementation milestone; no decision changes, and
-[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) stays proposed. The code now serves what
-that record decides for FR-10 and FR-11:
+An implementation milestone; no decision changes. The code now serves what
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md), accepted on 2026-10-31 with this build,
+decides for FR-10 and FR-11:
 
 - **Eight of the twelve tools.** The [agent plugin](api/mcp-plugin.md)'s catalog holds twelve
   tools, and `tools/list` serves eight: `oml_remember`, `oml_learn`, `oml_recall`, `oml_get`,
@@ -91,6 +91,17 @@ that record decides for FR-10 and FR-11:
   [critical path](product/critical-path.md) owns it; and set-wise hydration of served rows: each
   served row's readable `derives_from` ancestors, its `replaces` target and its workarea path are
   read one row at a time, against ADR-0024 d4, at a cost that is unmeasured (FR-7, FR-25).
+
+### 2026-10-30 — `/readyz` names the build that answered (implementation)
+
+A page edit; no decision changes. [Health](api/http-api.md#health) now declares a `build` object
+on every `/readyz` response, ready or not: version, commit, commit time, build time, compiler,
+target and profile, each `unknown` when nothing could supply it. The `Ready` schema in
+[openapi.yaml](api/openapi.yaml) gains the `Build` schema. The image build has no git metadata,
+so the release workflow passes the commit and its time as build arguments, and
+`scripts/check_release.py` refuses a release workflow that does not. `SOURCE_DATE_EPOCH`, when
+set, fixes the reported build time so a pinned build stays reproducible. The stated cost: an
+unauthenticated probe now discloses the exact build.
 
 ### 2026-10-30 — The release image for linux/amd64 and linux/arm64 (implementation)
 
