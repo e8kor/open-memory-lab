@@ -19,9 +19,13 @@ pub const DEFAULT_MAX_TOKENS: u64 = 800;
 /// The largest budget the variable takes: 2000 budget tokens of hits are at
 /// most 8,000 bytes, inside Claude Code's 10,000-character cap (d2).
 pub const MAX_MAX_TOKENS: u64 = 2000;
-/// Each request ends after this, so a silent server delays the session's
-/// first answer by about two of them (d5).
+/// Each request ends after this, its connect included, so a silent server
+/// delays the session's first answer by about two of them (d5).
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+/// The whole hook gives up after this, whatever blocks it, a DNS lookup
+/// with no deadline of its own included: above two request timeouts, below
+/// the 10-second timeout of the plugin's hook entry (d5, d7).
+pub const DEADLINE: Duration = Duration::from_secs(8);
 /// The own-work items listed and the recall's `k` (d2).
 const COUNT: usize = 10;
 /// What every occurrence of the key value is printed as (d4).

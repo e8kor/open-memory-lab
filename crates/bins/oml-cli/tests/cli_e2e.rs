@@ -1506,10 +1506,102 @@ async fn the_hook_prints_nothing_and_exits_0_when_the_server_is_unreachable() {
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.is_empty(), "{stdout}");
     assert!(
-        elapsed < std::time::Duration::from_secs(8),
-        "the per-request timeout bounds the wait: {elapsed:?}"
+        elapsed < std::time::Duration::from_secs(5),
+        "the 3-second request timeout bounds the wait: {elapsed:?}"
     );
     assert!(!stderr.contains(key), "{stderr}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_prints_nothing_and_exits_0_when_the_connection_never_completes() {
+    // A listener whose accept queue is full: the kernel drops every further
+    // SYN, so a connect blocks as it does behind a firewall that drops them.
+    let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+    socket
+        .bind("127.0.0.1:0".parse().expect("an address"))
+        .expect("bind");
+    let addr = socket.local_addr().expect("addr");
+    let _listener = socket.listen(1).expect("listen");
+    let mut queued = Vec::new();
+    let full = (0..64).any(|_| {
+        match std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(300)) {
+            Ok(stream) => {
+                queued.push(stream);
+                false
+            }
+            Err(_) => true,
+        }
+    });
+    assert!(
+        full,
+        "the accept queue fills after {} connections",
+        queued.len()
+    );
+
+    let key = "oml_neverconnects0123456789abcdefghijklmnopqr";
+    let started = std::time::Instant::now();
+    let (code, stdout, stderr) = hook(
+        &[("OML_URL", &format!("http://{addr}")), ("OML_API_KEY", key)],
+        &session("startup", "/home/op/src/metals"),
+    );
+    let elapsed = started.elapsed();
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "the 3-second timeout bounds the connect too: {elapsed:?}"
+    );
+    assert!(!stderr.contains(key), "{stderr}");
+    drop(queued);
+}
+
+#[test]
+fn the_hook_gives_up_after_8_seconds_whatever_blocks_it() {
+    // Stdin that never closes blocks the hook before any request, where no
+    // request timeout applies, as a DNS lookup with no deadline would.
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml"));
+    cmd.args(["hook", "session-start"]);
+    for name in HOOK_VARIABLES {
+        cmd.env_remove(name);
+    }
+    cmd.env("HOME", std::env::temp_dir().join("oml-hook-e2e-no-home"))
+        .env("OML_URL", "http://127.0.0.1:9")
+        .env(
+            "OML_API_KEY",
+            "oml_blockedhook0123456789abcdefghijklmnopqrs",
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let started = std::time::Instant::now();
+    let mut child = cmd.spawn().expect("the oml binary runs");
+    let held_open = child.stdin.take();
+    let mut exited = None;
+    while started.elapsed() < std::time::Duration::from_secs(15) {
+        if let Some(status) = child.try_wait().expect("the child is polled") {
+            exited = Some(status);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let elapsed = started.elapsed();
+    if exited.is_none() {
+        let _ = child.kill();
+    }
+    let out = child.wait_with_output().expect("the hook is reaped");
+    drop(held_open);
+    let status = exited.expect("the hook ends on its own deadline");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(status.code(), Some(0), "{stderr}");
+    assert!(out.stdout.is_empty(), "no context");
+    assert!(
+        elapsed >= std::time::Duration::from_secs(7) && elapsed < std::time::Duration::from_secs(9),
+        "it waits for its own deadline and no longer: {elapsed:?}"
+    );
+    assert!(
+        stderr.contains("8 seconds") && stderr.lines().count() == 1,
+        "one line names the deadline: {stderr}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

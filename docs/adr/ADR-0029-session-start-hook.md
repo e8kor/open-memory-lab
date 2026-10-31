@@ -131,11 +131,12 @@ accepts it.
 - **d5 — The hook fails open: every failure ends in no output and exit 0, and the context is
   printed whole or not at all.** No stdout and exit 0 follow `OML_SESSION_CONTEXT=off`, a refused
   `OML_SESSION_CONTEXT`, budget or key value (d1, d2, d4), a missing or empty `OML_URL` or
-  `OML_API_KEY`,
-  stdin that is not a JSON object or whose `source` or `cwd` is not a string, an unreachable
-  server, a typed refusal, a timeout, and an answer the hook cannot read. Each request has a
-  3-second timeout. If the listing fails the recall is not sent, and if the recall fails nothing
-  is printed. One line naming the reason may go to stderr, with the key redacted as in d4; Claude
+  `OML_API_KEY`, stdin that is not a JSON object or whose `source` or `cwd` is not a string, an
+  unreachable server, a typed refusal, a timeout, and an answer the hook cannot read. Each request
+  has a 3-second timeout that covers its TCP connect as well as the exchange, and the whole hook
+  gives up after 8 seconds whatever holds it, which also bounds the DNS lookup, since the HTTP
+  client gives that lookup no deadline of its own. If the listing fails the recall is not sent,
+  and if the recall fails nothing is printed. One line naming the reason may go to stderr, with the key redacted as in d4; Claude
   never sees the stderr of a hook that exits 0 ([hooks reference](https://code.claude.com/docs/en/hooks),
   fetched 2026-10-31).
 
@@ -143,7 +144,9 @@ accepts it.
     while a server is down would be noise the user cannot act on from the session. All or nothing
     keeps the context from saying "none" for a list the hook never received. Claude's first
     response waits for the SessionStart hooks (same reference), so the 3-second timeout bounds the
-    delay a slow or silent server adds to about six seconds over two requests. The cost: a
+    delay a slow, silent or unreachable server adds to about six seconds over two requests, and
+    the 8-second deadline bounds any other wait, below the 10 seconds after which Claude Code ends
+    the hook itself (d7). The cost: a
     write-only key ([ADR-0028](ADR-0028-agent-key-issuance.md) d2), which recall refuses, gets no
     session context at all, and a server slower than 3 seconds per request gets none either.
 
@@ -175,8 +178,8 @@ accepts it.
 
 - **d7 — `plugins/oml/hooks/hooks.json` declares one SessionStart command hook that runs `oml hook
   session-start` only when `oml` is on `PATH`.** The entry has no matcher (d1), a timeout of 10
-  seconds, above the two 3-second requests of d5, the status message `Loading OML memory`, and the
-  command
+  seconds, above the hook's own 8-second deadline (d5), the status message `Loading OML memory`,
+  and the command
 
     ```sh
     command -v oml >/dev/null 2>&1 || exit 0; oml hook session-start || exit 0
