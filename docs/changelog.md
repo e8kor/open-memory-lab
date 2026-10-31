@@ -29,6 +29,34 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-10-31 — Guardrails: reviewed rules loaded at session start and checked at the tool call (ADR-0037, proposed)
+
+[ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), proposed on 2026-10-31, answers the user's request of that day: load
+guardrails, a special kind of claim, at session start from the workarea or from the workarea and
+all its ancestors as a setting chooses. Its number follows those that records on other branches
+hold. It binds nothing before its acceptance, and no accepted record changes until then.
+
+- **Proposed, not built:** kind `guardrail`, which reuses steering's applicability and differs
+  from it in content, delivery, frame, ratification, budget and tool calls (d1); severity
+  `never`, `must` or `should`, with `never` and `must` loaded at every descendant (d2); promoted
+  guardrails only, held ones listed to their author alone (d3); downward addressing, `reach` and
+  `OML_GUARDRAILS`, severity-first order and shown conflicts (d4); `GET /v1/guardrails`, never in
+  recall (d5); `oml hook guardrails` on SessionStart, after a compaction and on SubagentStart,
+  in its own frame with provenance on every line (d6); a cap and no partial set (d7); the
+  `oml-gr/1` rule, deny or ask only (d8); `oml hook pre-tool-use`, its 0600 per-session cache
+  and its failure modes (d9); `oml_remember` with kind `guardrail`, two scan classes and a human
+  verdict no policy removes (d10); `oml guardrails export` and an MCP prompt for other harnesses
+  (d11); a change freeze through proposed ADR-0036's valid time (d12); what the hooks never do
+  (d13); the wire and three vocabulary rows (d14); the build after v0.3.1 (d15).
+- **Pages touched:** the record, its register row and nav entry, `llms.txt`, a new engineering
+  page, [session claims](engineering/session-claims.md), which catalogues the other claim kinds
+  the same hook points could carry, proposed and not decided, with its sources quoted, and
+  FR-50 to FR-59 on the roadmap, each marked proposed. No contract page changes, so
+  `info.version` stays `0.3.0-design`.
+- **Amends, on acceptance:** ADR-0008 (d4), ADR-0012 (d3, d5), ADR-0013 (d5), ADR-0014 (d2),
+  ADR-0018 (d4), ADR-0025 (d12) and ADR-0029 (d7); their Status lines gain the back-pointer then,
+  and proposed ADR-0036 (d2, d4) and ADR-0030 (d8) take d12 and d3 when each is accepted.
+
 ### 2026-10-31 — Names as keys (implementation)
 
 An implementation milestone; no decision changes. The code now serves what the proposed

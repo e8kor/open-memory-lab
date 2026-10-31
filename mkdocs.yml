@@ -110,6 +110,7 @@ nav:
           - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
           - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
       - Client SDKs: engineering/sdks.md
+      - Session claims: engineering/session-claims.md
   - Decisions:
       - Index: adr/index.md
       - ADR template: adr/TEMPLATE.md
@@ -142,3 +143,4 @@ nav:
       - ADR-0028: adr/ADR-0028-agent-key-issuance.md
       - ADR-0029: adr/ADR-0029-session-start-hook.md
       - ADR-0033: adr/ADR-0033-interim-helm-chart.md
+      - ADR-0037: adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md

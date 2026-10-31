@@ -70,6 +70,7 @@
 - [Finding: chain-format vectors](https://e8kor.github.io/open-memory-lab/engineering/spikes/chain-vectors/): the chain-format test vectors reproduced byte for byte by independent non-Rust JCS, SHA-256 and Ed25519 implementations, and the Rust tests' copies of them compared with the page
 - [Findings: spike 3, RLS](https://e8kor.github.io/open-memory-lab/engineering/spikes/spike-3-rls/): S3.1–S3.4 on PostgreSQL 18.6: what held, the cross-tenant FTS index statistics that the owner's pg_stats and any session's EXPLAIN estimate expose, S3.2 as a PostgreSQL mechanism and as an open claim about OML's roles, the no-tenant behaviour, and the GIN index under RLS
 - [Client SDKs](https://e8kor.github.io/open-memory-lab/engineering/sdks/): the Python and TypeScript clients generated from openapi.yaml, their pinned generators, what the hand-written wrappers add, and the regeneration rule (FR-12)
+- [Session claims](https://e8kor.github.io/open-memory-lab/engineering/session-claims/): proposed, not decided — the claim kinds beyond guardrails that could start, steer or close an agent's session or turn (handoff, definition of done, pitfalls, conventions, playbooks, rubrics), the hook point each would use in each harness, advisory or checked, their R2/R3 fit, risk and value, ranked, with the sources quoted
 
 ## Product
 
@@ -82,4 +83,4 @@
 
 ## Decisions
 
-- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0026, ADR-0028, ADR-0029 and the proposed ADR-0033, what each decides, and which page owns which decision
+- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0026, ADR-0028, ADR-0029 and the proposed ADR-0033 and ADR-0037 (guardrails loaded at session start and checked at the tool call), what each decides, and which page owns which decision
