@@ -9,10 +9,8 @@
 
 <p align="center">
   <a href="https://github.com/e8kor/open-memory-lab/releases"><img alt="Release" src="https://img.shields.io/github/v/release/e8kor/open-memory-lab?style=flat-square&labelColor=0A0F1D&color=46D684&label=release"></a>
-  <a href="https://github.com/e8kor/open-memory-lab/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/e8kor/open-memory-lab/ci.yml?branch=main&style=flat-square&labelColor=0A0F1D&label=ci"></a>
   <a href="https://e8kor.github.io/open-memory-lab/"><img alt="Docs" src="https://img.shields.io/badge/docs-design%20draft-7AA2FF?style=flat-square&labelColor=0A0F1D"></a>
   <a href="https://e8kor.github.io/open-memory-lab/atlas/"><img alt="Live atlas" src="https://img.shields.io/badge/live%20atlas-3D%20tour-B48AF2?style=flat-square&labelColor=0A0F1D"></a>
-  <a href="plugins/oml/README.md"><img alt="Claude Code plugin" src="https://img.shields.io/badge/claude%20code-plugin-E8B45A?style=flat-square&labelColor=0A0F1D"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-4FD8C0?style=flat-square&labelColor=0A0F1D"></a>
 </p>
 
