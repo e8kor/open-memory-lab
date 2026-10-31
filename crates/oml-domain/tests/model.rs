@@ -1,24 +1,70 @@
-//! Transition-function refusals (admission.md lifecycle, M1 slice) and the
-//! R2 reviewer check (ADR-0001 d2).
+//! The claim kinds (http-api.md submit), transition-function refusals
+//! (admission.md lifecycle; ADR-0025 d10), the capture normalization to NFC
+//! (admission.md, capture; ADR-0025 d6) and the R2 reviewer check
+//! (ADR-0001 d2).
 
 use oml_domain::{
-    LineageClosure, MemoryStatus, Role, TransitionError, VerdictError, check_reviewer, transition,
+    LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError, check_reviewer,
+    nfc, transition,
 };
 use uuid::Uuid;
 
-const ALL: [MemoryStatus; 4] = [
+#[test]
+fn the_claim_kinds_are_the_submit_enum_and_each_name_parses_back() {
+    let kinds = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Steering,
+        MemoryKind::Term,
+        MemoryKind::TermMapping,
+        MemoryKind::VocabRelease,
+    ];
+    let names: Vec<&str> = kinds.iter().map(|k| k.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "memory",
+            "derived_fact",
+            "steering",
+            "term",
+            "term_mapping",
+            "vocab_release"
+        ],
+        "openapi.yaml SubmitRequest.kind"
+    );
+    for kind in kinds {
+        assert_eq!(MemoryKind::parse(kind.as_str()), Some(kind));
+    }
+    assert_eq!(MemoryKind::parse("dataset_manifest"), None, "unbuilt");
+    assert_eq!(MemoryKind::parse("Memory"), None, "names are exact");
+}
+
+const ALL: [MemoryStatus; 5] = [
     MemoryStatus::Held,
     MemoryStatus::Promoted,
+    MemoryStatus::Demoted,
     MemoryStatus::Rejected,
-    MemoryStatus::Superseded,
+    MemoryStatus::Erased,
 ];
 
 #[test]
-fn exactly_three_transitions_are_legal() {
+fn the_claim_states_are_the_schema_set_and_none_is_superseded() {
+    let names: Vec<&str> = ALL.iter().map(|s| s.as_str()).collect();
+    assert_eq!(
+        names,
+        ["held", "promoted", "demoted", "rejected", "erased"],
+        "postgres-schema.md, memories.state"
+    );
+}
+
+#[test]
+fn transition_admits_only_held_to_promoted_or_rejected() {
+    // A supersession adds no state: the replaced version stays promoted and
+    // only loses the tip (ADR-0025 d10). Demote, erase, reopen and
+    // reassignment are unbuilt, so nothing else is legal yet.
     let legal = [
         (MemoryStatus::Held, MemoryStatus::Promoted),
         (MemoryStatus::Held, MemoryStatus::Rejected),
-        (MemoryStatus::Promoted, MemoryStatus::Superseded),
     ];
     for from in ALL {
         for to in ALL {
@@ -99,4 +145,20 @@ fn only_dreamers_review() {
             Err(VerdictError::NotDreamer(role))
         );
     }
+}
+
+#[test]
+fn nfc_normalizes_decomposed_text() {
+    // "e" + COMBINING ACUTE ACCENT composes to the one code point U+00E9,
+    // and the octet count the budget counts drops from 3 to 2.
+    let decomposed = "caf\u{0065}\u{0301}";
+    let composed = nfc(decomposed);
+    assert_eq!(composed, "caf\u{00E9}");
+    assert_eq!(decomposed.len(), 6);
+    assert_eq!(composed.len(), 5);
+    // Hangul jamo compose to their syllable.
+    assert_eq!(nfc("\u{1100}\u{1161}"), "\u{AC00}");
+    // Text already in NFC is returned unchanged.
+    assert_eq!(nfc("Accra Metals \u{00E9}"), "Accra Metals \u{00E9}");
+    assert_eq!(nfc(""), "");
 }

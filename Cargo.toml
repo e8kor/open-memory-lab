@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # MSRV = pinned stable minus two minor releases (ci-and-toolchain.md MSRV window)
 rust-version = "1.97"
@@ -58,6 +58,9 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 thiserror = "2.0"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
+# Pure Rust NFC for capture's normalization step (oml-domain; admission.md,
+# ADR-0025 d6). Already in the graph through sqlx-postgres's stringprep.
+unicode-normalization = "0.1"
 # serde feature: idempotency-stored responses serialize ids (oml-app); the
 # domain stays deterministic — no v4 feature (workspace-plan.md).
 uuid = { version = "1.18", features = ["serde"] }

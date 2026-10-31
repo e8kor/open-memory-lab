@@ -128,3 +128,4 @@ nav:
       - ADR-0022: adr/ADR-0022-two-ring-api.md
       - ADR-0023: adr/ADR-0023-install-profiles-and-cluster-mode.md
       - ADR-0024: adr/ADR-0024-performance-foundation.md
+      - ADR-0025: adr/ADR-0025-the-agent-only-memory-surface.md

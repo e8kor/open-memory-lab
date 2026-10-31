@@ -41,17 +41,24 @@ const ACCEPTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 
 /// The catalog tools whose ring endpoint exists in this slice.
-pub const SERVED_TOOLS: [&str; 4] = ["oml_remember", "oml_learn", "oml_recall", "oml_events_tail"];
-
-/// Catalog tools whose ring endpoint is not built yet: named, not unknown.
-const UNBUILT_TOOLS: [&str; 6] = [
-    "oml_attach",
-    "oml_relate_propose",
+pub const SERVED_TOOLS: [&str; 8] = [
+    "oml_remember",
+    "oml_learn",
+    "oml_recall",
+    "oml_get",
+    "oml_supersede",
     "oml_my_work",
     "oml_workarea_info",
-    "oml_graph",
-    "oml_vocab",
+    "oml_events_tail",
 ];
+
+/// Catalog tools whose ring endpoint is not built yet: named, not unknown
+/// (ADR-0025 d12).
+const UNBUILT_TOOLS: [&str; 4] = ["oml_attach", "oml_relate_propose", "oml_graph", "oml_vocab"];
+
+/// How a tool's refusal of arguments outside its input schema begins, as
+/// distinct from any refusal the ring answers to well-typed arguments.
+pub const ARGUMENTS_OUTSIDE_THE_SCHEMA: &str = "the arguments are not this tool's input schema";
 
 // JSON-RPC 2.0 error codes.
 const PARSE_ERROR: i64 = -32700;
@@ -122,6 +129,44 @@ struct RecallArgs {
     query: String,
     scope: Option<String>,
     k: Option<u64>,
+    include_own_held: Option<bool>,
+    max_tokens: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GetArgs {
+    artifact_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SupersedeArgs {
+    artifact_id: String,
+    text: String,
+    retirement: Option<bool>,
+    kind: Option<String>,
+    derives_from: Option<Vec<String>>,
+    reason: Option<String>,
+    simulation_id: Option<String>,
+    simulated_time: Option<String>,
+    idempotency_key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MyWorkArgs {
+    workarea: Option<String>,
+    claim_key: Option<String>,
+    state: Option<String>,
+    limit: Option<u64>,
+    cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkareaInfoArgs {
+    workarea: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -240,6 +285,10 @@ where
             "oml_remember" => Self::tool_submit(st, token, "remember", args).await,
             "oml_learn" => Self::tool_submit(st, token, "learn", args).await,
             "oml_recall" => Self::tool_recall(st, token, args).await,
+            "oml_get" => Self::tool_get(st, token, args).await,
+            "oml_supersede" => Self::tool_supersede(st, token, args).await,
+            "oml_my_work" => Self::tool_my_work(st, token, args).await,
+            "oml_workarea_info" => Self::tool_workarea_info(st, token, args).await,
             "oml_events_tail" => Self::tool_events_tail(st, token, args).await,
             _ if UNBUILT_TOOLS.contains(&name) => {
                 return rpc_error(
@@ -314,62 +363,224 @@ where
         }))
     }
 
-    /// `oml_recall`: one `POST /v1/memories/recall`.
+    /// `oml_recall`: one `POST /v1/memories/recall`. `include_own_held`,
+    /// `max_tokens` and `k` pass through only when sent, so the ring applies
+    /// its defaults, its range checks and its query digest to exactly what
+    /// the agent asked (retrieval.md own held rows and token budgets;
+    /// ADR-0025 d4, d7, d9, d12).
     async fn tool_recall(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
         let args: RecallArgs = parse_args(args)?;
         let mut headers = ring_headers(token);
         if let Some(scope) = &args.scope {
             insert_header(&mut headers, "x-oml-workarea", scope)?;
         }
-        let mut body = json!({ "query": args.query });
-        if let (Some(k), Some(obj)) = (args.k, body.as_object_mut()) {
-            obj.insert("k".to_owned(), json!(k));
+        let mut body = Map::new();
+        body.insert("query".to_owned(), Value::String(args.query));
+        for (name, value) in [
+            ("k", args.k.map(Value::from)),
+            ("include_own_held", args.include_own_held.map(Value::from)),
+            ("max_tokens", args.max_tokens.map(Value::from)),
+        ] {
+            if let Some(value) = value {
+                body.insert(name.to_owned(), value);
+            }
         }
-        let result =
-            ring_outcome(Self::recall_inner(st, &headers, &Bytes::from(body.to_string())).await)
-                .await?;
+        let result = ring_outcome(
+            Self::recall_inner(st, &headers, &Bytes::from(Value::Object(body).to_string())).await,
+        )
+        .await?;
+        // Steering items and hits are one claim-item shape with text; only a
+        // hit carries a score (mcp-plugin.md, the claim item; ADR-0025 d12).
+        let steering: Vec<Value> = result["steering"]
+            .as_array()
+            .map(|items| items.iter().map(|m| recall_item(m, None)).collect())
+            .unwrap_or_default();
         let hits: Vec<Value> = result["hits"]
             .as_array()
             .map(|hits| {
                 hits.iter()
-                    .map(|hit| {
-                        let m = &hit["memory"];
-                        json!({
-                            "artifact_id": m["artifact_id"],
-                            "claim_key": m["claim_key"],
-                            "version": m["version"],
-                            "state": m["state"],
-                            "score": hit["score"],
-                            "text": m["body"],
-                            "workarea_id": m["workarea_id"],
-                            // The PoC derives no workarea paths (see create_workarea).
-                            "workarea_path": Value::Null,
-                            "promoted_at": m["promoted_at"],
-                            "attachments": m["attachments"],
-                        })
+                    .map(|hit| recall_item(&hit["memory"], Some(&hit["score"])))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut out = json!({ "steering": steering, "hits": hits });
+        // The ring's budget object, present if and only if max_tokens was
+        // sent (retrieval.md token budgets; ADR-0025 d7).
+        if let (Some(budget), Some(obj)) = (result.get("budget"), out.as_object_mut()) {
+            obj.insert("budget".to_owned(), budget.clone());
+        }
+        Ok(out)
+    }
+
+    /// `oml_get`: one `GET /v1/memories/{artifact_id}`. The item is the
+    /// claim item with `text`, `derives_from` and `attachments`, whose
+    /// `derives_from` and `replaces` the ring has already limited to what
+    /// the key can read (mcp-plugin.md `oml_get`; ADR-0025 d3, d12).
+    async fn tool_get(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: GetArgs = parse_args(args)?;
+        let memory =
+            ring_outcome(Self::get_memory_inner(st, &args.artifact_id, &ring_headers(token)).await)
+                .await?;
+        let mut item = claim_item(&memory);
+        for (from, to) in [
+            ("body", "text"),
+            ("derives_from", "derives_from"),
+            ("attachments", "attachments"),
+        ] {
+            item.insert(to.to_owned(), memory[from].clone());
+        }
+        Ok(Value::Object(item))
+    }
+
+    /// `oml_supersede`: one `POST /v1/memories/{artifact_id}/supersede`.
+    /// `idempotency_key` is the `Idempotency-Key` header and `text` the
+    /// body; `retirement`, `kind`, `derives_from`, `reason` and the
+    /// simulation fields pass through only when sent, so the ring applies
+    /// its own defaults. The tool carries no vocabulary fields, so a target
+    /// of a vocabulary kind is refused at step 5 of the supersede rule
+    /// (mcp-plugin.md `oml_supersede`; ADR-0025 d10, d11, d12).
+    async fn tool_supersede(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: SupersedeArgs = parse_args(args)?;
+        let mut headers = ring_headers(token);
+        insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
+        let mut body = Map::new();
+        body.insert("body".to_owned(), Value::String(args.text));
+        for (name, value) in [
+            ("retirement", args.retirement.map(Value::from)),
+            ("kind", args.kind.map(Value::from)),
+            ("derives_from", args.derives_from.map(Value::from)),
+            ("reason", args.reason.map(Value::from)),
+            ("simulation_id", args.simulation_id.map(Value::from)),
+            ("simulated_time", args.simulated_time.map(Value::from)),
+        ] {
+            if let Some(value) = value {
+                body.insert(name.to_owned(), value);
+            }
+        }
+        let response = Self::supersede_inner(
+            st,
+            &args.artifact_id,
+            &headers,
+            &Bytes::from(Value::Object(body).to_string()),
+            true,
+        )
+        .await;
+        let replayed = response
+            .as_ref()
+            .is_ok_and(|r| r.headers().contains_key("idempotency-replay"));
+        let receipt = ring_outcome(response).await?;
+        Ok(json!({
+            "artifact_id": receipt["artifact_id"],
+            "claim_key": receipt["claim_key"],
+            "version": receipt["version"],
+            "state": receipt["state"],
+            "retirement": receipt["retirement"],
+            "replaces": receipt["replaces"],
+            "workarea": receipt["workarea_id"],
+            "idempotent_replay": replayed,
+        }))
+    }
+
+    /// `oml_my_work`: one `GET /v1/memories?own=true`, the own-work
+    /// listing. `workarea` is the ring's `workarea_id` subtree filter, and
+    /// `state`, `claim_key`, `limit` and the client-held `cursor` pass
+    /// through; each item is the claim item without `text`, plus
+    /// `held_expires_at` (mcp-plugin.md `oml_my_work`; ADR-0025 d12, d13).
+    async fn tool_my_work(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: MyWorkArgs = parse_args(args)?;
+        let mut params = vec![("own".to_owned(), "true".to_owned())];
+        for (name, value) in [
+            ("workarea_id", args.workarea),
+            ("claim_key", args.claim_key),
+            ("state", args.state),
+            ("limit", args.limit.map(|l| l.to_string())),
+            ("cursor", args.cursor),
+        ] {
+            if let Some(value) = value {
+                params.push((name.to_owned(), value));
+            }
+        }
+        let page = ring_outcome(Self::list_memories_inner(st, &params, &ring_headers(token)).await)
+            .await?;
+        let items: Vec<Value> = page["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|m| {
+                        let mut item = claim_item(m);
+                        item.insert("held_expires_at".to_owned(), m["held_expires_at"].clone());
+                        Value::Object(item)
                     })
                     .collect()
             })
             .unwrap_or_default();
-        Ok(json!({ "steering": result["steering"], "hits": hits }))
+        Ok(json!({ "items": items, "next_cursor": page["next_cursor"] }))
     }
 
-    /// `oml_events_tail`: one `GET /v2/events`.
+    /// `oml_workarea_info`: one `GET /v2/workareas/{id}`. An omitted
+    /// workarea is the key's journalled default, which the app resolves from
+    /// the authenticated key record after step 1 of the refusal order, so an
+    /// admin key is the verb ceiling with or without a default, and a key
+    /// past step 1 with none is `request.workarea_unresolved` (mcp-plugin.md;
+    /// roles-and-keys.md refusal order; ADR-0025 d14).
+    async fn tool_workarea_info(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: WorkareaInfoArgs = parse_args(args)?;
+        let view = ring_outcome(
+            Self::get_workarea_inner(st, args.workarea.as_deref(), &ring_headers(token)).await,
+        )
+        .await?;
+        // The plugin's output names the parent `parent`; `crew` stays absent
+        // when none was recorded (mcp-plugin.md `oml_workarea_info`).
+        let mut out = Map::new();
+        for (from, to) in [
+            ("id", "id"),
+            ("path", "path"),
+            ("status", "status"),
+            ("crew", "crew"),
+            ("parent_id", "parent"),
+            ("children", "children"),
+            ("edges", "edges"),
+            ("my_effective_verbs", "my_effective_verbs"),
+            ("permission_epoch", "permission_epoch"),
+        ] {
+            if let Some(value) = view.get(from) {
+                out.insert(to.to_owned(), value.clone());
+            }
+        }
+        Ok(Value::Object(out))
+    }
+
+    /// `oml_events_tail`: one `GET /v2/events`. `scope` is the ring's
+    /// `workarea_id`; omitted, the app fills it from the key record with the
+    /// journalled default, as the ring does. An omitted `after_seq` is 0, as
+    /// on the ring. The page is projected to `{events, head_seq,
+    /// next_after_seq, idle}`, idle once the resume point has reached the
+    /// head (mcp-plugin.md `oml_events_tail`; ADR-0025 d15).
     async fn tool_events_tail(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
         let args: EventsTailArgs = parse_args(args)?;
-        if args.scope.is_some() {
-            return Err(refusal(ApiError::validation(
-                "scope filtering on the events tail is outside the PoC slice; omit scope to tail the key's tenant",
-            )));
-        }
-        let mut params = HashMap::new();
-        if let Some(after_seq) = args.after_seq {
-            params.insert("after_seq".to_owned(), after_seq.to_string());
+        let mut params = HashMap::from([(
+            "after_seq".to_owned(),
+            args.after_seq.unwrap_or(0).to_string(),
+        )]);
+        if let Some(scope) = args.scope {
+            params.insert("workarea_id".to_owned(), scope);
         }
         if let Some(limit) = args.limit {
             params.insert("limit".to_owned(), limit.to_string());
         }
-        ring_outcome(Self::events_tail_inner(st, &params, &ring_headers(token)).await).await
+        let page =
+            ring_outcome(Self::events_tail_inner(st, &params, &ring_headers(token)).await).await?;
+        let events: Vec<Value> = page["items"]
+            .as_array()
+            .map(|items| items.iter().map(tail_item).collect())
+            .unwrap_or_default();
+        Ok(json!({
+            "events": events,
+            "head_seq": page["head_seq"],
+            "next_after_seq": page["next_after_seq"],
+            "idle": page["next_after_seq"] == page["head_seq"],
+        }))
     }
 }
 
@@ -381,6 +592,42 @@ pub(crate) async fn mcp_get() -> Response {
         .headers_mut()
         .insert(header::ALLOW, HeaderValue::from_static("POST"));
     response
+}
+
+/// The base claim item of a ring `Memory` or `MemorySummary`: the one shape
+/// every tool returns a claim version in, the ring's `workarea_id` named
+/// `workarea` (mcp-plugin.md, the claim item; ADR-0025 d12).
+fn claim_item(m: &Value) -> Map<String, Value> {
+    [
+        ("artifact_id", "artifact_id"),
+        ("claim_key", "claim_key"),
+        ("version", "version"),
+        ("kind", "kind"),
+        ("state", "state"),
+        ("tip", "tip"),
+        ("retirement", "retirement"),
+        ("replaces", "replaces"),
+        ("workarea_id", "workarea"),
+        ("workarea_path", "workarea_path"),
+        ("tokens", "tokens"),
+        ("created_at", "created_at"),
+        ("promoted_at", "promoted_at"),
+    ]
+    .into_iter()
+    .map(|(from, to)| (to.to_owned(), m[from].clone()))
+    .collect()
+}
+
+/// A ring `Memory` as an `oml_recall` item: the claim item plus its `body`
+/// as `text`, and a hit's `score`; a steering item has none (mcp-plugin.md,
+/// the claim item; ADR-0025 d12).
+fn recall_item(m: &Value, score: Option<&Value>) -> Value {
+    let mut item = claim_item(m);
+    item.insert("text".to_owned(), m["body"].clone());
+    if let Some(score) = score {
+        item.insert("score".to_owned(), score.clone());
+    }
+    Value::Object(item)
 }
 
 fn ring_headers(token: &str) -> HeaderMap {
@@ -408,7 +655,7 @@ fn insert_header(headers: &mut HeaderMap, name: &'static str, value: &str) -> Re
 fn parse_args<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, Value> {
     serde_json::from_value(args).map_err(|e| {
         refusal(ApiError::validation(format!(
-            "the arguments are not this tool's input schema: {e}"
+            "{ARGUMENTS_OUTSIDE_THE_SCHEMA}: {e}"
         )))
     })
 }
@@ -443,4 +690,36 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Response {
         StatusCode::OK,
         &json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
     )
+}
+
+/// A served ring event as an `oml_events_tail` event (mcp-plugin.md
+/// `oml_events_tail`; ADR-0025 d15): its `subject` — `{artifact_id,
+/// claim_key, version}` for a claim version, the new version for a
+/// `lifecycle.supersede`, `{workarea_id}` for a `workarea.*` node — and
+/// `workarea`, the subject's workarea as the served payload names it, null
+/// where the naming rule withholds it. Hashes, signatures, payloads and
+/// identities are dropped. This build journals no `lifecycle.tip_override`,
+/// `lifecycle.reassign` or `workarea.relate_*` event, so none is projected.
+fn tail_item(event: &Value) -> Value {
+    let payload = &event["payload"];
+    let subject = match event["event_type"].as_str() {
+        Some(t) if t.starts_with("workarea.") => json!({ "workarea_id": payload["workarea_id"] }),
+        Some("lifecycle.supersede") => json!({
+            "artifact_id": payload["new_artifact_id"],
+            "claim_key": payload["claim_key"],
+            "version": payload["new_version"],
+        }),
+        _ => json!({
+            "artifact_id": payload["artifact_id"],
+            "claim_key": payload["claim_key"],
+            "version": payload["version"],
+        }),
+    };
+    json!({
+        "seq": event["seq"],
+        "event_type": event["event_type"],
+        "at": event["at"],
+        "subject": subject,
+        "workarea": payload["workarea_id"],
+    })
 }

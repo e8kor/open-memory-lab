@@ -78,12 +78,20 @@ Writes enter held; nothing in this family changes visibility. Pipeline:
   "derives_from": ["artifact_id…"],
   "provenance": "agent",
   "simulation_id": null,
+  "replaces": null,
+  "retirement": false,
   "scan": {"result": "pass", "scanner_version": "…"}
 }
 ```
 
 A writer submits a memory; it is held on arrival, scanned in the same call, and visible to no one
-else until ratified.
+else until ratified. A supersession is a submission at the claim's next unused version whose
+`derives_from` includes the replaced version: `replaces` is then
+`{"artifact_id": "…", "version": 3}`, naming that version, and `retirement: true` marks a
+proposal to retire the claim
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10, d11). `body_bytes` is the
+UTF-8 octet length of the NFC-normalized body — the clear integer the recall budget counts
+([retrieval](../architecture/retrieval.md#token-budgets)).
 
 ### submission.learn
 
@@ -91,10 +99,11 @@ else until ratified.
 {
   "artifact_id": "…", "workarea_id": "…", "claim_key": "…",
   "version": 1, "kind": "derived_fact",
-  "plaintext_digest": "sha256:…",
+  "plaintext_digest": "sha256:…", "body_bytes": 512,
   "ciphertext_digest": "sha256:…",
   "derives_from": ["artifact_id…", "artifact_id…"],
   "provenance": "agent", "simulation_id": null,
+  "replaces": null, "retirement": false,
   "scan": {"result": "pass", "scanner_version": "…"}
 }
 ```
@@ -240,41 +249,51 @@ Visibility and existence changes. Each enqueues its outbox row in the same trans
   "artifact_id": "…", "version": 3,
   "workarea_id": "…", "claim_key": "deploy-runbook",
   "ratification_event_id": "…",
-  "previous_tip_version": 2,
+  "previous_tip_version": null,
   "self_signed": false
 }
 ```
 
-Ratified content becomes readable by others and silver materialization is enqueued; a supersession
-promotion CAS-checks that `previous_tip_version` is still the tip, else it is refused.
+Ratified content becomes readable by others and silver materialization is enqueued. Journalled for
+a claim's first promoted version, with `previous_tip_version` null; the promotion of a supersession
+journals `lifecycle.supersede` instead
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
 
 ### lifecycle.demote
 
 ```json
 {
   "artifact_id": "…", "version": 3,
+  "workarea_id": "…", "claim_key": "deploy-runbook",
   "reason": "simulation_ended",
   "demoted_by_key_id": "…", "cause_event_id": "…"
 }
 ```
 
 Removes a version from service while keeping its bytes (R4); the lake sees a retract through the
-outbox.
+outbox. `workarea_id`, `claim_key` and `version` name the subject, so the
+[events tail](../api/http-api.md#events-tail) filters this event from the journal alone
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d15).
 
 ### lifecycle.erase
 
 ```json
 {
-  "artifact_id": "…",
+  "artifact_id": "…", "version": 3,
+  "workarea_id": "…", "claim_key": "deploy-runbook",
   "dek_destroyed": true,
-  "copy_classes": ["silver.body", "object_store", "fts", "embeddings"],
+  "copy_classes": ["silver.body", "object_store", "fts", "embeddings", "held_fts"],
   "erased_by_key_id": "…"
 }
 ```
 
-Crypto-shredding: the DEK is destroyed and plaintext-derived index rows removed in the same commit;
-the payload names the copy classes affected, and the honest boundary of what persists as ciphertext
-or in backups is declared in [audit-and-lineage](../architecture/audit-and-lineage.md) (D4).
+Crypto-shredding: the DEK is destroyed and plaintext-derived index rows removed in the same
+commit — `held_fts` among them when the erased version is held, with the row count checked
+([retrieval](../architecture/retrieval.md#held-text-containment)); the payload names the copy
+classes affected, and the honest boundary of what persists as ciphertext or in backups is
+declared in [audit-and-lineage](../architecture/audit-and-lineage.md) (D4).
+`workarea_id`, `claim_key` and `version` name the subject for the events tail, as on
+`lifecycle.demote`.
 
 ### lifecycle.supersede
 
@@ -282,13 +301,27 @@ or in backups is declared in [audit-and-lineage](../architecture/audit-and-linea
 {
   "claim_key": "deploy-runbook", "workarea_id": "…",
   "new_artifact_id": "…", "new_version": 4,
-  "replaces_version": 3,
-  "ratification_event_id": "…"
+  "replaces_artifact_id": "…", "replaces_version": 3,
+  "retirement": false,
+  "ratification_event_id": "…",
+  "self_signed": false
 }
 ```
 
-The promoted supersession takes the tip from the version it replaces — one event so the tip flip is
-a single journalled fact rather than a demote/promote pair to correlate.
+Journalled at ratification, after the compare-and-set that the replaced version is still the tip
+under the successor's own `workarea_id` and `claim_key`, so the one `workarea_id` names both
+versions: it promotes the successor and flips the tip in one event, so the tip flip is a single
+journalled fact rather than a demote/promote pair to correlate. `self_signed` carries the
+successor's mark exactly as `lifecycle.promote` carries a first version's
+([ADR-0001](../adr/ADR-0001-the-constitution.md) d5): it is the promotion event of the version it
+names, so the mark reaches the journal, the `memories.self_signed` fold and the
+[events tail](../api/http-api.md#events-tail) from this event alone. Several held successors of one tip
+may coexist; the first ratified takes the tip, and a lost compare-and-set refuses the verdict and
+journals nothing. With `retirement: true` the successor is a retirement version and the claim
+becomes a retired claim
+([audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
+For a tainted successor (a simulation row or sim-derived) the same event sets that simulation's
+audience overlay tip instead, and the default tip does not move (same section).
 
 ### lifecycle.tip_override
 
@@ -296,18 +329,22 @@ a single journalled fact rather than a demote/promote pair to correlate.
 {
   "claim_key": "deploy-runbook", "workarea_id": "…",
   "from_version": 4, "to_version": 2,
+  "from_artifact_id": "…", "to_artifact_id": "…",
   "overridden_by_key_id": "…", "reason_digest": "sha256:…"
 }
 ```
 
 An admin designates an earlier promoted version as the served tip without demoting the later one —
-an explicit, journalled act, never a silent re-rank.
+an explicit, journalled act, never a silent re-rank. `from_artifact_id` and `to_artifact_id` name
+the two versions, so the events tail names its subject from the journal alone. A later
+supersession of the restored tip takes the next unused ordinal, never `to_version` + 1
+([audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
 
 ### lifecycle.reassign
 
 ```json
 {
-  "artifact_id": "…",
+  "artifact_id": "…", "version": 3, "claim_key": "deploy-runbook",
   "from_workarea_id": "…", "to_workarea_id": "…",
   "re_key": null,
   "source_policy_snapshot": {"k": 1, "required_roles": ["dreamer"]},
@@ -320,7 +357,10 @@ an explicit, journalled act, never a silent re-rank.
 An admin moves a claim between workareas, with both policy snapshots recorded. A stricter
 destination policy re-enters the claim `held`; a move into a `validated` area is refused; a
 `claim_key` collision at the destination is refused unless this event records the re-key. The lake
-sees the move as a retract MERGE through the outbox.
+sees the move as a retract MERGE through the outbox. `claim_key` and `version` name the subject
+for the events tail, as on `lifecycle.demote`; a move that re-enters `held` takes the version out
+of the shared serving indexes and puts its text in the author-fenced held index in the same
+commit ([retrieval](../architecture/retrieval.md#held-text-containment)).
 
 ## Workarea family
 
@@ -372,13 +412,14 @@ one endpoint and reader on both.
 
 ```json
 {
-  "edge_id": "…",
+  "edge_id": "…", "src_id": "…", "dst_id": "…",
   "ratifier_key_id": "…"
 }
 ```
 
 Ratifies the edge; the ratifier needs dreamer(review) on both endpoints and must not be the
-proposer (R2 extends to edges).
+proposer (R2 extends to edges). `src_id` and `dst_id` repeat the endpoints, so the events tail
+filters this event from the journal alone.
 
 ### workarea.status_proposed
 
@@ -474,8 +515,14 @@ the attestation, never the humanness ([ADR-0021](../adr/ADR-0021-ai-human-ontolo
 {"key_id": "…", "revoked_by_key_id": "…", "reason_digest": "sha256:…"}
 ```
 
-Immediate revocation; the permission epoch bump that invalidates caches rides the grant events the
-revocation implies.
+Revocation: the key's next request served by the lead answers `auth.invalid`, since keys and
+effective access are resolved on every request, and a follower, which resolves keys from its
+local replica, does so after replication lag
+([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). Its seq
+is the key's permission epoch from then on. A key whose
+issuance failed after `key.issued` gets this event in a following commit, with `reason_digest`
+over the fixed reason `issuance_incomplete`
+([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 
 ### key.rotated
 
@@ -487,7 +534,9 @@ One journalled act carries both key ids and the grace deadline: the successor is
 key id, linked to the old by `rotated_from`, its grants reproduced from the journalled grant
 records; the old key stays usable through the bounded grace window and is revoked at `grace_until`
 — a journalled `key.revoked` citing this event as cause, with the epoch bump revocation always
-carries.
+carries. The successor has no `key.issued` and its reproduced grants no `grant.issued`, so this
+event's seq is the successor's `issued_seq`, the epoch of each of its grant rows, and its first
+permission epoch ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
 
 ### grant.issued
 
@@ -500,8 +549,9 @@ carries.
 }
 ```
 
-Binds a key to a workarea node id (never a path) with per-grant deny masks; `epoch` makes every
-historical effective-access computation reproducible.
+Binds a key to a workarea node id (never a path) with per-grant deny masks; `epoch` is this
+event's own journal seq, which makes every historical effective-access computation reproducible
+([workareas](../architecture/workareas.md)).
 
 ### grant.revoked
 
@@ -509,7 +559,9 @@ historical effective-access computation reproducible.
 {"grant_id": "…", "key_id": "…", "revoked_by_key_id": "…", "epoch": 19}
 ```
 
-Journalled grant removal; the epoch bump invalidates cached effective-access computations.
+Journalled grant removal; `epoch` is this event's own journal seq, and the key's next request
+served by the lead is resolved without the grant, since effective access is computed per request;
+a follower's reads follow after replication lag ([workareas](../architecture/workareas.md)).
 
 ### key.denied
 
@@ -521,7 +573,7 @@ Journalled grant removal; the epoch bump invalidates cached effective-access com
 ```
 
 A global per-key deny: a distinct journalled object with deny-wins semantics across all of the
-key's grants.
+key's grants; `epoch` is this event's own journal seq.
 
 ### key.denial_lifted
 
@@ -594,12 +646,14 @@ from the journal. Removal takes effect on the next read; past reads stand in the
 {
   "artifact_id": "…", "workarea_id": "…", "claim_key": "…",
   "version": 1, "kind": "memory",
-  "plaintext_digest": "sha256:…",
+  "plaintext_digest": "sha256:…", "body_bytes": 2048,
   "ciphertext_digest": "sha256:…",
   "derives_from": ["…"],
   "provenance": "simulation",
   "simulation_id": "…",
   "simulated_time": "1944-06-06T06:30:00Z",
+  "replaces": null,
+  "retirement": false,
   "scan": {"result": "pass", "scanner_version": "…"}
 }
 ```
@@ -607,7 +661,13 @@ from the journal. Removal takes effect on the next read; past reads stand in the
 The submission envelope with `provenance: simulation` and `simulation_id` mandatory and indelible —
 the event gets a real chain timestamp (`at` in the envelope) and the declared `simulated_time` is
 data, never backdating; a submission whose `derives_from` touches a simulation row is
-server-forced to carry that row's `simulation_id`.
+server-forced to carry that row's `simulation_id`. It is a simulation row's submission event and
+carries every field `submission.remember` carries: `body_bytes`, the clear integer the recall
+budget counts ([retrieval](../architecture/retrieval.md#token-budgets)); `replaces`, naming the
+version a simulation successor replaces; and `retirement`, marking a proposal to retire the claim
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d6, d10, d11). Its visibility on
+the events tail is declared beside the `submission.*` family's
+([HTTP API](../api/http-api.md#events-tail)).
 
 ### simulation.ended
 

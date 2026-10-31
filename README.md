@@ -25,8 +25,9 @@ every unmeasured or unbuilt property as exactly that.
 
 This repository contains a design under review, plus a first working slice of it. **The design
 is the authority; the code implements its M1 slice** (the signed journal chain, the one-transaction
-commit point, submit → review → promote → recall over the standalone profile) and the first four
-tools of the agent plugin. You can run it today: see the [quickstart](#quickstart). Every
+commit point, submit → review → promote → recall over the standalone profile) and the part of M2
+that lets an agent keep its whole memory in OML on one key, through eight of the agent plugin's
+twelve tools. You can run it today: see the [quickstart](#quickstart). Every
 capability beyond that slice is a design commitment with a tracked exit criterion, not a property
 of running software. If you are here to evaluate the design, start at the
 [review guide](docs/review-guide.md).
@@ -42,21 +43,23 @@ bash scripts/quickstart.sh    # claim the server, issue keys, check the agent pl
 
 The compose file uses the published image `ghcr.io/e8kor/open-memory-lab`. Use
 `docker compose up -d --build` to build it from the checkout instead. The quickstart claims the
-server's one-time enrollment token from its log and creates a workarea. It then issues three keys:
-a writer and a reader for your agent, and a dreamer key for the person who reviews. Finally it
-writes, approves and recalls one memory through the plugin's endpoint, and prints the lines to
-connect Claude Code:
+server's one-time enrollment token from its log and creates a workarea. It then issues two keys:
+one key for your agent, which both stores memories and searches them, and a dreamer key for the
+person who reviews. With the agent's key it writes one memory through the plugin's endpoint,
+finds it waiting for review in the agent's own list and in the agent's own search, has the
+dreamer key approve it, and searches for it again. Then it prints the lines to connect Claude
+Code:
 
 ```sh
 export OML_URL=http://127.0.0.1:8080
-export OML_API_KEY=<writer key>
-export OML_RECALL_KEY=<reader key>
+export OML_API_KEY=<agent key>
 claude plugin marketplace add e8kor/open-memory-lab
 claude plugin install oml@open-memory-lab
 ```
 
-Each key is shown once, so store them when the quickstart prints them. Nothing the agent writes
-is recalled until someone approves it with the dreamer key:
+Each key is shown once, so store them when the quickstart prints them. The agent sees its own
+writes while they wait, but nothing it writes reaches anyone else until someone approves it
+with the dreamer key:
 
 ```sh
 docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <dreamer key> review next
@@ -114,8 +117,8 @@ under [`docs/`](docs/) is additionally licensed under [CC-BY-4.0](LICENSE-docs).
 
 ## Running the PoC
 
-The repository now carries a proof-of-concept implementation of the design's M1 slice: the
-standalone lead server (`oml-server-lead`) and the thin administration CLI (`oml`), composed
+The repository now carries a proof-of-concept implementation of the design's M1 slice and of the
+part of M2 that makes OML an agent's only memory: the standalone lead server (`oml-server-lead`) and the thin administration CLI (`oml`), composed
 per [docs/engineering/workspace-plan.md](docs/engineering/workspace-plan.md).
 
 **Prerequisites**
@@ -127,7 +130,7 @@ per [docs/engineering/workspace-plan.md](docs/engineering/workspace-plan.md).
   there is no separate migrate step.
 - `jq` and `psql` for the demo script.
 
-**Three commands**
+**Two commands**
 
 ```sh
 # 1. Build, then boot the lead (migrates on start, mints the keyring, prints the
@@ -138,21 +141,32 @@ OML_POSTGRES__URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev ./target/re
 # 2. Or let the demo script drive the whole story against a throwaway database —
 #    bootstrap, keys, submit, review, the R2 refusal, supersede, audit, shutdown:
 bash scripts/poc-demo.sh
-
-# 3. Verify the signed journal chain independently (the public key is operator
-#    input, confirmed out of band — the server logs it at boot):
-./target/release/oml audit verify-chain --genesis --signing-key <64-hex ed25519 public key>
 ```
 
 CLI verbs, exit codes and transcripts are specified in [docs/cli/reference.md](docs/cli/reference.md).
 
 **Honest status.** The PoC is the M1 slice of the
-[critical path](docs/product/critical-path.md): one standalone lead, one tenant
-(bootstrap-claimed), held-by-default admission with a deterministic marker scanner, the
-dreamer review ceremony with R2 enforced against the lineage closure, supersede, substring
-recall, the signed per-tenant hash chain with an independent CLI verifier, and four of the
-agent plugin's ten tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_events_tail`). **Not
-implemented yet:** the other six plugin tools, a key that holds more than one role, attachments
-and the object lake, erasure ceremonies, follower servers and read scaling, simulations,
-embedding-based retrieval, and the operator tier — see the
-[critical path](docs/product/critical-path.md) for the order in which they land.
+[critical path](docs/product/critical-path.md) and the part of M2 that makes OML an agent's
+only memory: one standalone lead, one tenant (bootstrap-claimed), held-by-default admission with
+a deterministic marker scanner, the dreamer review ceremony with R2 enforced against the lineage
+closure, full-text recall, the signed per-tenant hash chain, and eight of the agent plugin's
+twelve tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_get`, `oml_supersede`,
+`oml_my_work`, `oml_workarea_info`, `oml_events_tail`). One key both stores and searches through
+the workareas it is granted. With it an agent reads back its own writes while they wait for
+review, searches within a budget with standing instructions served first, replaces a memory with
+a new version and proposes retiring one; a new version replaces the old one for other readers
+only once someone other than its author approves it, and the event feed shows each key only the
+events it may see. **Not implemented yet:** the other four plugin tools, attachments and the
+object lake, erasure ceremonies, checking the signed chain against a live server (the
+command-line verifier reads an export of the whole chain that the server does not serve yet, so
+`oml audit verify-chain` stops with an error that says so), follower servers and read scaling,
+simulations, embedding-based retrieval, and the operator tier; on keys, adding or revoking a
+grant after issuance, lifting a denial, retrying an issuance safely, rotation, and expiry (a key
+issued with an expiry is refused); held writes that expire when nobody reviews them; the record
+of what each search served; and links between workareas. Two working pieces differ from the
+design. An agent's search of its own waiting writes reads them through a store query restricted
+to their author, not through the separate author-only search index the design specifies. And a
+write retried while its first attempt is still running never gets the design's "still in
+progress" answer: it gets the first attempt's receipt as a replay, or, for a new memory whose
+name the first attempt has just taken, the refusal that the name is in use. The
+[critical path](docs/product/critical-path.md) orders what lands next.

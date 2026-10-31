@@ -1,13 +1,15 @@
 # Open Memory Lab
 
-> Design specification, revision 0.1.0-design, of an agentic external memory provider: every
+> Design specification, revision 0.2.0-design, of an agentic external memory provider: every
 > memory an agent writes is a claim, held until an identity that did not write it has reviewed
 > it, and only then visible to others. PostgreSQL is the system of record with per-tenant
 > Ed25519-signed hash chains; a Delta Lake lakehouse is derived and never authoritative; erasure
 > is crypto-shredding; the surface is one JSON HTTP API with two stability rings (/v1 provider,
-> /v2 lab), an MCP facade and a CLI. Nothing is built: every page describes a decided design,
-> marks unmeasured quantities as roadmap rows, and says so. Each page opens with an HTML-comment
-> frontmatter block (id, tier, status, answers) stating what it answers.
+> /v2 lab), an MCP facade and a CLI. The design is the authority, and a first working slice is
+> built: the critical path's M1 and the agent-only-memory part of M2. Every page describes a
+> decided design, marks unmeasured quantities as roadmap rows, and says what is not built. Each
+> page opens with an HTML-comment frontmatter block (id, tier, status, answers) stating what it
+> answers.
 
 ## Start here
 
@@ -20,9 +22,9 @@
 
 - [Storage](https://e8kor.github.io/open-memory-lab/architecture/storage/): the commit point, the per-tenant signed hash chain, the outbox protocol and the derived lake
 - [Admission](https://e8kor.github.io/open-memory-lab/architecture/admission/): the pipeline every write crosses — capture, quarantine, scan, non-author review, ratification, release
-- [Retrieval](https://e8kor.github.io/open-memory-lab/architecture/retrieval/): reads served from Postgres, result order, decryption, the journalled read log
+- [Retrieval](https://e8kor.github.io/open-memory-lab/architecture/retrieval/): reads served from Postgres, result order, decryption, the journalled read log, token budgets
 - [Workareas](https://e8kor.github.io/open-memory-lab/architecture/workareas/): the universe tree, node-id grants, deny-wins semantics, edges, and the status ladder
-- [Roles and keys](https://e8kor.github.io/open-memory-lab/architecture/roles-and-keys/): the five roles, their verb ceilings, key issuance and lifecycle, the independence axis
+- [Roles and keys](https://e8kor.github.io/open-memory-lab/architecture/roles-and-keys/): the five roles, their verb ceilings, key issuance and lifecycle, the independence axis, grant admissibility and the refusal order
 - [Security and tenancy](https://e8kor.github.io/open-memory-lab/architecture/security/): the tenancy model, the key custody map, and the threat model against hostile co-tenants
 - [Audit and lineage](https://e8kor.github.io/open-memory-lab/architecture/audit-and-lineage/): what the journal records, what an evidence export contains, and what erasure does to every copy class
 - [Simulations](https://e8kor.github.io/open-memory-lab/architecture/simulations/): the fenced provenance channel and taint propagation
@@ -76,4 +78,4 @@
 
 ## Decisions
 
-- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0024, what each decides, and which page owns which decision
+- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0025, what each decides, and which page owns which decision

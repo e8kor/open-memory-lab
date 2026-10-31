@@ -14,9 +14,10 @@ into four tiers: guaranteed by construction, guaranteed within a stated bound, p
 unmeasured, and never claimed. A claim that does not appear on this page is not a commitment,
 whatever a sentence elsewhere may suggest. Each entry names its enforcement point and the
 assumption it rests on; every bound links the [roadmap](roadmap.md) row that measures it.
-Nothing is built — "by construction" means the design makes violation impossible *if the code
-implements the design*, and the assumptions column says what "implements the design" has to
-include.
+Only a first working slice is built, so a guarantee here is a commitment of the design, not a
+property of running software — "by construction" means the design makes violation impossible
+*if the code implements the design*, and the assumptions column says what "implements the
+design" has to include.
 
 ## 1. Guaranteed by construction
 
@@ -66,8 +67,13 @@ include.
   yet. In cluster mode the window also covers follower-written rows awaiting the lead's anchor,
   and a crashed follower loses its unflushed async batch ([RS-13](roadmap.md)).
   [Audit and lineage](../architecture/audit-and-lineage.md).
-- **Revocation and grant latency.** A revoked key or withdrawn grant can act until the bounded
-  cache epoch lapses; the window is stated in [security](../architecture/security.md), not zero.
+- **Revocation and grant latency.** A revoked key or withdrawn grant stops acting at the key's
+  next request served by the lead: access is recomputed from the record on every request, and no
+  cache holds an older answer. In cluster mode a follower checks access against its own copy of
+  the record, so on the reads a follower serves, a revoked key or withdrawn grant keeps acting
+  until replication catches up: the window is replication lag, exposed as a follower metric and
+  never assumed zero. A lead-only deployment, the default, has no such window
+  ([security](../architecture/security.md)).
 - **Rate limiting.** In cluster mode the split follows the topology: write-path limits are
   exact (one lead — nothing to divide); read-path limits are limit/N across followers, so a
   tenant can briefly exceed its read quota and the error grows with follower churn.

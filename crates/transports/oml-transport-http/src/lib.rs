@@ -4,11 +4,12 @@
 //! docs/api/errors.md, attached here at the edge and nowhere else
 //! (errors.md "Implementation mapping").
 //!
-//! The PoC slice: submit / get / recall / supersede on `/v1`; review next,
-//! verdicts, key issuance, workarea creation, the events tail and the
-//! bootstrap claim on `/v2`; `/healthz` and `/readyz` unversioned and
-//! unauthenticated (http-api.md "Health"); `/mcp`, the agent plugin's
-//! stateless facade over those rings ([`mcp`]).
+//! The PoC slice: submit / list / get / recall / supersede on `/v1`; review next,
+//! verdicts, key issuance, global per-key denials, workarea creation, the
+//! workarea read, the events tail and the bootstrap claim on `/v2`;
+//! `/healthz` and `/readyz` unversioned and unauthenticated (http-api.md
+//! "Health"); `/mcp`, the agent plugin's stateless facade over those rings
+//! ([`mcp`]).
 
 #![forbid(unsafe_code)]
 
@@ -16,7 +17,7 @@ pub mod error;
 pub mod mcp;
 pub mod time;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +25,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::{Body, Bytes};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
@@ -33,15 +35,18 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::App;
-use oml_app::domain::{HeldBy, Role, SignedEnvelope, sha256_digest_string};
+use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
+use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
+use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
-    AppError, BootstrapRequest, IssueKeyRequest, MemoryRecord, RecallRequest, SubmitRequest,
-    SupersedeRequest, Verdict,
+    AppError, BootstrapRequest, Crew, GrantRequest, IssueKeyRequest, IssuedKey, ListRequest,
+    RecallRequest, ServedMemory, SubmitRequest, SupersedeRequest, TailedEvent, Verdict,
+    WorkareaInfo,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
-use crate::time::{system_event_time, system_event_time_plus};
+use crate::time::{parse_date_time, system_event_time, system_event_time_plus};
 
 /// How many times a write retries after a chain-head conflict before giving
 /// up — the concurrent-submitter shape the oml-pg phase prescribed: re-read
@@ -58,6 +63,49 @@ const SERVE_TTL_SECS: u64 = 900;
 pub type PingFuture = Pin<Box<dyn Future<Output = bool> + Send>>;
 pub type DbPing = Arc<dyn Fn() -> PingFuture + Send + Sync>;
 
+/// The build `/readyz` names (http-api.md "Health"). The composition supplies
+/// it; the transport knows no build system. A field nothing supplied is
+/// `unknown`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildInfo {
+    pub version: String,
+    pub commit: String,
+    pub commit_time: String,
+    pub build_time: String,
+    pub rustc: String,
+    pub target: String,
+    pub profile: String,
+}
+
+impl BuildInfo {
+    /// What a composition that supplies no build reports.
+    #[must_use]
+    pub fn unknown() -> Self {
+        let unknown = || "unknown".to_owned();
+        Self {
+            version: unknown(),
+            commit: unknown(),
+            commit_time: unknown(),
+            build_time: unknown(),
+            rustc: unknown(),
+            target: unknown(),
+            profile: unknown(),
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "version": self.version,
+            "commit": self.commit,
+            "commit_time": self.commit_time,
+            "build_time": self.build_time,
+            "rustc": self.rustc,
+            "target": self.target,
+            "profile": self.profile,
+        })
+    }
+}
+
 /// Everything the handlers share. `store` is a second handle on the journal
 /// port for the reads the use-case surface does not front (the events-tail
 /// `head_seq`); every invariant-bearing verb still goes through [`App`].
@@ -67,6 +115,7 @@ pub struct ApiState<J, S, C, I, Sc> {
     db_ping: DbPing,
     fork_check_ok: Arc<AtomicBool>,
     enrollment: Arc<Mutex<Option<String>>>,
+    build: Arc<BuildInfo>,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -77,6 +126,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             db_ping: Arc::clone(&self.db_ping),
             fork_check_ok: Arc::clone(&self.fork_check_ok),
             enrollment: Arc::clone(&self.enrollment),
+            build: Arc::clone(&self.build),
         }
     }
 }
@@ -105,7 +155,15 @@ where
             db_ping,
             fork_check_ok: Arc::new(AtomicBool::new(fork_check_ok)),
             enrollment: Arc::new(Mutex::new(enrollment_token)),
+            build: Arc::new(BuildInfo::unknown()),
         }
+    }
+
+    /// The build `/readyz` reports; without it every build field is `unknown`.
+    #[must_use]
+    pub fn with_build(mut self, build: BuildInfo) -> Self {
+        self.build = Arc::new(build);
+        self
     }
 
     /// The two rings plus the unversioned probes, as one axum router.
@@ -113,7 +171,7 @@ where
         Router::new()
             .route("/healthz", get(healthz))
             .route("/readyz", get(Self::readyz))
-            .route("/v1/memories", post(Self::submit))
+            .route("/v1/memories", post(Self::submit).get(Self::list_memories))
             .route("/v1/memories/recall", post(Self::recall))
             .route("/v1/memories/{artifact_id}", get(Self::get_memory))
             .route(
@@ -123,7 +181,9 @@ where
             .route("/v2/review/next", post(Self::review_next))
             .route("/v2/review/verdicts", post(Self::review_verdicts))
             .route("/v2/keys", post(Self::issue_key))
+            .route("/v2/keys/{key_id}/denials", post(Self::deny_key))
             .route("/v2/workareas", post(Self::create_workarea))
+            .route("/v2/workareas/{workarea_id}", get(Self::get_workarea))
             .route("/v2/events", get(Self::events_tail))
             .route("/v2/bootstrap/claim", post(Self::bootstrap_claim))
             .route("/mcp", post(Self::mcp).get(mcp::mcp_get))
@@ -152,6 +212,8 @@ where
                 "postgres": if postgres_ok { "ok" } else { "unreachable" },
                 "fork_check": if fork_ok { "ok" } else { "failed" },
             },
+            // Ready or not, the probe names the build it belongs to.
+            "build": st.build.to_json(),
         });
         let status = if postgres_ok && fork_ok {
             StatusCode::OK
@@ -175,7 +237,7 @@ where
         let token = bearer(headers)?;
         let idem_key = idempotency_key(headers)?;
         let req: SubmitBody = parse_json(headers, body)?;
-        validate_kind(&req.kind)?;
+        let kind = parse_kind(&req.kind)?;
         match req.verb.as_str() {
             "remember" => {}
             // learn asserts a derived claim: lineage is required, never
@@ -195,7 +257,10 @@ where
                 )));
             }
         }
-        if req.body.len() > MAX_BODY_BYTES {
+        // The limit counts the NFC body, the form capture stores
+        // (http-api.md limits; ADR-0025 d6).
+        let text = nfc(&req.body);
+        if text.len() > MAX_BODY_BYTES {
             return Err(ApiError::payload_too_large("the claim body"));
         }
         refuse_attachments(&req.attachments)?;
@@ -204,8 +269,9 @@ where
 
         let app_req = SubmitRequest {
             idempotency_key: idem_key,
-            claim_key: Some(req.claim_key),
-            body: req.body,
+            claim_key: req.claim_key,
+            kind,
+            body: text,
             workarea_id,
             derives_from: req.derives_from,
         };
@@ -215,14 +281,18 @@ where
         let r = &outcome.receipt;
         let mut response = json_response(
             StatusCode::ACCEPTED,
+            // SubmitAccepted: a submit captures a new claim, never a
+            // supersession, so it replaces nothing and retires nothing.
             &json!({
                 "artifact_id": r.memory_id,
                 "claim_key": r.claim_key,
-                "version": 1,
+                "version": r.version,
                 "state": r.state,
                 "plaintext_digest": r.body_digest,
                 "journal_seq": r.journal_seq,
                 "workarea_id": r.workarea_id,
+                "retirement": false,
+                "replaces": Value::Null,
             }),
         );
         if outcome.replayed {
@@ -232,6 +302,53 @@ where
                 .insert("idempotency-replay", HeaderValue::from_static("true"));
         }
         Ok(response)
+    }
+
+    async fn list_memories(
+        State(st): State<Self>,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        let result = match query {
+            Ok(Query(params)) => Self::list_memories_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v1/memories`: the own-work listing with `own=true`, else the
+    /// scoped listing, as memory summaries without bodies, newest first
+    /// (http-api.md search; ADR-0025 d13). The own-work listing resolves no
+    /// workarea, so an `X-OML-Workarea` sent with it is refused, not
+    /// ignored.
+    async fn list_memories_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let mut req = list_request(params)?;
+        req.scope = workarea_override(headers)?;
+        if req.own && req.scope.is_some() {
+            return Err(ApiError::validation(
+                "X-OML-Workarea is refused with own=true: the own-work listing resolves no workarea",
+            ));
+        }
+        let page = st
+            .app
+            .list_memories(&token, &req)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "items": page.items.iter().map(|m| memory_json(m, false)).collect::<Vec<_>>(),
+                "next_cursor": page.next_cursor,
+            }),
+        ))
     }
 
     async fn get_memory(
@@ -246,12 +363,20 @@ where
         )
     }
 
+    /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
+    /// workarea, so an `X-OML-Workarea` sent with it is refused, not
+    /// ignored, as on the own-work listing (ADR-0025 d13).
     async fn get_memory_inner(
         st: &Self,
         artifact_id: &str,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
+        if workarea_override(headers)?.is_some() {
+            return Err(ApiError::validation(
+                "X-OML-Workarea is refused on get: get resolves no workarea",
+            ));
+        }
         // Ids are opaque; one that can name no row is absent (access.not_found).
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let memory = st
@@ -274,10 +399,36 @@ where
     ) -> Result<Response, ApiError> {
         // Read-shaped POST: no Idempotency-Key (http-api.md idempotency).
         let token = bearer(headers)?;
+        // The body is closed: a field the server does not serve is refused,
+        // never dropped (ADR-0025 d16).
         let req: RecallBody = parse_json(headers, body)?;
         let k = req.k.unwrap_or(8);
         if !(1..=100).contains(&k) {
             return Err(ApiError::validation("k must be between 1 and 100"));
+        }
+        // The vocabulary filter is unbuilt: refused by name, never answered
+        // unfiltered (retrieval.md; ADR-0025 d16).
+        if req.terms.is_some() {
+            return Err(ApiError::validation(
+                "terms on recall is not built: the vocabulary filter is refused, never ignored",
+            ));
+        }
+        if req.expand_terms.is_some() {
+            return Err(ApiError::validation(
+                "expand_terms on recall is not built: the vocabulary filter is refused, never ignored",
+            ));
+        }
+        let kinds = parse_hit_kinds(req.kinds.as_deref())?;
+        // A budget is an integer ≥ 1, and one RFC 8785 digests exactly: an
+        // integer above 2^53 − 1 has no exact I-JSON form (retrieval.md, the
+        // read log; ADR-0025 d7, d9).
+        if req
+            .max_tokens
+            .is_some_and(|m| !(1..=MAX_CHAIN_INTEGER).contains(&m))
+        {
+            return Err(ApiError::validation(
+                "max_tokens must be an integer between 1 and 2^53 - 1",
+            ));
         }
         let include_bodies = req.include_bodies.unwrap_or(true);
         let workarea_id = workarea_override(headers)?;
@@ -289,30 +440,42 @@ where
                     query: req.query.clone(),
                     k,
                     workarea_id,
+                    kinds,
+                    include_bodies,
+                    include_own_held: req.include_own_held.unwrap_or(false),
+                    max_tokens: req.max_tokens,
                 },
             )
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        // Steering items are unranked and carry no score; each hit carries
+        // the store's (retrieval.md, the recall-ordering contract).
+        let steering: Vec<Value> = result
+            .steering
+            .iter()
+            .map(|m| memory_json(m, include_bodies))
+            .collect();
         let hits: Vec<Value> = result
             .hits
             .iter()
-            .map(|m| {
+            .map(|hit| {
                 json!({
-                    "memory": memory_json(m, include_bodies),
-                    // The PoC store ranks (ts_rank order) but does not expose
-                    // the rank value; the score field is shape, not signal.
-                    "score": 0.0,
+                    "memory": memory_json(&hit.served, include_bodies),
+                    "score": hit.score,
                 })
             })
             .collect();
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({
-                "steering": [],
-                "hits": hits,
-                "query_digest": sha256_digest_string(req.query.as_bytes()),
-            }),
-        ))
+        let mut response = json!({
+            "steering": steering,
+            "hits": hits,
+            "query_digest": result.query_digest,
+        });
+        // The budget object is present if and only if max_tokens was sent
+        // (retrieval.md token budgets; ADR-0025 d7).
+        if let (Some(budget), Some(obj)) = (&result.budget, response.as_object_mut()) {
+            obj.insert("budget".to_owned(), budget_json(budget));
+        }
+        Ok(json_response(StatusCode::OK, &response))
     }
 
     async fn supersede(
@@ -324,52 +487,90 @@ where
         let rid = new_request_id();
         finish(
             &rid,
-            Self::supersede_inner(&st, &artifact_id, &headers, &body).await,
+            // The ring supersedes a target of any kind (ADR-0025 d12).
+            Self::supersede_inner(&st, &artifact_id, &headers, &body, false).await,
         )
     }
 
+    /// `POST /v1/memories/{artifact_id}/supersede`: a held successor that
+    /// names what it replaces; the target stays the tip until ratification
+    /// (http-api.md supersede; ADR-0025 d10, d11). The body is closed: a
+    /// field the server does not serve is refused, never dropped (d16).
+    /// `refuse_vocabulary_target` is set by `oml_supersede`, whose input
+    /// carries no vocabulary fields (d12).
     async fn supersede_inner(
         st: &Self,
         artifact_id: &str,
         headers: &HeaderMap,
         body: &Bytes,
+        refuse_vocabulary_target: bool,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
-        let _idem = idempotency_key(headers)?;
+        let idem_key = idempotency_key(headers)?;
         let target_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let req: SupersedeBody = parse_json(headers, body)?;
-        if req.body.len() > MAX_BODY_BYTES {
+        let text = nfc(&req.body);
+        if text.len() > MAX_BODY_BYTES {
             return Err(ApiError::payload_too_large("the claim body"));
         }
+        let kind = req.kind.as_deref().map(parse_kind).transpose()?;
         refuse_attachments(&req.attachments)?;
+        refuse_simulation(req.simulation_id.as_ref())?;
+        // Vocabulary successors are unbuilt: their fields are parsed so the
+        // closed body can name them, and refused by name (ADR-0025 d16).
+        for (field, sent) in [
+            ("mapping", req.mapping.is_some()),
+            ("terms", req.terms.is_some()),
+            ("term_status", req.term_status.is_some()),
+            ("successors", req.successors.is_some()),
+        ] {
+            if sent {
+                return Err(ApiError::validation(format!(
+                    "{field} on supersede is not built: vocabulary successors are outside this slice, so the field is refused, never dropped"
+                )));
+            }
+        }
         let app_req = SupersedeRequest {
+            idempotency_key: idem_key,
             target_id,
-            body: req.body,
-            claim_key: None, // the successor keeps the claim's key
+            body: text,
+            kind,
+            retirement: req.retirement,
+            derives_from: req.derives_from,
+            reason: req.reason,
+            workarea_id: workarea_override(headers)?,
+            refuse_vocabulary_target,
         };
         let outcome = retry_chain(|| st.app.supersede(&token, &app_req))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        // The successor is the caller's own held row, so the author read is
-        // always admitted — it supplies the claim_key/digest the receipt
-        // shape (SubmitAccepted) carries.
-        let successor = st
-            .app
-            .get_memory(&token, outcome.successor_id)
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
+        let r = &outcome.receipt;
+        let mut response = json_response(
             StatusCode::ACCEPTED,
+            // SubmitAccepted for a supersession: the successor, the version
+            // it replaces, and whether it proposes retirement.
             &json!({
-                "artifact_id": outcome.successor_id,
-                "claim_key": successor.claim_key,
-                "version": 1,
-                "state": "held",
-                "plaintext_digest": successor.body_digest,
-                "journal_seq": outcome.journal_seq,
+                "artifact_id": r.memory_id,
+                "claim_key": r.claim_key,
+                "version": r.version,
+                "state": r.state,
+                "workarea_id": r.workarea_id,
+                "retirement": r.retirement,
+                "replaces": {
+                    "artifact_id": r.replaces.artifact_id,
+                    "version": r.replaces.version,
+                },
+                "plaintext_digest": r.body_digest,
+                "journal_seq": r.journal_seq,
             }),
-        ))
+        );
+        if outcome.replayed {
+            response
+                .headers_mut()
+                .insert("idempotency-replay", HeaderValue::from_static("true"));
+        }
+        Ok(response)
     }
 
     async fn review_next(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
@@ -402,21 +603,40 @@ where
                 *response.status_mut() = StatusCode::NO_CONTENT;
                 Ok(response)
             }
-            Some(memory) => Ok(json_response(
-                StatusCode::OK,
-                &json!({
+            Some(memory) => {
+                // A supersession is served with the version it replaces
+                // whenever the reviewer can read it — the item's `replaces`
+                // says so, under the readability test every read applies —
+                // and the serve records that version's digest (ADR-0012 d5;
+                // ADR-0025 d3, d10).
+                let replaced = match memory.replaces {
+                    None => None,
+                    Some(r) => match st.app.get_memory(&token, r.artifact_id).await {
+                        Ok(replaced) => Some(replaced),
+                        // Unreadable since the item was served: shown as
+                        // the item's own read would show it, not at all.
+                        Err(AppError::NotFound) => None,
+                        Err(e) => return Err(map_app_error(e, ErrorContext::Review)),
+                    },
+                };
+                let mut serve = json!({
                     // The PoC serve binding is the claimed row itself
                     // (review_queue.held_by_key); the id round-trips the
                     // memory id rather than naming a serve table row.
-                    "serve_id": format!("srv_{}", memory.memory_id.simple()),
+                    "serve_id": format!("srv_{}", memory.memory.memory_id.simple()),
                     "expires_at": system_event_time_plus(SERVE_TTL_SECS).as_str(),
                     "item": memory_json(&memory, true),
                     "served_digests": {
-                        "body": memory.body_digest,
+                        "body": memory.memory.body_digest,
                         "attachments": [],
                     },
-                }),
-            )),
+                });
+                if let (Some(replaced), Some(obj)) = (&replaced, serve.as_object_mut()) {
+                    obj.insert("replaces".to_owned(), memory_json(replaced, true));
+                    obj["served_digests"]["replaces"] = json!(replaced.memory.body_digest);
+                }
+                Ok(json_response(StatusCode::OK, &serve))
+            }
         }
     }
 
@@ -464,7 +684,7 @@ where
             StatusCode::OK,
             &json!({
                 "artifact_id": outcome.memory_id,
-                "version": 1,
+                "version": outcome.version,
                 "verdict": req.verdict,
                 "state": outcome.state.as_str(),
                 "ratification_event_id": Value::Null,
@@ -486,80 +706,104 @@ where
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
+        // The body is closed, nested objects included: a field the server
+        // does not serve is refused, never dropped (ADR-0025 d16).
         let req: KeyIssueBody = parse_json(headers, body)?;
+        // Issued keys do not expire yet: a requested expiry is refused by
+        // name, since minting the key without it would leave the key its
+        // access past the issuer's date (ADR-0025 d2, d16).
+        if req.expiry.is_some() {
+            return Err(ApiError::validation(
+                "expiry on key issuance is not built: an issued key does not expire, so the field is refused, never dropped",
+            ));
+        }
         if req.tenant_id.is_some() {
             return Err(ApiError::validation(
                 "tenant_id on key issuance (operator first-admin-key path) is outside the PoC slice",
             ));
         }
         let role = parse_role(&req.role)?;
-        // The two-key rule: a key never combines admin with dreamer-class
-        // grants (errors.md access.role_exclusive).
-        if role == Role::Admin && req.grants.iter().any(|g| g.role == "dreamer") {
-            return Err(ApiError::new(
-                StatusCode::FORBIDDEN,
-                "access.role_exclusive",
-                "Admin is never a reviewer (D9): a key never combines admin with dreamer verbs.",
-                "a key holding the admin role never carries dreamer-class grants",
-            ));
-        }
-        let held_by = match req.held_by.as_deref().unwrap_or("agent") {
-            "agent" => HeldBy::Agent,
-            "human" => HeldBy::Human,
-            "service" => HeldBy::Service,
-            other => {
+        let held_by = match req.held_by.as_deref() {
+            None => None,
+            Some("agent") => Some(HeldBy::Agent),
+            Some("human") => Some(HeldBy::Human),
+            Some("service") => Some(HeldBy::Service),
+            Some(other) => {
                 return Err(ApiError::validation(format!(
                     "held_by must be agent, human or service, not {other:?}"
                 )));
             }
         };
+        let grants = req
+            .grants
+            .iter()
+            .map(|g| {
+                Ok(GrantRequest {
+                    node: g.workarea_node_id,
+                    role: parse_grant_role(&g.role)?,
+                    deny: g.deny.iter().map(|d| d.subtree_node_id).collect(),
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
         let principal = req
             .principal
             .clone()
             .or_else(|| req.label.clone())
             .unwrap_or_else(|| "unnamed".to_owned());
-        // ADR-0022 d4: the key's journalled default workarea is the provider
-        // ring's target; the PoC maps the first grant's node to it.
-        let default_workarea = req
-            .default_workarea_id
-            .or_else(|| req.grants.first().map(|g| g.workarea_node_id));
         let issue = IssueKeyRequest {
             role,
-            principal: principal.clone(),
+            principal,
             held_by,
-            default_workarea,
+            default_workarea: req.default_workarea_id,
+            grants,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let grants: Vec<Value> = req
-            .grants
-            .iter()
-            .map(|g| {
-                json!({
-                    "workarea_node_id": g.workarea_node_id,
-                    "role": g.role,
-                    "grant_id": format!("gr_{}", new_uuid().simple()),
-                    "epoch": 1,
-                })
-            })
-            .collect();
+        Ok(json_response(
+            StatusCode::CREATED,
+            &key_issued_json(&issued, req.label.as_deref()),
+        ))
+    }
+
+    async fn deny_key(
+        State(st): State<Self>,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(
+            &rid,
+            Self::deny_key_inner(&st, &key_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key_id}/denials`: one journalled `key.denied`, its
+    /// epoch its own seq (http-api.md keys, grants, denials; ADR-0025 d2).
+    async fn deny_key_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        // Ids are opaque; one that can name no key is absent.
+        let key_id = Uuid::parse_str(key_id).map_err(|_| ApiError::not_found())?;
+        let req: DenialBody = parse_json(headers, body)?;
+        let denial = retry_chain(|| st.app.deny_key(&token, key_id, req.workarea_node_id))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::CREATED,
             &json!({
-                "key_id": issued.key_id,
-                "role": req.role,
-                "principal": principal,
-                "label": req.label,
-                "expiry": Value::Null,
-                "revoked_at": Value::Null,
-                "rotated_from": Value::Null,
-                "grants": grants,
-                "denials": [],
-                "epoch": 1,
-                // Show-once: the value appears exactly here, journalled as
-                // issued-without-value (D14).
-                "value": issued.value,
+                "denial_id": denial.denial.denial_id,
+                "workarea_node_id": denial.denial.node,
+                "epoch": denial.epoch,
+                // Lifting is not built (ADR-0025 d2).
+                "lifted": false,
             }),
         ))
     }
@@ -586,24 +830,64 @@ where
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
             ));
         }
-        let workarea = retry_chain(|| {
+        let created = retry_chain(|| {
             st.app
-                .create_workarea(&token, &req.name, Some(req.parent_id))
+                .create_workarea(&token, &req.name, Some(req.parent_id), req.crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &json!({
-                "id": workarea.workarea_id,
-                "parent_id": workarea.parent_id,
-                // The PoC derives no ltree; the node's own name stands in.
-                "path": workarea.name,
-                "status": "development",
-                "crew": req.crew,
-                "created_at": system_event_time().as_str(),
-            }),
-        ))
+        let workarea = &created.workarea;
+        let mut response = json!({
+            "id": workarea.workarea_id,
+            "parent_id": workarea.parent_id,
+            // Derived from the parent names, as the workarea read serves
+            // it (ADR-0025 d14).
+            "path": created.path,
+            "status": workarea.status(),
+            "created_at": system_event_time().as_str(),
+        });
+        // The crew as stored, which the workarea read serves: absent when
+        // none was sent, since `Workarea.crew` is never null (openapi.yaml).
+        if let (Some(crew), Some(obj)) = (&workarea.crew, response.as_object_mut()) {
+            obj.insert("crew".to_owned(), json!(crew));
+        }
+        Ok(json_response(StatusCode::CREATED, &response))
+    }
+
+    async fn get_workarea(
+        State(st): State<Self>,
+        Path(workarea_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(
+            &rid,
+            Self::get_workarea_inner(&st, Some(&workarea_id), &headers).await,
+        )
+    }
+
+    /// `GET /v2/workareas/{workarea_id}`: the node and the calling key's
+    /// view of it in one call, at reader effective access and otherwise
+    /// `access.not_found` (http-api.md workareas; ADR-0025 d14). `None` is
+    /// the MCP facade's omitted workarea: the key's default, which the app
+    /// resolves after step 1 of the refusal order (mcp-plugin.md
+    /// `oml_workarea_info`).
+    async fn get_workarea_inner(
+        st: &Self,
+        workarea_id: Option<&str>,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        // Ids are opaque; one that can name no node is absent.
+        let id = workarea_id
+            .map(|id| Uuid::parse_str(id).map_err(|_| ApiError::not_found()))
+            .transpose()?;
+        let info = st
+            .app
+            .workarea_info(&token, id)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
     }
 
     async fn events_tail(
@@ -637,29 +921,26 @@ where
                     ApiError::validation(format!("limit must be between 1 and {PAGE_LIMIT_MAX}"))
                 })?,
         };
-        let events = st
+        // Ids are opaque; one that can name no node is absent.
+        let workarea_id = params
+            .get("workarea_id")
+            .map(|id| Uuid::parse_str(id).map_err(|_| ApiError::not_found()))
+            .transpose()?;
+        let page = st
             .app
-            .tail_events(&token, after_seq, limit)
+            .tail_events(&token, workarea_id, after_seq, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        // head_seq, for measuring lag (http-api.md events tail). The key was
-        // just authenticated by the app; the port lookup names its tenant.
-        let key = st
-            .store
-            .key_by_hash(&sha256_digest_string(token.as_bytes()))
-            .await
-            .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
-            .ok_or_else(|| ApiError::auth_invalid("unknown"))?;
-        let head_seq = st
-            .store
-            .chain_head(key.tenant_id)
-            .await
-            .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
-            .map_or(0, |h| h.seq);
-        let items: Vec<Value> = events.iter().map(event_json).collect();
+        // head_seq for measuring lag, next_after_seq to resume from, both
+        // read in the scan's snapshot (http-api.md events tail; ADR-0025 d15).
+        let items: Vec<Value> = page.events.iter().map(event_json).collect();
         Ok(json_response(
             StatusCode::OK,
-            &json!({ "items": items, "head_seq": head_seq }),
+            &json!({
+                "items": items,
+                "head_seq": page.head_seq,
+                "next_after_seq": page.next_after_seq,
+            }),
         ))
     }
 
@@ -692,12 +973,11 @@ where
                 None => return Err(ApiError::auth_invalid("consumed")),
             }
         };
-        let principal = req
-            .admin_principal
-            .unwrap_or_else(|| "bootstrap/admin".to_owned());
         let boot = BootstrapRequest {
             tenant_name: req.tenant_name.unwrap_or_else(|| "default".to_owned()),
-            admin_principal: principal.clone(),
+            admin_principal: req
+                .admin_principal
+                .unwrap_or_else(|| "bootstrap/admin".to_owned()),
         };
         match st.app.bootstrap_tenant(&boot).await {
             Err(e) => {
@@ -707,26 +987,19 @@ where
                 }
                 Err(map_app_error(e, ErrorContext::Write))
             }
-            Ok(result) => Ok(json_response(
-                StatusCode::CREATED,
-                &json!({
-                    "key_id": result.admin_key.key_id,
-                    // The PoC ceremony mints the tenant's first ADMIN key
-                    // directly (the spec's operator tier is out of slice).
-                    "role": "admin",
-                    "principal": principal,
-                    "label": "root admin key",
-                    "expiry": Value::Null,
-                    "revoked_at": Value::Null,
-                    "rotated_from": Value::Null,
-                    "grants": [],
-                    "denials": [],
-                    "epoch": 1,
-                    "value": result.admin_key.value,
-                    "tenant_id": result.tenant_id,
-                    "root_workarea_id": result.root_workarea_id,
-                }),
-            )),
+            Ok(result) => {
+                // The PoC ceremony mints the tenant's first ADMIN key
+                // directly (the spec's operator tier is out of slice).
+                let mut body = key_issued_json(&result.admin_key, Some("root admin key"));
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("tenant_id".to_owned(), json!(result.tenant_id));
+                    obj.insert(
+                        "root_workarea_id".to_owned(),
+                        json!(result.root_workarea_id),
+                    );
+                }
+                Ok(json_response(StatusCode::CREATED, &body))
+            }
         }
     }
 }
@@ -755,27 +1028,53 @@ struct SubmitBody {
     simulated_time: Option<String>,
 }
 
+/// openapi.yaml `RecallRequest`, closed (ADR-0025 d16).
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RecallBody {
     query: String,
     k: Option<usize>,
-    #[serde(default)]
-    #[allow(dead_code, reason = "kind filtering is outside the PoC recall slice")]
-    kinds: Vec<String>,
+    kinds: Option<Vec<String>>,
     include_bodies: Option<bool>,
+    include_own_held: Option<bool>,
+    max_tokens: Option<u64>,
+    /// Parsed only to be refused while the vocabulary filter is unbuilt
+    /// (ADR-0025 d16).
+    terms: Option<Vec<String>>,
+    /// Parsed only to be refused while the vocabulary filter is unbuilt.
+    expand_terms: Option<String>,
 }
 
+/// openapi.yaml `SupersedeRequest`, closed: it declares every submission
+/// field a successor can need beside its own (ADR-0025 d16).
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SupersedeBody {
     body: String,
     #[serde(default)]
+    retirement: bool,
+    kind: Option<String>,
+    #[serde(default)]
     attachments: Vec<String>,
+    #[serde(default)]
+    derives_from: Vec<Uuid>,
+    reason: Option<String>,
+    #[serde(default)]
+    simulation_id: Option<String>,
     #[serde(default)]
     #[allow(
         dead_code,
-        reason = "recorded reason text is outside the PoC journal payload"
+        reason = "declared data, accepted; the PoC journals real time only"
     )]
-    reason: Option<String>,
+    simulated_time: Option<String>,
+    #[serde(default)]
+    mapping: Option<Value>,
+    #[serde(default)]
+    terms: Option<Value>,
+    #[serde(default)]
+    term_status: Option<Value>,
+    #[serde(default)]
+    successors: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -793,27 +1092,46 @@ struct VerdictBody {
 }
 
 #[derive(Deserialize)]
-struct GrantBody {
-    workarea_node_id: Uuid,
-    role: String,
+#[serde(deny_unknown_fields)]
+struct DenyBody {
+    subtree_node_id: Uuid,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantBody {
+    workarea_node_id: Uuid,
+    role: String,
+    #[serde(default)]
+    deny: Vec<DenyBody>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct KeyIssueBody {
     role: String,
     #[serde(default)]
     grants: Vec<GrantBody>,
     label: Option<String>,
     principal: Option<String>,
+    /// Parsed only to be refused while key expiry is unbuilt (ADR-0025 d16).
     #[serde(default)]
-    #[allow(
-        dead_code,
-        reason = "key expiry is outside the PoC slice; issued keys do not expire"
-    )]
     expiry: Option<String>,
     held_by: Option<String>,
     default_workarea_id: Option<Uuid>,
     tenant_id: Option<String>,
+}
+
+/// openapi.yaml `DenialRequest`, which the contract leaves open.
+#[derive(Deserialize)]
+struct DenialBody {
+    workarea_node_id: Uuid,
+    #[serde(default)]
+    #[allow(
+        dead_code,
+        reason = "key.denied journals no reason (event-catalog.md); the text is accepted, not stored"
+    )]
+    reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -821,7 +1139,7 @@ struct WorkareaCreateBody {
     parent_id: Uuid,
     name: String,
     #[serde(default)]
-    crew: Option<Value>,
+    crew: Option<Crew>,
     #[serde(default)]
     prefix: Option<String>,
 }
@@ -962,20 +1280,174 @@ fn parse_role(role: &str) -> Result<Role, ApiError> {
     }
 }
 
-fn validate_kind(kind: &str) -> Result<(), ApiError> {
-    const KINDS: [&str; 6] = [
-        "memory",
-        "derived_fact",
-        "steering",
-        "term",
-        "term_mapping",
-        "vocab_release",
-    ];
-    if KINDS.contains(&kind) {
-        Ok(())
-    } else {
-        Err(ApiError::validation(format!("unknown kind {kind:?}")))
+/// A grant role is reader, writer or dreamer, never admin or operator
+/// (openapi.yaml `GrantRequest.role`); whether the key role admits it is the
+/// app's issuance check.
+fn parse_grant_role(role: &str) -> Result<Role, ApiError> {
+    match role {
+        "reader" => Ok(Role::Reader),
+        "writer" => Ok(Role::Writer),
+        "dreamer" => Ok(Role::Dreamer),
+        other => Err(ApiError::validation(format!(
+            "a grant role is one of reader, writer, dreamer — not {other:?}"
+        ))),
     }
+}
+
+/// The spec's `KeyIssued` (openapi.yaml): the key as `key.issued` journalled
+/// it, each stored grant with its id and epoch, the key's permission epoch
+/// and the value, shown once (ADR-0025 d2).
+fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
+    let grants: Vec<Value> = issued
+        .access
+        .grants
+        .iter()
+        .map(|g| {
+            json!({
+                "grant_id": g.grant.grant_id,
+                "workarea_node_id": g.grant.node,
+                "role": g.grant.role.as_str(),
+                "deny": g
+                    .grant
+                    .deny
+                    .iter()
+                    .map(|d| json!({ "subtree_node_id": d }))
+                    .collect::<Vec<_>>(),
+                "epoch": g.epoch,
+            })
+        })
+        .collect();
+    json!({
+        "key_id": issued.key_id,
+        "role": issued.role.as_str(),
+        "principal": issued.principal,
+        "default_workarea_id": issued.default_workarea,
+        "held_by": issued.held_by.map(HeldBy::as_str),
+        "label": label,
+        "expiry": Value::Null,
+        "revoked_at": Value::Null,
+        "rotated_from": Value::Null,
+        "grants": grants,
+        "denials": [],
+        "epoch": issued.access.permission_epoch(),
+        // Show-once: the value appears exactly here, journalled as
+        // issued-without-value (D14).
+        "value": issued.value,
+    })
+}
+
+/// The listing's query parameters (openapi.yaml `searchMemories`): each
+/// at most once, and an unknown one refused rather than ignored, so a
+/// mistyped filter never widens a listing. The scope override is a header,
+/// read by the handler.
+fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
+    let mut req = ListRequest {
+        own: false,
+        scope: None,
+        workarea_id: None,
+        state: None,
+        kind: None,
+        claim_key: None,
+        since: None,
+        until: None,
+        limit: PAGE_LIMIT_DEFAULT,
+        cursor: None,
+    };
+    let mut seen = HashSet::new();
+    for (name, value) in params {
+        if !seen.insert(name.as_str()) {
+            return Err(ApiError::validation(format!(
+                "the query parameter {name} is given more than once"
+            )));
+        }
+        let date_time = || {
+            parse_date_time(value).ok_or_else(|| {
+                ApiError::validation(format!(
+                    "{name} must be an RFC 3339 date-time of at most microsecond precision"
+                ))
+            })
+        };
+        match name.as_str() {
+            "own" => {
+                req.own = match value.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(ApiError::validation("own must be true or false")),
+                };
+            }
+            "workarea_id" => {
+                req.workarea_id =
+                    Some(Uuid::parse_str(value).map_err(|_| {
+                        ApiError::validation("workarea_id must be a workarea node id")
+                    })?);
+            }
+            "claim_key" => req.claim_key = Some(value.clone()),
+            "state" => req.state = Some(parse_state(value)?),
+            "kind" => req.kind = Some(parse_kind(value)?),
+            "since" => req.since = Some(date_time()?),
+            "until" => req.until = Some(date_time()?),
+            "limit" => {
+                req.limit = value
+                    .parse()
+                    .ok()
+                    .filter(|l| (1..=PAGE_LIMIT_MAX).contains(l))
+                    .ok_or_else(|| {
+                        ApiError::validation(format!(
+                            "limit must be between 1 and {PAGE_LIMIT_MAX}"
+                        ))
+                    })?;
+            }
+            "cursor" => req.cursor = Some(value.clone()),
+            other => {
+                return Err(ApiError::validation(format!(
+                    "unknown query parameter {other:?}"
+                )));
+            }
+        }
+    }
+    Ok(req)
+}
+
+/// A listing's `state` filter (openapi.yaml `searchMemories`).
+fn parse_state(state: &str) -> Result<MemoryStatus, ApiError> {
+    match state {
+        "held" => Ok(MemoryStatus::Held),
+        "promoted" => Ok(MemoryStatus::Promoted),
+        "demoted" => Ok(MemoryStatus::Demoted),
+        "rejected" => Ok(MemoryStatus::Rejected),
+        "erased" => Ok(MemoryStatus::Erased),
+        other => Err(ApiError::validation(format!("unknown state {other:?}"))),
+    }
+}
+
+/// The submit body's kind, stored as sent (http-api.md submit; ADR-0025
+/// d8); an unknown one is refused, never coerced to `memory`.
+fn parse_kind(kind: &str) -> Result<MemoryKind, ApiError> {
+    MemoryKind::parse(kind).ok_or_else(|| ApiError::validation(format!("unknown kind {kind:?}")))
+}
+
+/// The recall `kinds` filter: absent is no filter, and a sent one names at
+/// least one of `memory` and `derived_fact`, the only kinds it filters —
+/// steering is never ranked and the vocabulary kinds are no filter value
+/// (openapi.yaml `RecallRequest.kinds`; ADR-0021 d9, ADR-0025 d16).
+fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError> {
+    let Some(kinds) = kinds else {
+        return Ok(Vec::new());
+    };
+    if kinds.is_empty() {
+        return Err(ApiError::validation(
+            "an empty kinds is refused: omit kinds for no filter",
+        ));
+    }
+    kinds
+        .iter()
+        .map(|name| match MemoryKind::parse(name) {
+            Some(kind @ (MemoryKind::Memory | MemoryKind::DerivedFact)) => Ok(kind),
+            _ => Err(ApiError::validation(format!(
+                "kinds names memory or derived_fact, not {name:?}"
+            ))),
+        })
+        .collect()
 }
 
 /// No upload sessions exist in the PoC, so every attachment digest fails the
@@ -1021,18 +1493,22 @@ where
     }
 }
 
-/// The spec's `Memory` object (openapi.yaml components.schemas.Memory) from
-/// the PoC record. Fields the slice does not model are emitted at their
-/// fixed PoC values rather than omitted, so clients see the full shape.
+/// The spec's `Memory` object (openapi.yaml components.schemas.Memory) as
+/// the calling key is served it (ADR-0025 d3, d12). Fields the slice does
+/// not model — provenance, simulation, self-signing, attachments, held-item
+/// expiry — are emitted at their fixed PoC values rather than omitted, so
+/// clients see the full shape.
 #[must_use]
-pub fn memory_json(m: &MemoryRecord, include_body: bool) -> Value {
+pub fn memory_json(served: &ServedMemory, include_body: bool) -> Value {
+    let m = &served.memory;
     let mut value = json!({
         "artifact_id": m.memory_id,
         "claim_key": m.claim_key,
-        "version": 1,
-        "tip": m.superseded_by.is_none(),
+        "version": m.version,
+        "tip": m.is_tip,
         "workarea_id": m.workarea_id,
-        "kind": "memory",
+        "workarea_path": served.workarea_path,
+        "kind": m.kind.as_str(),
         "state": m.status.as_str(),
         "principal": m.author_principal,
         "provenance": "agent",
@@ -1041,8 +1517,18 @@ pub fn memory_json(m: &MemoryRecord, include_body: bool) -> Value {
         "plaintext_digest": m.body_digest,
         "derives_from": m.derives_from,
         "attachments": [],
+        // Budget tokens of the body under oml-tc/1, whether or not a budget
+        // was sent (retrieval.md token budgets; ADR-0025 d6).
+        "tokens": budget_tokens(m.body_bytes),
+        "retirement": m.retirement,
+        "replaces": served.replaces.map(|r| json!({
+            "artifact_id": r.artifact_id,
+            "version": r.version,
+        })),
+        // Held-item expiry is unbuilt (ADR-0025 d13).
+        "held_expires_at": Value::Null,
         "created_at": m.created_at.as_str(),
-        "promoted_at": Value::Null,
+        "promoted_at": m.promoted_at.as_ref().map(|at| at.as_str()),
     });
     if include_body && let Some(obj) = value.as_object_mut() {
         obj.insert("body".to_owned(), Value::String(m.body.clone()));
@@ -1050,10 +1536,59 @@ pub fn memory_json(m: &MemoryRecord, include_body: bool) -> Value {
     value
 }
 
-/// The event-catalog envelope as the tail serves it (digest-only payloads by
-/// construction — the journal never stored plaintext).
+/// openapi.yaml `RecallBudget`: how the `max_tokens` cut was applied
+/// (retrieval.md token budgets; ADR-0025 d7).
+fn budget_json(budget: &Budget) -> Value {
+    json!({
+        "max_tokens": budget.max_tokens,
+        "counter": COUNTER_ID,
+        "steering_tokens": budget.steering_tokens,
+        "used_tokens": budget.used_tokens,
+        "truncated": budget.truncated,
+        "hits_omitted": budget.hits_omitted,
+        "next_hit_tokens": budget.next_hit_tokens,
+    })
+}
+
+/// openapi.yaml `WorkareaView`: the `Workarea` fields — `crew` absent when
+/// none was recorded — and the calling key's children, edges, effective
+/// verbs and permission epoch (ADR-0025 d14).
 #[must_use]
-pub fn event_json(e: &SignedEnvelope) -> Value {
+pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
+    let w = &info.workarea;
+    let mut value = json!({
+        "id": w.workarea_id,
+        "parent_id": w.parent_id,
+        "path": info.path,
+        "status": w.status(),
+        "children": info.children.iter().map(|c| json!({
+            "id": c.workarea_id,
+            "path_leaf": c.name,
+            "status": c.status(),
+        })).collect::<Vec<_>>(),
+        // No workarea edge can exist in this build (ADR-0025 d14).
+        "edges": [],
+        "my_effective_verbs": info.my_effective_verbs,
+        "permission_epoch": info.permission_epoch,
+    });
+    if let (Some(crew), Some(obj)) = (&w.crew, value.as_object_mut()) {
+        obj.insert("crew".to_owned(), json!(crew));
+    }
+    value
+}
+
+/// The event-catalog envelope as the tail serves it (digest-only payloads by
+/// construction — the journal never stored plaintext), with the actor named
+/// only to a key in its own key set and the payload as the app serves it
+/// (http-api.md events tail; ADR-0025 d15).
+#[must_use]
+pub fn event_json(tailed: &TailedEvent) -> Value {
+    let e = &tailed.event;
+    let (principal, api_key_id) = if tailed.names_actor {
+        (json!(e.envelope.principal), json!(e.envelope.api_key_id))
+    } else {
+        (Value::Null, Value::Null)
+    };
     json!({
         "seq": e.envelope.seq,
         "event_id": e.envelope.event_id,
@@ -1061,9 +1596,9 @@ pub fn event_json(e: &SignedEnvelope) -> Value {
         "prev_hash": e.envelope.prev_hash.to_prefixed(),
         "hash": e.hash.to_prefixed(),
         "sig": hex::encode(e.sig.to_bytes()),
-        "principal": e.envelope.principal,
-        "api_key_id": e.envelope.api_key_id,
+        "principal": principal,
+        "api_key_id": api_key_id,
         "at": e.envelope.at.as_str(),
-        "payload": e.envelope.payload,
+        "payload": tailed.payload,
     })
 }

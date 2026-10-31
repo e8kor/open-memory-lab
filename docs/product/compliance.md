@@ -9,11 +9,11 @@ answers: what evidence OML produces for GDPR, SOC 2 and ISO 27001 asks; what cla
 
 **Status:** design draft for review · decided, not built
 
-This page maps Open Memory Lab's mechanisms to the questions compliance frameworks ask. The
-claim is the sanctioned one and no stronger: the system **produces the evidence an auditor asks
-for**. OML is not certified against any framework, no assessment of it has been performed,
-nothing is built, and no sentence here or anywhere in this documentation calls the design
-compliant, audit-ready or certified — the verdict belongs to the deploying organization's
+This page maps Open Memory Lab's mechanisms to the questions compliance frameworks ask. The claim
+is the sanctioned one and no stronger: the system **produces the evidence an auditor asks for**.
+OML is not certified against any framework, no assessment of it has been performed, only a first
+working slice of it is built, and no sentence here or anywhere in this documentation calls the
+design compliant, audit-ready or certified — the verdict belongs to the deploying organization's
 auditor, assessor and counsel. What this page adds to the guarantee register in
 [commitments](commitments.md) is the cross-walk: which mechanism produces evidence relevant to
 which framework's ask, and where each mechanism's honest boundary sits.
@@ -46,7 +46,7 @@ Three rules govern every row of the mapping below:
 | **Read log** — every read is recorded: who read what, when, within a tenant-set retention window, integrity-anchored into the journal ([retrieval](../architecture/retrieval.md)) | Access history for stored content. Limit: it answers nothing outside the retention window and says so; the not-yet-anchored tail is a stated bound in [commitments](commitments.md) | Art. 30; Art. 32 (security of processing) | CC6 (logical access); CC7 (system operations) | 8.15 (logging); 8.16 (monitoring activities) |
 | **Tenant isolation (row-level security)** — tenant identity is derived server-side from the key and enforced by the database on every table ([security](../architecture/security.md)) | A technical access-restriction measure enforced by construction, not convention | Art. 32(1)(b) | CC6 (logical access) | 5.15 (access control); 8.3 (information access restriction) |
 | **Key custody** — one signing process; per-service credentials with stated "never" entries; keys shown once and stored only as hashes; the wrapping key held in a key-management service where the profile provides one ([security](../architecture/security.md)) | Custody and separation of secrets, per install profile — each profile's weakening is named in [commitments](commitments.md), never discovered | Art. 32 | CC6 (logical access) | 8.24 (use of cryptography); 5.17 (authentication information) |
-| **Permission epochs** — every grant change and revocation bumps an epoch that invalidates cached access, so "when did this key stop being able to act" is answerable from the record ([workareas](../architecture/workareas.md)) | Timely, provable access removal, with the bounded latency window stated in [commitments](commitments.md) | Art. 32 | CC6 (access provisioning and removal) | 5.18 (access rights) |
+| **Access checked on every request** — every grant change and revocation is a journalled record, and access is recomputed from those records on every request, so "when did this key stop being able to act" is answerable from the record ([workareas](../architecture/workareas.md)) | Timely, provable access removal: a revocation applies to the key's next request, and on a cluster's followers once their copy of the record catches up — the window [commitments](commitments.md) states | Art. 32 | CC6 (access provisioning and removal) | 5.18 (access rights) |
 | **Review and lineage** — nothing is visible to others until an identity that did not write it ratified it; the reviewer check runs against the declared derivation graph; the verdict is bound to exactly what was served ([architecture: admission](../architecture/admission.md)) | Enforced segregation of duties on content, with an attributable approval trail. Limit: review attests process, never truth; collusion between distinct identities is made visible, not prevented ([commitments](commitments.md), never-claimed tier) | Art. 30; Art. 32 | PI1 (processing integrity); CC5 (control activities — segregation of duties) | 5.3 (segregation of duties); 5.28 (collection of evidence) |
 
 ## Data classification and retention

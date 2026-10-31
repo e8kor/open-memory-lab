@@ -183,6 +183,16 @@ impl ApiError {
     }
 }
 
+/// `submission.tip_conflict` with its stable rule (errors.md).
+fn tip_conflict(message: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "submission.tip_conflict",
+        "Supersession promotion CAS-checks its target is the current tip; the tip flip is one journalled fact, never a lost update.",
+        message,
+    )
+}
+
 /// Which endpoint family the refusal surfaced on — a refused status
 /// transition means different things to a verdict (the serve no longer names
 /// a held row) and to a write (the target is not the current tip).
@@ -206,15 +216,68 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("{verb} is outside the {} verb ceiling", role.as_str()),
         )
         .with_details(json!({ "verb": verb, "role": role.as_str() })),
-        AppError::IssuerCeiling { issuer, requested } => ApiError::new(
+        AppError::IssuerCeiling {
+            role,
+            admissible,
+            grant_index,
+        } => {
+            // One-hop recovery details (ADR-0025 d2, d16): the refused role,
+            // the set that would be admitted, and which grant it was.
+            let mut details = json!({
+                "role": role.as_str(),
+                "admissible": admissible.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+            });
+            if let (Some(index), Some(obj)) = (grant_index, details.as_object_mut()) {
+                obj.insert("grant_index".to_owned(), json!(index));
+            }
+            let message = match grant_index {
+                None => format!("the issuer may not issue a {} key", role.as_str()),
+                Some(index) => format!(
+                    "grant {index} has role {}, which the key role does not admit",
+                    role.as_str()
+                ),
+            };
+            ApiError::new(
+                StatusCode::FORBIDDEN,
+                "access.issuer_ceiling",
+                "A key is issued with a role no higher than the issuer's (D9).",
+                message,
+            )
+            .with_details(details)
+        }
+        AppError::RoleExclusive => ApiError::new(
             StatusCode::FORBIDDEN,
-            "access.issuer_ceiling",
-            "A key is issued with a role no higher than the issuer's (D9).",
+            "access.role_exclusive",
+            "Admin is never a reviewer (D9): a key never combines admin with dreamer verbs.",
+            "a key holding the admin role never carries dreamer-class grants",
+        ),
+        AppError::GrantRefused {
+            workarea_id,
+            needed_role,
+        } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.grant_refused",
+            "Effective access is the union of grants, each attenuated by its denies, deny-wins for global denials; what a grant does not confer, the key does not have (D7).",
             format!(
-                "a {} key cannot issue a {} key",
-                issuer.as_str(),
-                requested.as_str()
+                "the key reads this workarea but holds no effective {} role on it",
+                needed_role.as_str()
             ),
+        )
+        .with_details(json!({
+            "workarea_id": workarea_id.to_string(),
+            "needed_role": needed_role.as_str(),
+        })),
+        AppError::DenyOutsideGrant {
+            grant_index,
+            subtree_node_id,
+        } => ApiError::validation(format!(
+            "grant {grant_index}'s deny names {subtree_node_id}, which lies outside the grant's subtree"
+        )),
+        AppError::DefaultUncovered { workarea_id } => ApiError::validation(format!(
+            "default_workarea_id {workarea_id} is covered by no grant of the key"
+        )),
+        AppError::BudgetWithoutBodies => ApiError::validation(
+            "max_tokens is refused with include_bodies false: a budget counts bodies that would not be sent",
         ),
         AppError::WorkareaUnresolved => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -222,6 +285,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "The target workarea comes from the token (ADR-0022 d4); a key with neither a default nor the X-OML-Workarea header is refused, never guessed for.",
             "the key has no default_workarea and the request names none",
         ),
+        AppError::AfterSeqBeyondHead {
+            after_seq,
+            head_seq,
+        } => ApiError::validation(format!(
+            "after_seq {after_seq} is beyond head_seq {head_seq}: pass back a next_after_seq this tail served"
+        )),
         AppError::NotFound => ApiError::not_found(),
         AppError::LineageUnknown(id) => ApiError::not_found().with_details(json!({
             // derives_from targets fail closed as absence, like CURIE
@@ -234,11 +303,40 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "A writer proposes supersessions of its own claims only (D9).",
             "a writer key may supersede only its own claims",
         ),
-        AppError::TipConflict => ApiError::new(
+        AppError::TipConflict { current_tip } => {
+            let error = tip_conflict("the supersede target is not the current served tip");
+            match current_tip {
+                // One-hop recovery: the tip to propose against, named only
+                // when the caller can read it (ADR-0025 d10, d16).
+                Some(tip) => error.with_details(json!({
+                    "current_tip": {
+                        "artifact_id": tip.artifact_id.to_string(),
+                        "version": tip.version,
+                    },
+                })),
+                None => error,
+            }
+        }
+        AppError::WorkareaNotTarget { workarea_id } => ApiError::validation(format!(
+            "X-OML-Workarea names {workarea_id}, but a supersession is captured in its target's workarea"
+        )),
+        AppError::KindChangeRefused { target, sent } => ApiError::validation(format!(
+            "a {} target admits no {} successor: a kind changes only within its class, and a retirement keeps the target's",
+            target.as_str(),
+            sent.as_str()
+        )),
+        AppError::TermRetirement => ApiError::validation(
+            "a term is never retired: terms deprecate, through a supersession with term_status deprecated",
+        ),
+        AppError::VocabularyTarget(kind) => ApiError::validation(format!(
+            "a {} target is superseded on the HTTP API: oml_supersede carries no vocabulary fields",
+            kind.as_str()
+        )),
+        AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
-            "submission.tip_conflict",
-            "Supersession promotion CAS-checks its target is the current tip; the tip flip is one journalled fact, never a lost update.",
-            "the supersede target is not the current served tip",
+            "submission.claim_key_conflict",
+            "A claim_key names one live claim per (tenant, workarea); a claim whose every version is rejected or erased releases it (D7).",
+            "a held, promoted or demoted version already holds this claim_key in the workarea",
         ),
         AppError::ScanVeto(finding) => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -280,7 +378,17 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             // loop (the oml-pg phase's intended lead write shape).
             ApiError::unavailable("chain head contention")
         }
+        AppError::Store(StoreError::TipMoved { .. }) => {
+            tip_conflict("the supersede target stopped being the served tip before ratification")
+        }
+        AppError::Store(StoreError::IdempotencyRecorded) => {
+            // Surfaces only when the record a concurrent attempt committed
+            // was gone again when the use-case read it back to replay it.
+            ApiError::unavailable("idempotency record contention")
+        }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
+        // A stale or foreign pagination cursor (errors.md request.validation).
+        AppError::Cursor(e) => ApiError::validation(e.to_string()),
         AppError::StoredResponse(e) => ApiError::internal(e),
         AppError::Chain(e) => ApiError::internal(e.to_string()),
         AppError::ChainVerify(e) => ApiError::internal(e.to_string()),

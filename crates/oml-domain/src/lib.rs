@@ -5,10 +5,15 @@
 //! byte-level chain spec of `docs/data/chain-format.md`, the envelope of
 //! `docs/data/event-catalog.md`, and the M1 slice of the domain model:
 //! roles, memory status transitions, and the constitution's R2 check
-//! (ADR-0001 d2).
+//! (ADR-0001 d2). `access` holds grant admissibility, effective access, the
+//! refusal order, effective verbs and content-tail visibility (ADR-0025 d1,
+//! d2, d14, d15); `budget` holds the budget token, the budget cut and the
+//! recall order (ADR-0025 d6, d7, d8).
 
 #![forbid(unsafe_code)]
 
+pub mod access;
+pub mod budget;
 pub mod chain;
 pub mod envelope;
 pub mod jcs;
@@ -29,6 +34,6 @@ pub use keys::{
     verify_rotation_cross_sig,
 };
 pub use model::{
-    HeldBy, LineageClosure, MemoryStatus, Role, TransitionError, VerdictError, check_reviewer,
-    transition,
+    HeldBy, LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError,
+    check_reviewer, nfc, transition,
 };

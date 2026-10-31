@@ -2,7 +2,7 @@
 id: architecture/roles-and-keys
 tier: engineering
 status: design draft for review · decided, not built
-answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion
+answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers
 -->
 
 # Roles and keys
@@ -31,10 +31,10 @@ and the row's derivation lineage closure, not just at key issuance.
 | `admin` | Tenant governance: keys, workareas, reassignment, bans, erasure, crew metadata, simulations. Admin verdicts on content are refused: admin ≠ reviewer. |
 | `operator` | Provider level: creates tenants and issues each tenant's first admin key. Never writes, reads or reviews content. |
 
-Roles do not imply one another. A key is issued with exactly one role, which is the ceiling on the
-grants it may carry; each grant confers a role no higher than that ceiling over one workarea
-subtree (grant mechanics, including deny entries and the permission epoch, are declared in
-[workareas.md](workareas.md)). A crew member that must both write and recall holds a writer key
+Roles do not imply one another. A key is issued with exactly one role, which names the grant
+roles it may carry ([grant admissibility](#grant-admissibility-and-refusal-order)); each grant
+confers one of those roles over one workarea subtree (grant mechanics, including deny entries and
+the permission epoch, are declared in [workareas.md](workareas.md)). A crew member that must both write and recall holds a writer key
 whose grants include reader scope — not a writer key with implied read. Which verb a key may
 exercise in a given workarea is therefore resolved from effective access at call time, never from
 the role name alone.
@@ -49,15 +49,24 @@ attestation, never the humanness — a mis-attested key is an admin's journalled
 a server failure. `human_required_classes` consumes exactly this attribute: only verdicts from
 keys attested `held_by: human` satisfy it ([ontologies](ontologies.md),
 [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). The attestation has a third member,
-`held_by: service`, issued by operators for infrastructure processes — the reconciler's narrowed
-repair key, a forwarding follower's zero-grant hop key ([security](security.md)) — never for
-review. A service key can never satisfy `human_required_classes` and never counts as review
-capacity.
+`held_by: service`, which a tenant admin issues under the ordinary
+[issuer ceiling](#issuer-ceiling) for infrastructure processes — the reconciler's repair key, a
+forwarding follower's zero-grant hop key ([security](security.md)) — never for review. Only an
+admin key sets `held_by`; the operator issues no service key. A service key is refused every
+review-class verb ([the role each verb needs](#grant-admissibility-and-refusal-order)), can
+never satisfy `human_required_classes` and never counts as review capacity.
 
 ## Permission matrix
 
 Verbs are journalled acts; the matrix states which role's keys may invoke each one. A dash means
-the verb is refused with a typed error naming this rule ([errors.md](../api/errors.md)).
+the verb is refused with a typed error naming this rule ([errors.md](../api/errors.md)). For a
+content verb — recall, read, graph read, workarea info, events tail, remember, learn, attach,
+supersession, steering, propose, review, status-transition propose and ratify, and dead-letter
+re-enqueue — a column names the grant role that effective access must confer on the workarea the
+verb touches, resolved in the [refusal order](#grant-admissibility-and-refusal-order) below; the
+admin column of the last three names the key's role. For a key-level verb — keys,
+grants, denials, workarea create and re-parent, reassignment, bans, demote, erase, exports,
+settings, tenants — a column names the key's role itself.
 
 | Verb | reader | writer | dreamer | admin | operator |
 |---|---|---|---|---|---|
@@ -68,9 +77,9 @@ the verb is refused with a typed error naming this rule ([errors.md](../api/erro
 | own-work status (own submissions only) | ✓ | ✓ | ✓ | ✓ | — |
 | remember / learn (held on arrival) | — | ✓ | — | — ¹ | — |
 | attach (resumable upload session) | — | ✓ | — | — ¹ | — |
-| propose supersession of own claim | — | ✓ | — | — ¹ | — |
+| propose supersession of own claim (including retirement) | — | ✓ | — | — ¹ | — |
 | write steering row (held + reviewed) | — | ✓ | — | — ¹ | — |
-| edit-as-proposal (new attributed submission with `derives_from`) | — | — | ✓ propose | — | — |
+| edit-as-proposal (new attributed submission with `derives_from`, including retirement) | — | — | ✓ propose | — | — |
 | propose connection, claim↔claim or workarea↔workarea | — | — | ✓ propose ² | — | — |
 | verdict on a held item | — | — | ✓ review ³ | — (refused) | — |
 | ratify a connection | — | — | ✓ review ³ | — | — |
@@ -102,8 +111,8 @@ proposer. The edge-authority rule is declared in [workareas.md](workareas.md).
 next section.
 ⁴ The operator issues only each tenant's first admin key, and operator keys (see
 [issuer ceiling](#issuer-ceiling)).
-⁵ The author of a held or rejected version may fetch that version of its own claim (own-work
-path); everyone else sees promoted rows only ([http-api](../api/http-api.md)).
+⁵ The calling key may fetch its [own](#own) rows in any state (own-work path); everyone else
+sees promoted rows only ([http-api](../api/http-api.md)).
 
 Promote, sign and delete appear in no column: promotion is an effect of ratification inside the
 admission pipeline, signing is done by `oml-server` with the deployment key
@@ -112,9 +121,180 @@ journalled crypto-shred ([audit-and-lineage.md](audit-and-lineage.md)).
 
 One bounded exception is inherited from the constitution: a `development` workarea may, by
 journalled tenant policy, permit a writer to self-sign its own rows. Such rows are marked
-`self_signed`, are readable only inside that workarea, and never promote beyond it. The exception
-is declared in [workareas.md](workareas.md) and ADR-0001; it does not change this matrix — it
-changes the review policy a development workarea applies.
+`self_signed`, are served only to reads whose scope node is that workarea
+([retrieval](retrieval.md#the-rule-postgres-serves-the-lake-never-does)), and never promote
+beyond it. How a
+`self_signed` version may take a claim's tip is declared in
+[audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). The
+exception is declared in [workareas.md](workareas.md) and ADR-0001; it does not change this
+matrix — it changes the review policy a development workarea applies.
+
+## Grant admissibility and refusal order
+
+This section is the single declaration site for which grant roles a key may carry and for the
+order in which a workarea-scoped verb is refused
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1, d2).
+
+**Admissibility.** A key's role names exactly the grant roles the key may carry:
+
+| Key role | Admissible grant roles |
+|---|---|
+| `reader` | `reader` |
+| `writer` | `reader`, `writer` |
+| `dreamer` | `reader`, `dreamer` |
+| `admin` | none |
+| `operator` | none |
+
+A grant role is never `admin` or `operator`. A grant whose role falls outside its key role's set
+is refused with `access.issuer_ceiling`, details `{role, admissible}`, plus `grant_index` at
+issuance (step 3 of the issuance order below). A key of role `admin` carrying any dreamer grant
+is refused with `access.role_exclusive` — the two-key rule — and that check runs first, at
+issuance and at every grant amendment. An admin who must write or recall
+holds a separate writer-role key ([Admin verbs](#admin-verbs)).
+
+**Issuance validation order.** `POST /v2/keys` ([http-api](../api/http-api.md#keys-grants-denials))
+first checks that `tenant_id` is present if and only if the issuer is an operator key — else
+`request.validation` (step 0) — and then validates in this order, and the first failure answers:
+
+1. `access.role_exclusive`;
+2. the [issuer ceiling](#issuer-ceiling) on the key role — `access.issuer_ceiling`, including an
+   admin minting an operator key, with details `{role, admissible}`: `role` the requested key
+   role, `admissible` the key roles this issuer may issue;
+3. grant admissibility (the table above) — `access.issuer_ceiling`, with details `{role,
+   admissible, grant_index}`: `role` the first refused grant's role, `admissible` the key role's
+   admissible set, `grant_index` that grant's 0-based position in `grants`;
+4. every grant node and deny node exists in the tenant — else `access.not_found`;
+5. each deny node lies inside its own grant's subtree — else `request.validation`;
+6. a `default_workarea_id`, when present, is covered by some grant of the key — else
+   `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
+   key has none, and a key never inherits its issuer's default.
+
+`held_by` is the issuing admin's attestation, so an operator key's issuance that carries it is
+`request.validation`; `held_by: service` keys are issued by a tenant admin like every other
+working key.
+
+`key.issued` is journalled first and one `grant.issued` per grant follows; the key value is
+returned only after the last `grant.issued` commits. If issuance fails after `key.issued`, the
+server journals `key.revoked` for the key in a following commit, with `reason_digest` over the
+fixed reason `issuance_incomplete`, and the key is listed as revoked. Its value was never
+disclosed, so it authenticates no request either way, including before that commit lands.
+
+**Refusal order.** A verb that needs grant role R on node N resolves in this order, where
+`effective_roles(N)` is the [effective-access](workareas.md#effective-access-union-of-attenuated-grants-then-deny-wins)
+formula evaluated at N, on every request:
+
+1. R is not admissible under the key's role → `access.verb_ceiling`;
+2. R is in `effective_roles(N)` → allowed;
+3. `reader` is in `effective_roles(N)` → `access.grant_refused`, details `{workarea_id, needed_role}`;
+4. otherwise → `access.not_found`.
+
+Step 1 depends only on the key's role and needs no node, so it runs before the workarea is
+resolved: `request.workarea_unresolved` is answered only to a call that has passed step 1, and a
+reader key submitting answers `access.verb_ceiling` whether or not it has a default workarea.
+
+**The role each verb needs.**
+
+- **writer** — submit and steering writes, on the resolved node, which must exist.
+- **reader** — recall, on the scope node (the search runs over subtree(scope) ∩ the nodes where
+  reader is effective); get of a row that is not the caller's own, on the row's workarea; a listing
+  without `own`; the events tail; workarea info.
+- **supersede, retirement included** — [own](#own) is read on the target version, the current
+  tip, never on the claim's first version; the rule runs in this order:
+
+    1. a key whose role admits neither writer nor dreamer → `access.verb_ceiling`, before any
+       lookup;
+    2. the target must be readable — the caller's own row in any state, or promoted within its
+       reader effective access — else `access.not_found`;
+    3. a writer key needs writer on the target's workarea when the target is its own, resolved by
+       the refusal order; a readable target another key authored answers `access.author_only`;
+    4. a dreamer key needs dreamer and reader on the target's workarea, resolved by the refusal
+       order, whoever authored the target, its own ratified edits included (edit-as-proposal);
+    5. only then the refusals that depend on the target, in this order: an `X-OML-Workarea`
+       equal to the target's workarea, else `request.validation`; the target is the current
+       served tip, else `submission.tip_conflict`; the kind and retirement checks, and on
+       `oml_supersede` the vocabulary-kind check, else `request.validation`
+       ([kind changes](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); the
+       workarea is not `validated`, else `workarea.frozen`. The checks every submit runs follow.
+
+    No target-dependent refusal is answered before step 2, so none of them tells a caller that an
+    unreadable target exists. The idempotency record, scoped to the key alone, is looked up
+    between steps 1 and 2, so a committed supersession replays whatever the target's state now,
+    and it is claimed only after step 2 ([http-api](../api/http-api.md#idempotency)).
+
+    A claim whose tip another key authored is that key's to supersede: a writer whose version
+    was superseded by another key's ratified version no longer owns the claim and answers
+    `access.author_only`, and a dreamer may still propose its revision or retirement.
+
+- **dreamer** — status-transition propose and ratify, and dead-letter re-enqueue, on the node;
+  admin keys act on these verbs by their key role.
+- **review next and verdict** — dreamer on the row's workarea, in addition to the
+  [lineage-closure exclusion](#the-dreamer-split): a row outside dreamer effective access is never
+  served, and a verdict on one resolves by the refusal order like every other verb —
+  `access.grant_refused` with `needed_role: dreamer` where reader is effective on the row's
+  workarea, `access.not_found` otherwise.
+- **service keys** — a `held_by: service` key is refused every review-class verb — the
+  [matrix](#permission-matrix)'s review rows (verdict, reopen, claim-edge ratify and
+  workarea-edge ratify) and the review queue and review next that lead to a verdict — and
+  status-transition ratify with `access.verb_ceiling`, before any
+  lookup, as at step 1 of the refusal order. A service key's dreamer grant confers those verbs
+  like any dreamer grant; this rule, not the grant, keeps it out of review and out of every
+  ratification ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1).
+- **admin and operator verbs** — the key's own role, as the [matrix](#permission-matrix) states.
+
+## Own
+
+A row is the caller's **own** when its authoring key (`memories.author_key_id`) is the calling
+key; once rotation is built, own also covers a key in the caller's journalled `rotated_from`
+chain. Principal equality never makes a row own. This definition governs get of held or rejected
+versions, recall with `include_own_held` ([retrieval](retrieval.md#own-held-rows-in-recall)), the
+own-work listing, and the `access.author_only` check on supersession, which reads it on the
+target version. Wherever a store enforces own, it compares against the caller's whole key set —
+the calling key and its journalled `rotated_from` chain — never against one key id
+([held text containment](retrieval.md#held-text-containment)).
+
+Own-work reads admit every tenant role except operator and need no grant, but a global per-key
+denial covering the row's workarea still masks the row — deny-wins, as everywhere else
+([workareas](workareas.md)). An own row that is a simulation row or sim-derived is read only while
+the calling key is in that simulation's audience; outside it the row is absent
+(`access.not_found`), like any fenced row
+([the simulation read predicate](retrieval.md#the-simulation-read-predicate)). Both conditions
+hold on get, the own-work listing, `include_own_held` and the
+[events tail's](../api/http-api.md#events-tail) author clause. R2 is unaffected: a reviewer is
+still excluded by both key id and principal
+([lineage-closure exclusion](#the-dreamer-split)).
+
+**Naming a node.** An own row can sit on a node where the calling key holds no role — an admin's
+reassignment can move it there. A response names a claim's node to a key only where
+`effective_roles(node)` is not empty for that key, and serves null in its place elsewhere: the
+`workarea_id` and `workarea_path` of a get or a listing item, a claim-subject workarea id
+(`workarea_id`, `from_workarea_id`, `to_workarea_id`) in an
+[events-tail](../api/http-api.md#events-tail) payload, and `workarea` and `workarea_path` on the
+[agent plugin](../api/mcp-plugin.md#the-claim-item); a listing's `workarea_id` filter accepts only
+a node the rule names to the key ([Search](../api/http-api.md#search-get-v1memories)). A key never
+learns the id of a node it holds nothing on, except the ancestors of a node it can read, whose ids
+(`parent_id`) and names (path segments) the [workarea read](../api/http-api.md#workareas) and every
+derived path already disclose, and a re-parented node's former parent, which `workarea.reparent`
+names as the workarea read did before the move; the workarea read omits the children the key
+cannot read ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3).
+
+## Effective verbs
+
+The single declaration site for the verb names a key's effective access confers, as
+`my_effective_verbs` reports them ([http-api](../api/http-api.md#workareas)): the union over the
+grant roles effective on the node.
+
+| Effective grant role | Verbs conferred |
+|---|---|
+| `reader` | `recall`, `read`, `graph_read`, `events_tail` |
+| `writer` | `remember`, `learn`, `attach`, `supersede` |
+| `dreamer` | `propose`, `review`, `supersede` |
+
+A dreamer's `supersede` is edit-as-proposal and also needs `reader` on the node, under the
+supersede rule [above](#grant-admissibility-and-refusal-order). The array lists verbs in table
+order — the `reader`, `writer` and `dreamer` rows, each left to right — without duplicates; for a
+`held_by: service` key it omits `review`, which that key is refused whatever its grants. The
+set states the access conferred, not what a given server build serves; `tools/list` on the
+[agent plugin](../api/mcp-plugin.md) states that.
 
 ## The dreamer split
 
@@ -140,6 +320,17 @@ reviewing key or its principal appears anywhere in that closure. "I edited an an
 claim" disqualifies a reviewer exactly as "I wrote this claim" does. Because the closure includes
 pending edges, a dreamer cannot launder authorship by proposing an edit and reviewing the result
 before the edit is ratified. A dreamer's own proposals always need another reviewer.
+
+**Rival successors.** While a successor is held, the reviewer-exclusion set of every other held
+successor of the same target (same workarea, `claim_key` and `replaces`) also contains its
+author's key and principal; review next never serves such a row to that key, and a verdict from
+it answers `review.author_in_lineage`
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). Competing successors of one
+tip are decided by the tip compare-and-set
+([audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)), so a rival's
+author judging the other successor would be deciding its own row's fate. A row's
+**reviewer-exclusion set** is therefore the keys and principals in its lineage closure plus, for a
+held successor, the authors of its held rivals.
 
 The honest boundary: **undeclared derivation is not detectable.** If a writer reconstructs
 someone's content without declaring `derives_from`, the service has no way to know; lineage
@@ -310,10 +501,13 @@ the successor amends them afterward, as ordinary journalled grant acts. Bulk rot
 for whole crews (re-issue many keys in one ceremony) is unbuilt and tracked as a roadmap FR
 ([roadmap](../product/roadmap.md): key rotation ergonomics for crews).
 
-**Revocation and the permission epoch.** Revocation is a journalled act that takes effect through
-the permission epoch declared in [workareas.md](workareas.md): the epoch bump invalidates every
-cached effective-access computation, so no cache can serve a revoked key past the revocation
-event. The same epoch mechanism covers grant changes, so "when did this key stop being able to do
+**Revocation and the permission epoch.** Revocation is a journalled act that takes effect at the
+key's next request served by the lead: keys and effective access are resolved on every request and
+no resolution is cached. A follower resolves them from its local replica, so on follower-served
+reads a revocation takes effect after replication lag — the window
+[workareas.md](workareas.md#grants-bind-to-node-ids-paths-are-derived) states and
+[security](security.md) carries as a residual. Grant changes and denials apply the same way, and the permission epoch labels the
+journalled state each answer was computed against, so "when did this key stop being able to do
 X" is answerable from journalled grants plus epochs — reproducibly, which is the property the
 evidence export leans on.
 
@@ -342,6 +536,8 @@ no threshold auto-demotes anything.
 
 ## Decision record
 
-This page's decisions are registered as ADR-0010 ([decision register](../adr/index.md)). One
+This page's decisions are registered as ADR-0010 ([decision register](../adr/index.md)); grant
+admissibility, the refusal order, the issuance order, own and the effective verbs are
+[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14). One
 adjacent decision is named elsewhere: programs hold keys, humans hold ceremonies, and OAuth for
 MCP clients remains a named roadmap trigger ([roadmap](../product/roadmap.md)).
