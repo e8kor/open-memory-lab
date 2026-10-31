@@ -2677,7 +2677,7 @@ async fn a_crew_update_changes_its_charter_and_manager_and_never_its_name() {
         updated
     );
     assert_eq!(
-        app.crews(admin).await.expect("list"),
+        app.crews(admin, None, 50).await.expect("list").items,
         vec![updated.clone(), redline.clone()],
         "in name order"
     );
@@ -2723,7 +2723,7 @@ async fn a_crew_update_changes_its_charter_and_manager_and_never_its_name() {
 
     // No agent role reaches a crew verb (R1).
     let writer = agent(&app, admin, "wanda", crew_wa).await;
-    let err = app.crews(&writer.value).await.unwrap_err();
+    let err = app.crews(&writer.value, None, 50).await.unwrap_err();
     assert!(
         matches!(
             err,

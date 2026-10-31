@@ -1128,6 +1128,86 @@ async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supers
     drop_db(&db).await;
 }
 
+/// `oml_remember`'s `workarea` takes the node's name as well as its id: the
+/// facade passes it through as `X-OML-Workarea` and the server resolves it,
+/// so a remember naming `metals-crew` is captured there and the own-work
+/// listing under that name lists it, while a derived path is refused as
+/// `request.validation` naming the HTTP field the argument maps to; the
+/// served catalog says so (mcp-plugin.md, a workarea by id or name;
+/// errors.md `details.field`; ADR-0026 d4, d7).
+#[tokio::test]
+async fn oml_remember_with_a_workarea_name_submits_into_it() {
+    let (router, db) = fresh_router().await;
+    let (agent, _, _, crew) = agent_crew(&router).await;
+
+    let remembered = call_tool(
+        &router,
+        &agent,
+        1,
+        "oml_remember",
+        json!({
+            "workarea": "metals-crew",
+            "claim_key": "supplier-quote-am-7741",
+            "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
+            "idempotency_key": "crew-procure/run-1/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(remembered["isError"], false, "{remembered}");
+    let receipt = &remembered["structuredContent"];
+    assert_eq!(receipt["workarea"], crew.to_string(), "{remembered}");
+    assert_eq!(receipt["state"], "held");
+    let mine = call_tool(
+        &router,
+        &agent,
+        2,
+        "oml_my_work",
+        json!({"workarea": "metals-crew"}),
+    )
+    .await;
+    assert_eq!(mine["isError"], false, "{mine}");
+    let items = mine["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(items.len(), 1, "{mine}");
+    assert_eq!(items[0]["artifact_id"], receipt["artifact_id"]);
+
+    let refused = call_tool(
+        &router,
+        &agent,
+        3,
+        "oml_remember",
+        json!({
+            "workarea": "universe.metals-crew",
+            "claim_key": "supplier-quote-am-7742",
+            "text": "Supplier Accra Metals quoted 415 USD/t.",
+            "idempotency_key": "crew-procure/run-1/step-2",
+        }),
+    )
+    .await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let error = &refused["structuredContent"]["error"];
+    assert_eq!(error["code"], "request.validation", "{refused}");
+    assert_eq!(error["details"]["field"], "X-OML-Workarea", "{refused}");
+
+    // The served entry describes what the build serves: the id or the
+    // name, and no path (ADR-0025 d12).
+    let listed = rpc(&router, &agent, 4, "tools/list", json!({})).await;
+    let tool = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "oml_remember")
+        .expect("oml_remember is served");
+    let described = tool["inputSchema"]["properties"]["workarea"]["description"]
+        .as_str()
+        .expect("a description");
+    assert!(described.contains("id or name"), "{described}");
+    assert!(!described.contains("path given here"), "{described}");
+
+    drop_db(&db).await;
+}
+
 #[tokio::test]
 async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() {
     let (router, db) = fresh_router().await;
@@ -1149,9 +1229,8 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         "/v2/workareas",
         Some(&admin),
         Some("wa-1"),
-        // A workarea names a crew record, which no route of this build
-        // creates yet (ADR-0026 d8); this one names none, so `crew` stays
-        // absent.
+        // A workarea names at most one crew record (ADR-0026 d8); this one
+        // names none, so `crew` stays absent.
         Some(&json!({
             "parent_id": root,
             "name": "metals-crew",
@@ -1211,6 +1290,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         view,
         &json!({
             "id": crew,
+            "name": "metals-crew",
             "path": "universe.metals-crew",
             "status": "development",
             "parent": root,
@@ -1224,15 +1304,18 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         })
     );
     assert!(view["permission_epoch"].is_u64(), "{view}");
-    let named = call_tool(
-        &router,
-        &agent,
-        3,
-        "oml_workarea_info",
-        json!({"workarea": crew}),
-    )
-    .await;
-    assert_eq!(&named["structuredContent"], view);
+    // By id and by name, the same node (ADR-0026 d4).
+    for (id, workarea) in [(3, crew.as_str()), (8, "metals-crew")] {
+        let named = call_tool(
+            &router,
+            &agent,
+            id,
+            "oml_workarea_info",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(&named["structuredContent"], view);
+    }
 
     // A key with no default is refused by name; a node the key cannot read
     // is absence, as on the ring; an unknown argument is validation.

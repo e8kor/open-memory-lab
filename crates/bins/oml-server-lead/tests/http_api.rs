@@ -17,7 +17,6 @@ use sqlx::{Connection, Executor};
 use tower::ServiceExt as _;
 use uuid::Uuid;
 
-use oml_app::App;
 use oml_app::domain::name::Name;
 use oml_app::domain::{
     EventDraft, EventTime, Sha256Hash, SignedEnvelope, event_types, next_envelope,
@@ -25,11 +24,10 @@ use oml_app::domain::{
 };
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{IdGen as _, JournalStore};
-use oml_app::types::CrewCreateRequest;
 use oml_pg::{MIGRATOR, PgStore};
 use oml_server_lead::{
-    LeadSigner, MarkerScanner, OsIds, SystemClock, enumerate_tenants, lead_state, pg_ping,
-    start_lead, startup_fork_check, startup_names_check,
+    OsIds, enumerate_tenants, lead_state, pg_ping, start_lead, startup_fork_check,
+    startup_names_check,
 };
 use oml_transport_http::DbPing;
 use sqlx::migrate::Migrate as _;
@@ -98,19 +96,6 @@ async fn fresh_rig() -> Rig {
         signing,
         db_name,
     }
-}
-
-/// The composition the router serves, over the rig's store and signing key,
-/// for a verb this transport does not route yet: the crew records of
-/// ADR-0026 d8.
-fn rig_app(rig: &Rig) -> App<PgStore, LeadSigner, SystemClock, OsIds, MarkerScanner> {
-    App::new(
-        rig.store.clone(),
-        LeadSigner::new(rig.signing.clone()),
-        SystemClock,
-        OsIds,
-        MarkerScanner,
-    )
 }
 
 async fn drop_db(name: &str) {
@@ -1471,7 +1456,7 @@ async fn full_happy_path_over_http() {
         "/v1/memories",
         Call::auth(&writer)
             .idem("s-bad-wa")
-            .workarea("not-a-node-id")
+            .workarea("not_a_node_id")
             .body(json!({
                 "verb": "remember", "claim_key": "x", "kind": "memory", "body": "x",
             })),
@@ -1583,7 +1568,7 @@ async fn a_workarea_name_the_creation_grammar_refuses_is_request_validation_and_
         let (status, _, body) = send(router, "POST", "/v2/workareas", create(n, value)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{value}: {body}");
         assert_envelope(&body, "request.validation");
-        assert_eq!(body["error"]["details"]["field"], "name", "{body}");
+        assert_eq!(body["error"]["details"]["field"], "/name", "{body}");
     }
     for (n, value) in ["universe", "metals-crew"].into_iter().enumerate() {
         let (status, _, body) = send(router, "POST", "/v2/workareas", create(10 + n, value)).await;
@@ -1629,7 +1614,7 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     let (status, _, body) = send(router, "POST", "/v2/bootstrap/claim", claim(ENROLLMENT)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_envelope(&body, "request.validation");
-    assert_eq!(body["error"]["details"]["field"], "tenant_name", "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/tenant_name", "{body}");
     // The key's name is required, and checked after the token too: a
     // claim with none, or with one the creation grammar refuses, is
     // `request.validation` naming `name` (ADR-0026 d9).
@@ -1647,7 +1632,7 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert_envelope(&body, "request.validation");
-        assert_eq!(body["error"]["details"]["field"], "name", "{body}");
+        assert_eq!(body["error"]["details"]["field"], "/name", "{body}");
     }
     let (status, _, body) = send(
         router,
@@ -1671,6 +1656,853 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
     assert_envelope(&body, "auth.invalid");
     assert_eq!(body["error"]["details"]["reason"], "consumed", "{body}");
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// References by id or name on the transport (ADR-0026 d3, d4, d5, d8, d15)
+// ---------------------------------------------------------------------------
+
+/// A writer key with a writer and a reader grant on `node`, its default;
+/// returns the show-once value.
+async fn agent_on(router: &Router, admin: &str, principal: &str, node: Uuid) -> String {
+    issue_key_with(
+        router,
+        admin,
+        "writer",
+        principal,
+        json!([
+            { "workarea_node_id": node, "role": "writer" },
+            { "workarea_node_id": node, "role": "reader" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned()
+}
+
+/// A submit of the claim `claim_key` under `token`, its `X-OML-Workarea`
+/// header `workarea`.
+fn submit_into(token: &str, idem: &str, workarea: &str, claim_key: &str) -> Call {
+    Call::auth(token).idem(idem).workarea(workarea).body(json!({
+        "verb": "remember",
+        "claim_key": claim_key,
+        "kind": "memory",
+        "body": format!("Supplier quote {claim_key}."),
+    }))
+}
+
+/// Creates a crew record named `name` over HTTP; returns the `201` body.
+async fn create_crew(router: &Router, admin: &str, name: &str) -> Value {
+    let (status, _, crew) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(admin).idem(&format!("crew-{name}")).body(json!({
+            "name": name,
+            "charter_uri": format!("https://crews.example.com/{name}/charter.md"),
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{crew}");
+    crew
+}
+
+/// `X-OML-Workarea` takes the node's id or its name, and a name is replaced
+/// by the id before the idempotency record is looked up: a submit whose
+/// header names the node lands where the same submit by id lands, a retry
+/// that switches the header's spelling replays, and the listing's and the
+/// events tail's `workarea_id` answer one page by name and by id
+/// (http-api.md names and ids, idempotency; ADR-0026 d4).
+#[tokio::test]
+async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    let by_id = quarter.to_string();
+
+    let (status, _, named) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&agent, "quote-1", "q1-2027", "quote-1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{named}");
+    assert_eq!(named["workarea_id"], by_id.as_str(), "served by id");
+    let (status, _, sent_by_id) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&agent, "quote-2", &by_id, "quote-2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{sent_by_id}");
+    assert_eq!(sent_by_id["workarea_id"], by_id.as_str());
+
+    // The record's workarea component is the resolved node, so one
+    // Idempotency-Key under either spelling of the header is one request.
+    let (status, headers, replay) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&agent, "quote-1", &by_id, "quote-1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{replay}");
+    assert_eq!(
+        headers
+            .get("idempotency-replay")
+            .and_then(|v| v.to_str().ok()),
+        Some("true"),
+        "{replay}"
+    );
+    assert_eq!(replay, named);
+
+    // The filters answer one page by name and by id.
+    let (status, page_by_name) =
+        list(router, Call::auth(&agent), "own=true&workarea_id=q1-2027").await;
+    assert_eq!(status, StatusCode::OK, "{page_by_name}");
+    assert_eq!(listed(&page_by_name).len(), 2, "{page_by_name}");
+    let (_, page_by_id) = list(
+        router,
+        Call::auth(&agent),
+        &format!("own=true&workarea_id={by_id}"),
+    )
+    .await;
+    assert_eq!(listed(&page_by_name), listed(&page_by_id));
+    let tail = |workarea: String| {
+        let call = Call::auth(&agent);
+        async move {
+            send(
+                router,
+                "GET",
+                &format!("/v2/events?workarea_id={workarea}"),
+                call,
+            )
+            .await
+        }
+    };
+    let (status, _, tail_by_name) = tail("q1-2027".to_owned()).await;
+    assert_eq!(status, StatusCode::OK, "{tail_by_name}");
+    assert!(
+        !tail_by_name["items"].as_array().expect("items").is_empty(),
+        "{tail_by_name}"
+    );
+    let (_, _, tail_by_id) = tail(by_id.clone()).await;
+    assert_eq!(tail_by_name["items"], tail_by_id["items"]);
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A derived path is never a reference: it holds `.`, so `X-OML-Workarea:
+/// universe.metals-crew` is neither an id nor a name, and the submit, the
+/// recall and the listing that carry it are refused at parse,
+/// `request.validation` with `details.field` the header's name, before any
+/// check that consults state, so nothing is journalled (errors.md
+/// `details.field`; ADR-0026 d3, d7).
+#[tokio::test]
+async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    let head = head_seq(&rig, tenant).await;
+    let path = "universe.metals-crew";
+
+    for (method, uri, call) in [
+        (
+            "POST",
+            "/v1/memories",
+            submit_into(&agent, "path-1", path, "quote-1"),
+        ),
+        (
+            "POST",
+            "/v1/memories/recall",
+            Call::auth(&agent)
+                .workarea(path)
+                .body(json!({ "query": "quote" })),
+        ),
+        ("GET", "/v1/memories", Call::auth(&agent).workarea(path)),
+    ] {
+        let (status, _, refused) = send(router, method, uri, call).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(
+            refused["error"]["details"]["field"], "X-OML-Workarea",
+            "{method} {uri}: {refused}"
+        );
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Every place that names a workarea, crew or key classifies its value at
+/// parse: a derived path, or hex-and-dash text of version 8, which no id
+/// carries, is `request.validation` with `details.field` naming its place as
+/// errors.md spells it — the parameter for a path or query parameter, the
+/// header for a header, a JSON Pointer for a body member — and nothing is
+/// journalled (errors.md `details.field`; ADR-0026 d3).
+#[tokio::test]
+async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_its_place() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    let head = head_seq(&rig, tenant).await;
+    let path = "universe.metals-crew";
+    let version_8 = "0190f2a4-7c3e-8b1d-9a6f-e2d8c51b3a07";
+    let issue = |idem: &str, body: Value| Call::auth(&admin).idem(idem).body(body);
+
+    for (method, uri, call, field) in [
+        (
+            "GET",
+            format!("/v2/workareas/{path}"),
+            Call::auth(&admin),
+            "workarea_id",
+        ),
+        (
+            "GET",
+            format!("/v2/workareas/{version_8}"),
+            Call::auth(&admin),
+            "workarea_id",
+        ),
+        (
+            "GET",
+            format!("/v1/memories?workarea_id={path}"),
+            Call::auth(&agent),
+            "workarea_id",
+        ),
+        (
+            "GET",
+            format!("/v2/events?workarea_id={path}"),
+            Call::auth(&agent),
+            "workarea_id",
+        ),
+        (
+            "POST",
+            "/v1/memories".to_owned(),
+            submit_into(&agent, "v8", version_8, "quote-8"),
+            "X-OML-Workarea",
+        ),
+        (
+            "POST",
+            "/v2/workareas".to_owned(),
+            issue("wa-path", json!({ "parent_id": path, "name": "q1-2027" })),
+            "/parent_id",
+        ),
+        (
+            "POST",
+            "/v2/workareas".to_owned(),
+            issue(
+                "wa-crew",
+                json!({ "parent_id": crew, "name": "q1-2027", "crew": path }),
+            ),
+            "/crew",
+        ),
+        (
+            "POST",
+            "/v2/keys".to_owned(),
+            issue(
+                "key-grant",
+                json!({ "role": "writer", "name": "agent-1", "grants": [
+                    { "workarea_node_id": crew, "role": "writer" },
+                    { "workarea_node_id": path, "role": "reader" },
+                ] }),
+            ),
+            "/grants/1/workarea_node_id",
+        ),
+        (
+            "POST",
+            "/v2/keys".to_owned(),
+            issue(
+                "key-deny",
+                json!({ "role": "writer", "name": "agent-2", "grants": [
+                    { "workarea_node_id": crew, "role": "writer", "deny": [{ "subtree_node_id": version_8 }] },
+                ] }),
+            ),
+            "/grants/0/deny/0/subtree_node_id",
+        ),
+        (
+            "POST",
+            "/v2/keys".to_owned(),
+            issue(
+                "key-default",
+                json!({ "role": "writer", "name": "agent-3", "default_workarea_id": path, "grants": [
+                    { "workarea_node_id": crew, "role": "writer" },
+                ] }),
+            ),
+            "/default_workarea_id",
+        ),
+        (
+            "POST",
+            "/v2/keys".to_owned(),
+            issue(
+                "key-crew",
+                json!({ "role": "writer", "name": "agent-4", "crew": path, "grants": [] }),
+            ),
+            "/crew",
+        ),
+        (
+            "POST",
+            format!("/v2/keys/{path}/denials"),
+            issue("deny-key", json!({ "workarea_node_id": crew })),
+            "key_id",
+        ),
+        (
+            "POST",
+            "/v2/keys/writer-crew-agent-7/denials".to_owned(),
+            issue("deny-node", json!({ "workarea_node_id": path })),
+            "/workarea_node_id",
+        ),
+        (
+            "GET",
+            format!("/v2/keys/{path}"),
+            Call::auth(&admin),
+            "key_id",
+        ),
+        (
+            "GET",
+            format!("/v2/crews/{path}"),
+            Call::auth(&admin),
+            "crew_id",
+        ),
+        (
+            "POST",
+            format!("/v2/crews/{version_8}/update"),
+            issue(
+                "crew-update",
+                json!({ "external_manager": "crewd.example.com" }),
+            ),
+            "crew_id",
+        ),
+        (
+            "POST",
+            format!("/v2/workareas/{path}/crew"),
+            issue("wa-crew-path", json!({ "crew": "metals-crew" })),
+            "workarea_id",
+        ),
+        (
+            "POST",
+            format!("/v2/workareas/{crew}/crew"),
+            issue("wa-crew-ref", json!({ "crew": path })),
+            "/crew",
+        ),
+    ] {
+        let (status, _, refused) = send(router, method, &uri, call).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(
+            refused["error"]["details"]["field"], field,
+            "{method} {uri}: {refused}"
+        );
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Names compare byte for byte and are never case-mapped: with
+/// `metals-crew` a workarea and a crew of the tenant and `root-admin` its
+/// key, `Metals-Crew` and `Root-Admin` are `request.validation` naming their
+/// place wherever they are sent — a header, a path parameter, a reference
+/// body field, a creation's name — and never read as the lowercase name they
+/// resemble (http-api.md names and ids; errors.md; ADR-0026 d2).
+#[tokio::test]
+async fn an_uppercase_name_is_refused_never_lowercased() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    create_crew(router, &admin, "metals-crew").await;
+    let head = head_seq(&rig, tenant).await;
+
+    // Spelled as created, each resolves.
+    for uri in [
+        "/v2/workareas/metals-crew",
+        "/v2/crews/metals-crew",
+        "/v2/keys/root-admin",
+    ] {
+        let (status, _, body) = send(router, "GET", uri, Call::auth(&admin)).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    for (method, uri, call, field) in [
+        (
+            "POST",
+            "/v1/memories",
+            submit_into(&agent, "upper-1", "Metals-Crew", "quote-1"),
+            "X-OML-Workarea",
+        ),
+        (
+            "GET",
+            "/v2/workareas/Metals-Crew",
+            Call::auth(&admin),
+            "workarea_id",
+        ),
+        (
+            "GET",
+            "/v2/crews/Metals-Crew",
+            Call::auth(&admin),
+            "crew_id",
+        ),
+        ("GET", "/v2/keys/Root-Admin", Call::auth(&admin), "key_id"),
+        (
+            "POST",
+            "/v2/workareas",
+            Call::auth(&admin)
+                .idem("upper-wa")
+                .body(json!({ "parent_id": "Universe", "name": "q1-2027" })),
+            "/parent_id",
+        ),
+        (
+            "POST",
+            "/v2/crews",
+            Call::auth(&admin)
+                .idem("upper-crew")
+                .body(json!({ "name": "Redline-Crew" })),
+            "/name",
+        ),
+    ] {
+        let (status, _, refused) = send(router, method, uri, call).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(
+            refused["error"]["details"]["field"], field,
+            "{method} {uri}: {refused}"
+        );
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// `GET /v2/keys/{key_id}` takes the key's id or its name, and answers the
+/// same by both: the key's name, role, principal, crew, default workarea,
+/// attestation as `key.issued` journalled it, stored grants, denials in
+/// force and permission epoch, never its value. A name that names no key
+/// answers exactly what an unknown id answers, `access.not_found`, and only
+/// the admin key role reads a key (http-api.md keys, grants, denials;
+/// ADR-0026 d4, d8, d9).
+#[tokio::test]
+async fn get_v2_keys_by_name_answers_the_key() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let crew_record = create_crew(router, &admin, "metals-crew").await;
+    let (status, _, issued) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("issue-laptop").body(json!({
+            "role": "writer",
+            "name": "claude-laptop",
+            "principal": "claude/laptop",
+            "held_by": "agent",
+            "crew": "metals-crew",
+            "grants": [
+                { "workarea_node_id": "metals-crew", "role": "writer" },
+                { "workarea_node_id": "metals-crew", "role": "reader" },
+            ],
+            "default_workarea_id": "q1-2027",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    // Every reference was sent by name; the response carries ids.
+    assert_eq!(issued["crew_id"], crew_record["crew_id"], "{issued}");
+    assert_eq!(issued["default_workarea_id"], quarter.to_string());
+    assert_eq!(issued["grants"][0]["workarea_node_id"], crew.to_string());
+    let agent = issued["value"].as_str().expect("value").to_owned();
+    let key_id = issued["key_id"].as_str().expect("key id").to_owned();
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        "/v2/keys/claude-laptop/denials",
+        Call::auth(&admin)
+            .idem("deny-laptop")
+            .body(json!({ "workarea_node_id": "q1-2027" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    let read = |key: String, token: String| async move {
+        send(
+            router,
+            "GET",
+            &format!("/v2/keys/{key}"),
+            Call::auth(&token),
+        )
+        .await
+    };
+    let (status, _, by_name) = read("claude-laptop".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{by_name}");
+    assert_eq!(
+        by_name,
+        json!({
+            "key_id": key_id,
+            "name": "claude-laptop",
+            "role": "writer",
+            "principal": "claude/laptop",
+            "crew_id": crew_record["crew_id"],
+            "default_workarea_id": quarter,
+            "held_by": "agent",
+            "expiry": null,
+            "rotated_from": null,
+            "grants": issued["grants"],
+            "denials": [{
+                "denial_id": denial["denial_id"],
+                "workarea_node_id": quarter,
+                "epoch": denial["epoch"],
+                "lifted": false,
+            }],
+            "epoch": denial["epoch"],
+        })
+    );
+    let (status, _, by_id) = read(key_id.clone(), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_id, by_name, "one key by either spelling");
+
+    // The attestation reads back as key.issued journalled it: the ceremony's
+    // `human`, and null for a key issued without one.
+    let (_, _, root_admin) = read("root-admin".to_owned(), admin.clone()).await;
+    assert_eq!(root_admin["role"], "admin", "{root_admin}");
+    assert_eq!(root_admin["held_by"], "human", "{root_admin}");
+    issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let (_, _, unattested) = read("reader-crew-agent-recall".to_owned(), admin.clone()).await;
+    assert_eq!(unattested["held_by"], Value::Null, "{unattested}");
+    assert_eq!(unattested["crew_id"], Value::Null, "{unattested}");
+
+    // An unknown name answers what an unknown id answers; an agent key
+    // reaches no key read.
+    let (status, _, unknown_name) = read("nobody-key".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{unknown_name}");
+    let (status, _, unknown_id) = read(OsIds.new_id().to_string(), admin.clone()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{unknown_id}");
+    assert_eq!(unknown_name["error"], unknown_id["error"]);
+    let (status, _, refused) = read("claude-laptop".to_owned(), agent).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.verb_ceiling");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A crew's name is unique in its tenant and in its kind: `POST /v2/crews`
+/// creates the record beside a workarea of the same name and answers it, and
+/// a second create under that name, under another Idempotency-Key, is `409
+/// name.taken` with `details` `{kind, name}` and journals nothing
+/// (http-api.md crews; errors.md `name.taken`; ADR-0026 d1, d5, d8).
+#[tokio::test]
+async fn post_v2_crews_twice_with_one_name_answers_409_name_taken() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, _crew_workarea) = crew_tenant(router).await;
+    let (status, _, created) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(&admin).idem("crew-1").body(json!({
+            "name": "metals-crew",
+            "charter_uri": "https://crews.example.com/metals/charter.md",
+            "external_manager": "crewd.example.com",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let crew_id = created["crew_id"].as_str().expect("crew id");
+    assert!(Uuid::parse_str(crew_id).is_ok(), "{created}");
+    assert_eq!(
+        created,
+        json!({
+            "crew_id": crew_id,
+            "name": "metals-crew",
+            "charter_uri": "https://crews.example.com/metals/charter.md",
+            "external_manager": "crewd.example.com",
+        })
+    );
+    let head = head_seq(&rig, tenant).await;
+
+    let (status, _, taken) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(&admin)
+            .idem("crew-2")
+            .body(json!({ "name": "metals-crew" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{taken}");
+    assert_envelope(&taken, "name.taken");
+    assert_eq!(
+        taken["error"]["details"],
+        json!({ "kind": "crew", "name": "metals-crew" }),
+        "{taken}"
+    );
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The crew routes are the admin key role's: `GET /v2/crews/{crew_id}`
+/// reads one record by id or name, `POST /v2/crews/{crew_id}/update`
+/// changes its charter or manager and never its name, `GET /v2/crews` pages
+/// the tenant's records in name order under a cursor bound to the key that
+/// obtained it, an unknown crew is `access.not_found`, and no agent key
+/// reaches any of them (http-api.md crews; ADR-0026 d8).
+#[tokio::test]
+async fn the_crew_routes_read_update_and_list_crew_records_by_id_or_name_for_admin_keys_only() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    let redline = create_crew(router, &admin, "redline").await;
+    let metals = create_crew(router, &admin, "metals-crew").await;
+    let metals_id = metals["crew_id"].as_str().expect("crew id").to_owned();
+
+    for crew_ref in ["metals-crew", metals_id.as_str()] {
+        let (status, _, read) = send(
+            router,
+            "GET",
+            &format!("/v2/crews/{crew_ref}"),
+            Call::auth(&admin),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{read}");
+        assert_eq!(read, metals);
+    }
+
+    let (status, _, updated) = send(
+        router,
+        "POST",
+        "/v2/crews/metals-crew/update",
+        Call::auth(&admin)
+            .idem("update-1")
+            .body(json!({ "external_manager": "crewd.example.com" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(
+        updated,
+        json!({
+            "crew_id": metals_id,
+            "name": "metals-crew",
+            "charter_uri": metals["charter_uri"],
+            "external_manager": "crewd.example.com",
+        }),
+        "the charter kept, the name never changed"
+    );
+    let head = head_seq(&rig, tenant).await;
+    // An update with neither field, and one naming the record anew, are
+    // refused; the body is closed.
+    for (n, body) in [json!({}), json!({ "name": "renamed-crew" })]
+        .into_iter()
+        .enumerate()
+    {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            &format!("/v2/crews/{metals_id}/update"),
+            Call::auth(&admin)
+                .idem(&format!("update-bad-{n}"))
+                .body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    // Two pages of one, in name order; the cursor answers only its key.
+    let (status, _, first) = send(router, "GET", "/v2/crews?limit=1", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["items"], json!([updated]));
+    let cursor = first["next_cursor"]
+        .as_str()
+        .expect("a next page")
+        .to_owned();
+    let (status, _, second) = send(
+        router,
+        "GET",
+        &format!("/v2/crews?limit=1&cursor={cursor}"),
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second, json!({ "items": [redline], "next_cursor": null }));
+    let other_admin = issue_key_with(router, &admin, "admin", "platform/second", json!([])).await;
+    let other_admin = other_admin["value"].as_str().expect("value");
+    let (status, _, foreign) = send(
+        router,
+        "GET",
+        &format!("/v2/crews?cursor={cursor}"),
+        Call::auth(other_admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{foreign}");
+    assert_envelope(&foreign, "request.validation");
+
+    let (status, _, unknown) =
+        send(router, "GET", "/v2/crews/nowhere-crew", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{unknown}");
+    assert_envelope(&unknown, "access.not_found");
+
+    for (method, uri, call) in [
+        ("GET", "/v2/crews", Call::auth(&agent)),
+        ("GET", "/v2/crews/metals-crew", Call::auth(&agent)),
+        (
+            "POST",
+            "/v2/crews",
+            Call::auth(&agent)
+                .idem("agent-crew")
+                .body(json!({ "name": "agent-crew" })),
+        ),
+        (
+            "POST",
+            "/v2/crews/metals-crew/update",
+            Call::auth(&agent)
+                .idem("agent-update")
+                .body(json!({ "charter_uri": "https://crews.example.com/x.md" })),
+        ),
+    ] {
+        let (status, _, refused) = send(router, method, uri, call).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}: {refused}");
+        assert_envelope(&refused, "access.verb_ceiling");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+/// `POST /v2/workareas/{workarea_id}/crew` points a workarea at a crew
+/// record, each by id or name, and answers the node with its name, its
+/// path and the record, which the workarea read then serves; a crew that
+/// names no record of the tenant is `access.not_found`, as is a workarea,
+/// and nothing is journalled for either (http-api.md workareas; ADR-0026
+/// d8).
+#[tokio::test]
+async fn post_v2_workareas_crew_points_a_workarea_at_a_crew_record_by_name() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let record = create_crew(router, &admin, "metals-crew").await;
+    let head = head_seq(&rig, tenant).await;
+
+    for (n, uri, crew_ref) in [
+        (1, "/v2/workareas/q1-2027/crew", "nowhere-crew"),
+        (2, "/v2/workareas/no-such-node/crew", "metals-crew"),
+    ] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            uri,
+            Call::auth(&admin)
+                .idem(&format!("point-{n}"))
+                .body(json!({ "crew": crew_ref })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {refused}");
+        assert_envelope(&refused, "access.not_found");
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    let (status, _, pointed) = send(
+        router,
+        "POST",
+        "/v2/workareas/q1-2027/crew",
+        Call::auth(&admin)
+            .idem("point")
+            .body(json!({ "crew": "metals-crew" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pointed}");
+    assert_eq!(
+        pointed,
+        json!({
+            "id": quarter,
+            "name": "q1-2027",
+            "parent_id": crew,
+            "path": "universe.metals-crew.q1-2027",
+            "status": "development",
+            "crew": record,
+        })
+    );
+    let (status, _, view) = send(
+        router,
+        "GET",
+        &format!("/v2/workareas/{quarter}"),
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["crew"], record, "the read serves the record");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// An admin key reads workarea structure by its key role, no grant
+/// entering: the workarea read, here by name, answers the node's name and
+/// every child, children no grant reaches included, with
+/// `my_effective_verbs` empty, and an admin key with no grant reads it the
+/// same; a reader key sees only what its grants reach (roles-and-keys.md
+/// permission matrix, footnote 6; http-api.md workareas; ADR-0026 d15).
+#[tokio::test]
+async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_empty() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let metals = create_workarea(router, &admin, root, "metals-crew").await;
+    let redline = create_workarea(router, &admin, root, "redline").await;
+    let quarter = create_workarea(router, &admin, metals, "q1-2027").await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", quarter).await;
+    let second_admin = issue_key_with(router, &admin, "admin", "platform/second", json!([])).await;
+    let second_admin = second_admin["value"].as_str().expect("value").to_owned();
+
+    for token in [&admin, &second_admin] {
+        let (status, _, view) =
+            send(router, "GET", "/v2/workareas/universe", Call::auth(token)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(
+            view,
+            json!({
+                "id": root,
+                "name": "universe",
+                "parent_id": null,
+                "path": "universe",
+                "status": "committed",
+                "children": [
+                    { "id": metals, "path_leaf": "metals-crew", "status": "development" },
+                    { "id": redline, "path_leaf": "redline", "status": "development" },
+                ],
+                "edges": [],
+                "my_effective_verbs": [],
+                "permission_epoch": view["permission_epoch"],
+            })
+        );
+    }
+
+    // A reader key reads by its grants alone: not the node above its grant,
+    // and its own node with the verbs its grant confers.
+    let (status, _, refused) = send(
+        router,
+        "GET",
+        "/v2/workareas/metals-crew",
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_envelope(&refused, "access.not_found");
+    let (status, _, leaf) = send(router, "GET", "/v2/workareas/q1-2027", Call::auth(&reader)).await;
+    assert_eq!(status, StatusCode::OK, "{leaf}");
+    assert_eq!(leaf["name"], "q1-2027");
+    assert_eq!(
+        leaf["my_effective_verbs"],
+        json!(["recall", "read", "graph_read", "events_tail"])
+    );
+
     drop_db(&rig.db_name).await;
 }
 
@@ -1878,7 +2710,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
         assert_envelope(&refused, "request.validation");
-        assert_eq!(refused["error"]["details"]["field"], "name", "{refused}");
+        assert_eq!(refused["error"]["details"]["field"], "/name", "{refused}");
     }
     // Before step 1: a body that would also fail the two-key rule answers
     // the missing name.
@@ -1893,7 +2725,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
-    assert_eq!(refused["error"]["details"]["field"], "name", "{refused}");
+    assert_eq!(refused["error"]["details"]["field"], "/name", "{refused}");
     assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
 
     let issued = issue_key_with(router, &admin, "writer", "claude/laptop", grants.clone()).await;
@@ -3937,23 +4769,18 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     let rig = fresh_rig().await;
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
-    let crew = rig_app(&rig)
-        .create_crew(
-            &admin,
-            &CrewCreateRequest {
-                name: Name::parse("metals-crew").expect("a name"),
-                charter_uri: Some("https://crews.example.com/metals/charter.md".to_owned()),
-                external_manager: Some("crewd.example.com".to_owned()),
-            },
-        )
-        .await
-        .expect("create crew");
-    let crew_record = json!({
-        "crew_id": crew.crew_id,
-        "name": "metals-crew",
-        "charter_uri": "https://crews.example.com/metals/charter.md",
-        "external_manager": "crewd.example.com",
-    });
+    let (status, _, crew_record) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(&admin).idem("crew-metals").body(json!({
+            "name": "metals-crew",
+            "charter_uri": "https://crews.example.com/metals/charter.md",
+            "external_manager": "crewd.example.com",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{crew_record}");
 
     // A crew that names no crew record of the tenant is absent, and a value
     // that is neither an id nor a name is refused at parse.
@@ -3988,7 +4815,9 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     assert_eq!(created["crew"], crew_record);
-    // The create serves the same derived path the read serves.
+    // The create serves the node's name and the same derived path the read
+    // serves.
+    assert_eq!(created["name"], "metals-crew");
     assert_eq!(created["path"], "universe.metals-crew");
     let crew = Uuid::parse_str(created["id"].as_str().expect("id")).expect("uuid");
     let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
@@ -4019,6 +4848,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
         view,
         json!({
             "id": crew,
+            "name": "metals-crew",
             "parent_id": root,
             "path": "universe.metals-crew",
             "status": "development",
@@ -4089,12 +4919,12 @@ async fn an_unreadable_workarea_is_not_found() {
     };
     let (status, _, body) = get(&reader, crew.to_string()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    // A writer-only key, an unknown node and an id that names no node all
-    // answer as absence.
+    // A writer-only key, an id that names no node and a name that names no
+    // node all answer as absence (ADR-0026 d4).
     for (token, id) in [
         (&writer, crew.to_string()),
         (&reader, Uuid::from_u128(0xDEAD).to_string()),
-        (&reader, "wa_not_a_node".to_owned()),
+        (&reader, "no-such-node".to_owned()),
     ] {
         let (status, _, body) = get(token, id).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");

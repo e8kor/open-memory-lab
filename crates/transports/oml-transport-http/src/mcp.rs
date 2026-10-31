@@ -6,9 +6,11 @@
 //! Every tool translates to exactly one call on the HTTP API: the handler
 //! builds that call's headers and body and runs the same handler the ring
 //! route runs, so validation, idempotency and the typed refusals cannot drift
-//! between the two surfaces. The catalog served is the PoC slice of
-//! docs/api/mcp-tools.json — the tools whose ring endpoint exists — and the
-//! schemas are read from that file, its one declaration site.
+//! between the two surfaces. A workarea argument is passed through as sent,
+//! an id or a name; the facade resolves nothing (mcp-plugin.md; ADR-0026
+//! d4). The catalog served is the PoC slice of docs/api/mcp-tools.json — the
+//! tools whose ring endpoint exists — and the schemas are read from that
+//! file, its one declaration site.
 
 use std::collections::HashMap;
 
@@ -519,13 +521,15 @@ where
     }
 
     /// `oml_workarea_info`: one `GET /v2/workareas/{id}`, so the tool answers
-    /// exactly what the ring answers. An omitted workarea is the key's
-    /// journalled default, which the app resolves from the authenticated key
-    /// record after step 1 of the refusal order; a key past step 1 with none
-    /// is `request.workarea_unresolved`, and an admin key, which the ring's
-    /// read answers with structure by its key role, reads its default the
-    /// same way (mcp-plugin.md; roles-and-keys.md refusal order; ADR-0025
-    /// d14; ADR-0026 d15).
+    /// exactly what the ring answers; `workarea` is the node's id or name,
+    /// which the ring classifies and the app resolves (ADR-0026 d4). An
+    /// omitted workarea is the key's journalled default, which the app
+    /// resolves from the authenticated key record after step 1 of the
+    /// refusal order; a key past step 1 with none is
+    /// `request.workarea_unresolved`, and an admin key, which the ring's read
+    /// answers with structure by its key role, reads its default the same
+    /// way (mcp-plugin.md; roles-and-keys.md refusal order; ADR-0025 d14;
+    /// ADR-0026 d15).
     async fn tool_workarea_info(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
         let args: WorkareaInfoArgs = parse_args(args)?;
         let view = ring_outcome(
@@ -533,10 +537,12 @@ where
         )
         .await?;
         // The plugin's output names the parent `parent`; `crew` stays absent
-        // when none was recorded (mcp-plugin.md `oml_workarea_info`).
+        // when none was recorded (mcp-plugin.md `oml_workarea_info`;
+        // ADR-0026 d1, d8).
         let mut out = Map::new();
         for (from, to) in [
             ("id", "id"),
+            ("name", "name"),
             ("path", "path"),
             ("status", "status"),
             ("crew", "crew"),

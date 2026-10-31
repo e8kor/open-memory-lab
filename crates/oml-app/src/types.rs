@@ -652,6 +652,27 @@ pub struct MemoryPage {
     pub next_cursor: Option<String>,
 }
 
+/// One page of the tenant's crew records in name order, and the cursor of
+/// the next page, `None` once the listing is exhausted (http-api.md crews;
+/// ADR-0026 d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrewPage {
+    pub items: Vec<CrewRecord>,
+    pub next_cursor: Option<String>,
+}
+
+/// One key as the key read serves it (http-api.md keys, grants, denials;
+/// ADR-0026 d9, d10): its row, a revoked key's included, the access its
+/// grants and its denials in force give it, and its attestation as
+/// `key.issued` journalled it, `None` when none was sent. Never its value,
+/// which no store holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyDetail {
+    pub key: KeyRecord,
+    pub held_by: Option<HeldBy>,
+    pub access: KeyAccess,
+}
+
 /// `POST /v1/memories/{artifact_id}/supersede` (http-api.md supersede;
 /// ADR-0025 d10, d11). The successor's `claim_key` and workarea are always
 /// the target's.

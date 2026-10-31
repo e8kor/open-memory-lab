@@ -28,7 +28,7 @@ use oml_domain::{
     sha256_digest_string, transition,
 };
 
-use crate::cursor::ListingCursor;
+use crate::cursor::{ListingCursor, NameCursor};
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, OutboxRow, ScanOutcome,
@@ -36,12 +36,12 @@ use crate::ports::{
 };
 use crate::types::{
     AppError, AssignedNames, BootstrapRequest, BootstrapResult, CreatedWorkarea, CrewCreateRequest,
-    CrewRecord, CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey,
-    KeyAccess, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage,
-    MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult,
-    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeReceipt,
-    SupersedeRequest, TailPage, TailedEvent, TreeNode, UnnamedRows, Verdict, VerdictOutcome,
-    VersionRef, WorkareaInfo, WorkareaRecord,
+    CrewPage, CrewRecord, CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS, IssueKeyRequest,
+    IssuedKey, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
+    ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
+    RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode,
+    UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -1590,13 +1590,98 @@ where
             .ok_or(AppError::NotFound)
     }
 
-    /// The tenant's crew records in name order, admin by key role
-    /// (http-api.md crews; ADR-0026 d8). The read is one store query; the
-    /// HTTP page cut is the transport's.
-    pub async fn crews(&self, api_key: &str) -> Result<Vec<CrewRecord>, AppError> {
+    /// One page of the tenant's crew records in name order, admin by key
+    /// role: at most `limit` of them, after the name `cursor` resumes at,
+    /// and the cursor of the next page, bound to the key and to
+    /// `api.cursor_ttl` like every listing cursor; a stale or foreign one
+    /// is refused (http-api.md crews and pagination; ADR-0026 d8). The read
+    /// is one store query.
+    pub async fn crews(
+        &self,
+        api_key: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<CrewPage, AppError> {
         let key = self.authenticate(api_key).await?.key;
         require_role(&key, Role::Admin, "crews")?;
-        Ok(self.journal.crews(key.tenant_id).await?)
+        let now = self.clock.now();
+        let after = cursor
+            .map(|cursor| NameCursor::resume(cursor, key.key_id, &now))
+            .transpose()?;
+        // One row past the page says whether another page exists.
+        let mut items: Vec<CrewRecord> = self
+            .journal
+            .crews(key.tenant_id)
+            .await?
+            .into_iter()
+            .filter(|crew| after.as_ref().is_none_or(|after| crew.name > *after))
+            .take(limit.saturating_add(1))
+            .collect();
+        let more = items.len() > limit;
+        items.truncate(limit);
+        let next_cursor = items.last().filter(|_| more).map(|last| {
+            NameCursor {
+                key_id: key.key_id,
+                after: last.name.clone(),
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        Ok(CrewPage { items, next_cursor })
+    }
+
+    /// One key of the tenant, by id or name, admin by key role: a revoked
+    /// key's included, since its name still resolves and its row stays as
+    /// history; one the tenant does not hold is absent (http-api.md keys,
+    /// grants, denials; ADR-0026 d4, d9, d10). The attestation is read from
+    /// the key's `key.issued`, which journals it as sent, where the row
+    /// holds the schema default; never the value, which no store holds.
+    pub async fn key(&self, api_key: &str, key: Reference) -> Result<KeyDetail, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "key")?;
+        let tenant_id = admin.tenant_id;
+        let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
+        let Some(record) = self.journal.key(tenant_id, key_id).await? else {
+            return Err(AppError::NotFound);
+        };
+        let access = self
+            .journal
+            .key_access(tenant_id, key_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let issued = self
+            .journal
+            .events_range(tenant_id, access.issued_seq, 1)
+            .await?
+            .into_iter()
+            .next()
+            .filter(|e| {
+                e.envelope.event_type == event_types::KEY_ISSUED
+                    && payload_id(&e.envelope.payload, "key_id") == Some(key_id)
+            })
+            .ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "key {key_id}'s issued_seq {} names no key.issued of it",
+                    access.issued_seq
+                ))
+            })?;
+        let held_by = match payload_str(&issued.envelope.payload, "held_by").as_deref() {
+            None => None,
+            Some("agent") => Some(HeldBy::Agent),
+            Some("human") => Some(HeldBy::Human),
+            Some("service") => Some(HeldBy::Service),
+            Some(other) => {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id}'s key.issued journals held_by {other:?}"
+                ))
+                .into());
+            }
+        };
+        Ok(KeyDetail {
+            key: record,
+            held_by,
+            access,
+        })
     }
 
     /// Change a crew record's charter URI or external manager, never its

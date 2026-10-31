@@ -6,12 +6,7 @@
     "design_spec_version": "0.3.0-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
-      "oml_remember": "ADR-0026 d3, d4, d7: workarea takes the workarea's id or its name, resolved on the server so that an unknown or unreadable name answers exactly what its id would; a path is not accepted (request.validation), so the description's path sentence goes when the code lands; the build parses the value as an id only.",
-      "oml_learn": "ADR-0026 d3, d4: workarea takes the workarea's id or its name, as on oml_remember; the build parses the value as an id only.",
-      "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet. ADR-0026 d3, d4: scope takes the workarea's id or its name, resolved on the server, an unknown or unreadable name answering exactly what its id would; the build parses the value as an id only.",
-      "oml_my_work": "ADR-0026 d3, d4: workarea takes the workarea's id or its name, and a name the key holds no role on answers access.not_found, indistinguishable from a nonexistent node, exactly as its id would; the build parses the value as an id only.",
-      "oml_workarea_info": "ADR-0026 d3, d4: workarea takes the workarea's id or its name, and a name the key may not see answers access.not_found, as its id would; the build parses the value as an id only.",
-      "oml_events_tail": "ADR-0026 d4: scope takes the workarea's id or its name; the build parses the value as an id only."
+      "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet."
     }
   },
   "tools": [
@@ -23,7 +18,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional target workarea node id. Omitted: the key's journalled default workarea. Present: an override honored only within the key's grants. A path given here is resolved to its node first. A key with neither a default nor a value here is refused (request.workarea_unresolved)."
+            "description": "Optional target workarea, by node id or name, resolved on the server; a derived path is neither and is refused (request.validation). Omitted: the key's journalled default workarea. Present: an override honored only within the key's grants, and a name the key may not see answers access.not_found exactly as its id would. A key with neither a default nor a value here is refused (request.workarea_unresolved)."
           },
           "claim_key": {
             "type": "string",
@@ -88,7 +83,7 @@
           },
           "scope": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the key's default workarea's subtree. Present: one node as an override within the key's grants. Either way the search covers that node's subtree intersected with the key's effective read access."
+            "description": "Optional workarea, by node id or name. Omitted: the key's default workarea's subtree. Present: one node as an override within the key's grants. Either way the search covers that node's subtree intersected with the key's effective read access."
           },
           "k": {
             "type": "integer",
@@ -120,7 +115,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional target workarea node id, exactly as on oml_remember: omitted, the key's default workarea is the target."
+            "description": "Optional target workarea, by node id or name, exactly as on oml_remember: omitted, the key's default workarea is the target."
           },
           "claim_key": {
             "type": "string",
@@ -292,7 +287,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea node id, a subtree filter; omitted, every workarea the key wrote to. It must name a node the key holds some role on, else access.not_found, indistinguishable from a nonexistent node."
+            "description": "Optional workarea, by node id or name, a subtree filter; omitted, every workarea the key wrote to. It must name a node the key holds some role on, else access.not_found, indistinguishable from a nonexistent node."
           },
           "claim_key": {
             "type": "string",
@@ -326,7 +321,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the tool describes the key's default workarea; a key with none is refused (request.workarea_unresolved)."
+            "description": "Optional workarea, by node id or name. Omitted: the tool describes the key's default workarea; a key with none is refused (request.workarea_unresolved)."
           }
         },
         "required": [],
@@ -375,7 +370,7 @@
         "properties": {
           "scope": {
             "type": "string",
-            "description": "Optional workarea node id: the tail is filtered to its subtree within the key's reader effective access, and a node outside that access is refused (access.not_found). Omitted: the key's journalled default workarea; a key with none is refused (request.workarea_unresolved)."
+            "description": "Optional workarea, by node id or name: the tail is filtered to its subtree within the key's reader effective access, and a node outside that access is refused (access.not_found). Omitted: the key's journalled default workarea; a key with none is refused (request.workarea_unresolved)."
           },
           "after_seq": {
             "type": "integer",
