@@ -52,8 +52,9 @@ confirmed d2's departure from the brief on 2026-10-31.
 - **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-40 to FR-43
   and FR-46 on the roadmap, each marked proposed (FR-44 and FR-45 are used on another branch). No
   contract page changes, so `info.version` stays `0.2.0-design`.
-- **Amends, on acceptance:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4), ADR-0023 (d3,
-  d8) and ADR-0025 (d4, d6, d8, d11, d12, d14); their Status lines gain the back-pointer then.
+- **Amends, on acceptance:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4), ADR-0022 (d6),
+  ADR-0023 (d3, d8), ADR-0024 (d1) and ADR-0025 (d4, d6, d8, d11, d12, d13, d14); their Status
+  lines gain the back-pointer then.
 
 ### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
 

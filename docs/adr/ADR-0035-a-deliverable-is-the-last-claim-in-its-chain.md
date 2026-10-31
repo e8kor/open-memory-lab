@@ -9,30 +9,29 @@ answers: what a deliverable is and what its words and files hold; how remember, 
 
 **Status:** proposed · 2026-10-31
 
-**Amends:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4), ADR-0023 (d3, d8), ADR-0025 (d4, d6, d8, d11, d12, d14)
+**Amends:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4), ADR-0022 (d6), ADR-0023 (d3, d8), ADR-0024 (d1), ADR-0025 (d4, d6, d8, d11, d12, d13, d14)
 
 ## Context
 
 Agents finish work — a report, an analysis, a diagram, the evidence behind a finding — and OML
 keeps only the memories that led to it. **The user's decisions**, not reopened here: a
-**deliverable** (an `artifact_id` already names a claim version) is the **last claim in its
-chain**: its words describe it, its files are [ADR-0004](ADR-0004-bodies-and-attachments.md)
-attachments bound into its envelope by digest, `derives_from` names what led to it, and its
-versions are supersessions under one `claim_key` ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
-d10), as a claude.ai artifact is republished to one URL; **several coexist in one workarea**; each
-is reviewed like every claim (R2, R3; ADR-0004 d5); and, on 2026-10-31, they ride remember, recall
-and get, the server describing the file forms it accepts and the harness choosing, while storage
-should "keep our basic installation simple but … allow us to scale in future", its "underneath
-solution" replaceable "with cloud or local host, with local host enabled by default".
+**deliverable** is the **last claim in its chain**: its words describe it, its files are
+[ADR-0004](ADR-0004-bodies-and-attachments.md) attachments bound by digest, `derives_from` names
+what led to it, and its versions are supersessions under one `claim_key`
+([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d10); **several coexist in one workarea**;
+each is reviewed like every claim (R2, R3; ADR-0004 d5); and, on 2026-10-31, they ride remember,
+recall and get, the server describing the file forms it accepts and the harness choosing, while
+storage should "keep our basic installation simple but … allow us to scale in future", its
+"underneath solution" replaceable "with cloud or local host, with local host enabled by default".
 
 **What the build has**, at `02a385d`: no attachment substrate. Envelopes carry `"attachments": []`
-(crates/oml-app/src/app.rs:1365, 2037); a submit naming a digest answers
+(crates/oml-app/src/app.rs:1365, 2037), and a submit naming a digest answers
 `submission.attachment_missing` (crates/transports/oml-transport-http/src/lib.rs:1453-1466); no
 migration lays `upload_sessions` or `artifact_keys` (migrations/0001_init.sql:9-11); the keyring
-holds only the signing key, and no object-store or KMS port exists (crates/oml-app/src/ports.rs),
-nor an `object_store` or `deltalake` dependency (Cargo.toml), nor an object store in CI or compose
-(docker-compose.yml:7-9); no lineage read is routed (lib.rs:172-189); `oml_attach` and `oml_graph`
-answer "not built" (crates/transports/oml-transport-http/src/mcp.rs:57). ADR-0026 (iteration 3),
+holds only the signing key; no object-store or KMS port (crates/oml-app/src/ports.rs), `object_store`
+or `deltalake` dependency (Cargo.toml), or object store in CI or compose (docker-compose.yml:7-9)
+exists; no lineage read is routed (lib.rs:172-189); `oml_attach` and `oml_graph` answer "not
+built" (mcp.rs:57). ADR-0026 (iteration 3),
 ADR-0030 (in-progress workareas) and ADR-0031 (connections) are proposed on other branches, cited
 by number and unlinked. d10 is the user's decision; d2 departs from the brief, as the maintainer
 confirmed on 2026-10-31; each other decision is the maintainer's reading, which the user confirms
@@ -42,11 +41,12 @@ before acceptance. Proposed, not built.
 
 - **d1 — A deliverable is a claim of kind `deliverable`: finished work its words describe.** It is
   an `oml_remember` (`POST /v1/memories`, `verb: "remember"`) with `kind: "deliverable"`,
-  journalled as `submission.remember`. Recall ranks it by its words, never its files' text, and
-  `kinds` and `include_own_held` admit it beside `memory` and `derived_fact` (amends ADR-0025 d4,
-  d8). Its successors are deliverables and no other kind becomes one, a class of its own (amends
-  ADR-0025 d11). It suits reports, analyses, diagrams and evidence; code stays in git (the words
-  may record a commit SHA), hosting with claude.ai artifacts, datasets with [ADR-0020](ADR-0020-dataset-onboarding.md).
+  journalled as `submission.remember`. Recall ranks it by its words, never its files' text; hits
+  include served tips of kind `deliverable` whether or not `kinds` is sent, the session hook's
+  (ADR-0029 d2) too, and `kinds` and `include_own_held` admit it beside `memory` and
+  `derived_fact` (amends ADR-0025 d4, d8). Its successors are deliverables and no other kind
+  becomes one (amends ADR-0025 d11). It suits reports, analyses, diagrams and evidence; code stays
+  in git, hosting with claude.ai artifacts, datasets with [ADR-0020](ADR-0020-dataset-onboarding.md).
 
 - **d2 — Every claim that binds files names them in a file manifest, its first attachment, which
   the server builds and checks; one that does not name exactly the other bound digests is refused
@@ -68,10 +68,7 @@ before acceptance. Proposed, not built.
     `422` with `details.reason` ∈ `path`, `duplicate`, `entry`, `mismatch` (a builder defect) and
     `details.path` where one applies. The envelope shape is unchanged (ADR-0004 d2's additive rule),
     a version's identity commits to every path, and paths shred with the bytes
-    ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) d3). **Departing from the brief**, whose
-    deliverable kind "adds only the manifest rule and listability", as the maintainer confirmed on
-    2026-10-31: a file manifest on deliverables alone makes `path` required on one kind and refused
-    on the rest, a conditionally required input ADR-0025 d12 rules out.
+    ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) d3).
 
 - **d3 — Every attachment fetch names one version and answers as a download a browser may not run,
   and nothing renders on the API origin.** One digest may be stored once per version that binds it
@@ -83,8 +80,7 @@ before acceptance. Proposed, not built.
   segment (`file-manifest.json` for the file manifest), `X-Content-Type-Options: nosniff` and
   `Content-Security-Policy: sandbox` ([fetch semantics](../api/http-api.md#fetch-semantics)),
   widening to every fetch what [security](../architecture/security.md#hostile-content-after-the-gate)
-  commits for reviewers, since ADR-0031 puts its OAuth authorization page on this origin; under
-  `sandbox` a document rendered anyway is an opaque origin without scripts.
+  commits for reviewers, since ADR-0031 puts its OAuth authorization page on this origin.
 
 - **d4 — `oml_remember` and `oml_supersede`, and the bodies they ride, carry files in two forms,
   each ending as the same completed upload, binding and scan.** An `attachments` item is one of:
@@ -97,7 +93,8 @@ before acceptance. Proposed, not built.
       (ADR-0031 d7, d11).
 
     The ring's bare digest strings go (a pre-release rewrite), the request gains an optional
-    `entry`, and the oneOf sits inside the items, so inputs stay flat (ADR-0025 d12).
+    `entry`, and the oneOf sits inside the items, so inputs stay flat (ADR-0025 d12). This and d5
+    to d8 reshape tools whose shapes ADR-0022 d6 keeps (amends it).
     - **Inline text** has a `text/*` or `application/json` media type or a `+json` or `+xml` suffix
       (RFC 6839), SVG and Mermaid source included, else `request.validation`; its UTF-8 bytes stay
       unnormalized, since a file's bytes are its identity. Inline texts and the file manifest are
@@ -113,22 +110,23 @@ before acceptance. Proposed, not built.
       itself when inline), and the file manifest is scanned as inline text. An uploaded file of an
       inline type whose bytes are not UTF-8 is vetoed, `submission.scan_veto` with finding
       `format.encoding` ([admission](../architecture/admission.md#the-rule-set-registry)), so no read decodes one.
-    - **Versions and R1.** A successor re-sends every file it keeps (ADR-0025 d11; d9).
-      `oml_remember` still answers only a held claim, its uploads bind into it or expire, and it
-      promotes, signs, demotes and deletes nothing ([R1](../api/mcp-plugin.md#the-verb-ceiling-what-this-surface-can-never-do-r1)).
+    - **Versions and R1.** A successor re-sends every file it keeps (ADR-0025 d11; d9); a write
+      still answers only a held claim, and promotes, signs, demotes and deletes nothing ([R1](../api/mcp-plugin.md#the-verb-ceiling-what-this-surface-can-never-do-r1)).
 
 - **d5 — Reads serve file descriptors, never bytes; descriptors count toward `max_tokens` under
   counter `oml-tc/2`; get serves small text files inline on request.**
     - **Descriptors.** Every recall hit and get result that binds files carries `entry` and
       `attachments: [{digest, path, media_type, size_bytes}]` in path order, the file manifest not
-      among them: `AttachmentDescriptor` gains `path`, and hits gain the field ADR-0025 d12 gave
-      get alone (amends it); listings carry neither. The file manifest is decrypted on the serving
-      path, never for a row the budget cuts.
+      among them, and `AttachmentDescriptor` gains `path`. On the ring both move from
+      `MemorySummary` to `Memory`, so listings carry neither (amends ADR-0025 d13); on MCP the claim
+      item carries them on recall and get, where ADR-0025 d12 gave get alone `attachments` (amends
+      it). The file manifest is decrypted on the serving path, never for a row the budget cuts.
     - **The budget.** `tokens(row) = ⌈(body_bytes + file_manifest_bytes) ÷ 4⌉`, where
       `file_manifest_bytes` is the clear `size_bytes` of its file manifest's `submission.attach` (0
-      without files), standing for the descriptors that re-serialize it, a definition like the
-      divisor. A changed function mints a counter (ADR-0025 d6, amended): `oml-tc/2`, equal to
-      `oml-tc/1` on rows without files, under ADR-0025 d7's unchanged cut.
+      without files), folded to `memories.file_manifest_bytes`, standing for the descriptors that
+      re-serialize it, a definition like the divisor. A changed function mints a counter (ADR-0025
+      d6, amended): `oml-tc/2`, equal to `oml-tc/1` on rows without files, under ADR-0025 d7's
+      unchanged cut.
     - **Text on get.** `oml_get` gains `include_text` (default `false`; `GET
       /v1/memories/{artifact_id}?include_text=true`): in path order, each inline-type file carries
       `text` while the texts stay within `submission.max_body_size`, the rest `text: null`;
@@ -145,11 +143,10 @@ before acceptance. Proposed, not built.
   `{upload_session}` item answers `submission.attachment_missing`; that half lands with ADR-0031's
   build, closed by `a_connector_keys_workarea_read_lists_only_the_inline_form`. The `oml-memory`
   skill and `initialize`'s `instructions` (MCP 2025-06-18, lifecycle, fetched 2026-10-31; unserved,
-  mcp.rs:251-257) name the form to prefer: where the harness reaches the CLI or the [HTTP
-  API](../api/http-api.md#attachments) under a bearer key, as Claude Code with the `oml` plugin does,
-  an upload for any file on disk, binary or large, whose bytes never pass through the model; inline
-  text for a short text it writes anyway, and through a connection, which reaches MCP alone, so no
-  binary goes in or comes back ([FR-42](../product/roadmap.md)).
+  mcp.rs:251-257) prefer an upload for any file on disk where the harness reaches the CLI or the
+  [HTTP API](../api/http-api.md#attachments) under a bearer key, as Claude Code with the `oml`
+  plugin does, so its bytes never pass through the model; and inline text for a short text it
+  writes anyway, and through a connection, where no binary goes in or out ([FR-42](../product/roadmap.md)).
 
 - **d7 — Several deliverables coexist in one workarea, each its own claim, and every act names one
   version.**
@@ -157,21 +154,19 @@ before acceptance. Proposed, not built.
       `claim_key` a held, promoted or demoted version holds answers `409
       submission.claim_key_conflict` ([FR-31](../product/roadmap.md)'s residual), so the agent
       names each apart, as `q4-cost-report` and `q4-cost-deck`.
-    - **Shared chains.** One memory may feed several deliverables, and a deck may derive from its
-      report; R2's closure ([ADR-0001](ADR-0001-the-constitution.md) d2) keeps a shared memory's
-      author off everything built from it, and demoting or erasing it leaves every deliverable's
-      bytes, keyed apart (d9).
     - **Listing, the tip of each.** `GET /v1/memories?kind=deliverable`, an existing filter, lists
       each deliverable's promoted served tip in scope. On MCP, `oml_my_work` gains `kind` and
       `oml_recall` `kinds`, both ring filters, so an agent lists its own and finds others' by a
       query. Missing: no MCP tool rides the scoped listing ([FR-41](../product/roadmap.md)).
-    - **Independence.** A serve binds one version's digests ([ADR-0012](ADR-0012-admission-and-review.md)
-      d5), ratification compare-and-sets one (`workarea_id`, `claim_key`) tip (ADR-0025 d10), a
-      fetch names one version (d3), and rival exclusion is per target: none touches another.
-    - **In an in-progress workarea** (ADR-0030), the commit releases every deliverable inside
-      together and is refused while any version inside is held (ADR-0030 d12), so deliverables
-      that ship apart live in sibling in-progress workareas; no claim reads into another subtree
-      (ADR-0030 d2), so a deck in one cites a report in the other only after that sibling commits.
+    - **Independence.** One memory may feed several deliverables, and a deck may derive from its
+      report: R2's closure ([ADR-0001](ADR-0001-the-constitution.md) d2) keeps a shared memory's
+      author off everything built from it, and demoting or erasing it leaves every deliverable's
+      bytes, keyed apart (d9). A serve binds one version's digests ([ADR-0012](ADR-0012-admission-and-review.md)
+      d5), ratification compare-and-sets one tip (ADR-0025 d10), a fetch names one version (d3),
+      and rival exclusion is per target: none touches another.
+    - **In an in-progress workarea**, the commit releases every deliverable inside together
+      (ADR-0030 d12), so deliverables that ship apart live in sibling in-progress workareas, and a
+      deck in one cites a report in the other only after that sibling commits (ADR-0030 d2).
 
 - **d8 — The agent declares the chain, the server checks each link and infers none, and the
   lineage read follows it back and, with `direction=descendants`, forward.** `oml_learn` and
@@ -191,22 +186,26 @@ before acceptance. Proposed, not built.
       `artifact_id`), one DEK per version, for (`tenant_id`, `object_id`), the version's
       `artifact_id` for its body and the session's `id` for a file, with (`tenant_id`,
       `artifact_id`) indexed. Inside [ADR-0024](ADR-0024-performance-foundation.md) d1's one
-      data-modifying statement, binding compare-and-sets each named session from `complete` and
-      unexpired to a new state `bound`, moves its wrapped DEK into `artifact_keys`, and inserts the
-      journal row only if every session moved, else the transaction rolls back with
+      data-modifying statement (amends it), binding compare-and-sets each named session from
+      `complete` and unexpired to a new state `bound`, moves its wrapped DEK into `artifact_keys`,
+      and inserts the journal row only if every session moved, else the transaction rolls back with
       `submission.attachment_missing`: an upload binds into one version only, races included.
       Erasure, once built ([FR-1](../product/roadmap.md)), destroys one version's DEKs in one
-      commit, then deletes its objects (amends ADR-0005 d1's "per artifact" to per stored object).
-    - **Objects.** ADR-0004 d4's `oml-bodies/<tenant>/<digest>` and its quarantine twin end in the
-      session's id, else one key re-uploading unchanged bytes for a next version would put two
-      ciphertexts at one name (amends d4). An object is a run of frames, one per part or inline
-      file: a 4-byte big-endian ciphertext length, a random 12-byte nonce (a retried part
-      re-encrypts, and a counter would repeat one), then AES-256-GCM ciphertext and tag under the
-      session DEK, with the session's `id` and part number as associated data, so a moved frame
-      fails to decrypt, and the plaintext digest, checked at completion and on every serve
-      (ADR-0004 d4), catches a dropped one. Parts are encrypted on arrival; completion stores the
-      frames unchanged at `oml-quarantine/<tenant>/<digest>/<session_id>`, the bytes
-      `submission.attach`'s ciphertext digest covers.
+      commit (amends ADR-0005 d1's "per artifact" to per stored object).
+    - **Objects.** Every object's name ends in its `artifact_keys.object_id`, the version's
+      `artifact_id` for a body and the session's `id` for a file, as
+      `oml-quarantine/<tenant>/<digest>/<object_id>` and its `oml-bodies` twin (amends ADR-0004
+      d4), else two versions binding unchanged bytes would put two ciphertexts at one name. A
+      file's object is a run of frames, one per part or inline file: a 4-byte big-endian
+      ciphertext length, a random 12-byte nonce (a retried part re-encrypts, and a counter would
+      repeat one), then AES-256-GCM ciphertext and tag under the session DEK, with the session's
+      `id` and part number as associated data, so a moved frame fails to decrypt, and the
+      plaintext digest, checked at completion and on every serve (ADR-0004 d4), catches a dropped
+      one. Each encrypted part is its own object at
+      `oml-quarantine/<tenant>/uploads/<session_id>/<part_number>`, written by plain put on every
+      backend, so a retry re-puts it; completion streams the frames in part order into the
+      session's object with one `put_multipart`, the bytes `submission.attach`'s ciphertext digest
+      covers, then deletes the parts.
     - **Lifecycle.** A held, rejected or dead-lettered version's objects stay in quarantine, since
       each can return to review ([admission](../architecture/admission.md#lifecycle)), and
       `quarantine.refused_expiry` spares them. After the ratifying commit, outside the chain lock,
@@ -217,11 +216,12 @@ before acceptance. Proposed, not built.
       the lead's sweep compare-and-sets an `open` or `complete` session past it to `expired`,
       nulling its wrapped DEK, and deletes its parts and object once that commits, so a session is
       bound or expired, never both; it also retries an interrupted move. Each session row is written
-      before its object, so the keyless quarantine GC sweep deletes an object whose row is absent
-      or `expired`, never one whose row is still to come.
+      before its objects, so the keyless quarantine GC sweep deletes a part whose session is not
+      `open` and a file object whose session is `expired`, never one whose row is to come; a body
+      object keeps admission's rule, deleted when no journalled event references its digest.
     - **Copy classes** (amends ADR-0005 d4): `upload_sessions.wrapped_dek`, live until binding or
-      expiry, then in base backups and WAL under the `artifact_keys.wrapped_dek` bound; and parts
-      in flight (S3 multipart parts, `LocalFileSystem` staging files), session-DEK ciphertext.
+      expiry, then in base backups and WAL under the `artifact_keys.wrapped_dek` bound; and part
+      objects, session-DEK ciphertext.
     - **The KEK, at its minimum.** One per tenant, its id in `artifact_keys.kek_id`, in the
       `kms-file` keyring beside the signing key (ADR-0023 d4), through ADR-0023 d8's external
       adapter once the kubernetes profile lands; custody stays ADR-0005's and [security](../architecture/security.md)'s.
@@ -231,9 +231,13 @@ before acceptance. Proposed, not built.
   lake table; one URL, `storage.url`, picks the backend, the local filesystem by default.** delta-rs
   is built on that crate and takes a caller's store (`DeltaTableBuilder::with_storage_backend`,
   deltalake 1.1.2; delta-rs `crates/core/Cargo.toml`), so each binary's composition builds one
-  store with `object_store::parse_url_opts` (0.14.2; all fetched 2026-10-31) from `storage.url` and
-  `storage.options`, the crate's endpoint and credential keys, for `oml-objectstore` and, once the
-  lake is built, `oml-lake` ([ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md)). One root holds
+  store with `object_store::parse_url_opts` from `storage.url` and `storage.options`, the crate's
+  endpoint and credential keys, for `oml-objectstore` and, once the lake is built, `oml-lake`
+  ([ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md)). The workspace pins the `object_store`
+  the pinned deltalake-core links (`^0.13.2` in 1.1.2 and 1.1.3; all fetched 2026-10-31), since
+  another version's store is another type; S1's suite rechecks ADR-0023 F1, read at 0.14.2.
+  `oml-lake` enables deltalake's `s3`, `azure` and `gcs` features and registers their handlers,
+  since delta-rs picks its log store by the URL's scheme even when handed a store. One root holds
   the `oml-quarantine/`, `oml-bodies/` and `lake/<tenant>/` prefixes (amends ADR-0023 d3's
   directory names), each process holding the prefix credentials [deployment](../operations/deployment.md#workloads) grants it.
     - **The default.** Unset, as the standalone profile leaves it, `storage.url` is the `file://`
@@ -251,9 +255,10 @@ before acceptance. Proposed, not built.
       fails. The crate documents R2 and MinIO as supporting it (`S3ConditionalPut::ETagMatch`) and
       deployment states AWS S3's as native; Garage, Azure and Google Cloud Storage are unverified,
       and the suite runs against no cloud service ([FR-46](../product/roadmap.md)).
-    - **One conformance suite**, put, get, list, conditional put, and delete as expiry and erasure
-      use it, runs against the filesystem and MinIO (S1); MinIO runs only in the compose file, the
-      kubernetes `local` profile on k3d or kind, and CI. `oml storage copy <from-url> <to-url>`, a
+    - **One conformance suite**, put, get, list, copy, conditional put, the part path (put a part,
+      re-put it, assemble) and delete as expiry uses it, runs against the filesystem and MinIO
+      (S1); MinIO runs only in the compose file, the kubernetes `local` profile on k3d or kind, and
+      CI. `oml storage copy <from-url> <to-url>`, a
       keyless Rust subcommand, copies every object and table file unchanged with the writers stopped
       and checks each copy's SHA-256; names are relative to the root, so no row changes, and once
       the operator sets `storage.url`, ADR-0023 d10's full-genesis reconciliation checks the move.
@@ -273,9 +278,9 @@ before acceptance. Proposed, not built.
     | Step | Lands | Check, tests named as sentences |
     |---|---|---|
     | S1 | d10's store: `storage.url`, `storage.options`, the default, the refused schemes, the self-test on every backend; the object-store and KMS ports; `oml-objectstore`; `oml-kms` (`kms-file`); `upload_sessions` and `artifact_keys` as d9 keys them; a `minio` service at ADR-0023 d7's pinned tag in `docker-compose.yml`, with `storage.url` set to it, and in the `test` job of `.github/workflows/ci.yml`, which runs the suite | `the_filesystem_and_minio_backends_pass_one_object_store_conformance_suite`, failing rather than skipping in CI when the MinIO endpoint is absent; `an_unset_storage_url_stores_under_the_data_directory`; `a_memory_or_http_storage_url_is_refused_at_startup`; `kms_file_wraps_and_unwraps_a_dek_and_never_stores_it_in_clear` |
-    | S2 | upload sessions, the `bound` state, expiry and the lead's sweep, binding, `submission.attach`, the move at promotion, serves with every attachment, d3's fetch; d2's file manifest and d4's two forms on remember and supersede | `no_part_or_completed_upload_rests_as_plaintext_under_the_data_directory`, `a_frame_moved_to_another_position_fails_to_decrypt`, `an_unbound_session_past_its_expiry_has_no_wrapped_dek_and_no_object`, `a_session_the_sweep_expired_never_binds_and_a_bound_one_is_never_swept`, `a_request_refused_before_begin_writes_no_object`, `a_promoted_versions_objects_move_from_quarantine_to_oml_bodies`, `one_key_uploading_the_same_bytes_twice_stores_two_objects_under_two_deks`, `a_completed_upload_binds_into_one_version_only`, `each_bound_file_has_its_own_wrapped_dek_row_under_its_version`, `a_verdict_counts_only_when_every_attachment_was_served_to_its_reviewer`, `a_fetch_serves_the_object_of_the_version_it_names`, `every_attachment_fetch_answers_as_a_download_with_scripts_disabled`, `a_file_manifest_that_does_not_name_exactly_the_other_bound_digests_is_refused`, `an_inline_text_and_an_uploaded_file_of_the_same_bytes_bind_the_same_digest_and_scan`, `inline_texts_past_the_body_bound_are_refused_as_payload_too_large`, `every_property_oml_remember_advertises_is_accepted_by_its_argument_struct` |
-    | S3 | d5 and d6: descriptors, `oml-tc/2`, `include_text`, `attachment_forms` and `attachment_limits` | `recall_counts_a_hits_file_descriptors_under_oml_tc_2`, `the_workarea_read_states_the_calling_keys_forms_and_limits` |
-    | S4 | kind `deliverable`, its class, the `kind` and `kinds` filters | `a_new_deliverable_on_a_taken_claim_key_answers_claim_key_conflict`, `two_deliverables_in_one_workarea_keep_their_own_tips_when_one_is_superseded`, `the_scoped_listing_by_kind_lists_one_tip_per_deliverable` |
+    | S2 | upload sessions, the `bound` state, expiry and the lead's sweep, binding, `submission.attach`, the move at promotion, serves with every attachment, d3's fetch; d2's file manifest and d4's two forms on remember and supersede | `no_part_or_completed_upload_rests_as_plaintext_under_the_data_directory`, `a_frame_moved_to_another_position_fails_to_decrypt`, `an_unbound_session_past_its_expiry_has_no_wrapped_dek_and_no_object`, `a_session_the_sweep_expired_never_binds_and_a_bound_one_is_never_swept`, `the_keyless_gc_deletes_no_body_object_an_event_references_and_no_part_of_an_open_session`, `a_request_refused_before_begin_writes_no_object`, `a_promoted_versions_objects_move_from_quarantine_to_oml_bodies`, `one_key_uploading_the_same_bytes_twice_stores_two_objects_under_two_deks`, `a_completed_upload_binds_into_one_version_only`, `each_bound_file_has_its_own_wrapped_dek_row_under_its_version`, `a_verdict_counts_only_when_every_attachment_was_served_to_its_reviewer`, `a_fetch_serves_the_object_of_the_version_it_names`, `every_attachment_fetch_answers_as_a_download_with_scripts_disabled`, `a_file_manifest_that_does_not_name_exactly_the_other_bound_digests_is_refused`, `an_inline_text_and_an_uploaded_file_of_the_same_bytes_bind_the_same_digest_and_scan`, `inline_texts_past_the_body_bound_are_refused_as_payload_too_large`, `every_property_oml_remember_advertises_is_accepted_by_its_argument_struct` |
+    | S3 | d5 and d6: descriptors, `oml-tc/2` with `memories.file_manifest_bytes` and retrieval's [token budgets](../architecture/retrieval.md#token-budgets), `include_text`, `attachment_forms` and `attachment_limits` | `recall_counts_a_hits_file_descriptors_under_oml_tc_2`, `a_listing_item_carries_no_file_descriptors`, `the_workarea_read_states_the_calling_keys_forms_and_limits` |
+    | S4 | kind `deliverable`, its class, the `kind` and `kinds` filters | `a_new_deliverable_on_a_taken_claim_key_answers_claim_key_conflict`, `a_recall_without_kinds_serves_deliverable_tips`, `two_deliverables_in_one_workarea_keep_their_own_tips_when_one_is_superseded`, `the_scoped_listing_by_kind_lists_one_tip_per_deliverable` |
     | S5 | the lineage read both ways; `oml_graph` served | `the_descendants_read_lists_a_deck_built_from_a_report`, `the_descendants_read_stops_at_a_node_the_caller_cannot_read` |
     | S6 | `oml attach put` and `get`; the `oml-memory` skill and `instructions` naming d6's preferred forms; the session below | `attach_put_prints_the_session_id_and_never_the_bytes` and `attach_get_writes_a_file_only_after_its_digest_matches` in `cli_e2e.rs`; `scripts/check_plugin.py` fails when the skill names a tool or form the catalog lacks; `deliverables.rs` runs the session below in `cargo test --workspace` |
 
@@ -314,13 +319,16 @@ changes now, so `info.version` stays `0.2.0-design`.
 **Process obligations.** With the proposal: this file, a [register](index.md) row, a `mkdocs.yml`
 nav entry, `llms.txt`, FR-40 to FR-43 and FR-46 on the [roadmap](../product/roadmap.md) marked proposed, one
 [changelog](../changelog.md) entry. On acceptance, not before: this record and its register row
-become `accepted design` with the date; the Status lines of ADR-0004, ADR-0005, ADR-0018, ADR-0023
-and ADR-0025 gain "· amended by ADR-0035"; ADR-0005 d4's table and the [erasure
-inventory](../architecture/audit-and-lineage.md) gain d9's two copy classes; [storage](../architecture/storage.md)
-states that the lake writes through the same port, and storage, admission and deployment name
-d10's one root and prefixes; the D2–D5, D12, D13 and D15 cells name this record; concepts gains a
-deliverables section and map row, and its and CONTRIBUTING's vocabulary pointers name d11; the
-spec tag is cut.
+become `accepted design` with the date; the Status line of each record the Amends line names
+(ADR-0022 and ADR-0024 among them) gains "· amended by ADR-0035"; ADR-0005 d4's table and the
+[erasure inventory](../architecture/audit-and-lineage.md) gain d9's two copy classes;
+[storage](../architecture/storage.md) states that the lake writes through the same port; storage,
+admission and deployment name d10's one root and prefixes, and admission's [quarantine
+placement](../architecture/admission.md#quarantine-placement), its keyless GC paragraph included,
+d9's object names and both sweep rules; the budget-token row (ADR-0025 d6) and concepts' budget
+sentence name `oml-tc/2`'s file manifest bytes; the D2–D5, D12, D13 and D15 cells name this
+record; concepts gains a deliverables section and map row, and its and CONTRIBUTING's vocabulary
+pointers name d11; the spec tag is cut.
 
 ## Rejected alternatives
 
