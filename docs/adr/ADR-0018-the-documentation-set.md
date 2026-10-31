@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0018-the-documentation-set
 tier: engineering
-status: accepted design
+status: accepted design · amended by ADR-0025
 answers: what the documentation set commits — the two tiers, the honesty discipline, the fixed vocabulary, one declaration site per rule, and the llms.txt and frontmatter contract
 -->
 
 # ADR-0018 — The documentation set: tiers, honesty discipline, llms.txt, frontmatter
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
 
 ## Context
 

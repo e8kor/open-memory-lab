@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0025-the-agent-only-memory-surface
 tier: engineering
-status: proposed
+status: accepted design
 answers: how one agent key both writes and recalls through grants; what an agent may read back of its own held memory; how a recall is budgeted in budget tokens and truncated deterministically; how supersession and the author's retire-proposal move the tip only through admission; which MCP tools carry that surface
 -->
 
 # ADR-0025 — One key writes and recalls through grants, and an agent reads back, budgets, supersedes and retires its own memory only through admission
 
-**Status:** proposed · 2026-10-30
+**Status:** accepted design · 2026-10-31
 
 **Amends:** ADR-0001 (d5), ADR-0008 (d4, d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0022 (d4, d6)
 
