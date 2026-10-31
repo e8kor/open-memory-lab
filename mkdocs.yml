@@ -14,6 +14,8 @@ validation:
 
 theme:
   name: material
+  logo: assets/brand/oml-mark.svg
+  favicon: assets/brand/favicon.svg
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
