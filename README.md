@@ -163,10 +163,13 @@ command-line verifier reads an export of the whole chain that the server does no
 simulations, embedding-based retrieval, and the operator tier; on keys, adding or revoking a
 grant after issuance, lifting a denial, retrying an issuance safely, rotation, and expiry (a key
 issued with an expiry is refused); held writes that expire when nobody reviews them; the record
-of what each search served; and links between workareas. Two working pieces differ from the
+of what each search served; and links between workareas. Three working pieces differ from the
 design. An agent's search of its own waiting writes reads them through a store query restricted
-to their author, not through the separate author-only search index the design specifies. And a
+to their author, not through the separate author-only search index the design specifies. A
 write retried while its first attempt is still running never gets the design's "still in
 progress" answer: it gets the first attempt's receipt as a replay, or, for a new memory whose
-name the first attempt has just taken, the refusal that the name is in use. The
-[critical path](docs/product/critical-path.md) orders what lands next.
+name the first attempt has just taken, the refusal that the name is in use. And the design has
+the server name, on its first start, the tenants and workareas an earlier version created; this
+build does not name them yet, so started on data an earlier version wrote, the server reports
+itself not ready and refuses every request, while a deployment that starts empty runs as
+before. The [critical path](docs/product/critical-path.md) orders what lands next.

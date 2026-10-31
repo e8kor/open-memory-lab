@@ -20,9 +20,12 @@ use uuid::Uuid;
 use oml_app::domain::sha256_digest_string;
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{IdGen as _, JournalStore};
-use oml_pg::PgStore;
-use oml_server_lead::{OsIds, enumerate_tenants, lead_state, pg_ping, startup_fork_check};
+use oml_pg::{MIGRATOR, PgStore};
+use oml_server_lead::{
+    OsIds, enumerate_tenants, lead_state, pg_ping, startup_fork_check, startup_names_check,
+};
 use oml_transport_http::DbPing;
+use sqlx::migrate::Migrate as _;
 
 const ENROLLMENT: &str = "enr_test_fixture_token";
 
@@ -52,7 +55,8 @@ struct Rig {
     db_name: String,
 }
 
-async fn fresh_rig() -> Rig {
+/// A throwaway database with no migration applied; its name.
+async fn fresh_database() -> String {
     let db_name = format!(
         "oml_test_http_{}_{}",
         std::process::id(),
@@ -65,6 +69,11 @@ async fn fresh_rig() -> Rig {
         .execute(format!("CREATE DATABASE {db_name}").as_str())
         .await
         .expect("create throwaway database");
+    db_name
+}
+
+async fn fresh_rig() -> Rig {
+    let db_name = fresh_database().await;
     let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
     store.migrate().await.expect("embedded migrations apply");
     let signing = SigningKey::from_bytes(&OsIds.new_secret());
@@ -324,6 +333,151 @@ async fn health_readyz_and_fork_refusal() {
         "retryable refusals carry Retry-After"
     );
 
+    drop_db(&rig.db_name).await;
+}
+
+/// A database at the PoC schema (0001–0005) holding one PoC tenant and its
+/// `root` workarea, then migrated by this build, so that both rows predate
+/// names (ADR-0026 d11): (database name, store, the root's id).
+async fn poc_store() -> (String, PgStore, Uuid) {
+    let db_name = fresh_database().await;
+    let mut conn = PgConnection::connect(&db_url(&db_name))
+        .await
+        .expect("connect");
+    conn.ensure_migrations_table()
+        .await
+        .expect("migrations table");
+    for migration in MIGRATOR.iter().filter(|m| m.version <= 5) {
+        conn.apply(migration)
+            .await
+            .expect("the PoC migrations apply");
+    }
+    let (tenant, root) = (Uuid::from_u128(0xA800), Uuid::from_u128(0xB800));
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, 'oml')")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("PoC tenant");
+    sqlx::query(
+        "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+         VALUES ($1, $2, NULL, 'root', 'committed')",
+    )
+    .bind(root)
+    .bind(tenant)
+    .execute(&mut *tx)
+    .await
+    .expect("PoC root");
+    tx.commit().await.expect("commit the PoC rows");
+    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
+    store
+        .migrate()
+        .await
+        .expect("0006 applies over the PoC's rows");
+    (db_name, store, root)
+}
+
+/// A lead whose store holds rows that predate names, which this build does
+/// not name yet (ADR-0026 d11; a divergence the README states), fails its
+/// startup names check by name and, built so, reports `names_assigned` not
+/// ready on `/readyz` and answers every request on either ring — a read, a
+/// write, the bootstrap claim, `/mcp` — with `system.unavailable` naming
+/// `names_assigned`, before any credential is read; `/healthz` still
+/// answers (http-api.md "Health", "Rows created before names").
+#[tokio::test]
+async fn a_lead_over_rows_that_predate_names_is_not_ready_and_serves_no_request() {
+    let (db_name, store, root) = poc_store().await;
+    let tenants = enumerate_tenants(store.pool()).await.expect("tenants");
+    let failure = startup_names_check(&store, &tenants)
+        .await
+        .expect_err("the PoC rows predate names");
+    for named in ["names_assigned", "tenants 1", "workareas 1"] {
+        assert!(failure.contains(named), "{named}: {failure}");
+    }
+
+    let router = lead_state(
+        &store,
+        SigningKey::from_bytes(&OsIds.new_secret()),
+        pg_ping(store.pool().clone()),
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .with_names_assigned(false)
+    .into_router();
+    let (status, _, body) = send(&router, "GET", "/healthz", Call::default()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, body) = send(&router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["status"], "unavailable", "{body}");
+    assert_eq!(body["checks"]["names_assigned"], "unassigned", "{body}");
+    assert_eq!(body["checks"]["fork_check"], "ok", "{body}");
+
+    let submit = json!({ "verb": "remember", "claim_key": "x", "kind": "memory", "body": "x" });
+    let tools = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    for (method, path, call) in [
+        (
+            "GET",
+            format!("/v2/workareas/{root}"),
+            Call::auth("oml_whatever"),
+        ),
+        (
+            "POST",
+            "/v1/memories".to_owned(),
+            Call::auth("oml_whatever").idem("k").body(submit),
+        ),
+        (
+            "POST",
+            "/v2/bootstrap/claim".to_owned(),
+            Call::default().body(json!({ "enrollment_token": ENROLLMENT })),
+        ),
+        (
+            "POST",
+            "/mcp".to_owned(),
+            Call::auth("oml_whatever").body(tools),
+        ),
+    ] {
+        let (status, headers, body) = send(&router, method, &path, call).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{method} {path}: {body}"
+        );
+        assert_envelope(&body, "system.unavailable");
+        assert_eq!(
+            body["error"]["details"]["reason"], "names_assigned",
+            "{method} {path}: {body}"
+        );
+        assert!(
+            headers.contains_key("retry-after"),
+            "retryable refusals carry Retry-After"
+        );
+    }
+    drop(store);
+    drop_db(&db_name).await;
+}
+
+/// A deployment this build bootstrapped holds no row that predates names:
+/// its tenant and workareas are named at creation, and a key's missing name
+/// is every key's until issuance takes one (ADR-0026 d9). Its startup names
+/// check passes and `/readyz` reports `names_assigned` ok.
+#[tokio::test]
+async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "metals-crew").await;
+    issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+
+    let tenants = enumerate_tenants(rig.store.pool()).await.expect("tenants");
+    assert_eq!(startup_names_check(&rig.store, &tenants).await, Ok(()));
+    let (status, _, body) = send(router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["checks"]["names_assigned"], "ok", "{body}");
     drop_db(&rig.db_name).await;
 }
 

@@ -115,6 +115,7 @@ pub struct ApiState<J, S, C, I, Sc> {
     store: J,
     db_ping: DbPing,
     fork_check_ok: Arc<AtomicBool>,
+    names_assigned: bool,
     enrollment: Arc<Mutex<Option<String>>>,
     build: Arc<BuildInfo>,
 }
@@ -126,6 +127,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             store: self.store.clone(),
             db_ping: Arc::clone(&self.db_ping),
             fork_check_ok: Arc::clone(&self.fork_check_ok),
+            names_assigned: self.names_assigned,
             enrollment: Arc::clone(&self.enrollment),
             build: Arc::clone(&self.build),
         }
@@ -155,6 +157,7 @@ where
             store,
             db_ping,
             fork_check_ok: Arc::new(AtomicBool::new(fork_check_ok)),
+            names_assigned: true,
             enrollment: Arc::new(Mutex::new(enrollment_token)),
             build: Arc::new(BuildInfo::unknown()),
         }
@@ -167,11 +170,29 @@ where
         self
     }
 
-    /// The two rings plus the unversioned probes, as one axum router.
+    /// The composition's startup names check. `false` means the store holds
+    /// rows that predate names, which the lead names before it serves
+    /// (ADR-0026 d11; http-api.md "Rows created before names") and which
+    /// this build does not name yet: `/readyz` reports `names_assigned` not
+    /// ready and every route but the two probes answers `system.unavailable`
+    /// with that reason, so no request reaches a row with no name. Without
+    /// the call every row is taken as named.
+    #[must_use]
+    pub fn with_names_assigned(mut self, names_assigned: bool) -> Self {
+        self.names_assigned = names_assigned;
+        self
+    }
+
+    /// The two rings plus the unversioned probes, as one axum router; only
+    /// the probes while names are not assigned.
     pub fn into_router(self) -> Router {
-        Router::new()
+        let probes = Router::new()
             .route("/healthz", get(healthz))
-            .route("/readyz", get(Self::readyz))
+            .route("/readyz", get(Self::readyz));
+        if !self.names_assigned {
+            return probes.fallback(names_unassigned).with_state(self);
+        }
+        probes
             .route("/v1/memories", post(Self::submit).get(Self::list_memories))
             .route("/v1/memories/recall", post(Self::recall))
             .route("/v1/memories/{artifact_id}", get(Self::get_memory))
@@ -207,16 +228,18 @@ where
         let rid = new_request_id();
         let postgres_ok = (st.db_ping)().await;
         let fork_ok = st.fork_check_ok.load(Ordering::SeqCst);
+        let ready = postgres_ok && fork_ok && st.names_assigned;
         let body = json!({
-            "status": if postgres_ok && fork_ok { "ok" } else { "unavailable" },
+            "status": if ready { "ok" } else { "unavailable" },
             "checks": {
                 "postgres": if postgres_ok { "ok" } else { "unreachable" },
                 "fork_check": if fork_ok { "ok" } else { "failed" },
+                "names_assigned": if st.names_assigned { "ok" } else { "unassigned" },
             },
             // Ready or not, the probe names the build it belongs to.
             "build": st.build.to_json(),
         });
-        let status = if postgres_ok && fork_ok {
+        let status = if ready {
             StatusCode::OK
         } else {
             StatusCode::SERVICE_UNAVAILABLE
@@ -1187,6 +1210,14 @@ async fn healthz() -> Response {
         &rid,
         Ok(json_response(StatusCode::OK, &json!({"status": "ok"}))),
     )
+}
+
+/// Every route but the probes while the store holds rows that predate
+/// names: the replica cannot serve them safely, so it serves nothing
+/// (errors.md `system.unavailable`; ADR-0026 d11).
+async fn names_unassigned() -> Response {
+    let rid = new_request_id();
+    finish(&rid, Err(ApiError::unavailable("names_assigned")))
 }
 
 fn new_uuid() -> Uuid {

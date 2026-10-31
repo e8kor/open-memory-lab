@@ -15,8 +15,10 @@
 -- name, crew_id and path columns added here. That naming lives in the
 -- lead's startup path, beside the startup fork check (crates/bins/
 -- oml-server-lead), not in SQL, and is not built yet: until it is, every
--- row this migration finds keeps NULL names, and the store refuses to serve
--- a workarea that has none. prior_name is history no reference reads; the
+-- row this migration finds keeps NULL names, and a lead whose startup names
+-- check finds one serves no request — /readyz reports names_assigned not
+-- ready and every other route answers system.unavailable — a divergence the
+-- README states. prior_name is history no reference reads; the
 -- naming reads each prior name from the journal, never from these columns.
 --
 -- Renaming tenants.name and workareas.name breaks every earlier binary,

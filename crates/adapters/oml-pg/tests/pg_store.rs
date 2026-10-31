@@ -1648,3 +1648,72 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
     drop(conn);
     drop_dbs(&created).await;
 }
+
+/// The store reports, per table, the rows that predate names: after 0006 a
+/// PoC tenant row and each of its workarea rows has none, while a tenant
+/// created since, with its `universe` root, a workarea and a key, reports
+/// nothing, its key's missing name included, since issuance names no key
+/// yet (ADR-0026 d9, d11; http-api.md "Rows created before names").
+#[tokio::test]
+async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_are_not() {
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 5).await;
+    let poc = Uuid::from_u128(0xA700);
+    let (poc_root, poc_team) = (Uuid::from_u128(0xB700), Uuid::from_u128(0xB701));
+    let mut tx = conn.begin().await.expect("begin");
+    poc_tenant(&mut tx, poc).await;
+    for (w, parent, poc_name, status) in [
+        (poc_root, None, "root", "committed"),
+        (poc_team, Some(poc_root), "Procurement Team", "development"),
+    ] {
+        sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(w)
+        .bind(poc)
+        .bind(parent)
+        .bind(poc_name)
+        .bind(status)
+        .execute(&mut *tx)
+        .await
+        .expect("PoC workarea");
+    }
+    tx.commit().await.expect("commit the PoC rows");
+    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
+    store.migrate().await.expect("0006 applies over PoC rows");
+
+    let mut rig = ChainRig::new(97);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let (root, crew, key) = (
+        Uuid::from_u128(0xB970),
+        Uuid::from_u128(0xB971),
+        Uuid::from_u128(0xD970),
+    );
+    rig.create_workarea(&store, workarea_record(t, root, None, "universe"))
+        .await;
+    rig.create_workarea(&store, workarea_record(t, crew, Some(root), "metals-crew"))
+        .await;
+    rig.issue_key(&store, key_record(t, key, Role::Writer, None))
+        .await;
+
+    assert_eq!(
+        store
+            .rows_without_names(&[poc, t])
+            .await
+            .expect("the check reads"),
+        vec![("tenants", 1), ("workareas", 2)],
+        "the PoC tenant and both its workareas, and nothing created since"
+    );
+    assert_eq!(
+        store
+            .rows_without_names(&[t])
+            .await
+            .expect("the check reads"),
+        Vec::<(&str, u64)>::new(),
+        "a tenant created since names reports nothing"
+    );
+    drop(conn);
+    drop_dbs(&created).await;
+}

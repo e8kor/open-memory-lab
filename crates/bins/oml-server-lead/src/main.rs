@@ -1,8 +1,10 @@
 //! `oml-server-lead` — boot order per deployment.md and ADR-0002 d7:
-//! configuration, Postgres, migrations, keyring, fork check, then the
-//! listener. A failed fork check does not exit: `/readyz` answers 503 and
-//! every write answers `system.unavailable` until an operator intervenes
-//! (http-api.md "Health").
+//! configuration, Postgres, migrations, keyring, fork check, names check,
+//! then the listener. A failed fork check does not exit: `/readyz` answers
+//! 503 and every write answers `system.unavailable` until an operator
+//! intervenes (http-api.md "Health"). Nor does a failed names check: rows
+//! that predate names, which this build does not name yet (ADR-0026 d11),
+//! keep `/readyz` at 503 and every request at `system.unavailable`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -11,7 +13,7 @@ use oml_app::ports::{KeyringStore as _, Signer as _};
 use oml_pg::PgStore;
 use oml_server_lead::{
     Config, FileKeyring, LeadSigner, enumerate_tenants, lead_state, mint_enrollment_token, pg_ping,
-    startup_fork_check,
+    startup_fork_check, startup_names_check,
 };
 
 fn config_path_arg() -> Result<Option<PathBuf>, String> {
@@ -78,6 +80,16 @@ async fn run() -> Result<(), String> {
             false
         }
     };
+    let names_assigned = match startup_names_check(&store, &tenants).await {
+        Ok(()) => true,
+        Err(failure) => {
+            // ADR-0026 d11: the lead names every row that predates names
+            // before it serves; this build does not yet, so it serves
+            // nothing rather than fail on each request that meets one.
+            tracing::error!(%failure, "STARTUP NAMES CHECK FAILED — serving no request");
+            false
+        }
+    };
 
     let enrollment_token = if tenants.is_empty() && fork_check_ok {
         let token = mint_enrollment_token();
@@ -101,6 +113,7 @@ async fn run() -> Result<(), String> {
         fork_check_ok,
         enrollment_token,
     )
+    .with_names_assigned(names_assigned)
     .into_router();
 
     let listener = tokio::net::TcpListener::bind(&config.listen)

@@ -1,8 +1,9 @@
 //! The lead composition pieces (workspace-plan.md: binaries are thin
 //! compositions): configuration (oml.toml + `OML_` environment,
 //! configuration.md), the kms-file keyring (ADR-0023 d4), the runtime
-//! clock/id/scanner adapters, the startup fork check (ADR-0002 d7) and the
-//! state constructor the integration tests share with `main`.
+//! clock/id/scanner adapters, the startup fork check (ADR-0002 d7), the
+//! startup names check (ADR-0026 d11) and the state constructor the
+//! integration tests share with `main`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -335,6 +336,33 @@ pub async fn startup_fork_check(
         Ok(())
     } else {
         Err(failures.join("; "))
+    }
+}
+
+/// The startup names check: the store holds no row that predates names, or
+/// the failure names `names_assigned` and each table that holds one.
+/// ADR-0026 d11 has the lead name such rows, journalled as
+/// `system.names_assigned`, before it serves; that naming is not built, a
+/// divergence the README states, so a lead that fails this check serves no
+/// request (`/readyz` reports `names_assigned`, every other route answers
+/// `system.unavailable`) rather than failing request by request on the
+/// first row with no name. A store this build bootstrapped passes, and a
+/// store the check cannot read fails it.
+pub async fn startup_names_check(store: &PgStore, tenants: &[Uuid]) -> Result<(), String> {
+    match store.rows_without_names(tenants).await {
+        Ok(rows) if rows.is_empty() => Ok(()),
+        Ok(rows) => {
+            let rows: Vec<String> = rows
+                .iter()
+                .map(|(table, n)| format!("{table} {n}"))
+                .collect();
+            Err(format!(
+                "names_assigned: rows that predate names ({}), which this build does not name \
+                 yet (ADR-0026 d11)",
+                rows.join(", ")
+            ))
+        }
+        Err(e) => Err(format!("names_assigned: the store could not be read: {e}")),
     }
 }
 
