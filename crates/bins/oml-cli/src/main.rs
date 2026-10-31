@@ -246,7 +246,7 @@ enum WorkareasCommand {
         crew: Option<String>,
     },
     /// The tree from a workarea down, with each node's path, id, status
-    /// and crew: one workarea read per node.
+    /// and crew: every page of one tree read.
     Tree {
         /// The workarea the listing starts at, by id or name.
         #[arg(long, default_value = "universe")]
@@ -256,6 +256,24 @@ enum WorkareasCommand {
     Show {
         /// The workarea's id or name.
         workarea: String,
+    },
+    /// The crew record a workarea names (admin key role).
+    Crew {
+        #[command(subcommand)]
+        command: WorkareaCrewCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkareaCrewCommand {
+    /// Point the workarea at a crew record (workarea.crew_updated); allowed
+    /// on validated workareas.
+    Set {
+        /// The workarea, by id or name.
+        workarea: String,
+        /// The crew record, by id or name.
+        #[arg(long)]
+        crew: String,
     },
 }
 
@@ -624,6 +642,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     );
                 }
                 println!("    epoch    : {}", response["epoch"]);
+                // A revoked key's name still resolves, so the read says
+                // whether the key is history (ADR-0026 d10).
+                match response["revoked_at"].as_str() {
+                    Some(at) => println!("    revoked  : {at}"),
+                    None => println!("    revoked  : no (live)"),
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -724,6 +748,31 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     } else {
                         verbs.join(", ")
                     }
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workareas {
+            command:
+                WorkareasCommand::Crew {
+                    command: WorkareaCrewCommand::Set { workarea, crew },
+                },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                &format!("/v2/workareas/{}/crew", segment(workarea)?),
+                &json!({ "crew": crew }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "workarea {} ({}) names crew {}",
+                    field(&response, "name"),
+                    field(&response, "id"),
+                    crew_line(&response["crew"])
                 );
             }
             Ok(ExitCode::SUCCESS)
@@ -1101,36 +1150,28 @@ fn print_json(v: &Value) {
 // oml workareas tree (ADR-0026 d15)
 // ---------------------------------------------------------------------------
 
-/// The tree from `root` down, depth first, each node's children in the
-/// order its read serves them (by name): one `GET /v2/workareas/{workarea}`
-/// per node, the root by the id or name the operator gave, the default
-/// `universe` (ADR-0026 d6), and every other node by the id its parent's
-/// read serves. Under an admin key each read answers by the key role, for
-/// every workarea of the tenant and structure only; under a reader key it
-/// answers within reader effective access, a child outside it absent
-/// (http-api.md workareas; ADR-0026 d15). The server does not serve `GET
-/// /v2/workareas/{workarea_id}/tree` yet, so `--json` prints the reads, each
-/// as served, as one document's `items` (cli/reference.md `oml workareas`).
+/// The tree from `root` down, by id or name, the default `universe`
+/// (ADR-0026 d6): every page of `GET /v2/workareas/{workarea_id}/tree`, in
+/// the server's path order. Under an admin key the read answers by the key
+/// role, for every workarea of the tenant and structure only; under a reader
+/// key it answers within reader effective access, every node outside it
+/// absent (http-api.md workareas; ADR-0026 d15). `--json` prints the pages'
+/// items as one page (cli/reference.md `oml workareas`).
 fn run_workareas_tree(cli: &Cli, stored: &Credentials, root: &str) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
+    let tree = format!("/v2/workareas/{}/tree", segment(root)?);
     let mut nodes: Vec<Value> = Vec::new();
-    // Last in, first read: the children go on in reverse, so the first
-    // child is read first.
-    let mut pending = vec![segment(root)?];
-    while let Some(reference) = pending.pop() {
-        let (_, node) = client.get(&format!("/v2/workareas/{reference}"))?;
-        let children: Vec<String> = node["children"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|c| c["id"].as_str())
-            .map(segment)
-            .collect::<Result<_, _>>()?;
-        pending.extend(children.into_iter().rev());
-        nodes.push(node);
+    let mut path = tree.clone();
+    loop {
+        let (_, page) = client.get(&path)?;
+        nodes.extend(page["items"].as_array().into_iter().flatten().cloned());
+        match page["next_cursor"].as_str() {
+            Some(cursor) => path = format!("{tree}?cursor={}", encode(cursor)),
+            None => break,
+        }
     }
     if cli.json {
-        print_json(&json!({ "items": nodes }));
+        print_json(&json!({ "items": nodes, "next_cursor": Value::Null }));
     } else {
         for node in &nodes {
             println!(

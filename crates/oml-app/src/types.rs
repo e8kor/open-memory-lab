@@ -201,12 +201,23 @@ pub struct WorkareaInfo {
     pub permission_epoch: u64,
 }
 
-/// One node of a workarea tree read, with its derived path (http-api.md
-/// workareas, `GET /v2/workareas/{id}/tree`; ADR-0026 d15).
+/// One node of a workarea tree read, with its derived path and the crew
+/// record it names, if any (http-api.md workareas, `GET
+/// /v2/workareas/{id}/tree`; ADR-0026 d8, d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeNode {
     pub workarea: WorkareaRecord,
     pub path: String,
+    pub crew: Option<CrewRecord>,
+}
+
+/// One page of a workarea tree read, in path order, and the cursor of the
+/// next page, `None` once the tree is exhausted (http-api.md workareas and
+/// pagination; ADR-0026 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreePage {
+    pub items: Vec<TreeNode>,
+    pub next_cursor: Option<String>,
 }
 
 /// The rows of one tenant's chain that have no name yet: the tenant's own

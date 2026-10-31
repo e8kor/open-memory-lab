@@ -5392,8 +5392,9 @@ async fn a_row_with_no_name_in_a_chain_already_named_refuses_the_naming() {
 }
 
 /// An admin key reads the tree of any workarea in its tenant by its key
-/// role, with no grant: every node of the subtree, each with its derived
-/// path; a reader key reads only what its grants reach (roles-and-keys.md
+/// role, with no grant: every node of the subtree in path order, a node
+/// before its children and siblings by name, each with its derived path; a
+/// reader key reads only what its grants reach (roles-and-keys.md
 /// permission matrix, footnote 6; ADR-0026 d15).
 #[tokio::test]
 async fn an_admin_key_reads_the_workarea_tree_by_name() {
@@ -5409,8 +5410,9 @@ async fn an_admin_key_reads_the_workarea_tree_by_name() {
     let tree = |key: &str, node: Reference| {
         let (app, key) = (&app, key.to_owned());
         async move {
-            app.workarea_tree(&key, node).await.map(|nodes| {
-                nodes
+            app.workarea_tree(&key, node, None, 50).await.map(|page| {
+                assert_eq!(page.next_cursor, None, "one page holds the tree");
+                page.items
                     .into_iter()
                     .map(|n| (n.workarea.workarea_id, n.path))
                     .collect::<Vec<_>>()
@@ -5424,8 +5426,8 @@ async fn an_admin_key_reads_the_workarea_tree_by_name() {
         vec![
             (metals, "universe.metals".to_owned()),
             (q1, "universe.metals.q1-2027".to_owned()),
-            (q2, "universe.metals.q2-2027".to_owned()),
             (review, "universe.metals.q1-2027.lit-review".to_owned()),
+            (q2, "universe.metals.q2-2027".to_owned()),
         ]
     );
     // An unknown name answers what an unknown id does.

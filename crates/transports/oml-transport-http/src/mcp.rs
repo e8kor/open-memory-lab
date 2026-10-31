@@ -536,8 +536,8 @@ where
             Self::get_workarea_inner(st, args.workarea.as_deref(), &ring_headers(token)).await,
         )
         .await?;
-        // The plugin's output names the parent `parent`; `crew` stays absent
-        // when none was recorded (mcp-plugin.md `oml_workarea_info`;
+        // The plugin's output names the parent `parent`; `crew` is null when
+        // the workarea names none (mcp-plugin.md `oml_workarea_info`;
         // ADR-0026 d1, d8).
         let mut out = Map::new();
         for (from, to) in [

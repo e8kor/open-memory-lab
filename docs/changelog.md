@@ -71,10 +71,16 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
   `X-OML-Workarea`, `{workarea_id}`, `{key_id}`, the listing's `workarea_id`, `parent_id`, a
   grant's `workarea_node_id`, a denial's `subtree_node_id`, `default_workarea_id` and `crew`.
   `name.taken` answers 409; `GET` and `POST /v2/crews`, `GET /v2/crews/{crew_id}`,
-  `POST /v2/crews/{crew_id}/update` and `POST /v2/workareas/{workarea_id}/crew` are served;
-  workarea and key responses carry `name`; and `GET /v2/keys/{key_id}` answers a key by its id or
-  its name. The served entries of [mcp-tools.json](api/mcp-tools.json) take a workarea's name, and
-  their `_meta.pending_design` notes for names are gone.
+  `POST /v2/crews/{crew_id}/update`, `POST /v2/workareas/{workarea_id}/crew` and
+  `GET /v2/workareas/{workarea_id}/tree` are served, the tree a page at a time under a cursor
+  bound to the key, an admin key reading every node by its key role and a reader key every node
+  within its read access; workarea responses carry `name` and `crew`, the crew record or null, and
+  key responses `name`; and `GET /v2/keys/{key_id}` answers a key by its id or its name. A
+  `workarea` on `POST /v2/review/next`, by id or by name, is refused as `request.validation` with
+  `details.field` `/workarea`, never ignored, because the queue filter is not built and the queue
+  is served whole. The served entries of [mcp-tools.json](api/mcp-tools.json) take a workarea's
+  name and their `_meta.pending_design` notes for names are gone, and `oml_workarea_info` answers
+  `crew` null for a workarea that names none.
 - **CLI** (d2, d3, d4, d8, d12, d15). Every argument that names a workarea, crew, key or tenant
   takes its id or its name, sent as typed for the server to resolve, as one percent-encoded segment
   where the route takes it in its path; one a path carries that is empty, `.` or `..` is refused
@@ -85,8 +91,10 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
   `oml audit verify-chain --tenant`. `oml keys issue-agent` keeps
   [ADR-0028](adr/ADR-0028-agent-key-issuance.md) d1's `--out`, d2's reader grant and `--write-only`;
   `oml crews create`, `update`, `list` and `show` administer crew records;
-  `oml workareas create <parent> <name>` takes `--crew`; and `oml workareas show` and `tree` run
-  under an admin context, `tree` as one workarea read per node, since the tree read is unserved.
+  `oml workareas create <parent> <name>` takes `--crew`, and `oml workareas crew set <workarea>
+  --crew <crew>` points a workarea at another crew record; `oml workareas show` and `tree` run
+  under an admin context, `tree` reading every page of the tree read; and the human layout of
+  `oml keys show` prints a `revoked` line, the key's revocation time or `no (live)`.
 - **Plugins** (d14). The `oml-admin` skill asks for the key's name and the workarea's name and
   passes them to `issue-agent`, with `--crew` when the operator names a crew, still only with
   `--out` and never with `--json`. The `oml` plugin's README and skill say that a workarea
@@ -111,17 +119,21 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
   (`GET /v2/keys`) and `oml keys list`, so d10's revoked key is read as history only through
   `GET /v2/keys/{key_id}` and `oml keys show`; of the other verbs d9 addresses by the key's name,
   adding or revoking a grant after issuance, lifting a denial and the effective-access read; d15's
-  lookup by path (`GET /v2/workareas?path=`) and its `tree`, `edges` and `status` reads under
+  lookup by path (`GET /v2/workareas?path=`) and its `edges` and `status` reads under
   `GET /v2/workareas/{workarea_id}`; the re-parent's `new_parent_id`, a workarea edge's
-  `to_workarea_id` and the reassign's `workarea_id`; `oml workareas crew set`, though
-  `POST /v2/workareas/{workarea_id}/crew` is served; and a simulation audience's `key_id`. The
+  `to_workarea_id` and the reassign's `workarea_id`; the queue filter, `workarea` on
+  `POST /v2/review/next`, refused by name above; and a simulation audience's `key_id`. The
   operator tier is unbuilt, and so are tenant names beyond the one tenant the bootstrap claim
   creates, operator keys and the provider's key namespace, `tenant_id` on issuance and
   `POST /v2/tenants`. So are the independence axis's crew and manager comparisons at promotion,
   whose domain functions exist and which no promotion calls yet. Two pieces differ from the design
   because the operator tier is unbuilt: the PoC has no provider chain, so each tenant's name is
   journalled in its own chain's `system.names_assigned`; and the bootstrap claim mints the tenant's
-  first admin key, so its `name` is checked in that tenant's namespace, not the provider's.
+  first admin key, so its `name` is checked in that tenant's namespace, not the provider's. Two
+  listings are ordered otherwise than the [pagination](api/http-api.md#pagination) convention's
+  `created_at` descending: the tree is served in path order, a node before its children and
+  siblings by name in byte order, its cursor carrying the last path served, where newest first
+  would list a node's children before it; and the crew listing is served in name order.
 - **Pages touched:** this page and the [agent plugin](api/mcp-plugin.md) (the `issue-agent`
   synopsis); [mcp-tools.json](api/mcp-tools.json) and the [CLI reference](cli/reference.md)
   change with the code that serves them; the [runbooks](operations/runbooks.md) spell every key

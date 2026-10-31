@@ -1230,7 +1230,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         Some(&admin),
         Some("wa-1"),
         // A workarea names at most one crew record (ADR-0026 d8); this one
-        // names none, so `crew` stays absent.
+        // names none, so `crew` is null.
         Some(&json!({
             "parent_id": root,
             "name": "metals-crew",
@@ -1293,6 +1293,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
             "name": "metals-crew",
             "path": "universe.metals-crew",
             "status": "development",
+            "crew": null,
             "parent": root,
             "children": [],
             "edges": [],

@@ -3,7 +3,9 @@
 # ed25519-dalek/sha2 appear directly because `oml audit verify-chain` is an
 # INDEPENDENT re-implementation of the public chain-format.md procedure.
 # The dev-dependencies spin the real lead composition for the end-to-end
-# test only; nothing from them links into the shipped `oml` binary.
+# test only, and oml-app signs the one event no route journals (a part-failed
+# issuance's key.revoked); nothing from them links into the shipped `oml`
+# binary.
 [package]
 name = "oml-cli"
 version.workspace = true
@@ -30,6 +32,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+oml-app.workspace = true
 oml-pg.workspace = true
 oml-server-lead.workspace = true
 sqlx.workspace = true
