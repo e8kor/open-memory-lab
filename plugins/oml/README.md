@@ -45,6 +45,14 @@ their own work, both depend on it. Keep the key in the environment, not in a fil
 commit. To issue keys and run a server, see "Quickstart" in the
 [repository README](../../README.md#quickstart).
 
+`oml keys issue-agent --principal <principal> --workarea <workarea-id>` issues an agent's key in
+one call: a writer key with a writer and a reader grant on the workarea, which is also its
+default. It prints the `export OML_URL=…` and `export OML_API_KEY=…` lines to run before you start
+Claude Code. With `--out <path>` the value goes to a new owner-only file and the second line reads
+it from there; the `oml-admin` plugin in this marketplace runs it that way from inside Claude Code,
+so the value never enters the conversation. See the
+[CLI reference](../../docs/cli/reference.md#oml-keys-issuance-revocation-rotation).
+
 ## Other MCP clients
 
 The server speaks stateless streamable HTTP at `/mcp`. Any client that accepts this shape

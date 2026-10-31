@@ -7,8 +7,10 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-/// Why a verb did not succeed, split exactly along the CLI reference's exit
-/// codes: a typed server refusal (exit 1) versus a local failure (exit 2).
+/// Why a verb did not succeed, split along the CLI reference's exit codes: a
+/// typed server refusal (exit 1) versus a local failure (exit 2), and among
+/// the local failures, one where the server may have acted from one where
+/// nothing was sent.
 #[derive(Debug)]
 pub enum CliError {
     /// The server refused with the typed envelope; `envelope` is the whole
@@ -20,8 +22,16 @@ pub enum CliError {
         rule: String,
         envelope: Value,
     },
-    /// No context, unreachable server, bad arguments.
+    /// No context, unreachable server, bad arguments, or a 4xx without the
+    /// typed envelope: the server did not act on the request.
     Local(String),
+    /// The request may have reached the server, but no answer the CLI can
+    /// use came back: the exchange failed after connecting, a success body
+    /// could not be read or parsed, or a 5xx came without the typed
+    /// envelope, as from a gateway. The server may have acted on it. The
+    /// message never carries a success body, which can hold a key value
+    /// (cli/reference.md `oml keys issue-agent`, ADR-0028 d1).
+    Unanswered(String),
 }
 
 impl CliError {
@@ -139,15 +149,25 @@ fn finish(result: Result<ureq::Response, ureq::Error>) -> Result<(u16, Value), C
     match result {
         Ok(response) => {
             let status = response.status();
-            let text = response
-                .into_string()
-                .map_err(|e| CliError::local(format!("reading the response body: {e}")))?;
+            // A success body is never echoed: an issuance's carries the key
+            // value, which reaches no stream but the one the verb prints it
+            // to (ADR-0028 d1).
+            let text = response.into_string().map_err(|e| {
+                CliError::Unanswered(format!(
+                    "the server answered {status}, but its body could not be read ({e}); the \
+                     server may have acted on the request"
+                ))
+            })?;
             if text.is_empty() {
                 // 204: nothing in scope waits.
                 return Ok((status, Value::Null));
             }
-            let value: Value = serde_json::from_str(&text)
-                .map_err(|e| CliError::local(format!("the response is not JSON ({e}): {text}")))?;
+            let value: Value = serde_json::from_str(&text).map_err(|e| {
+                CliError::Unanswered(format!(
+                    "the server answered {status}, but its body is not JSON ({e}) and is not \
+                     shown; the server may have acted on the request"
+                ))
+            })?;
             Ok((status, value))
         }
         Err(ureq::Error::Status(status, response)) => {
@@ -163,11 +183,40 @@ fn finish(result: Result<ureq::Response, ureq::Error>) -> Result<(u16, Value), C
                     rule: envelope["error"]["rule"].as_str().unwrap_or("").to_owned(),
                     envelope,
                 }),
+                // A gateway's 5xx can follow a request the server committed.
+                _ if status >= 500 => Err(CliError::Unanswered(format!(
+                    "the server answered {status} without the typed error envelope, so the \
+                     server behind it may have acted on the request: {text}"
+                ))),
                 _ => Err(CliError::local(format!(
                     "the server answered {status} without the typed error envelope: {text}"
                 ))),
             }
         }
-        Err(e) => Err(CliError::local(format!("cannot reach the server: {e}"))),
+        Err(e) if nothing_was_sent(e.kind()) => {
+            Err(CliError::local(format!("cannot reach the server: {e}")))
+        }
+        Err(e) => Err(CliError::Unanswered(format!(
+            "the exchange with the server failed after connecting ({e}); the server may have \
+             acted on the request"
+        ))),
     }
+}
+
+/// The transport failures that end a call before any request byte leaves:
+/// a bad URL, DNS, the connection or the proxy. Every other failure may
+/// follow a request the server received, so it is not one of these.
+fn nothing_was_sent(kind: ureq::ErrorKind) -> bool {
+    use ureq::ErrorKind as K;
+    matches!(
+        kind,
+        K::InvalidUrl
+            | K::UnknownScheme
+            | K::Dns
+            | K::InsecureRequestHttpsOnly
+            | K::ConnectionFailed
+            | K::InvalidProxyUrl
+            | K::ProxyConnect
+            | K::ProxyUnauthorized
+    )
 }
