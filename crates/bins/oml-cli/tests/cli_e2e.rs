@@ -1328,7 +1328,7 @@ async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_w
     assert_eq!(
         context,
         format!(
-            "OML memory for this session, from {}, workarea {}.\n{FRAMING}\n{REMEMBER}\n\n\
+            "OML memory for this session, from {}, workarea {}.\n{REMEMBER}\n{FRAMING}\n\n\
              Steering in force:\n\
              - metals-crew-sourcing: Quote every supplier price with its source and its date.\n\n\
              {SUBMISSIONS}\n\
@@ -1337,7 +1337,8 @@ async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_w
              Memories matching \"accra metals\":\n{served}",
             crew.lab.server, crew.path
         ),
-        "the frame and how to record first, then steering, the agent's work and the matches"
+        "the header and how to record first, then the framing line over steering, the agent's \
+         work and the matches"
     );
     crew.lab.stop().await;
 }
@@ -1352,7 +1353,7 @@ async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_
         context_of(&stdout),
         format!(
             "OML memory for this session, from {}, in this key's default workarea \
-             (oml_workarea_info names it).\n{FRAMING}\n{REMEMBER}\n{COMPACTED}\n\n\
+             (oml_workarea_info names it).\n{REMEMBER}\n{COMPACTED}\n{FRAMING}\n\n\
              Steering in force:\n- none\n\n\
              {SUBMISSIONS}\n- none\n\n\
              Memories matching \"metals\":\n- none",
@@ -1365,7 +1366,9 @@ async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_
         assert_eq!(code, 0, "{source}: {stderr}");
         let context = context_of(&stdout);
         assert!(
-            context.lines().nth(2) == Some(REMEMBER) && !context.contains("compacted"),
+            context.lines().nth(1) == Some(REMEMBER)
+                && context.lines().nth(2) == Some(FRAMING)
+                && !context.contains("compacted"),
             "{source}: only a compaction asks for the summary's facts: {context}"
         );
     }
@@ -2149,11 +2152,16 @@ async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() 
                 cut(&crew.path)
             )
             .as_str(),
-            FRAMING,
             REMEMBER,
             COMPACTED,
+            FRAMING,
         ],
-        "the frame, the record line and the compaction line come first"
+        "the header, the record line and the compaction line come first, then the framing line"
+    );
+    let framing_ends = context.find(FRAMING).expect("the framing line") + FRAMING.len();
+    assert!(
+        context[..framing_ends].chars().count() <= 2000,
+        "with the longest path, all four fit in Claude Code's 2,000-character preview"
     );
     assert_eq!(
         section(&context, SUBMISSIONS),

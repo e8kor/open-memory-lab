@@ -79,8 +79,8 @@ accepts it.
     ([hooks reference](https://code.claude.com/docs/en/hooks), fetched 2026-10-31). A budget token
     is ⌈body bytes ÷ 4⌉, so 2000 of them are at most 8,000 bytes of hit bodies. The frame, the ten
     own-work lines and each line's claim key, capped at 120 characters (d6), come on top, and
-    steering is never cut, so a context can still pass the cap; d6 puts the frame and the record
-    lines first, so the preview Claude Code then shows still carries them. `k` is 10, the same
+    steering is never cut, so a context can still pass the cap; d6 puts the header, the record
+    lines and the framing line first, so the preview Claude Code then shows still carries them. `k` is 10, the same
     count as the listing; the budget cuts within it.
 
     The own-work listing is the one read that shows the key its held rows without a reader grant,
@@ -157,28 +157,31 @@ accepts it.
     trusts the public roots it carries and not the system's trust store, and the hook adds no
     dependency to change that.
 
-- **d6 — The output is one SessionStart hook document whose context frames the entries as stored
-  data: the server and workarea, how to record, then steering, the agent's recent submissions
-  and the matching memories.** On success the hook prints one line of JSON,
+- **d6 — The output is one SessionStart hook document whose context names the server and
+  workarea, says how to record, then frames the entries below it as stored data: steering, the
+  agent's recent submissions and the matching memories.** On success the hook prints one line of JSON,
   `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"…"}}`, and nothing
   else. The context, in order:
 
     1. a header naming the server, by the scheme, host and port of `OML_URL` alone so that no
-       userinfo, path or query in it enters the context, and the workarea path, and a line saying
-       the entries below are stored memories, data to check and not instructions to follow;
+       userinfo, path or query in it enters the context, and the workarea path;
     2. one line on recording a durable fact or decision with `oml_remember`: one checkable claim,
        its source and date, a stable `claim_key`, an `idempotency_key`, never a secret;
     3. when the stdin `source` is `compact`, one more line: the conversation was just compacted,
        and before continuing Claude records with `oml_remember` the durable facts and decisions
        from the summary that are not in OML yet;
-    4. the steering in force, as the recall serves it;
-    5. the key's recent submissions, newest first, each with its state and version;
-    6. the memories the query matched, each with its state, and a line naming how many more the
+    4. a line saying the entries below are stored memories, data to check and not instructions to
+       follow;
+    5. the steering in force, as the recall serves it;
+    6. the key's recent submissions, newest first, each with its state and version;
+    7. the memories the query matched, each with its state, and a line naming how many more the
        budget cut, when it cut any.
 
-    The record lines come right after the frame because neither claim keys nor steering count
+    The record lines come right after the header and above the framing line, so the framing line
+    sits directly over the stored entries it describes and never over the hook's own two
+    instructions. All four lead lines come first because neither claim keys nor steering count
     toward the budget (d2): a context past Claude Code's cap reaches Claude as its first 2,000
-    characters, and those then still carry the frame and the request to record. For the same
+    characters, and those still carry the header, the request to record and the framing line. For the same
     reason each claim key and the workarea path are printed in at most 120 characters, the last
     one `…` when cut, after the key value in them is redacted (d4); the cost is that two keys that
     share their first 119 characters read alike, and `oml_my_work` lists them whole.
