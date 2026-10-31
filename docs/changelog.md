@@ -66,13 +66,31 @@ that record decides for FR-10 and FR-11:
   `cargo test --workspace`. No CI run has carried it yet, so FR-10 and FR-11 stay open on the
   [roadmap](product/roadmap.md) until one passes; their rows then cite that run (ADR-0018 d3).
 - **The multi-arch image** is recorded in the release-image entry below.
+- **Bounds the ring already enforced, now declared.** Within 0.2.0-design,
+  `RecallRequest.max_tokens` and the budget object's echo of it declare a maximum of 2⁵³ − 1
+  ([retrieval](architecture/retrieval.md#token-budgets), d7, d9), and in
+  [mcp-tools.json](api/mcp-tools.json) `oml_recall`'s `max_tokens` and `oml_my_work`'s `limit`
+  declare the ring's maxima, 2⁵³ − 1 and 200. The served `oml_recall` entry now describes
+  full-text search, and `_meta.pending_design` names the hybrid search mode and the read log that
+  it does not serve yet (d12).
 - **Still unbuilt**, each stated in the README or a code comment: the designed `held_fts` (own
   held recall reads through the author-predicated `recall_own_held` port method instead, d5); the
   read log (d9); held-item expiry (`held_expires_at` is null); workarea edges (`edges` is `[]`);
   grant add and revoke, and denial lift (d2); issuance idempotency; key rotation (`rotated_from`
   is null) and expiry enforcement (an expiry on issuance is refused with `request.validation`,
   d16); `api.cursor_ttl`, held as the code constant `CURSOR_TTL_SECS`, 3600 s, until settings
-  are built; and the operator tier.
+  are built; the operator tier; the `in_progress` idempotency claim
+  ([http-api.md](api/http-api.md#idempotency)): the record is written in the commit's own
+  transaction, so a concurrent identical request answers the first attempt's receipt as a replay,
+  or, for a submit that read the `claim_key` after that attempt committed,
+  `submission.claim_key_conflict`, and never `idempotency.in_progress` (`IdempotencyPut` in
+  `crates/oml-app/src/ports.rs`); the chain export (`POST /v2/exports` with `kind: "chain"`,
+  [http-api.md](api/http-api.md#evidence-export)), and with it live `oml audit verify-chain`,
+  which refuses a live run by name since d15 made the events tail a filtered feed, not a
+  verification surface — the evidence export of M4 on the
+  [critical path](product/critical-path.md) owns it; and set-wise hydration of served rows: each
+  served row's readable `derives_from` ancestors, its `replaces` target and its workarea path are
+  read one row at a time, against ADR-0024 d4, at a cost that is unmeasured (FR-7, FR-25).
 
 ### 2026-10-30 — The release image for linux/amd64 and linux/arm64 (implementation)
 

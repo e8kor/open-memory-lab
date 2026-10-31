@@ -14,9 +14,10 @@ into four tiers: guaranteed by construction, guaranteed within a stated bound, p
 unmeasured, and never claimed. A claim that does not appear on this page is not a commitment,
 whatever a sentence elsewhere may suggest. Each entry names its enforcement point and the
 assumption it rests on; every bound links the [roadmap](roadmap.md) row that measures it.
-Nothing is built — "by construction" means the design makes violation impossible *if the code
-implements the design*, and the assumptions column says what "implements the design" has to
-include.
+Only a first working slice is built, so a guarantee here is a commitment of the design, not a
+property of running software — "by construction" means the design makes violation impossible
+*if the code implements the design*, and the assumptions column says what "implements the
+design" has to include.
 
 ## 1. Guaranteed by construction
 

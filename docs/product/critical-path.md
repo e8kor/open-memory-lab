@@ -207,6 +207,12 @@ Depends on M1–M3 — the evidence export reads the journal, and the
 inventory is only checkable once the reconciler runs. [FR-20](roadmap.md)'s vocabulary
 measurements join M6's campaigns.
 
+**Progress.** Not started. One check that M1 demonstrated now waits on this milestone: since
+each key's event feed shows only the events that key may see (M2), the feed no longer carries
+the whole signed history, so the command-line check of that history against a running server
+stops with an error that says so. It returns when the server serves the export of the whole
+history that this milestone's evidence export includes.
+
 ## M5 — Dataset onboarding (post-v1)
 
 **Goal.** [ADR-0020](../adr/ADR-0020-dataset-onboarding.md)'s smallest useful slice: pinned

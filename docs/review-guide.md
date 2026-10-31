@@ -9,13 +9,15 @@ answers: which decisions a reviewer should examine, in the order an error would 
 
 **Status:** design draft for review · decided, not built
 
-This documentation set is a set of drafts for review. Nothing is built; every decision below is
-open to challenge, and challenging one here is far cheaper than discovering it wrong in
-production. This page lists the decisions a reviewer should examine, in the order in which an
-error would be most expensive, with the page that carries each one. The full decision register is
-at [adr/index.md](adr/index.md); the open questions each decision leaves are tracked as FR/RS
-rows in the [roadmap](product/roadmap.md). If the vocabulary below is new, read
-[Concepts](concepts.md) first — it explains each term and links the page that decides it.
+This documentation set is a set of drafts for review. The design is the authority; a first working
+slice of it is built (the [critical path](product/critical-path.md)'s M1 and the agent-only-memory
+part of M2), and everything beyond that slice is decided, not built. Every decision below is open
+to challenge, and challenging one here is far cheaper than discovering it wrong in production. This
+page lists the decisions a reviewer should examine, in the order in which an error would be most
+expensive, with the page that carries each one. The full decision register is at
+[adr/index.md](adr/index.md); the open questions each decision leaves are tracked as FR/RS rows in
+the [roadmap](product/roadmap.md). If the vocabulary below is new, read [Concepts](concepts.md)
+first — it explains each term and links the page that decides it.
 
 ## 1. The constitution and its one exception (ADR-0001)
 
