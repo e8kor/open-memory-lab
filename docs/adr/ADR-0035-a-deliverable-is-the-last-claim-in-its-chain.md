@@ -2,7 +2,7 @@
 id: adr/ADR-0035-a-deliverable-is-the-last-claim-in-its-chain
 tier: engineering
 status: proposed
-answers: what a deliverable is and what its words and files hold; how remember, supersede, recall and get carry files and in which forms a credential may send them; how a file manifest names a claim's files and when it is refused; how attachment bytes are served by version and stored; how several deliverables coexist, are listed and stay independent; who records a deliverable's chain and how it is followed both ways; the build order after iteration 3
+answers: what a deliverable is and what its words and files hold; how remember, supersede, recall and get carry files and in which forms a key may send them; how a file manifest names a claim's files and when it is refused; how attachment bytes are served by version and stored; how several deliverables coexist, are listed and stay independent; who records a deliverable's chain and how it is followed both ways; the build order after iteration 3
 -->
 
 # ADR-0035 — A deliverable is the last claim in its chain: remember, recall and get carry its files, a file manifest names them, and several coexist in one workarea
@@ -27,8 +27,9 @@ and get, the server describing the file forms it accepts and the harness choosin
 (crates/oml-app/src/app.rs:1365, 2037); a submit naming a digest answers
 `submission.attachment_missing` (crates/transports/oml-transport-http/src/lib.rs:1453-1466); no
 migration lays `upload_sessions` or `artifact_keys` (migrations/0001_init.sql:9-11); the keyring
-holds only the signing key, and no object-store or KMS port exists (crates/oml-app/src/ports.rs);
-no lineage read is routed (lib.rs:172-189); `oml_attach` and `oml_graph` answer "not built"
+holds only the signing key, and no object-store or KMS port exists (crates/oml-app/src/ports.rs),
+nor an object store in CI or compose (docker-compose.yml:7-9); no lineage read is routed
+(lib.rs:172-189); `oml_attach` and `oml_graph` answer "not built"
 (crates/transports/oml-transport-http/src/mcp.rs:57). ADR-0026 (iteration 3), ADR-0030
 (in-progress workareas) and ADR-0031 (connections) are proposed on other branches, cited by number
 and unlinked. Each decision is the maintainer's proposed reading, which the user confirms before
@@ -66,9 +67,10 @@ acceptance; d2 names the one that departs from the brief. Proposed, not built.
     The envelope shape is unchanged (ADR-0004 d2's additive rule), a version's identity commits to
     every path, and paths shred with the bytes ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md)
     d3). **Departing from the brief**, whose deliverable kind "adds only the manifest rule and
-    listability": outside a file manifest a path has a clear column nothing shreds, or no home, so
-    every kind that binds files carries one, and the deliverable kind adds listability and the
-    supersession class every kind holds (d1).
+    listability": a file manifest on deliverables alone makes `path` required on one kind and
+    refused on the rest, a conditionally required input ADR-0025 d12 rules out, so every kind that
+    binds files carries one, and the deliverable kind adds listability and its supersession class
+    (d1).
 
 - **d3 — Every attachment fetch names one version and answers as a download a browser may not run,
   and nothing renders on the API origin.** One digest may be stored as several objects, one per
@@ -100,11 +102,15 @@ acceptance; d2 names the one that departs from the brief. Proposed, not built.
     - **Inline text** has a `text/*` or `application/json` media type or a `+json` or `+xml` suffix
       (RFC 6839), SVG and Mermaid source included, else `request.validation`. Its UTF-8 bytes, kept
       unnormalized since a file's bytes are its identity, become a completed upload owned by the
-      calling key, encrypted and written before `BEGIN`. So ADR-0004 d3's "the words' writer
-      uploaded the bytes" holds, its session read as the record of an upload and not only its
-      transport (amends d3). Words, inline texts and the file manifest total at most
-      `submission.max_body_size` bytes (shipped 1 MiB), else `413 request.payload_too_large`; a
-      refused request's inline uploads stay unbound and expire.
+      calling key. Inline texts and the file manifest are encrypted and written only after the
+      request passes validation, grant admissibility (the [refusal
+      order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)) and the
+      scan, immediately before `BEGIN`, so a request refused before `BEGIN` writes nothing. So
+      ADR-0004 d3's "the words' writer uploaded the bytes" holds, its session read as the record of
+      an upload and not only its transport (amends d3). Words, inline texts and the file manifest
+      total at most `submission.max_body_size` bytes (shipped 1 MiB), else `413
+      request.payload_too_large`; a request refused inside the transaction leaves its inline
+      uploads unbound, and they expire (d9).
     - **One write path.** Each form yields one completed-upload record, one `submission.attach`
       binding and one scan over the file's text where an extractor exists (ADR-0004 d6; the text
       itself when inline), and the file manifest is scanned as inline text. An uploaded file of an
@@ -134,20 +140,18 @@ acceptance; d2 names the one that departs from the brief. Proposed, not built.
       included, `text: null`. Binaries come by d3's fetch or `oml attach get <artifact_id> <digest>
       --out <path>`, which checks the digest before writing.
 
-- **d6 — The server describes the forms a credential can use, and the harness selects one;
-  nothing is negotiated.** The set is closed: `upload_session` and `inline_text`. `/mcp`
-  authenticates every call, `tools/list` included (mcp.rs:190-195), so `tools/list` serves
-  `oml_remember` and `oml_supersede` with the calling key's forms: a connector key (ADR-0031 d7)
-  the inline form, a bearer key both. Served descriptions state the deployment's caps, and the
-  workarea read gains `attachment_forms` and `attachment_limits {max_body_size, max_attachments,
-  max_attachment_size}` for `oml_workarea_info` (ADR-0014 d1; amends ADR-0025 d14). A form the key
-  cannot use is `403 oauth.attach_refused`, ADR-0031 d11's code for `oml_attach` `open`, before any
-  session lookup. Without ADR-0031 every key is a bearer key, so the connector half lands with its
-  build, closed by `a_connector_key_is_served_only_the_inline_form_and_refused_an_upload_session`.
-  The table below moves to the [agent plugin](../api/mcp-plugin.md) page when built; the
-  `oml-memory` skill and `initialize`'s `instructions` (MCP 2025-06-18, lifecycle, fetched
-  2026-10-31), which the build does not serve yet (mcp.rs:251-257), name the form to prefer, and
-  `clientInfo` may tailor that text, never what is accepted.
+- **d6 — The server describes the forms a key can use, and the harness selects one; nothing is
+  negotiated.** The set is closed: `upload_session` and `inline_text`. One catalog serves every
+  key, its `attachments` items the oneOf of both forms (d4). The workarea read gains
+  `attachment_forms`, the calling key's forms, and `attachment_limits {max_body_size,
+  max_attachments, max_attachment_size}` for `oml_workarea_info` (ADR-0014 d1; amends ADR-0025
+  d14): a connector key (ADR-0031 d7) reads `["inline_text"]`, a bearer key both. A connector key
+  opens no session (ADR-0031 d11) and no one is served an inline upload's id, so an
+  `{upload_session}` item from it answers `submission.attachment_missing`. The connector half lands
+  with ADR-0031's build, closed by `a_connector_keys_workarea_read_lists_only_the_inline_form`. The
+  table below moves to the [agent plugin](../api/mcp-plugin.md) page when built; the `oml-memory`
+  skill and `initialize`'s `instructions` (MCP 2025-06-18, lifecycle, fetched 2026-10-31), which
+  the build does not serve yet (mcp.rs:251-257), name the form to prefer.
 
     | Harness | Reaches | Prefers |
     |---|---|---|
@@ -189,8 +193,7 @@ acceptance; d2 names the one that departs from the brief. Proposed, not built.
   /v2/memories/{artifact_id}/lineage` and `oml_graph {roots}`, unreadable nodes redacted (FR-31).
   Forward, "what was built from X": the same read with `direction=descendants`, and `oml_graph`
   with `direction`, bounded by `depth`; the walk stops at a node the caller cannot read, which is
-  absent rather than redacted, so no one learns that unreadable work exists. Neither is built: no
-  lineage read is routed, and `oml_graph` answers "not built".
+  absent rather than redacted, so no one learns that unreadable work exists.
 
 - **d9 — File bytes live behind the object-store port under one DEK per stored object, wrapped by
   a tenant KEK through the KMS port.** This slice builds the ports and crates that exist on paper
@@ -199,27 +202,38 @@ acceptance; d2 names the one that departs from the brief. Proposed, not built.
   standalone lead's data directory ([ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) d3,
   NFS and SMB refused), and `AmazonS3` against S3 or MinIO for docker, kubernetes and cluster mode,
   whose followers share no disk, chosen by the object-store URI (ADR-0023 d8).
-    - **Names.** ADR-0004 d4's `oml-bodies/<tenant>/<digest>` and its quarantine twin end in the
-      upload session's id; else one key re-uploading unchanged bytes for a next version would put
-      two ciphertexts at one name (amends ADR-0004 d4).
-    - **DEKs.** A session's DEK is minted when it opens and each part is encrypted on arrival, so no
-      part rests in plaintext; completion decrypts the parts to check the digest. The binding
-      commit copies the wrapped DEK into `artifact_keys` under its version and nulls it in
-      `upload_sessions`, so an upload binds into one version only; expiry of an unbound session
-      destroys its wrapped DEK and deletes its parts and staging objects. Erasing a version, once
-      erase is built ([FR-1](../product/roadmap.md)), destroys its files' DEKs in one commit and no
-      other version's: ADR-0005 d1's "per artifact" becomes per stored object (amends it).
+    - **DEKs.** A session's DEK is minted when it opens and wrapped into a new
+      `upload_sessions.wrapped_dek`. The binding commit copies it into `artifact_keys`, unique on
+      (`tenant_id`, `artifact_id`, `upload_session_id`) `NULLS NOT DISTINCT` with the session null
+      for the body's DEK, and nulls it in `upload_sessions`, so an upload binds into one version
+      only. Erasing a version, once erase is built ([FR-1](../product/roadmap.md)), destroys its
+      files' DEKs in one commit and no other version's: ADR-0005 d1's "per artifact" becomes per
+      stored object (amends it).
+    - **Objects.** ADR-0004 d4's `oml-bodies/<tenant>/<digest>` and its quarantine twin end in the
+      session's id, else one key re-uploading unchanged bytes for a next version would put two
+      ciphertexts at one name (amends d4). Each part, inline text and file manifest is one
+      AES-256-GCM frame under the session DEK, encrypted on arrival so no part rests in plaintext;
+      completion decrypts the frames to check the digest and assembles them, unchanged, at
+      `oml-quarantine/<tenant>/<digest>/<session_id>`. A held version's objects stay there.
+      Promotion moves them to `oml-bodies` as [admission](../architecture/admission.md#quarantine-placement)
+      moves a body: after the ratifying commit, outside the chain lock, the lead copies the
+      ciphertext under the same DEK and deletes the quarantine object once the copy's ciphertext
+      digest matches; a fetch serves whichever exists.
+    - **Expiry.** An unbound session expires `uploads.session_expiry` after it opens: S2 ships 24
+      hours, the idempotency retention floor ([configuration](../operations/configuration.md)), and
+      FR-15 still decides upload-session limits. The lead, which holds the database and object-store
+      credentials, sweeps: an expired session loses its wrapped DEK, its parts and its completed
+      object, and an interrupted move is retried. The keyless quarantine GC sweep keys on the
+      name's session id, deleting an object whose session row is absent, or expired and unbound.
     - **Copy classes** (amends ADR-0005 d4): `upload_sessions.wrapped_dek`, live until binding or
-      expiry and then in base backups and WAL under the `artifact_keys.wrapped_dek` bound; and
-      upload parts and staging objects (S3 incomplete multipart parts, `LocalFileSystem` staging
-      files), session-DEK ciphertext, deleted at completion or expiry and unreadable once that DEK
-      is destroyed.
-    - **The KEK, at its minimum.** One KEK per tenant, its id in `artifact_keys.kek_id`: in the
-      `kms-file` keyring beside the signing key (ADR-0023 d4), and through ADR-0023 d8's external
-      adapter once the kubernetes profile lands. Custody and rotation stay ADR-0005's and
-      [security](../architecture/security.md)'s; this slice ships no rotation, so ADR-0005 d4's
-      backup bound lacks its rotation period ([FR-17](../product/roadmap.md)), and the keyring
-      mechanism is [RS-12](../product/roadmap.md).
+      expiry, then in base backups and WAL under the `artifact_keys.wrapped_dek` bound; and parts
+      in flight (an S3 multipart upload's parts, `LocalFileSystem` staging files), session-DEK
+      ciphertext that completion turns into the object or expiry deletes.
+    - **The KEK, at its minimum.** One KEK per tenant, its id in `artifact_keys.kek_id`, in the
+      `kms-file` keyring beside the signing key (ADR-0023 d4) and through ADR-0023 d8's external
+      adapter once the kubernetes profile lands. Custody stays ADR-0005's and [security](../architecture/security.md)'s;
+      this slice ships no rotation, so ADR-0005 d4's backup bound lacks its rotation period
+      ([FR-17](../product/roadmap.md)), and the keyring mechanism is [RS-12](../product/roadmap.md).
 
 - **d10 — Two vocabulary rows** (amends ADR-0018 d4):
 
@@ -230,13 +244,13 @@ acceptance; d2 names the one that departs from the brief. Proposed, not built.
 
 - **d11 — The build follows iteration 3 in six steps, substrate first, each closed by its check.**
   Each step changes its contract pages (OpenAPI, errors, HTTP API, `mcp-tools.json`, the agent
-  plugin) with its code; migrations number after iteration 3's 0006.
+  plugin, configuration) with its code; migrations number after iteration 3's 0006.
 
     | Step | Lands | Check, tests named as sentences |
     |---|---|---|
-    | S1 | object-store and KMS ports; `oml-objectstore` (filesystem, S3); `oml-kms` (`kms-file`); `upload_sessions`, per-object `artifact_keys` | `the_filesystem_and_s3_adapters_pass_one_object_store_contract`, `kms_file_wraps_and_unwraps_a_dek_and_never_stores_it_in_clear` |
-    | S2 | upload sessions, binding, `submission.attach`, serves with every attachment, d3's fetch | `no_part_or_completed_upload_rests_as_plaintext_under_the_data_directory`, `one_key_uploading_the_same_bytes_twice_stores_two_objects_under_two_deks`, `a_completed_upload_binds_into_one_version_only`, `each_bound_file_has_its_own_wrapped_dek_row_under_its_version`, `a_verdict_counts_only_when_every_attachment_was_served_to_its_reviewer`, `a_fetch_serves_the_object_of_the_version_it_names`, `every_attachment_fetch_answers_as_a_download_with_scripts_disabled` |
-    | S3 | d4–d6: both forms on remember and supersede, the file manifest, descriptors, `oml-tc/2`, `include_text`, the per-key schema and limits | `an_inline_text_and_an_uploaded_file_of_the_same_bytes_bind_the_same_digest_and_scan`, `inline_texts_past_the_body_bound_are_refused_as_payload_too_large`, `a_file_manifest_that_does_not_name_exactly_the_other_bound_digests_is_refused`, `recall_counts_a_hits_file_descriptors_under_oml_tc_2`, `every_property_oml_remember_advertises_is_accepted_by_its_argument_struct` |
+    | S1 | object-store and KMS ports; `oml-objectstore` (filesystem, S3); `oml-kms` (`kms-file`); `upload_sessions` and `artifact_keys` as d9 keys them, on the [Postgres schema](../data/postgres-schema.md) page; a `minio` service at ADR-0023 d7's pinned tag, the docker profile's default, in `docker-compose.yml` and `.github/workflows/ci.yml` | `the_filesystem_and_s3_adapters_pass_one_object_store_contract`, its S3 half against that service; `kms_file_wraps_and_unwraps_a_dek_and_never_stores_it_in_clear` |
+    | S2 | upload sessions, their expiry and the lead's sweep, binding, `submission.attach`, the move at promotion, serves with every attachment, d3's fetch; d2's file manifest and d4's two forms on remember and supersede | `no_part_or_completed_upload_rests_as_plaintext_under_the_data_directory`, `an_unbound_session_past_its_expiry_has_no_wrapped_dek_and_no_object`, `a_request_refused_before_begin_writes_no_object`, `a_promoted_versions_objects_move_from_quarantine_to_oml_bodies`, `one_key_uploading_the_same_bytes_twice_stores_two_objects_under_two_deks`, `a_completed_upload_binds_into_one_version_only`, `each_bound_file_has_its_own_wrapped_dek_row_under_its_version`, `a_verdict_counts_only_when_every_attachment_was_served_to_its_reviewer`, `a_fetch_serves_the_object_of_the_version_it_names`, `every_attachment_fetch_answers_as_a_download_with_scripts_disabled`, `a_file_manifest_that_does_not_name_exactly_the_other_bound_digests_is_refused`, `an_inline_text_and_an_uploaded_file_of_the_same_bytes_bind_the_same_digest_and_scan`, `inline_texts_past_the_body_bound_are_refused_as_payload_too_large`, `every_property_oml_remember_advertises_is_accepted_by_its_argument_struct` |
+    | S3 | d5 and d6: descriptors, `oml-tc/2`, `include_text`, `attachment_forms` and `attachment_limits` | `recall_counts_a_hits_file_descriptors_under_oml_tc_2`, `the_workarea_read_states_the_calling_keys_forms_and_limits` |
     | S4 | kind `deliverable`, its class, the `kind` and `kinds` filters | `a_new_deliverable_on_a_taken_claim_key_answers_claim_key_conflict`, `two_deliverables_in_one_workarea_keep_their_own_tips_when_one_is_superseded`, `the_scoped_listing_by_kind_lists_one_tip_per_deliverable` |
     | S5 | the lineage read both ways; `oml_graph` served | `the_descendants_read_lists_a_deck_built_from_a_report`, `the_descendants_read_stops_at_a_node_the_caller_cannot_read` |
     | S6 | `oml attach put` and `get`; the `oml-memory` skill, the harness table, `instructions`; the session below | `attach_put_prints_the_session_id_and_never_the_bytes` and `attach_get_writes_a_file_only_after_its_digest_matches` in `cli_e2e.rs`; `scripts/check_plugin.py` fails when the skill names a tool or form the catalog lacks; `deliverables.rs` runs the session below in `cargo test --workspace` |
@@ -264,9 +278,9 @@ and served again (d9), and only comparing file manifests narrows the work
 ([FR-2](../product/roadmap.md)). So drafts should not be submitted: an agent drafts in its working
 tree or git and submits when done, as the `oml-memory` skill says. Inline text costs the agent's
 output once per version, and whether claude.ai accepts a call near the 1 MiB cap is unverified
-(FR-42). Wrapped DEKs multiply by file count and each served hit with files decrypts its file
-manifest, unmeasured against [FR-25](../product/roadmap.md); `oml-tc/2` changes every count with
-files, the session hook's too.
+(FR-42). Wrapped DEKs multiply by file count, promotion copies every file once (d9), and each
+served hit with files decrypts its file manifest, unmeasured against [FR-25](../product/roadmap.md);
+`oml-tc/2` changes every count with files, the session hook's too.
 
 **Opened.** [FR-40](../product/roadmap.md), deliverables, closes when S6's scenario passes in
 continuous integration; FR-41 and FR-42 as above; FR-31 gains no residual, since the forward read
@@ -275,8 +289,9 @@ and the fields above; no contract page changes now, so `info.version` stays `0.2
 
 **Process obligations.** With the proposal: this file, a [register](index.md) row, a `mkdocs.yml`
 nav entry, `llms.txt`, FR-40 to FR-42 on the [roadmap](../product/roadmap.md) marked proposed, one
-[changelog](../changelog.md) entry. On acceptance, not before: this record and its register row
-become `accepted design` with the date; the Status lines of ADR-0004, ADR-0005, ADR-0018 and
+[changelog](../changelog.md) entry. On acceptance, not before: the user's dated confirmation of
+d2's departure from the brief, or d2 rewritten to it; this record and its register row become
+`accepted design` with the date; the Status lines of ADR-0004, ADR-0005, ADR-0018 and
 ADR-0025 gain "· amended by ADR-0035"; ADR-0005 d4's table and the [erasure
 inventory](../architecture/audit-and-lineage.md) gain d9's two copy classes; the D3, D4, D12 and
 D13 cells name it; concepts gains a deliverables section and map row, and its and CONTRIBUTING's
@@ -287,7 +302,7 @@ vocabulary pointers name d10; the spec tag is cut.
 | Alternative | Why not |
 |---|---|
 | **d1 — The file as the body, or recall indexing the files' text** | Words and bytes keep separate identities (ADR-0004): a re-issued file with the same words would claim a false supersession. Indexing would put up to 63 files of 64 MiB per version into the index, whose count would stop describing what recall serves. |
-| **d2 — A file manifest for deliverables only** | The brief's wording. Another kind's paths would need a clear column the erasure inventory never shreds, or be dropped; the user may still choose it, with `path` null on other kinds. |
+| **d2 — A file manifest for deliverables only** | The brief's wording. `path` would be required on deliverables and refused on every other kind, a conditionally required input (ADR-0025 d12); the user may still choose it, amending d12. |
 | **d2 — A client-built file manifest, or paths in the signed envelope** | An agent cannot compute digests reliably, and a second way to name files is a second write path; file names can be personal data, and the journal never erases (ADR-0005 d5). |
 | **d3 — Inline rendering on the API origin** | Stored XSS against ADR-0031's authorization page; a separate-origin preview reopens only under its own record. |
 | **d4 — A separate `oml_deliver` tool** | More surface, and a second write path to keep equal to `oml_remember`; one extension serves every kind. |
