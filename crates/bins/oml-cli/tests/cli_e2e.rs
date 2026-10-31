@@ -2221,6 +2221,41 @@ async fn the_hook_names_the_server_by_scheme_host_and_port_alone() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_redacts_the_key_from_the_working_directory_before_it_takes_the_query() {
+    // A directory named after the key value: split at its `_` first, the
+    // words would carry the key's secret part past the redaction, into the
+    // recall query and onto the matching line.
+    let crew = Crew::start().await;
+    crew.lab.take_requests();
+    let (code, stdout, stderr) = crew.hook(
+        &[],
+        &session("startup", &format!("/home/op/src/{}", crew.agent)),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let context = context_of(&stdout);
+    let seen = crew.lab.take_requests();
+    assert_eq!(
+        routes(&seen),
+        ["GET /v1/memories", "POST /v1/memories/recall"]
+    );
+    let query = seen[1].body["query"]
+        .as_str()
+        .expect("the recall query")
+        .to_owned();
+    let key: Vec<char> = crew.agent.chars().collect();
+    for window in key.windows(20).map(|w| w.iter().collect::<String>()) {
+        assert!(!context.contains(&window), "no part of the key: {context}");
+        assert!(!query.contains(&window), "no part of the key: {query}");
+    }
+    assert_eq!(query, "OML API KEY", "the redaction's words are the query");
+    assert!(
+        context.contains("Memories matching \"OML API KEY\":"),
+        "{context}"
+    );
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_query_is_the_words_of_the_working_directory_name() {
     let crew = Crew::start().await;
     crew.lab.take_requests();

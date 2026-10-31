@@ -122,7 +122,9 @@ pub fn session_start(
     let own = own["items"]
         .as_array()
         .ok_or_else(|| unreadable("the own-work listing"))?;
-    let query = query_words(session.cwd.as_deref());
+    // Redacted before it is split: the split breaks a key value at its `_`,
+    // where the later passes could no longer match it (ADR-0029 d3, d4).
+    let query = query_words(session.cwd.as_deref().map(redact).as_deref());
     let (_, recall) = client
         .post(
             "/v1/memories/recall",
