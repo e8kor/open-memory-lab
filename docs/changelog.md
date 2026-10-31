@@ -41,10 +41,9 @@ implementation fixes of what ADR-0007 d4 already decides. It decides the two rol
 privileges, the lead's boot under `postgres.owner_url` and `postgres.url`, the startup refusal
 `postgres.role_split` when one URL serves both, the one-time split of a single-role install with
 the live host's entry marked not run, `memories` list-partitioned by `tenant_id` with a GIN index
-per partition that the owner creates at tenant creation (d12), the composite keys (d13), the
+per partition that the owner creates at tenant creation (d11), the composite keys (d12), the
 checks, the `rls-spike` change and the build order after iteration 3. What the per-tenant index
-leaves open, EXPLAIN's estimate for SQL the server does not send and per-tenant catalog counts and
-ids, is FR-45. Numbers 0026, 0027 and 0030 to 0033
+leaves open, EXPLAIN's estimate and per-tenant catalog counts and ids, is FR-45. Numbers 0026, 0027 and 0030 to 0033
 are taken by records on other branches. It amends ADR-0007 (d2), whose Status line gains the
 back-pointer at acceptance; it binds nothing before then.
 
