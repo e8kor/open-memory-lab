@@ -283,8 +283,10 @@ issued-without-value (D9, declared in [roles-and-keys](../architecture/roles-and
 CREATE TABLE api_keys (
     id         uuid        PRIMARY KEY,
     tenant_id  uuid,                    -- NULL for provider-level operator keys
-    hash       bytea       UNIQUE,      -- SHA-256 of the value; NULL exactly for a connector
-                                        -- key, which has no value (ADR-0031 d7)
+    hash       bytea       UNIQUE,      -- SHA-256 of the value; always NULL for a connector key,
+                                        -- and NULL for a bearer key only after a re-fold
+    credential text        NOT NULL     -- folded from key.issued.credential (ADR-0031 d7)
+        CHECK (credential IN ('bearer', 'connection')),
     role       text        NOT NULL
         CHECK (role IN ('reader', 'writer', 'dreamer', 'admin', 'operator')),
     principal  text        NOT NULL,
@@ -304,7 +306,8 @@ CREATE TABLE api_keys (
                                           -- permission epoch (ADR-0025 d14)
     expiry     timestamptz,
     revoked_at timestamptz,
-    UNIQUE (tenant_id, id)                -- target of the tenant-scoped grant and denial references
+    UNIQUE (tenant_id, id),               -- target of the tenant-scoped grant and denial references
+    CHECK (credential = 'bearer' OR hash IS NULL)  -- a connector key never has a hash
 );
 
 CREATE TABLE grants (
@@ -369,7 +372,8 @@ Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before
 Connect codes, connections, their tokens, and the deployment-level state the authorization server
 keeps before a code names a key ([roles and keys](../architecture/roles-and-keys.md#connections),
 [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). No code, token or
-authorization code is stored, only its SHA-256.
+authorization code is stored, only its SHA-256, and no idempotency record holds a connect code
+([HTTP API — idempotency](../api/http-api.md#idempotency)).
 
 ```sql
 CREATE TABLE oauth_clients (           -- clients the authorization server knows; deployment-level
@@ -379,22 +383,26 @@ CREATE TABLE oauth_clients (           -- clients the authorization server knows
     client_name     text        NOT NULL,
     redirect_uris   text[]      NOT NULL,      -- each inside the redirect allowlist
     metadata_digest bytea       NOT NULL,      -- SHA-256 of the document or registration as received
-    fetched_at      timestamptz,               -- cimd: when the cached document was fetched
+    fetched_at      timestamptz,               -- cimd: when the cached document was fetched;
+                                               -- at most 10 000 cimd rows at once (ADR-0031 d5)
     created_at      timestamptz NOT NULL
 );
 
-CREATE TABLE oauth_authorizations (    -- one row per authorization request on the page
+CREATE TABLE oauth_authorizations (    -- one row per authorization request on the page;
+                                       -- at most 10 000 live at once (ADR-0031 d9)
     id             uuid        PRIMARY KEY,
     tenant_id      uuid        NOT NULL,       -- always the reserved provider tenant
     handle_hash    bytea       NOT NULL UNIQUE,-- SHA-256 of the handle the page's form carries
     client_id      text        NOT NULL REFERENCES oauth_clients (client_id),
     redirect_uri   text        NOT NULL,
-    code_challenge text        NOT NULL,       -- S256 only
-    state          text,                       -- echoed verbatim
+    redirect_uri_sent boolean  NOT NULL,       -- whether the request carried redirect_uri,
+                                               -- for the token endpoint's rule
+    code_challenge text        NOT NULL,       -- S256 only, 43 base64url characters
+    state          text,                       -- at most 512 bytes; echoed verbatim
     attempts_left  integer     NOT NULL,       -- five at creation
     expires_at     timestamptz NOT NULL,       -- ten minutes after creation
-    connection_id  uuid                        -- set when a connect code verifies; plain uuid,
-                                               -- since the connection is another tenant's row
+    code_id        uuid                        -- set when a connect code verifies; plain uuid,
+                                               -- since the code is another tenant's row
 );
 
 CREATE TABLE connect_codes (
@@ -405,7 +413,8 @@ CREATE TABLE connect_codes (
     issued_seq  bigint      NOT NULL,          -- journal seq of its connection.code_issued
     expires_at  timestamptz NOT NULL,
     redeemed_at timestamptz,                   -- its first correct entry on the page
-    voided_seq  bigint,                        -- seq of the connection.code_issued that replaced it
+    voided_seq  bigint,                        -- seq of the connection.code_issued that replaced
+                                               -- it, or of the key.revoked that voided it
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id)
 );
 
@@ -413,16 +422,24 @@ CREATE TABLE connect_codes (
 CREATE UNIQUE INDEX connect_codes_live ON connect_codes (key_id)
     WHERE redeemed_at IS NULL AND voided_seq IS NULL;
 
-CREATE TABLE oauth_connections (
+CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'authorized'
     id                   uuid        PRIMARY KEY,
     tenant_id            uuid        NOT NULL,
     key_id               uuid        NOT NULL,
     code_id              uuid        NOT NULL REFERENCES connect_codes (id),
     client_id            text        NOT NULL,  -- no reference: oauth_clients is the provider tenant's
     redirect_uri         text        NOT NULL,
+    redirect_uri_sent    boolean     NOT NULL,  -- copied from the authorization request
+    resource             text        NOT NULL,  -- <issuer>/mcp at Connect; connection.opened
+                                                -- journals it; a token works only while it is
+                                                -- the current <issuer>/mcp (ADR-0031 d10, d11)
     code_challenge       text        NOT NULL,
-    auth_code_hash       bytea       UNIQUE,    -- the authorization code, until it is redeemed
+    auth_code_hash       bytea       UNIQUE,    -- SHA-256 of the authorization code; kept after
+                                                -- redemption so a second redemption is detected
+                                                -- (ADR-0031 d10)
     auth_code_expires_at timestamptz,
+    auth_code_redeemed_at timestamptz,          -- set at the token exchange; a presented code
+                                                -- whose row has it set is code_reuse
     state                text        NOT NULL CHECK (state IN ('authorized', 'open', 'revoked')),
     opened_seq           bigint,                -- journal seq of its connection.opened
     revoked_seq          bigint,                -- its connection.revoked, or the connection.opened
@@ -441,7 +458,7 @@ CREATE TABLE oauth_tokens (
     tenant_id     uuid        NOT NULL,
     connection_id uuid        NOT NULL REFERENCES oauth_connections (id),
     kind          text        NOT NULL CHECK (kind IN ('access', 'refresh')),
-    expires_at    timestamptz NOT NULL,
+    expires_at    timestamptz NOT NULL,         -- set at minting; rotation never changes it
     rotated_at    timestamptz,                  -- refresh only: presenting it after this is reuse
     created_at    timestamptz NOT NULL
 );
@@ -452,10 +469,16 @@ tenant's RLS. `oauth_clients` and `oauth_authorizations` hold state from before 
 key, so they belong to the reserved provider tenant, under its RLS, and hold no tenant content: a
 client's self-description and a page's request in progress. The code, authorization-code and token
 digests are found by the same pre-tenant authentication lookup that finds `api_keys.hash`; the
-matched row's `tenant_id` then sets `oml.tenant_id` for everything after. Removal is operational:
-an authorization request's row 24 hours after it lapses, a registered client 24 hours after its
-registration when no connection used it, a token row once it has expired or its connection was
-revoked.
+matched row's `tenant_id` then sets `oml.tenant_id` for everything after. A presented
+authorization code whose row has `auth_code_redeemed_at` set is reuse, whatever its expiry: the
+token endpoint revokes the connection (`connection.revoked`, cause `code_reuse`). Removal is
+operational: an authorization request's row 24 hours after it lapses; a registered client 24 hours
+after its registration when no connection used it; an `authorized` connection row once its
+`auth_code_expires_at` has passed unexchanged; a token row only at its own `expires_at` or at its
+connection's revocation, so a rotated refresh token keeps its row, and reuse of it inside that
+window is always recognized; and `auth_code_hash`, cleared with the connection's token rows once
+the connection is revoked, so a second redemption is recognized for as long as the connection
+stands.
 
 ## vocabularies (ADR-0021)
 
@@ -560,7 +583,8 @@ CREATE TABLE idempotency (
     idem_key       text        NOT NULL,
     request_digest bytea       NOT NULL,
     state          text        NOT NULL CHECK (state IN ('in_progress', 'committed')),
-    response       jsonb,
+    response       jsonb,                 -- a show-once response is stored without value and
+                                          -- connect_code.code (http-api Idempotency)
     created_at     timestamptz NOT NULL,
     PRIMARY KEY (key_id, workarea_id, idem_key)
 );
@@ -787,13 +811,14 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |
 | `simulations` | simulation open / end events |
-| `api_keys` (state columns) | key issue / revoke events |
-| `connect_codes`, `oauth_connections` (state columns) | `connection.code_issued`, `connection.opened`, `connection.revoked` |
+| `api_keys` (state columns, `credential` among them) | key issue / revoke events |
+| `connect_codes`, `oauth_connections` (state columns, `resource` among them) | `connection.code_issued`, `connection.opened`, `connection.revoked`, and `key.revoked` for a voided code |
 
 One honest exception inside that last row: `api_keys.hash` is operational secret material. The
 journal records issuance **without the key value** (show-once ceremony), so a re-fold reconstructs
-every key's existence, role, issuer and revocation — but not its hash. Losing the `api_keys` table
-means re-issuing keys, not re-folding them. `connect_codes.hash` and
+every key's existence, role, credential, issuer and revocation — but not its hash; `credential`,
+not a null hash, is what tells a connector key from a re-folded bearer key. Losing the `api_keys`
+table means re-issuing keys, not re-folding them. `connect_codes.hash` and
 `oauth_connections.auth_code_hash` are the same kind of material, never journalled: a re-fold
 restores which codes and connections existed and when they ended, not the digests.
 

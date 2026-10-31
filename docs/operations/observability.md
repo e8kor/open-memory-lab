@@ -114,7 +114,8 @@ work on a deployment with no Prometheus at all, and they are authoritative
 when the two disagree. `--json` is supported everywhere; the JSON shape below
 is the contract.
 
-What `oml doctor` reads, per tenant in scope of the caller's key:
+What `oml doctor` reads, per tenant in scope of the caller's key, and, for an operator key, the
+deployment-level fields marked so:
 
 | Field | Source | Meaning |
 |---|---|---|
@@ -129,8 +130,9 @@ What `oml doctor` reads, per tenant in scope of the caller's key:
 | `reconciler` | journalled cursor + findings | Cursor lag, last pass time, open findings by class, repair halts |
 | `settings_drift` | configured vs. effective | Delegated to `oml settings show`; doctor flags that drift exists |
 | `oauth_discovery` | the two discovery documents, fetched by the CLI from `<issuer>` over the public network | Present only when `oauth.issuer` is set. `failing` when either document is unreachable, when `resource` is not exactly `<issuer>/mcp`, or when `issuer` is not the configured issuer — the signature of a proxy that does not route the paths or rewrites them; the output names the URL and the field ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)) |
-| `connect_codes` | `connect_codes` + `oauth_authorizations` | Live codes, codes that lapsed unredeemed in the window, and wrong entries in the window. `attention` when wrong entries exceed the threshold — someone is guessing, and the bound is L·G / 2⁶⁰ ([roles and keys](../architecture/roles-and-keys.md#connections)) |
-| `connections` | `oauth_connections` | Open connections per key, and connections revoked for `refresh_reuse` or `code_reuse` in the window. Any reuse revocation is `attention`: a stolen token, or a client that lost a refresh answer, and either way someone needs a new connect code |
+| `connect_codes` | `connect_codes` | Per tenant: live codes, and codes that lapsed unredeemed in the window ([roles and keys](../architecture/roles-and-keys.md#connections)) |
+| `connect_code_failures` | `oauth_authorizations` | **Deployment-level, operator key only.** Wrong connect-code entries in the window, deployment-wide: a wrong entry matches no code, so it names no key and no tenant, and the attempts live in the reserved provider tenant's rows, which no tenant admin's doctor reads. `oml_oauth_connect_code_failures_total` is the metrics view of the same count. `attention` when wrong entries exceed the threshold — someone is guessing, and the bound is L·G / 2⁶⁰ |
+| `connections` | `oauth_connections` + `oauth_tokens` + `api_keys` | Per key: live connections — open, the key neither revoked nor expired, the newest refresh token unexpired, the resource the current `<issuer>/mcp` ([roles and keys](../architecture/roles-and-keys.md#connections)) — and, apart, open connections that are not live, by why. Connections revoked for `refresh_reuse` or `code_reuse` in the window; any reuse revocation is `attention`: a stolen token, or a client that lost a refresh answer, and either way someone needs a new connect code |
 
 Doctor renders each field with a verdict (`ok` / `attention` / `failing`) and
 the rule it applied, in the same fail-closed, name-your-rule style as the
@@ -189,6 +191,14 @@ What logs may carry instead:
   hash), DEK/KEK material or wrapped keys, serve payloads, scan excerpts that
   quote the body. A scanner finding is logged as rule id + offset range +
   digest, not as the matched text.
+- **Never, for connections**: access and refresh tokens, authorization codes,
+  PKCE code verifiers, authorization-request handles and connect codes, nor a
+  digest of any of them — including the bodies of `POST /oauth/authorize` and
+  `POST /oauth/token` and the `Location` header of the authorize redirect, whose
+  query carries the authorization code. Ids only: `key_id`, `connection_id`,
+  `code_id`, the authorization request's row id
+  ([roles and keys](../architecture/roles-and-keys.md#connections),
+  [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8, d10).
 
 Log retention is a deployment-site choice precisely because, under this rule,
 logs contain no erasable content — that is the property the rule buys, and the

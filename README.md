@@ -88,20 +88,23 @@ read 2026-10-31).
     oml keys issue-agent --principal crew/claude-mobile --workarea <workarea-id> --connect-code
     ```
 
-    It prints two lines: the connector address, such as `https://oml.example.com/mcp`, and a code
-    such as `7KQ2-M9XD-4TPA`. The code works once and for ten minutes.
+    It will print two lines: the connector address, such as `https://oml.example.com/mcp`, and a
+    code such as `7KQ2-M9XD-4TPA`. The code will work once, for ten minutes.
 
 2. On claude.ai, open Customize > Connectors and add a custom connector with exactly that
    address.
-3. Claude opens OML's connect page. Enter the code. The page shows which agent identity and which
-   workareas the connection will use, and that nothing written through it reaches anyone else
-   until someone else approves it. Confirm.
-4. The connector is then available in every Claude app signed in to that account, the phone apps
-   included.
+3. Claude will open OML's connect page. Enter the code there only if you reached the page this way
+   yourself; if someone sent you a link to it, close it. After the code, the page will show which
+   organization's space, which agent identity and which workareas the connection will use, and
+   what it may do there: remember, recall, or both, as that identity allows. Where it may write,
+   the page will say that nothing it writes reaches anyone else until someone else reviews it, and
+   will name any workarea set up so that its writes are readable there without review. Confirm.
+4. The connector will then be available in every Claude app signed in to that account, the phone
+   apps included.
 
-Claude never receives the key itself, only access that OML can withdraw. The administrator ends it
-with `oml keys disconnect`, revoking the key ends it too, and a code that ran out before use is
-replaced with `oml keys connect-code`.
+Claude will never receive the key itself, only access that OML can withdraw. The administrator
+will end it with `oml keys disconnect`; revoking the key will end it too, and a code that ran out
+before use will be replaced with `oml keys connect-code`.
 
 ## Documentation
 

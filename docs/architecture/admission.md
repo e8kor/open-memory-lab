@@ -205,7 +205,7 @@ The v1 shipped registry:
 | Class | Fires on | Default |
 |---|---|---|
 | `secret.private_key` | A named private-key pattern — PEM-delimited key blocks, OpenSSH private keys — in claim text or deterministically extracted attachment text | veto |
-| `secret.api_token` | A named credential-token pattern: provider-prefixed tokens the pattern list enumerates, OML's own `oml_` key format among them | veto |
+| `secret.api_token` | A named credential-token pattern: provider-prefixed tokens the pattern list enumerates, OML's own credential formats among them — a key, `oml_[A-Za-z0-9]{43}`, and a connection's access and refresh tokens, `oml_at_[A-Za-z0-9]{43}` and `oml_rt_[A-Za-z0-9]{43}` ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d10) | veto |
 | `secret.credential_pair` | A named user-and-password pattern — connection strings, basic-auth URLs | veto |
 | `format.encoding` | Declared text that is not valid UTF-8 or cannot be NFC-normalized (the normalization step above has nothing lawful to produce) | veto |
 | `format.media_type_mismatch` | Attachment bytes whose leading structure contradicts the declared media type | veto |

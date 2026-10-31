@@ -36,22 +36,27 @@ Claude Desktop and the Claude iOS and Android apps reach the [agent plugin](api/
 through a claude.ai custom connector, on the maintainer's three fixed decisions: OML as an OAuth
 2.1 protected resource with its own authorization server, beside unchanged bearer keys; the binding
 by a one-time connect code; the build after iteration 3. It amends ADR-0010 (d3, d7), ADR-0014
-(d1, d2, d4), ADR-0015 (d1), ADR-0018 (d4) and ADR-0028 (d1); their Status lines gain the
-back-pointer on acceptance, not before. Sources: the MCP authorization specification, revision
-2025-11-25, and Anthropic's connector documentation, both fetched 2026-10-31.
+(d1, d2, d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0025 (d2) and ADR-0028 (d1); their Status lines
+gain the back-pointer on acceptance, not before. Sources: the MCP authorization specification,
+revision 2025-11-25, Anthropic's connector documentation, the client ID metadata document draft
+(-02), RFC 9700, RFC 9207 and the Fetch Standard, all fetched 2026-10-31.
 
 - **Decided, not built:** the `/mcp` `401` keeps its typed body and gains the RFC 9728 challenge
   (d2); one protected-resource document at `/.well-known/oauth-protected-resource/mcp` and one
   RFC 8414 document (d3); `/oauth/authorize`, `/oauth/token` and `/oauth/register`, unversioned,
   in the RFCs' shapes, S256 PKCE only, public clients only, one scope `mcp` (d4); client ID
   metadata documents preferred, dynamic registration as the fallback, no pre-registered client
-  (d5); a fixed redirect allowlist — `https://claude.ai/api/mcp/auth_callback` and loopback (d6);
+  (d5), with the document URL's form, the fetch's address, TLS, proxy and concurrency bounds; a
+  fixed redirect allowlist — `https://claude.ai/api/mcp/auth_callback` and loopback, matched on
+  raw strings (d6);
   the connector key, which has no value and at most one open connection, and
   `oml keys issue-agent --connect-code` (d7); the connect code — twelve Crockford base32 symbols,
   shown once, stored as a digest, journalled by id, ten minutes by default (d8); the two-step
-  authorization page with no cookie and fixed headers (d9); opaque tokens, rotation on every
-  refresh, reuse ending the connection (d10); a token as exactly its key, and
-  `oml keys disconnect` (d11); `connection.code_issued`, `connection.opened` and
+  authorization page with no cookie, fixed headers, `Referrer-Policy: same-origin`, `iss` on every
+  redirect, a warning against forwarded links, and a confirmation naming the tenant and built from
+  the key's role (d9); opaque tokens bound to their connection's resource, rotation on every
+  refresh, reuse ending the connection (d10); a token as exactly its key, the key's state read at
+  code entry, exchange and refresh, when a connection is live, and `oml keys disconnect` (d11); `connection.code_issued`, `connection.opened` and
   `connection.revoked`, and no event for a refresh (d12); the `oauth` error family (d13); the
   configuration keys, doctor fields, proxy routing and cluster mode (d14); the build order (d16).
 - **The vocabulary** gains three rows, *connection*, *connect code*, and *access token, refresh
@@ -73,7 +78,8 @@ back-pointer on acceptance, not before. Sources: the MCP authorization specifica
   [security](architecture/security.md), [event catalog](data/event-catalog.md),
   [Postgres schema](data/postgres-schema.md), [configuration](operations/configuration.md),
   [observability](operations/observability.md), [CLI reference](cli/reference.md),
-  [roadmap](product/roadmap.md), [the overview](index.md),
+  [roadmap](product/roadmap.md), [admission](architecture/admission.md) (the token formats in
+  `secret.api_token`), [the overview](index.md),
   [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md)
   (the revision), and this page; outside `docs/`, `README.md` (using OML from claude.ai and a
   phone) and `CONTRIBUTING.md` (the revision and the vocabulary rows).

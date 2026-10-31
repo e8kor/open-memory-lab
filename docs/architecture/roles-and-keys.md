@@ -413,8 +413,9 @@ in [security.md](security.md).
 **Bootstrap.** On first start, a Helm job mints a **single-use, expiring enrollment secret**
 (stored as a Kubernetes Secret; the job's logs carry progress only, never key material). The
 operator exchanges it over TLS — `oml bootstrap claim` — for the root operator key, shown exactly
-once in the operator's terminal and journalled as **issued-without-value**: the event carries the
-key id and hash, never the secret. The enrollment secret is consumed on first use. A
+once in the operator's terminal and journalled as **issued-without-value**: `key.issued` carries
+the key id, never the value or its hash, which lives only in `api_keys.hash`. The enrollment
+secret is consumed on first use. A
 lost root operator key is therefore not recoverable from the system; it is replaced by the
 rotation path below, or, if no operator key survives, by re-running the bootstrap ceremony — a
 deliberate ceremony, not an everyday verb. The mockup transcript lives in
@@ -474,9 +475,11 @@ logs or referrer headers.
 rule below); after that moment no component holds or reproduces it. The journal records
 `key.issued` as issued-without-value; log lines name keys by `key_id` only, never by value or
 hash ([observability](../operations/observability.md) owns the logging rules); journal payloads
-carry key ids, never key material. A key value found anywhere but the issuance terminal and the
-caller's `Authorization` header is a defect. A connector key has no value anywhere: the server
-mints none, and `api_keys.hash` is null ([connections](#connections)). The one exception is the file `oml keys issue-agent
+carry key ids, never key material; the idempotency record of an issuance or rotation stores its
+response without the value ([HTTP API — idempotency](../api/http-api.md#idempotency)). A key value
+found anywhere but the issuance terminal and the caller's `Authorization` header is a defect. A
+connector key has no value anywhere: the server mints none, and `api_keys.hash` is null
+([connections](#connections)). The one exception is the file `oml keys issue-agent
 --out` creates for it, the one place a key value may rest outside the show-once response: new,
 owner-only (mode 0600), written once, never overwritten, and the operator's to delete once the key
 is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),
@@ -508,7 +511,8 @@ linked to the old one by `rotated_from`, its grants reproduced from the journall
 ids and the grace deadline; the holder switches credentials inside the window, and at the
 deadline the old key is revoked — a journalled `key.revoked` citing the rotation as cause — so
 the export shows exactly when each credential could act. An admin who wants different grants on
-the successor amends them afterward, as ordinary journalled grant acts. Bulk rotation ergonomics
+the successor amends them afterward, as ordinary journalled grant acts. A connector key is not
+rotated ([connections](#connections)). Bulk rotation ergonomics
 for whole crews (re-issue many keys in one ceremony) is unbuilt and tracked as a roadmap FR
 ([roadmap](../product/roadmap.md): key rotation ergonomics for crews).
 
@@ -535,13 +539,17 @@ without a key value being pasted anywhere. Decided, not built ([FR-34](../produc
 
 **Connector keys.** A key issued with `connect_code: true` (`oml keys issue-agent …
 --connect-code`, [CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)) is a connector
-key. The server mints no value for it — `api_keys.hash` is null — so it authenticates no request
-by itself; its one credential path is a connection, and a connection reaches only `/mcp`. Its role
-is `reader`, `writer` or `dreamer`, it is not `held_by: service`, and the
-[issuance order](#grant-admissibility-and-refusal-order) is otherwise unchanged. A key is a bearer
-key or a connector key, never both, and a connector key has at most one connection open: opening
-one revokes the earlier in the same commit. The key id on every journal event therefore names
-exactly one credential path.
+key. The server mints no value for it — `api_keys.credential` is `connection` and
+`api_keys.hash` is null — so it authenticates no request by itself; its one credential path is a
+connection, and a connection reaches only `/mcp`. Its role is `reader`, `writer` or `dreamer`, it
+is not `held_by: service`, and the [issuance order](#grant-admissibility-and-refusal-order) is
+otherwise unchanged. A key is a bearer key or a connector key, never both, and a connector key has
+at most one connection open: opening one revokes the earlier in the same commit. The key id on
+every journal event therefore names exactly one credential path. A connector key is not rotated:
+`POST /v2/keys/{key_id}/rotate` on one answers `422 oauth.connect_refused`
+(`details.reason: connector_key`), because a rotated successor's value would make it a bearer key.
+A fresh connection is a new code (`oml keys connect-code`); a fresh identity is a new connector
+key, and the old one is revoked.
 
 **Connect codes.** A connect code is twelve symbols of Crockford's base32 alphabet (`0`–`9`,
 `A`–`Z` without `I`, `L`, `O`, `U`), 60 bits from a cryptographically secure generator, shown as
@@ -552,15 +560,18 @@ holds the SHA-256 of the decoded symbols, and `connection.code_issued` carries o
 and expiry ([event catalog](../data/event-catalog.md#connectioncode_issued)). It lives
 `oauth.connect_code_ttl` ([configuration](../operations/configuration.md); shipped 10 minutes, 1
 to 60), is spent by its first correct entry on the authorization page, and is voided when a newer
-code is minted for the same key. With L live codes and G wrong entries during their life, the
-chance that any entry finds one is at most L·G / 2⁶⁰.
+code is minted for the same key or when the key is revoked, in that `key.revoked`'s commit. The
+idempotency record of an issuance or a minting stores its response without the code, so a replay
+returns no code ([HTTP API — idempotency](../api/http-api.md#idempotency)). With L live codes and G wrong entries
+during their life, the chance that any entry finds one is at most L·G / 2⁶⁰; L counts every
+tenant's live codes, since a code is looked up before its tenant is known.
 
 **Lifecycle.**
 
 ```mermaid
 stateDiagram-v2
     [*] --> code_live : connector key issued, or code minted\n(connection.code_issued)
-    code_live --> code_voided : newer code minted
+    code_live --> code_voided : newer code minted,\nor key revoked
     code_live --> code_lapsed : expiry reached
     code_live --> code_spent : correct entry on the page
     code_spent --> authorized : Connect\n(authorization code, 60 s)
@@ -573,24 +584,57 @@ stateDiagram-v2
     revoked --> [*]
 ```
 
-A key revoked or expired leaves its connection `open` in the table and refused at every request,
-because each token lookup reads the key's state; `key.revoked` records when. A revoked connection
-never reopens: the key needs a new code.
+Code entry, the token exchange and every refresh read the key's state as `/mcp` does: a revoked or
+expired key's code answers `oauth.connect_code_invalid`, the one message for a code that is not
+valid, and its authorization code or refresh token answers `invalid_grant`
+(`oauth.authorization_code_invalid`, `oauth.refresh_invalid`). The token exchange reads it in the
+transaction that commits `connection.opened`, so no connection opens after its key's
+`key.revoked`. The connection row is created at Connect, `authorized`; until then the
+authorization request holds only the verified code's id.
+
+A connection is **live** while it is open, its key is neither revoked nor expired, its newest
+refresh token is unexpired, and its resource is the current `<issuer>/mcp`. An open connection
+that is not live stays `open` in the table, with no event, because nothing an actor did ended it:
+
+- one whose key was revoked or expired is refused at every request, because each token lookup
+  reads the key's state, and `key.revoked` records when;
+- one whose newest refresh token lapsed is dead: its next refresh answers `oauth.refresh_invalid`,
+  and a new code's connection replaces it;
+- one whose resource is not the current `<issuer>/mcp`, after `oauth.issuer` was changed or unset,
+  is refused at every request, and works again only if that origin is set again before its
+  refresh token lapses ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1).
+
+A revoked connection never reopens: the key needs a new code.
 
 **Tokens.** An access token is `oml_at_` and a refresh token `oml_rt_`, each followed by 43 base62
-characters under the generation rule of the [key format](#key-format); the shared `oml_` prefix
-keeps secret scanners matching, and the second underscore keeps a token from parsing as a key.
-`oauth_tokens` stores the SHA-256 of each, never the token, by the same argument as a key's hash.
-An access token lives `oauth.access_token_ttl` (shipped 1 hour, at most 24) and is bound to
-`<issuer>/mcp`. Every refresh answers a new pair and marks the presented refresh token rotated; a
-refresh token unused for `oauth.refresh_token_ttl` (shipped 30 days) expires. A rotated refresh
-token presented again, or an authorization code redeemed twice, revokes the connection and every
-token it holds. Tokens are read from the `Authorization` header only, never from a body or a query
-string.
+characters under the generation rule of the [key format](#key-format). The second underscore
+keeps a token from parsing as a key, and so from matching the scan's key pattern; the scan's
+`secret.api_token` row names both token formats beside the key format
+([admission](admission.md)). `oauth_tokens` stores the SHA-256 of each, never the token, by the
+same argument as a key's hash. An access token lives `oauth.access_token_ttl` (shipped 1 hour, at
+most 24) and is bound to its connection's resource, `<issuer>/mcp` when the connection was
+created. Every refresh answers a new pair and marks the presented refresh token rotated; a refresh
+token unused for `oauth.refresh_token_ttl` (shipped 30 days) expires. A rotated refresh token
+presented again, or an authorization code redeemed twice, revokes the connection and every token
+it holds. The evidence outlives the first use: an authorization code's digest is kept after
+redemption, marked redeemed, until the connection is revoked, and a rotated refresh token's row
+keeps its own expiry and stays until that expiry or the revocation, so a reuse inside either window
+is always recognized. Tokens are read from the `Authorization` header only, never from a body or a
+query string.
+
+**Where a connection secret never appears.** No access token, refresh token, authorization code,
+PKCE code verifier, authorization-request handle or connect code, nor any digest of one, appears
+in a log line at any level, a metric label, an `error_description`, a `details` field or a journal
+payload. Log lines name a connection by `connection_id`, a code by `code_id` and an authorization
+request by its row id, and the `/oauth/authorize` response's log line omits the `Location` query,
+which carries the authorization code. [Observability](../operations/observability.md) owns the
+logging rules and lists these among what a log line never carries.
 
 **A token is exactly its key.** At `/mcp` an access token resolves to its connection, which must
-be open, and to that connection's key, which must be neither revoked nor expired; from there the
-request is the key's request. The verb ceiling, [grant admissibility and the refusal
+be open and whose `resource` must equal the current `<issuer>/mcp`, else `auth.invalid`
+(`reason: unknown`), and to that connection's key, which must be neither revoked nor expired; from
+there the request is the key's request. A refresh refuses the same resource mismatch as
+`oauth.refresh_invalid`. The verb ceiling, [grant admissibility and the refusal
 order](#grant-admissibility-and-refusal-order), grants, denials, [own](#own) and the permission
 epoch apply to the key, on every request, with no cache. The scope `mcp` adds and narrows nothing.
 A token is accepted nowhere but `/mcp`, so it reaches only the agent-safe subset: a connection can
@@ -601,6 +645,8 @@ resolved and never forwards the token.
 (`POST /v2/keys/{key_id}/connections/{connection_id}/revoke`) ends a connection: the lead refuses
 its tokens at their next request, and a follower after replication lag, as for a revoked key
 ([key lifecycle](#key-lifecycle)). Revoking or expiring the key ends every connection of it the same way.
+Revoking a connection and listing a key's connections are served whether or not `oauth.issuer` is
+set, so an admin can clean up while the surface is off.
 
 ## Review independence and the evidence of collusion
 

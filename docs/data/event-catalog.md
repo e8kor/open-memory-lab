@@ -626,7 +626,8 @@ code's id and expiry and nothing derived from the code, not even its digest: the
 forever and exported, and a digest of a 60-bit secret is a brute-force target that a code alive for
 minutes never needs to outlast; the digest lives only in `connect_codes`
 ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8). `voids_code_id` names an
-unredeemed code of the same key that this one replaces, else null.
+unredeemed code of the same key that this one replaces, else null. A `key.revoked` voids the key's
+unredeemed code in its own commit, with no event of this family.
 
 ### connection.opened
 
@@ -643,9 +644,13 @@ unredeemed code of the same key that this one replaces, else null.
 
 A connection opens at the token exchange, when its first tokens exist. The envelope's
 `api_key_id` and `principal` are the connector key's. `client_id`, `client_kind` (`cimd` or
-`dcr`) and the digest of the client's document or registration tell the admin which client used
-the code. `replaces_connection_id` names the key's earlier open connection, which this commit
-revokes with no event of its own (ADR-0031 d7, d12).
+`dcr`) and the digest of the client's document or registration tell the admin which client
+software used the code, and not whose account: every connection from claude.ai names the same
+client and redirect URI, whichever claude.ai account completed it (ADR-0031 d8). `resource` is the
+`<issuer>/mcp` the connection's tokens are bound to. `replaces_connection_id` names the key's
+earlier open connection, which this commit revokes with no event of its own (ADR-0031 d7, d12).
+Like the rest of the `connection.*` family, the event is on no key's events tail
+([HTTP API](../api/http-api.md#events-tail)); the evidence export carries it.
 
 ### connection.revoked
 

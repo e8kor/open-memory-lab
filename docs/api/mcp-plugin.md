@@ -1297,9 +1297,17 @@ must set `oauth.issuer` ([configuration](../operations/configuration.md)).
    (one connector), Pro, Max, Ultra, Team and Enterprise
    ([Anthropic Help Center](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
    fetched 2026-10-31).
-3. Claude opens OML's connect page. Enter the code; the page then shows the
-   principal, role and workareas the connection will act as, and that every
-   write is held until someone else reviews it. Confirm.
+3. Claude opens OML's connect page. Enter the code only on a page reached this
+   way, never on a link someone sent. The page then shows the tenant by the name
+   its operator gave it, the principal, role and workareas the connection will
+   act as, and what it may do there, built from the key's role and effective
+   access — remember and learn where it holds writer, recall and read where it
+   holds reader, propose where it holds dreamer(propose). Where it may write, the
+   page says each write is held until someone else reviews it, and names any
+   workarea whose tenant policy permits `self_signed` rows, where its writes may
+   be readable without review
+   ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d9).
+   Confirm.
 4. The connector is then usable from every Claude app signed in to that account,
    the mobile apps included. claude.ai holds only tokens bound to that one key;
    no key value exists to paste.
