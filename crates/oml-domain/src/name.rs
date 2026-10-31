@@ -34,6 +34,19 @@ impl NamedKind {
         NamedKind::Key,
     ];
 
+    /// The kind's word: `tenant`, `workarea`, `crew` or `key`, as
+    /// `name.taken`'s `details.kind` and `system.names_assigned`'s `kind`
+    /// spell it (errors.md; event-catalog.md).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NamedKind::Tenant => "tenant",
+            NamedKind::Workarea => "workarea",
+            NamedKind::Crew => "crew",
+            NamedKind::Key => "key",
+        }
+    }
+
     /// The prefix of the kind's derived name: `tenant`, `wa`, `crew` or
     /// `key` (ADR-0026 d11, rule 3).
     fn derived_prefix(self) -> &'static str {
@@ -76,15 +89,28 @@ pub enum NameRefusal {
 pub struct Name(String);
 
 impl Name {
-    /// The value as a name, under the grammar of ADR-0026 d2:
-    /// `^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`, minus the three spellings that
-    /// read as an id. Every allowed character is ASCII, so the value is
-    /// taken as it is or refused.
+    /// The value as a name a creation may choose, under the creation grammar
+    /// of ADR-0026 d2: `^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`, minus the three
+    /// spellings that read as an id. Every allowed character is ASCII, so
+    /// the value is taken as it is or refused.
     pub fn parse(value: &str) -> Result<Self, NameRefusal> {
+        let name = Self::parse_reference(value)?;
+        if is_derived_form(value) {
+            return Err(NameRefusal::ReadsAsId);
+        }
+        Ok(name)
+    }
+
+    /// The value as a name in a reference, under the reference grammar of
+    /// ADR-0026 d2: the creation grammar with the derived form admitted, so
+    /// a row d11 named in that form is addressed by it like any other. It is
+    /// also how a stored name reads back, since the schema's `oml_name`
+    /// domain checks this grammar (postgres-schema.md names and tenants).
+    pub fn parse_reference(value: &str) -> Result<Self, NameRefusal> {
         if !is_label(value) {
             return Err(NameRefusal::Grammar);
         }
-        if is_id_form(value) || is_hex32(value) || is_derived_form(value) {
+        if is_id_form(value) || is_hex32(value) {
             return Err(NameRefusal::ReadsAsId);
         }
         Ok(Name(value.to_owned()))
@@ -168,13 +194,14 @@ pub enum Reference {
 
 impl Reference {
     /// The classification of ADR-0026 d3: in the id form, an id; otherwise
-    /// a name under d2; otherwise the name's refusal, which the caller
-    /// answers with `request.validation` and `details.field` naming the
-    /// field (http-api.md, "Names and ids").
+    /// a name under d2's reference grammar, the derived form included;
+    /// otherwise the name's refusal, which the caller answers with
+    /// `request.validation` and `details.field` naming the field
+    /// (http-api.md, "Names and ids").
     pub fn parse(value: &str) -> Result<Self, NameRefusal> {
         match parse_id(value) {
             Some(id) => Ok(Reference::Id(id)),
-            None => Name::parse(value).map(Reference::Name),
+            None => Name::parse_reference(value).map(Reference::Name),
         }
     }
 }

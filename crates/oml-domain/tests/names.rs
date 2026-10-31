@@ -83,23 +83,13 @@ fn a_value_in_the_hex_and_dash_form_is_an_id_in_either_case() {
 }
 
 #[test]
-fn thirty_two_hex_digits_the_derived_form_uppercase_dot_slash_and_underscore_are_neither() {
-    // Refused although the label grammar admits them: they read as an id.
-    for value in [
-        "deadbeefdeadbeefdeadbeefdeadbeef",
-        "tenant-0190f2a47c3e4b1d9a6fe2d8c51b3a07",
-        "wa-0190f2a47c3e4b1d9a6fe2d8c51b3a07",
-        "crew-0190f2a47c3e4b1d9a6fe2d8c51b3a07",
-        "key-0190f2a47c3e4b1d9a6fe2d8c51b3a07",
-    ] {
-        assert_eq!(parse_id(value), None, "{value:?}");
-        assert_eq!(Name::parse(value), Err(NameRefusal::ReadsAsId), "{value:?}");
-        assert_eq!(
-            Reference::parse(value),
-            Err(NameRefusal::ReadsAsId),
-            "{value:?}"
-        );
-    }
+fn thirty_two_hex_digits_uppercase_dot_slash_and_underscore_are_neither() {
+    // Refused although the label grammar admits it: it reads as an id.
+    let hex32 = "deadbeefdeadbeefdeadbeefdeadbeef";
+    assert_eq!(parse_id(hex32), None);
+    assert_eq!(Name::parse(hex32), Err(NameRefusal::ReadsAsId));
+    assert_eq!(Name::parse_reference(hex32), Err(NameRefusal::ReadsAsId));
+    assert_eq!(Reference::parse(hex32), Err(NameRefusal::ReadsAsId));
     // Refused by the grammar itself: refused, never coerced (errors.md).
     for value in [
         "0190f2a47c3e4b1d9a6fe2d8c51b3a07",
@@ -164,7 +154,13 @@ proptest! {
     #[test]
     fn no_string_is_both_an_id_and_a_name(value in near_either()) {
         let id = parse_id(&value);
-        let as_name = Name::parse(&value);
+        prop_assert!(
+            !(id.is_some() && Name::parse(&value).is_ok()),
+            "{value:?} is both an id and a created name"
+        );
+        // A reference classifies under the reference grammar, which admits
+        // the derived form that no creation may take (ADR-0026 d2, d3).
+        let as_name = Name::parse_reference(&value);
         prop_assert!(
             !(id.is_some() && as_name.is_ok()),
             "{value:?} is both an id and a name"
@@ -196,6 +192,48 @@ fn a_derived_name_is_the_kind_prefix_and_the_32_hex_digits_of_the_id() {
         assert_eq!(derived.as_str(), expected);
         // The form is reserved: no creation can take it (ADR-0026 d2, d11).
         assert_eq!(Name::parse(expected), Err(NameRefusal::ReadsAsId));
+    }
+}
+
+#[test]
+fn a_derived_name_is_a_name_in_a_reference_and_refused_at_creation() {
+    // A row d11 named in the derived form is addressed by that name like
+    // any other; only a creation refuses the form (ADR-0026 d2, d10, d11).
+    let id = Uuid::from_u128(0x0190_f2a4_7c3e_4b1d_9a6f_e2d8_c51b_3a07);
+    for kind in [
+        NamedKind::Tenant,
+        NamedKind::Workarea,
+        NamedKind::Crew,
+        NamedKind::Key,
+    ] {
+        let derived = Name::derived(kind, id);
+        assert_eq!(parse_id(derived.as_str()), None);
+        assert_eq!(Name::parse(derived.as_str()), Err(NameRefusal::ReadsAsId));
+        assert_eq!(Name::parse_reference(derived.as_str()), Ok(derived.clone()));
+        assert_eq!(
+            Reference::parse(derived.as_str()),
+            Ok(Reference::Name(derived)),
+            "the reference grammar admits the derived form"
+        );
+    }
+    // A created name reads back under the reference grammar as it was made.
+    assert_eq!(
+        Name::parse_reference("metals-crew"),
+        Name::parse("metals-crew")
+    );
+}
+
+#[test]
+fn each_kind_is_spelled_as_the_word_details_kind_carries() {
+    // errors.md `name.taken` details.kind; event-catalog.md
+    // `system.names_assigned` names[].kind.
+    for (kind, word) in [
+        (NamedKind::Tenant, "tenant"),
+        (NamedKind::Workarea, "workarea"),
+        (NamedKind::Crew, "crew"),
+        (NamedKind::Key, "key"),
+    ] {
+        assert_eq!(kind.as_str(), word);
     }
 }
 
