@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0026-names-are-keys
 tier: engineering
-status: proposed
+status: accepted design
 answers: which records carry a unique name, what a name may spell, how a name is accepted wherever an id is and resolved on the server without leaking existence, what the universe root is called, how paths relate to names, what a crew is, how a key's name differs from its principal and label, whether a name is ever released, how rows that predate names are named, how the CLI's agent-key verb takes a key's name and crew, and what workarea structure an admin key reads
 -->
 
 # ADR-0026 — Workareas, crews, keys and tenants are named by unique, immutable keys that every surface accepts in place of their ids
 
-**Status:** proposed · 2026-10-30
+**Status:** accepted design · 2026-10-31
 
 **Amends:** ADR-0008 (d3, d7), ADR-0010 (d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14), ADR-0028 (d1, d3)
 

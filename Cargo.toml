@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 # MSRV = pinned stable minus two minor releases (ci-and-toolchain.md MSRV window)
 rust-version = "1.97"

@@ -7,7 +7,7 @@ answers: how the CLI issues the one key the agent plugin needs in one call and p
 
 # ADR-0028 — The CLI issues an agent's key in one call with its reader grant by default, and an admin skill runs it without the key value entering a transcript
 
-**Status:** accepted design · 2026-10-31
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md)
 
 **Amends:** ADR-0015 (d1)
 

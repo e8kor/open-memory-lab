@@ -145,7 +145,7 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
 
 ### 2026-10-30 — names as keys (ADR-0026)
 
-[ADR-0026](adr/ADR-0026-names-are-keys.md) (proposed) gives workareas, crews, keys and tenants a
+[ADR-0026](adr/ADR-0026-names-are-keys.md), accepted by the maintainer on 2026-10-31 with release v0.3.0, gives workareas, crews, keys and tenants a
 name that is a unique, immutable key beside the id. It proposes amending ADR-0008 (d3, d7), ADR-0010
 (d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14) and ADR-0028 (d1, d3);
 each of those records' Status lines gains the back-pointer when ADR-0026 is accepted.
