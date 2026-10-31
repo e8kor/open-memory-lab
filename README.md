@@ -2,16 +2,16 @@
   <a href="https://e8kor.github.io/open-memory-lab/">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/readme-hero-dark.svg">
-      <img alt="Open Memory Lab: every memory is a claim under test" src="docs/assets/brand/readme-hero-light.svg" width="100%">
+      <img alt="Open Memory Lab: steady at the centre, forming at the edges" src="docs/assets/brand/readme-hero-light.svg" width="100%">
     </picture>
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/e8kor/open-memory-lab/releases"><img alt="Release" src="https://img.shields.io/github/v/release/e8kor/open-memory-lab?style=flat-square&labelColor=0A0F1D&color=46D684&label=release"></a>
-  <a href="https://e8kor.github.io/open-memory-lab/"><img alt="Docs" src="https://img.shields.io/badge/docs-design%20draft-7AA2FF?style=flat-square&labelColor=0A0F1D"></a>
-  <a href="https://e8kor.github.io/open-memory-lab/atlas/"><img alt="Live atlas" src="https://img.shields.io/badge/live%20atlas-3D%20tour-B48AF2?style=flat-square&labelColor=0A0F1D"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-4FD8C0?style=flat-square&labelColor=0A0F1D"></a>
+  <a href="https://github.com/e8kor/open-memory-lab/releases"><img alt="Release" src="https://img.shields.io/github/v/release/e8kor/open-memory-lab?style=flat-square&labelColor=0A0D22&color=F6A83E&label=release"></a>
+  <a href="https://e8kor.github.io/open-memory-lab/"><img alt="Docs" src="https://img.shields.io/badge/docs-design%20draft-9FC6E6?style=flat-square&labelColor=0A0D22"></a>
+  <a href="https://e8kor.github.io/open-memory-lab/atlas/"><img alt="Live atlas" src="https://img.shields.io/badge/live%20atlas-3D%20tour-9FC6E6?style=flat-square&labelColor=0A0D22"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-EFE9DA?style=flat-square&labelColor=0A0D22"></a>
 </p>
 
 <p align="center">

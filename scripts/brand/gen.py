@@ -1,237 +1,607 @@
-# Generates the OML brand SVGs into docs/assets/brand/. Text is outlined to paths with
-# fontTools from locally installed Inter Display / Inter / JetBrains Mono, so the SVGs render
-# identically on GitHub, where web fonts are not loaded inside <img>.
-# Usage: pip install fonttools && python3 scripts/brand/gen.py docs/assets/brand
-#        node scripts/brand/render.js docs/assets/brand docs/assets/brand \
-#          '[["social-preview.svg","social-preview.png",1280,640],["oml-icon.svg","oml-icon-512.png",512,512]]'
-import random, os, sys
+#!/usr/bin/env python3
+"""
+Open Memory Lab brand kit generator (direction: Atlas, cosmic).
+
+Usage:   python3 gen.py OUT_DIR
+Needs:   Python 3.9+, fonttools (pip install fonttools); uharfbuzz is optional (better kerning).
+Fonts:   OFL fonts are fetched from raw.githubusercontent.com/google/fonts into a cache directory
+         ($OML_FONT_CACHE, default ~/.cache/oml-brand-fonts) on first run, then instanced to the
+         static weights used here. Every piece of text is outlined to paths; no <text> is emitted.
+Writes:  oml-mark.svg, oml-mark-light.svg, oml-mark-mono.svg, oml-icon.svg, favicon.svg,
+         oml-lockup-dark.svg, oml-lockup-light.svg, oml-wordmark-dark.svg, oml-wordmark-light.svg,
+         readme-hero-dark.svg, readme-hero-light.svg, social-preview.svg, tokens.md.
+         PNGs (social-preview.png, oml-icon-512.png) come from render.js.
+"""
+import math, os, sys, random, urllib.request
 from fontTools.ttLib import TTFont
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
+from fontTools.varLib import instancer
+try:
+    import uharfbuzz as hb
+except ImportError:
+    hb = None
 
+if len(sys.argv) < 2:
+    sys.exit("usage: python3 gen.py OUT_DIR")
 OUT = sys.argv[1]
 os.makedirs(OUT, exist_ok=True)
-FD = "/usr/share/fonts/opentype/inter/"
-FONTS = {
-  "disp-bold": FD+"InterDisplay-Bold.otf",
-  "disp-semi": FD+"InterDisplay-SemiBold.otf",
-  "medium": FD+"Inter-Medium.otf",
-  "regular": FD+"Inter-Regular.otf",
-  "mono": "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Medium.ttf",
+CACHE = os.environ.get("OML_FONT_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "oml-brand-fonts"))
+os.makedirs(CACHE, exist_ok=True)
+
+RAW = "https://raw.githubusercontent.com/google/fonts/main/ofl/"
+SOURCES = {  # variable OFL sources
+    "newsreader": ("newsreader/Newsreader%5Bopsz,wght%5D.ttf", "Newsreader-VF.ttf"),
+    "inter": ("inter/Inter%5Bopsz,wght%5D.ttf", "Inter-VF.ttf"),
+    "jbmono": ("jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf", "JetBrainsMono-VF.ttf"),
 }
+STATIC = {  # key: (source, axis location)
+    "disp":  ("newsreader", {"opsz": 72, "wght": 600}),   # Newsreader Display SemiBold
+    "sans":  ("inter", {"opsz": 14, "wght": 400}),
+    "sansM": ("inter", {"opsz": 14, "wght": 500}),
+    "sansS": ("inter", {"opsz": 14, "wght": 600}),
+    "mono":  ("jbmono", {"wght": 500}),
+}
+
+def _source(name):
+    rel, fn = SOURCES[name]
+    p = os.path.join(CACHE, fn)
+    if not os.path.exists(p):
+        print("downloading", fn, file=sys.stderr)
+        with urllib.request.urlopen(RAW + rel, timeout=60) as r:
+            data = r.read()
+        with open(p + ".part", "wb") as f:
+            f.write(data)
+        os.replace(p + ".part", p)
+    return p
+
+def _static(key):
+    src, loc = STATIC[key]
+    tag = "-".join(f"{k}{v}" for k, v in sorted(loc.items()))
+    p = os.path.join(CACHE, f"{src}-{tag}.ttf")
+    if not os.path.exists(p):
+        vf = TTFont(_source(src))
+        axes = {a.axisTag for a in vf["fvar"].axes}
+        inst = instancer.instantiateVariableFont(vf, {k: v for k, v in loc.items() if k in axes})
+        inst.save(p + ".part")
+        os.replace(p + ".part", p)
+    return p
+
+F = {k: None for k in STATIC}
 _cache = {}
-def font(k):
-    if k not in _cache:
-        f = TTFont(FONTS[k]); _cache[k] = (f, f.getGlyphSet(), f.getBestCmap(), f["head"].unitsPerEm, f["hmtx"])
-    return _cache[k]
 
-def kern_pairs(f):
-    # simple pair kerning from GPOS PairPos format 1 only (best effort)
-    return {}
+def _font(key):
+    if key not in _cache:
+        p = F[key] or _static(key)
+        tt = TTFont(p)
+        hbfont = None
+        if hb:
+            face = hb.Face(hb.Blob.from_file_path(p))
+            hbfont = hb.Font(face)
+        _cache[key] = (tt, tt.getGlyphSet(), tt.getGlyphOrder(), hbfont, tt["head"].unitsPerEm)
+    return _cache[key]
 
-def text_path(k, s, size, x, y, track=0.0, anchor="start"):
-    f, gs, cmap, upm, hmtx = font(k)
-    sc = size / upm
-    w = 0; glyphs = []
-    for ch in s:
-        g = cmap.get(ord(ch))
-        if g is None: g = cmap[ord(" ")]
-        glyphs.append((g, w)); w += hmtx[g][0] * sc + track * size
-    w -= track * size
-    if anchor == "middle": x -= w/2
-    elif anchor == "end": x -= w
+def _shape(key, text):
+    tt, gs, order, font, upem = _font(key)
+    if font is not None:
+        buf = hb.Buffer(); buf.add_str(text); buf.guess_segment_properties()
+        hb.shape(font, buf, {"kern": True, "liga": True})
+        return [(order[i.codepoint], p.x_advance, p.x_offset, p.y_offset) for i, p in zip(buf.glyph_infos, buf.glyph_positions)]
+    cmap = tt.getBestCmap(); hmtx = tt["hmtx"]
+    out = []
+    for ch in text:
+        n = cmap.get(ord(ch), ".notdef")
+        out.append((n, hmtx[n][0], 0, 0))
+    return out
+
+def measure(key, text, size, tracking=0.0):
+    return text_d(key, text, size, 0, 0, tracking=tracking)[1]
+
+def text_d(key, text, size, x, y, anchor="start", tracking=0.0):
+    tt, gs, order, font, upem = _font(key)
+    glyphs = _shape(key, text)
+    s = size / upem
+    width = sum(g[1] for g in glyphs) * s + tracking * max(len(glyphs) - 1, 0)
+    if anchor == "middle": x -= width / 2
+    elif anchor == "end": x -= width
     pen = SVGPathPen(gs)
-    for g, off in glyphs:
-        tp = TransformPen(pen, (sc, 0, 0, -sc, x + off, y))
-        gs[g].draw(tp)
-    return pen.getCommands(), w
+    cx = x
+    for name, adv, xo, yo in glyphs:
+        gs[name].draw(TransformPen(pen, (s, 0, 0, -s, cx + xo * s, y - yo * s)))
+        cx += adv * s + tracking
+    return pen.getCommands(), width
 
-def tp(k, s, size, x, y, fill, track=0.0, anchor="start", extra=""):
-    d, w = text_path(k, s, size, x, y, track, anchor)
-    return f'<path fill="{fill}" {extra} d="{d}"/>', w
+def T(key, text, size, x, y, fill, anchor="start", tracking=0.0, opacity=None):
+    d, _ = text_d(key, text, size, x, y, anchor, tracking)
+    op = f' fill-opacity="{opacity}"' if opacity is not None else ""
+    return f'<path d="{d}" fill="{fill}"{op}/>'
 
-# ---------- palette ----------
-P = dict(void="#04060D", deep="#0A0F1D", panel="#0E1526", line="#1E2745",
-         star="#E9EDF8", dust="#94A0C0", faint="#5C6584",
-         gold="#E8B45A", teal="#4FD8C0", blue="#7AA2FF", violet="#B48AF2",
-         green="#46D684", red="#F0716E",
-         paper="#F7F8FC", paper2="#ECEFF8", ink="#0B1020", ink2="#4A5370", lline="#D5DAEA",
-         gold_d="#A86E12", teal_d="#0B8A78", blue_d="#3157D6", violet_d="#7A4FCF")
+def esc(t):
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def mark_group(cx, cy, s, left, right, core, sw_ratio=7/64):
-    """The OML mark: two facing chevrons (writer, reviewer) closing on a claim at the core.
-    Drawn in a 64-unit box centred on (cx, cy), scaled to s px."""
-    k = s/64.0
-    sw = 64*sw_ratio
-    return (f'<g transform="translate({cx-32*k:.2f} {cy-32*k:.2f}) scale({k:.4f})" fill="none" '
-            f'stroke-width="{sw:.2f}" stroke-linejoin="miter" stroke-linecap="butt">'
-            f'<path stroke="{left}" d="M28.6 10.6 L7.2 32 L28.6 53.4"/>'
-            f'<path stroke="{right}" d="M35.4 10.6 L56.8 32 L35.4 53.4"/>'
-            f'<rect x="26.5" y="26.5" width="11" height="11" transform="rotate(45 32 32)" fill="{core}" stroke="none"/>'
-            f'</g>')
+def write(name, svg, title, desc):
+    """Every SVG gets role, aria-label, <title> and <desc> right after the root tag."""
+    i = svg.index(">") + 1
+    root = svg[:i - 1] + f' role="img" aria-label="{esc(title)}">'
+    svg = root + f"<title>{esc(title)}</title><desc>{esc(desc)}</desc>" + svg[i:]
+    assert "<text" not in svg
+    with open(os.path.join(OUT, name), "w", encoding="utf-8") as f:
+        f.write(svg)
 
-def svg(w, h, body, title, desc=""):
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" role="img" aria-labelledby="t d">'
-            f'<title id="t">{title}</title><desc id="d">{desc}</desc>{body}</svg>\n')
+# ---------------------------------------------------------------- palette and drawing
+THEMES = {
+    "dark": dict(bg="#0A0D22", fg="#EFE9DA", muted="#AEB6D2", star="#F6A83E", core="#FFE2B0",
+                 lab="#9FC6E6", labDim="#5F7FA3", faint="#2E3664", glow=0.30, vig=0.55, starfield=True,
+                 halo="#0A0D22"),
+    "light": dict(bg="#F1EBDC", fg="#10153A", muted="#414872", star="#C4700D", core="#F2AA4C",
+                  lab="#2F6690", labDim="#7C97B4", faint="#C4BDAE", glow=0.20, vig=0.0, starfield=False,
+                  halo="#F1EBDC"),
+}
+PAL = {"night": "#0A0D22", "star": "#F6A83E", "ice": "#9FC6E6", "paper": "#EFE9DA",
+       "starPaper": "#C4700D", "steel": "#2F6690", "paperBg": "#F1EBDC", "inkText": "#10153A"}
 
-def write(name, content):
-    open(os.path.join(OUT, name), "w").write(content); print("wrote", name)
 
-# ---------- marks ----------
-write("oml-mark.svg", svg(64, 64, mark_group(32, 32, 64, P["gold"], P["teal"], P["star"]),
-      "Open Memory Lab", "Two facing chevrons, the writer and the reviewer, closing on a claim."))
-write("oml-mark-light.svg", svg(64, 64, mark_group(32, 32, 64, P["gold_d"], P["teal_d"], P["ink"]),
-      "Open Memory Lab", "OML mark for light backgrounds."))
-write("oml-mark-mono.svg", svg(64, 64, mark_group(32, 32, 64, "currentColor", "currentColor", "currentColor"),
-      "Open Memory Lab", "Single-colour OML mark; inherits currentColor."))
-tile = (f'<rect width="64" height="64" rx="14" fill="{P["deep"]}"/>'
-        f'<rect x="0.5" y="0.5" width="63" height="63" rx="13.5" fill="none" stroke="{P["line"]}"/>'
-        + mark_group(32, 32, 46, P["gold"], P["teal"], P["star"]))
-write("oml-icon.svg", svg(64, 64, tile, "Open Memory Lab", "App icon: OML mark on a deep-navy tile."))
-write("favicon.svg", svg(64, 64, f'<rect width="64" height="64" rx="14" fill="{P["deep"]}"/>' +
-      mark_group(32, 32, 52, P["gold"], P["teal"], P["star"], sw_ratio=9/64), "OML", ""))
+def Th(th, key, text, size, x, y, fill, anchor="start", tracking=0.0, halo=5):
+    """Outlined text with a halo in the ground colour, so it keeps clear of lines."""
+    d, _ = text_d(key, text, size, x, y, anchor, tracking)
+    h = (f'<path d="{d}" fill="none" stroke="{th["halo"]}" stroke-width="{halo}" stroke-linejoin="round" '
+         f'stroke-opacity="0.92"/>') if halo else ""
+    return h + f'<path d="{d}" fill="{fill}"/>'
 
-# ---------- lockups ----------
-def lockup(dark):
-    fg = P["star"] if dark else P["ink"]; sub = P["dust"] if dark else P["ink2"]
-    m = mark_group(44, 44, 72, P["gold"] if dark else P["gold_d"], P["teal"] if dark else P["teal_d"], fg)
-    t1, w1 = tp("disp-bold", "Open Memory Lab", 40, 100, 50, fg, track=-0.01)
-    t2, w2 = tp("mono", "every memory is a claim under test", 13.5, 102, 74, sub, track=0.02)
-    W = int(100 + max(w1, w2) + 16)
-    return svg(W, 88, m + t1 + t2, "Open Memory Lab", "Every memory is a claim under test.")
-write("oml-lockup-dark.svg", lockup(True))
-write("oml-lockup-light.svg", lockup(False))
+def cap(th, key, text, size, x, y, fill, anchor="start", halo=5):
+    return Th(th, key, text.upper(), size, x, y, fill, anchor, size * 0.11, halo)
 
-# ---------- shared art: starfield + atlas orbit + journal chain ----------
-def starfield(w, h, n, seed, col, x0=0):
-    r = random.Random(seed); out = []
-    for _ in range(n):
-        x = r.uniform(x0, w); y = r.uniform(0, h); rad = r.choice([0.6, 0.8, 1, 1, 1.3, 1.7])
-        op = r.uniform(0.25, 0.9)
-        out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{rad}" fill="{col}" opacity="{op:.2f}"/>')
-    return "".join(out)
+# ---------------------------------------------------------------- mark
+def mark_group(x, y, size, ring, star, body, sw=6.4, comp_r=5.6, star_r=11):
+    """A full orbit that is also the O of Open: star off-centre inside, companion sitting in a gap."""
+    k = size / 64.0
+    R, gap_c, gap = 24, -40, 26  # gap centre angle and half-width (deg)
+    a0, a1 = math.radians(gap_c + gap), math.radians(gap_c - gap + 360)
+    p0 = (32 + R * math.cos(a0), 32 + R * math.sin(a0))
+    p1 = (32 + R * math.cos(a1), 32 + R * math.sin(a1))
+    ringp = (f'<path d="M{p0[0]:.2f} {p0[1]:.2f} A{R} {R} 0 1 1 {p1[0]:.2f} {p1[1]:.2f}" fill="none" '
+             f'stroke="{ring}" stroke-width="{sw}" stroke-linecap="round"/>')
+    bc = (32 + R * math.cos(math.radians(gap_c)), 32 + R * math.sin(math.radians(gap_c)))
+    comp = f'<circle cx="{bc[0]:.2f}" cy="{bc[1]:.2f}" r="{comp_r}" fill="{body}"/>'
+    st = f'<circle cx="28.4" cy="35.4" r="{star_r}" fill="{star}"/>'
+    return f'<g transform="translate({x} {y}) scale({k:.5f})">{ringp}{st}{comp}</g>'
 
-def diamond(x, y, s, fill, extra=""):
-    return f'<rect x="{x-s/2:.1f}" y="{y-s/2:.1f}" width="{s}" height="{s}" transform="rotate(45 {x:.1f} {y:.1f})" fill="{fill}" {extra}/>'
+def wordmark(th, x, y, size):
+    ms = size * 1.18
+    g = [mark_group(x, y - ms * 0.80, ms, th["lab"], th["star"], th["fg"])]
+    g.append(T("disp", "Open Memory Lab", size, x + ms + size * 0.26, y, th["fg"], tracking=-size * 0.005))
+    return "".join(g)
 
-def C(dark):
-    """Theme-resolved colours for the story art."""
-    if dark:
-        return dict(bg=P["void"], fg=P["star"], sub=P["dust"], faint=P["faint"], line=P["line"],
-                    gold=P["gold"], teal=P["teal"], green=P["green"], violet=P["violet"], node=P["panel"])
-    return dict(bg=P["paper"], fg=P["ink"], sub=P["ink2"], faint="#8C96B8", line=P["lline"],
-                gold=P["gold_d"], teal=P["teal_d"], green="#1F9D57", violet=P["violet_d"], node="#FFFFFF")
+# ---------------------------------------------------------------- system
+TILT = math.radians(-10)
+O1, O2, O3 = (150, 62), (252, 104), (360, 150)
 
-def story(ox, oy, k, dark, uid, labels=True):
-    """The path of one memory across a workarea, drawn in a 560x330 box at (ox, oy), scale k.
-    Written by one agent -> held -> reviewed by someone who did not write it -> shared with the
-    crew. Each step drops into the signed journal along the bottom. Other memories sit quietly
-    in orbit so the one story reads first."""
-    import math
-    c = C(dark); r = random.Random(5)
-    T = lambda x, y: (ox + x*k, oy + y*k)
-    o = [f'<defs><marker id="ah{uid}" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="{7*k:.1f}" markerHeight="{7*k:.1f}" '
-         f'markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 L8 5 L1 9" fill="none" stroke="{c["sub"]}" stroke-width="1.6"/></marker></defs>']
-    # workarea orbits (tilted ellipses) and quiet, already-shared memories
-    cx, cy = T(320, 160)
-    for rr in (250, 170, 95):
-        o.append(f'<ellipse cx="{cx:.1f}" cy="{cy:.1f}" rx="{rr*k:.1f}" ry="{rr*0.42*k:.1f}" fill="none" stroke="{c["line"]}" '
-                 f'stroke-width="{1.2*k:.2f}" transform="rotate(-12 {cx:.1f} {cy:.1f})"/>')
-    for i, rr in enumerate((250, 170, 95)):
-        for j in range(5 - i):
-            a = r.uniform(0, 2*math.pi); x = rr*math.cos(a); y = rr*0.42*math.sin(a); th = math.radians(-12)
-            X = 320 + x*math.cos(th) - y*math.sin(th); Y = 160 + x*math.sin(th) + y*math.cos(th)
-            if 20 < X < 540 and 20 < Y < 275:
-                px, py = T(X, Y); o.append(diamond(px, py, 7*k, c["teal"], 'opacity="0.28"'))
-    # stations
-    W, H, R, S = (70, 225), (175, 92), (355, 62), (365, 200)
-    crew = [(470, 135), (505, 240), (255, 262)]
-    def P2(p): return T(*p)
-    # share lines to the crew
-    for q in crew:
-        a, b = P2(S), P2(q)
-        o.append(f'<line x1="{a[0]:.1f}" y1="{a[1]:.1f}" x2="{b[0]:.1f}" y2="{b[1]:.1f}" stroke="{c["green"]}" stroke-width="{1.4*k:.2f}" opacity="0.55"/>')
-        o.append(f'<circle cx="{b[0]:.1f}" cy="{b[1]:.1f}" r="{7*k:.1f}" fill="{c["node"]}" stroke="{c["sub"]}" stroke-width="{2*k:.2f}"/>')
-    # the path of the one memory
-    pts = [P2(W), P2(H), P2(R), P2(S)]
-    ctrl = [T(80, 120), T(255, 40), T(440, 110)]
-    d = f'M{pts[0][0]:.1f} {pts[0][1]:.1f}'
-    for cc, pp in zip(ctrl, pts[1:]):
-        d += f' Q{cc[0]:.1f} {cc[1]:.1f} {pp[0]:.1f} {pp[1]:.1f}'
-    o.append(f'<path d="{d}" fill="none" stroke="{c["sub"]}" stroke-width="{1.8*k:.2f}" stroke-dasharray="{5*k:.1f} {5*k:.1f}"/>')
-    # arrowheads mid-segment
-    for (a, cc, b) in zip(pts[:-1], ctrl, pts[1:]):
-        t = 0.55; x = (1-t)**2*a[0] + 2*(1-t)*t*cc[0] + t*t*b[0]; y = (1-t)**2*a[1] + 2*(1-t)*t*cc[1] + t*t*b[1]
-        dx = 2*(1-t)*(cc[0]-a[0]) + 2*t*(b[0]-cc[0]); dy = 2*(1-t)*(cc[1]-a[1]) + 2*t*(b[1]-cc[1])
-        ang = math.degrees(math.atan2(dy, dx))
-        o.append(f'<path d="M{-5*k:.1f} {-5*k:.1f} L{3*k:.1f} 0 L{-5*k:.1f} {5*k:.1f}" fill="none" stroke="{c["sub"]}" '
-                 f'stroke-width="{1.8*k:.2f}" transform="translate({x:.1f} {y:.1f}) rotate({ang:.1f})"/>')
-    # journal: one signed block per step, linked
-    jy = 300; xs = [70, 175, 355, 365+60]
-    blocks = [40 + i*58 for i in range(9)]
-    bx0, by = T(blocks[0], jy)
-    for i, bxv in enumerate(blocks):
-        bx, byy = T(bxv, jy)
-        if i:
-            px, _ = T(blocks[i-1] + 26, jy)
-            o.append(f'<line x1="{px:.1f}" y1="{byy+7*k:.1f}" x2="{bx:.1f}" y2="{byy+7*k:.1f}" stroke="{c["violet"]}" stroke-width="{1.4*k:.2f}" opacity="0.7"/>')
-        o.append(f'<rect x="{bx:.1f}" y="{byy:.1f}" width="{26*k:.1f}" height="{14*k:.1f}" rx="{3*k:.1f}" fill="{c["node"]}" stroke="{c["violet"]}" stroke-width="{1.2*k:.2f}" opacity="0.9"/>')
-    # drop lines from each step into the journal
-    for st, col, bi in ((W, c["gold"], 0), (H, c["gold"], 2), (R, c["teal"], 5), (S, c["green"], 6)):
-        a = P2(st); bxv = blocks[bi]; b = T(bxv + 13, jy)
-        o.append(f'<line x1="{a[0]:.1f}" y1="{a[1]+14*k:.1f}" x2="{b[0]:.1f}" y2="{b[1]:.1f}" stroke="{col}" stroke-width="{1.2*k:.2f}" stroke-dasharray="{2*k:.1f} {4*k:.1f}" opacity="0.6"/>')
-        o.append(f'<rect x="{T(bxv, jy)[0]:.1f}" y="{b[1]:.1f}" width="{26*k:.1f}" height="{14*k:.1f}" rx="{3*k:.1f}" fill="{col}" opacity="0.9"/>')
-    # station glyphs
-    w = P2(W); o.append(f'<circle cx="{w[0]:.1f}" cy="{w[1]:.1f}" r="{11*k:.1f}" fill="{c["node"]}" stroke="{c["gold"]}" stroke-width="{3*k:.2f}"/>')
-    h = P2(H); o.append(f'<circle cx="{h[0]:.1f}" cy="{h[1]:.1f}" r="{24*k:.1f}" fill="none" stroke="{c["gold"]}" stroke-width="{1.5*k:.2f}" stroke-dasharray="{4*k:.1f} {4*k:.1f}"/>')
-    o.append(diamond(h[0], h[1], 17*k, c["gold"]))
-    rv = P2(R); o.append(f'<circle cx="{rv[0]:.1f}" cy="{rv[1]:.1f}" r="{13*k:.1f}" fill="{c["node"]}" stroke="{c["teal"]}" stroke-width="{3*k:.2f}"/>')
-    o.append(f'<path d="M{rv[0]-5.5*k:.1f} {rv[1]+0.5*k:.1f} L{rv[0]-1.5*k:.1f} {rv[1]+4.5*k:.1f} L{rv[0]+6*k:.1f} {rv[1]-4*k:.1f}" fill="none" stroke="{c["teal"]}" stroke-width="{2.6*k:.2f}" stroke-linecap="round" stroke-linejoin="round"/>')
-    s = P2(S); o.append(f'<circle cx="{s[0]:.1f}" cy="{s[1]:.1f}" r="{28*k:.1f}" fill="{c["green"]}" opacity="0.14"/>')
-    o.append(diamond(s[0], s[1], 21*k, c["green"]))
-    if labels:
-        L = lambda txt, x, y, col, anc="middle": tp("mono", txt, 14*k, *T(x, y), col, anchor=anc)[0]
-        o.append(L("written", 70, 258, c["sub"]))
-        o.append(L("held", 175, 56, c["gold"]))
-        o.append(L("reviewed by someone else", 355, 30, c["teal"]))
-        o.append(L("shared", 365, 247, c["green"]))
-        o.append(L("every step signed", 560, 330, c["faint"], "end"))
-    return "".join(o)
+def P(cx, cy, rx, ry, deg, s=1.0):
+    a = math.radians(deg)
+    x, y = rx * math.cos(a) * s, ry * math.sin(a) * s
+    return cx + x * math.cos(TILT) - y * math.sin(TILT), cy + x * math.sin(TILT) + y * math.cos(TILT)
 
-# ---------- README hero ----------
-def hero(dark):
-    W, Hh = 1280, 380; c = C(dark)
-    defs = (f'<defs><radialGradient id="glow" cx="0.78" cy="0.45" r="0.55">'
-            f'<stop offset="0" stop-color="{c["violet"]}" stop-opacity="{0.18 if dark else 0.08}"/>'
-            f'<stop offset="1" stop-color="{c["bg"]}" stop-opacity="0"/></radialGradient></defs>')
-    b = [defs, f'<rect width="{W}" height="{Hh}" rx="18" fill="{c["bg"]}"/>', f'<rect width="{W}" height="{Hh}" rx="18" fill="url(#glow)"/>']
-    if not dark: b.append(f'<rect x="0.5" y="0.5" width="{W-1}" height="{Hh-1}" rx="17.5" fill="none" stroke="{P["lline"]}"/>')
-    b.append(starfield(W, Hh, 70, 3, P["star"] if dark else "#8C96B8", x0=640))
-    b.append(story(690, 22, 1.0, dark, "h"))
-    b.append(mark_group(110, 118, 104, c["gold"], c["teal"], c["fg"]))
-    t, _ = tp("disp-bold", "Open Memory Lab", 60, 186, 138, c["fg"], track=-0.015); b.append(t)
-    t, _ = tp("medium", "Every memory is a claim under test.", 26, 64, 222, c["fg"]); b.append(t)
-    for i, line in enumerate(["Shared memory for AI agents and crews. Nothing one agent",
-                              "writes reaches the others until someone else has checked it."]):
-        t, _ = tp("regular", line, 19, 64, 268 + i*28, c["sub"]); b.append(t)
-    return svg(W, Hh, "".join(b), "Open Memory Lab: every memory is a claim under test",
-               "Shared memory for AI agents and crews. A memory is written, held, reviewed by someone who did not write it, and only then shared; every step is signed.")
-write("readme-hero-dark.svg", hero(True))
-write("readme-hero-light.svg", hero(False))
+def ell(cx, cy, rx, ry, s, stroke, w, extra=""):
+    return (f'<ellipse cx="{cx:.1f}" cy="{cy:.1f}" rx="{rx*s:.2f}" ry="{ry*s:.2f}" fill="none" stroke="{stroke}" '
+            f'stroke-width="{w}" transform="rotate({math.degrees(TILT):.2f} {cx:.1f} {cy:.1f})" {extra}/>')
 
-# ---------- social preview 1280x640 ----------
+def arc_pts(cx, cy, rx, ry, s, a0, a1, n=60):
+    pts = [P(cx, cy, rx, ry, a0 + (a1 - a0) * i / n, s) for i in range(n + 1)]
+    return "M" + " L".join(f"{x:.2f} {y:.2f}" for x, y in pts)
+
+def atmosphere(th, W, H, cx, cy, s, uid, avoid, n=26, seed=11):
+    g = []
+    gr = 430 * s
+    g.append(f'<radialGradient id="{uid}glow" cx="{cx}" cy="{cy}" r="{gr:.0f}" gradientUnits="userSpaceOnUse">'
+             f'<stop offset="0" stop-color="{th["star"]}" stop-opacity="{th["glow"]}"/>'
+             f'<stop offset="0.28" stop-color="{th["star"]}" stop-opacity="{th["glow"]*0.38:.3f}"/>'
+             f'<stop offset="1" stop-color="{th["star"]}" stop-opacity="0"/></radialGradient>')
+    g.append(f'<rect width="{W}" height="{H}" fill="url(#{uid}glow)"/>')
+    if th["starfield"]:
+        rnd = random.Random(seed)
+        pts = []
+        tries = 0
+        while len(pts) < n and tries < 2000:
+            tries += 1
+            x, y = rnd.uniform(8, W - 8), rnd.uniform(8, H - 8)
+            if any(a[0] <= x <= a[2] and a[1] <= y <= a[3] for a in avoid):
+                continue
+            if any((x - p[0]) ** 2 + (y - p[1]) ** 2 < 70 ** 2 for p in pts):
+                continue
+            pts.append((x, y))
+        for x, y in pts:
+            r = rnd.uniform(0.6, 1.25); op = rnd.uniform(0.22, 0.5)
+            g.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.2f}" fill="{th["fg"]}" opacity="{op:.2f}"/>')
+    return "".join(g)
+
+def vignette(th, W, H, uid):
+    if not th["vig"]:
+        return ""
+    return (f'<radialGradient id="{uid}vig" cx="0.55" cy="0.5" r="0.75">'
+            f'<stop offset="0.55" stop-color="#000" stop-opacity="0"/>'
+            f'<stop offset="1" stop-color="#000" stop-opacity="{th["vig"]}"/></radialGradient>'
+            f'<rect width="{W}" height="{H}" fill="url(#{uid}vig)"/>')
+
+def system(th, cx, cy, s, uid, full=True):
+    """Returns (svg, anchors) for the star system."""
+    g = []
+    ST, LAB, FG, BG = th["star"], th["lab"], th["fg"], th["bg"]
+    w = max(2.4 * s, 1.6)
+    # construction axis (faint)
+    ax = 400 * s
+    g.append(f'<path d="M{cx-ax*math.cos(TILT):.1f} {cy-ax*math.sin(TILT):.1f} L{cx+ax*math.cos(TILT):.1f} {cy+ax*math.sin(TILT):.1f}" '
+             f'stroke="{th["faint"]}" stroke-width="1" stroke-dasharray="14 5 2 5"/>')
+    # forming disk beyond O3: growing
+    g.append(f'<path d="{arc_pts(cx, cy, O3[0]+30, O3[1]+13, s, -95, 70)}" fill="none" stroke="{LAB}" '
+             f'stroke-width="{w*0.85:.2f}" stroke-dasharray="{14*max(s,.7):.1f} {10*max(s,.7):.1f}" stroke-linecap="round" opacity="0.7"/>')
+    # orbits (lab, cool)
+    g.append(ell(cx, cy, *O3, s, LAB, w * 0.85, 'opacity="0.85"'))
+    g.append(ell(cx, cy, *O2, s, LAB, w))
+    g.append(ell(cx, cy, *O1, s, LAB, w))
+    # star (foundation, warm)
+    rs = 46 * s
+    g.append(f'<radialGradient id="{uid}core" cx="0.42" cy="0.40" r="0.65"><stop offset="0" stop-color="{th["core"]}"/>'
+             f'<stop offset="1" stop-color="{ST}"/></radialGradient>')
+    g.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{rs:.2f}" fill="url(#{uid}core)"/>')
+    an = {"star": (cx, cy, rs)}
+    # vocab planet on O1, dataset planet on O2
+    A = P(cx, cy, *O1, 196, s)
+    B = P(cx, cy, *O2, 18, s)
+    ra = 11 * s
+    g.append(f'<circle cx="{A[0]:.1f}" cy="{A[1]:.1f}" r="{ra+3*s:.1f}" fill="{BG}"/>')
+    g.append(f'<circle cx="{A[0]:.1f}" cy="{A[1]:.1f}" r="{ra:.1f}" fill="{LAB}"/>')
+    rb = 18 * s
+    g.append(f'<circle cx="{B[0]:.1f}" cy="{B[1]:.1f}" r="{rb+3*s:.1f}" fill="{BG}"/>')
+    g.append(f'<circle cx="{B[0]:.1f}" cy="{B[1]:.1f}" r="{rb:.1f}" fill="{LAB}"/>')
+    an["A"], an["B"], an["rb"], an["ra"] = A, B, rb, ra
+    # fenced experiment, its own closed boundary in the gap between O2 and O3
+    Fc = P(cx, cy, (O2[0] + O3[0]) / 2, (O2[1] + O3[1]) / 2, 146, s)
+    fr = 27 * s
+    g.append(f'<circle cx="{Fc[0]:.1f}" cy="{Fc[1]:.1f}" r="{fr+6*s:.1f}" fill="{BG}"/>')
+    g.append(f'<circle cx="{Fc[0]:.1f}" cy="{Fc[1]:.1f}" r="{fr:.1f}" fill="none" stroke="{LAB}" stroke-width="{2.2*max(s,.8):.2f}" stroke-dasharray="{6*max(s,.7):.1f} {4.5*max(s,.7):.1f}"/>')
+    g.append(f'<circle cx="{Fc[0]:.1f}" cy="{Fc[1]:.1f}" r="{6*s:.1f}" fill="{FG}"/>')
+    ma = math.radians(-40)
+    g.append(f'<circle cx="{Fc[0]+15*s*math.cos(ma):.1f}" cy="{Fc[1]+15*s*math.sin(ma):.1f}" r="{3.6*s:.1f}" fill="{LAB}"/>')
+    an["F"], an["fr"] = Fc, fr
+    # second look: newcomer waits at the entry point on O3; companion sights it.
+    E = P(cx, cy, *O3, -64, s)
+    re = 10 * s
+    g.append(f'<circle cx="{E[0]:.1f}" cy="{E[1]:.1f}" r="{re+4*s:.1f}" fill="{BG}"/>')
+    g.append(f'<circle cx="{E[0]:.1f}" cy="{E[1]:.1f}" r="{re:.1f}" fill="{BG}" stroke="{FG}" stroke-width="{2.4*max(s,.8):.2f}"/>')
+    # reticle brackets around the newcomer
+    h, l = 22 * s, 8 * s
+    br = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            x0, y0 = E[0] + sx * h, E[1] + sy * h
+            br.append(f"M{x0:.1f} {y0 - sy*l:.1f} L{x0:.1f} {y0:.1f} L{x0 - sx*l:.1f} {y0:.1f}")
+    g.append(f'<path d="{" ".join(br)}" fill="none" stroke="{ST}" stroke-width="{2.2*max(s,.8):.2f}" stroke-linecap="square"/>')
+    # companion star (binary companion to the foundation) and its single line of sight
+    C = (cx - 120 * s, cy - 222 * s)
+    rc = 9 * s
+    dx, dy = E[0] - C[0], E[1] - C[1]
+    dl = math.hypot(dx, dy); ux, uy = dx / dl, dy / dl
+    s0 = (C[0] + ux * (rc + 10 * s), C[1] + uy * (rc + 10 * s))
+    s1 = (E[0] - ux * (h + 6 * s), E[1] - uy * (h + 6 * s))
+    g.append(f'<path d="M{s0[0]:.1f} {s0[1]:.1f} L{s1[0]:.1f} {s1[1]:.1f}" stroke="{ST}" stroke-width="{1.8*max(s,.8):.2f}"/>')
+    # arrow tip
+    px_, py_ = -uy, ux
+    tip = s1; bl = 9 * s
+    g.append(f'<path d="M{tip[0]:.1f} {tip[1]:.1f} L{tip[0]-ux*bl+px_*bl*0.45:.1f} {tip[1]-uy*bl+py_*bl*0.45:.1f} '
+             f'L{tip[0]-ux*bl-px_*bl*0.45:.1f} {tip[1]-uy*bl-py_*bl*0.45:.1f} Z" fill="{ST}"/>')
+    g.append(f'<circle cx="{C[0]:.1f}" cy="{C[1]:.1f}" r="{rc+6*s:.1f}" fill="none" stroke="{ST}" stroke-width="{1.3*max(s,.8):.2f}"/>')
+    g.append(f'<circle cx="{C[0]:.1f}" cy="{C[1]:.1f}" r="{rc:.1f}" fill="{ST}"/>')
+    an["E"], an["C"], an["h"], an["rc"] = E, C, h, rc
+    return "".join(g), an
+
+def atlas_marks(th, x0, y0, x1, y1, caption, lab=12, step=18, cap_top=False):
+    """Corner ticks, a graduated bottom edge and a plate caption: no full box."""
+    c, L = th["muted"], th["labDim"]
+    g = []
+    k = 26
+    for (x, y, sx, sy) in [(x0, y0, 1, 1), (x0, y1, 1, -1)]:
+        g.append(f'<path d="M{x} {y+sy*k} L{x} {y} L{x+sx*k} {y}" fill="none" stroke="{L}" stroke-width="1.4"/>')
+    t = []
+    i = 0; xx = x0 + 40
+    while xx < x1:
+        ln = 9 if i % 5 == 0 else 4
+        t.append(f"M{xx:.1f} {y1} L{xx:.1f} {y1-ln}")
+        xx += step; i += 1
+    g.append(f'<path d="M{x0+40} {y1} L{x1} {y1}" stroke="{L}" stroke-width="1"/>')
+    g.append(f'<path d="{" ".join(t)}" stroke="{L}" stroke-width="1"/>')
+    i = 0; yy = y0 + 40
+    t = []
+    while yy < y1 - 30:
+        ln = 9 if i % 5 == 0 else 4
+        t.append(f"M{x0} {yy:.1f} L{x0+ln} {yy:.1f}")
+        yy += step; i += 1
+    g.append(f'<path d="{" ".join(t)}" stroke="{L}" stroke-width="1"/>')
+    g.append(Th(th, "mono", caption, lab, x1 - 24, (y0 + 22) if cap_top else (y1 - 16), c, "end", lab * 0.16, halo=4))
+    return "".join(g)
+
+# ---------------------------------------------------------------- copy
+TAG = ["Steady at the centre.", "Forming at the edges."]
+PROPOSAL = "Shared memory for AI agents and crews. Nothing joins until someone other than its writer has looked, and every decision stays on record."
+
+def wrap(key, text, size, maxw):
+    words, lines, cur = text.split(), [], ""
+    for wd in words:
+        trial = (cur + " " + wd).strip()
+        if measure(key, trial, size) > maxw and cur:
+            lines.append(cur); cur = wd
+        else:
+            cur = trial
+    lines.append(cur)
+    return lines
+
+
+def obstacles(cx, cy, s, an, extra_rects=()):
+    pts = []
+    for (rx, ry) in (O1, O2, O3):
+        pts += [P(cx, cy, rx, ry, a / 2, s) for a in range(720)]
+    pts += [P(cx, cy, O3[0] + 30, O3[1] + 13, -95 + a * 0.25, s) for a in range(661)]
+    C, E, h = an["C"], an["E"], an["h"]
+    pts += [(C[0] + (E[0] - C[0]) * t / 200, C[1] + (E[1] - C[1]) * t / 200) for t in range(201)]
+    circles = [(an["star"][0], an["star"][1], an["star"][2] + 10), (*an["A"], an["ra"] + 4), (*an["B"], an["rb"] + 4),
+               (*an["F"], an["fr"] + 4), (E[0], E[1], h * 1.45), (C[0], C[1], an["rc"] + 10)]
+    return pts, circles, list(extra_rects)
+
+def place(th, obs, bounds, key, text, size, ax, ay, ar, fill, prefer=None, clear=9):
+    """Put a caps label near (ax, ay) where it touches no orbit line; leader line if it sits far off."""
+    pts, circles, rects = obs
+    tr = size * 0.11
+    w = measure(key, text.upper(), size, tr); hgt = size * 0.74
+    best = None
+    angles = (prefer or []) + [a for a in range(0, 360, 15) if a not in (prefer or [])]
+    for dist in range(int(ar + 8), int(ar + 280), 6):
+        for ang in angles:
+            a = math.radians(ang)
+            px, py = ax + dist * math.cos(a), ay + dist * math.sin(a)
+            c = math.cos(a)
+            if c > 0.35: x0 = px
+            elif c < -0.35: x0 = px - w
+            else: x0 = px - w / 2
+            sn = math.sin(a)
+            y1 = py + hgt if sn > 0.35 else (py if sn < -0.35 else py + hgt / 2)
+            y0 = y1 - hgt
+            box = (x0 - clear, y0 - clear, x0 + w + clear, y1 + clear)
+            if box[0] < bounds[0] or box[2] > bounds[2] or box[1] < bounds[1] or box[3] > bounds[3]:
+                continue
+            if any(box[0] <= qx <= box[2] and box[1] <= qy <= box[3] for qx, qy in pts):
+                continue
+            bad = False
+            for (ccx, ccy, cr) in circles:
+                nx, ny = min(max(ccx, box[0]), box[2]), min(max(ccy, box[1]), box[3])
+                if (nx - ccx) ** 2 + (ny - ccy) ** 2 < cr ** 2:
+                    bad = True; break
+            if bad or any(not (box[2] < r[0] or box[0] > r[2] or box[3] < r[1] or box[1] > r[3]) for r in rects):
+                continue
+            best = (x0, y1, dist, a, w, hgt); break
+        if best: break
+    if not best:
+        raise SystemExit("no place for " + text)
+    x0, y1, dist, a, w, hgt = best
+    rects.append((x0 - 6, y1 - hgt - 6, x0 + w + 6, y1 + 6))
+    out = ""
+    if dist > ar + 26:
+        lx0, ly0 = ax + (ar + 4) * math.cos(a), ay + (ar + 4) * math.sin(a)
+        lx1, ly1 = ax + (dist - 6) * math.cos(a), ay + (dist - 6) * math.sin(a)
+        out += f'<path d="M{lx0:.1f} {ly0:.1f} L{lx1:.1f} {ly1:.1f}" stroke="{th["labDim"]}" stroke-width="1.2"/>'
+        pts.extend((lx0 + (lx1 - lx0) * t / 60, ly0 + (ly1 - ly0) * t / 60) for t in range(61))
+    return out + Th(th, key, text.upper(), size, x0, y1, fill, "start", tr, halo=0)
+
 def social():
-    W, Hh = 1280, 640; dark = True; c = C(True)
-    defs = (f'<defs><radialGradient id="glow" cx="0.76" cy="0.46" r="0.6">'
-            f'<stop offset="0" stop-color="{c["violet"]}" stop-opacity="0.2"/><stop offset="1" stop-color="{c["bg"]}" stop-opacity="0"/></radialGradient></defs>')
-    b = [defs, f'<rect width="{W}" height="{Hh}" fill="{c["bg"]}"/>', f'<rect width="{W}" height="{Hh}" fill="url(#glow)"/>',
-         starfield(W, Hh, 110, 11, P["star"], x0=620), story(660, 140, 1.0, True, "s")]
-    b.append(mark_group(124, 168, 96, c["gold"], c["teal"], c["fg"]))
-    t, _ = tp("disp-bold", "Open Memory Lab", 68, 80, 302, c["fg"], track=-0.02); b.append(t)
-    t, _ = tp("medium", "Every memory is a claim under test.", 31, 82, 356, c["fg"]); b.append(t)
-    for i, line in enumerate(["Shared memory for AI agents and crews.", "Nothing one agent writes reaches the others",
-                              "until someone else has checked it."]):
-        t, _ = tp("regular", line, 23, 82, 410 + i*32, c["sub"]); b.append(t)
-    t, _ = tp("mono", "github.com/e8kor/open-memory-lab", 17, 82, 560, c["faint"], track=0.02); b.append(t)
-    return svg(W, Hh, "".join(b), "Open Memory Lab", "Every memory is a claim under test. Shared memory for AI agents and crews.")
-write("social-preview.svg", social())
+    th = THEMES["dark"]; W, H = 1280, 640
+    cx, cy, s = 948, 352, 1.0
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">',
+         f'<rect width="{W}" height="{H}" fill="{th["bg"]}"/>']
+    g.append(atmosphere(th, W, H, cx, cy, s, "s", avoid=[(40, 120, 560, 580), (560, 150, 1280, 560)]))
+    sysg, an = system(th, cx, cy, s, "s")
+    g.append(atlas_marks(th, 572, 44, 1280, 604, "PLATE I · THE SYSTEM OF SHARED MEMORY", 12))
+    g.append(sysg)
+    # labels: each placed in clear space, away from every orbit line
+    lab = 15; ST, LAB, FG, MU = th["star"], th["lab"], th["fg"], th["muted"]
+    obs = obstacles(cx, cy, s, an, [(560, 560, 1280, 640)])
+    bd = (575, 50, 1272, 596)
+    X, Y, rs = an["star"]
+    g.append(place(th, obs, bd, "sansS", "The foundation", 16, X, Y, rs + 10, ST, prefer=[90, 75, 105, 60, 120]))
+    g.append(place(th, obs, bd, "sansS", "second look", 16, *an["C"], an["rc"] + 6, ST, prefer=[180, 165, 195, 150, 210, 270, 90]))
+    g.append(place(th, obs, bd, "sansM", "waits to join", lab, *an["E"], an["h"] * 1.4, FG, prefer=[0, 15, 30, 345, 45, 60, 90, 270]))
+    g.append(place(th, obs, bd, "sansM", "shared vocabularies", lab, *an["A"], an["ra"], LAB, prefer=[270, 255, 285, 240, 225, 210, 195, 180, 90]))
+    g.append(place(th, obs, bd, "sansM", "whole datasets", lab, *an["B"], an["rb"], LAB, prefer=[90, 75, 105, 120, 60, 270, 180]))
+    g.append(place(th, obs, bd, "sansM", "fenced experiments", lab, *an["F"], an["fr"], LAB, prefer=[90, 105, 75, 120, 135, 180]))
+    gp = P(cx, cy, O3[0] + 30, O3[1] + 13, 40, s)
+    g.append(place(th, obs, bd, "sansM", "growing", lab, *gp, 4, LAB, prefer=[90, 60, 120, 45, 135, 270]))
+    # left column
+    lx = 64
+    g.append(wordmark(th, lx, 168, 36))
+    hs = 58
+    while measure("disp", TAG[1], hs) > 480: hs -= 1
+    g.append(T("disp", TAG[0], hs, lx - 2, 268, ST))
+    g.append(T("disp", TAG[1], hs, lx - 2, 268 + hs * 1.1, LAB))
+    y0 = 268 + hs * 1.1 + 56
+    for i, ln in enumerate(wrap("sans", PROPOSAL, 21, 450)):
+        g.append(T("sans", ln, 21, lx, y0 + i * 31, MU))
+    g.append(f'<path d="M{lx} 524 L{lx+56} 524" stroke="{ST}" stroke-width="2"/>')
+    g.append(T("mono", "OPEN SOURCE · AI-FIRST, HUMAN IN THE LOOP", 13, lx, 552, FG, tracking=13 * 0.14))
+    g.append(vignette(th, W, H, "s"))
+    g.append("</svg>")
+    return "".join(g)
+
+def hero(mode):
+    th = THEMES[mode]; W, H = 1280, 380
+    cx, cy, s = 1000, 206, 0.64
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">',
+         f'<rect width="{W}" height="{H}" fill="{th["bg"]}"/>']
+    g.append(atmosphere(th, W, H, cx, cy, s, "h" + mode, avoid=[(30, 40, 640, 350), (680, 40, 1280, 360)], n=14))
+    sysg, an = system(th, cx, cy, s, "h" + mode)
+    g.append(atlas_marks(th, 690, 24, 1280, 360, "PLATE I · THE SYSTEM", 13, cap_top=True))
+    g.append(sysg)
+    ST, LAB, FG, MU = th["star"], th["lab"], th["fg"], th["muted"]
+    lab = 19
+    X, Y, rs = an["star"]
+    # foundation: directly below the star, short vertical leader, below the outer orbit
+    fy = 342
+    fw = measure("sansS", "FOUNDATION", lab, lab * 0.11)
+    g.append(f'<path d="M{X:.1f} {Y+rs+5:.1f} L{X:.1f} {fy-lab*0.74-7:.1f}" stroke="{th["labDim"]}" stroke-width="1.2"/>')
+    g.append(Th(th, "sansS", "FOUNDATION", lab, X, fy, ST, "middle", lab * 0.11, halo=0))
+    obs = obstacles(cx, cy, s, an, [(1040, 24, 1280, 48), (X - fw / 2 - 8, fy - lab, X + fw / 2 + 8, fy + 6)])
+    obs[0].extend((X, y) for y in range(int(Y + rs), int(fy - 14), 2))
+    bd = (696, 30, 1274, 352)
+    g.append(place(th, obs, bd, "sansS", "second look", lab, *an["C"], an["rc"] + 6, ST, prefer=[180, 165, 195, 150, 210], clear=6))
+    g.append(place(th, obs, bd, "sansS", "fenced", lab, *an["F"], an["fr"], LAB, prefer=[180, 165, 195, 150, 210, 135, 90], clear=6))
+    gp = P(cx, cy, O3[0] + 30, O3[1] + 13, 40, s)
+    g.append(place(th, obs, bd, "sansS", "growing", lab, *gp, 4, LAB, prefer=[90, 60, 120, 45, 30, 0, 135], clear=6))
+    lx = 56
+    g.append(wordmark(th, lx, 98, 36))
+    g.append(T("disp", TAG[0], 48, lx - 2, 182, ST))
+    g.append(T("disp", TAG[1], 48, lx - 2, 236, LAB))
+    g.append(T("sans", "Shared memory for AI agents and crews.", 22, lx, 290, MU))
+    g.append(T("sans", "Nothing joins until a second look.", 22, lx, 320, MU))
+    g.append(vignette(th, W, H, "h" + mode))
+    g.append("</svg>")
+    return "".join(g)
+
+
+# ---------------------------------------------------------------- kit pieces
+SVGNS = 'xmlns="http://www.w3.org/2000/svg"'
+
+def mark_plain(theme):
+    th = THEMES[theme]
+    return f'<svg {SVGNS} viewBox="0 0 64 64" width="64" height="64">' + mark_group(0, 0, 64, th["lab"], th["star"], th["fg"]) + '</svg>'
+
+def mark_mono():
+    return (f'<svg {SVGNS} viewBox="0 0 64 64" width="64" height="64">'
+            + mark_group(0, 0, 64, "currentColor", "currentColor", "currentColor") + '</svg>')
+
+def icon():
+    th = THEMES["dark"]
+    return (f'<svg {SVGNS} viewBox="0 0 64 64" width="512" height="512"><rect width="64" height="64" rx="14" fill="{th["bg"]}"/>'
+            + mark_group(5, 5, 54, th["lab"], th["star"], th["fg"]) + '</svg>')
+
+def favicon():
+    """Same mark, tile edge cut down and strokes thickened so it holds at 16px."""
+    th = THEMES["dark"]
+    return (f'<svg {SVGNS} viewBox="0 0 64 64" width="32" height="32"><rect width="64" height="64" rx="12" fill="{th["bg"]}"/>'
+            + mark_group(2, 2, 60, th["lab"], th["star"], th["fg"], sw=8.2, comp_r=6.6, star_r=11.6) + '</svg>')
+
+def lockup(theme, tagline):
+    th = THEMES[theme]
+    size = 64
+    ms = size * 1.18
+    gap = size * 0.26
+    tx = ms + gap
+    ww = measure("disp", "Open Memory Lab", size, -size * 0.005)
+    pad = 4
+    base = ms * 0.80 + pad
+    g = [mark_group(pad, base - ms * 0.80, ms, th["lab"], th["star"], th["fg"]),
+         T("disp", "Open Memory Lab", size, pad + tx, base, th["fg"], tracking=-size * 0.005)]
+    W = pad + tx + ww + pad
+    H = base + size * 0.30
+    if tagline:
+        ts = size * 0.36
+        a = TAG[0] + " "
+        aw = measure("disp", a, ts)
+        y2 = base + ts * 1.75
+        g.append(T("disp", a, ts, pad + tx + 2, y2, th["star"]))
+        g.append(T("disp", TAG[1], ts, pad + tx + 2 + aw, y2, th["lab"]))
+        W = max(W, pad + tx + 2 + aw + measure("disp", TAG[1], ts) + pad)
+        H = y2 + ts * 0.35
+    W, H = math.ceil(W), math.ceil(H)
+    return f'<svg {SVGNS} viewBox="0 0 {W} {H}" width="{W}" height="{H}">' + "".join(g) + '</svg>'
+
+def contrast(a, b):
+    def lum(h):
+        c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    l1, l2 = sorted([lum(a), lum(b)], reverse=True)
+    return (l1 + 0.05) / (l2 + 0.05)
+
+def tokens_md():
+    d, l = THEMES["dark"], THEMES["light"]
+    def row(name, role, th, key, deco=False):
+        r = contrast(th[key], th["bg"])
+        if deco:
+            return f"| {name} | `{th[key]}` | {role} | {r:.1f}:1 | decorative lines only, never text |"
+        grade = "AAA" if r >= 7 else "AA" if r >= 4.5 else "AA large (18px+ / 14px+ bold)" if r >= 3 else "graphics only"
+        return f"| {name} | `{th[key]}` | {role} | {r:.1f}:1 | {grade} |"
+    out = ["# Open Memory Lab design tokens", "",
+           "Direction: Atlas, cosmic. A stellar system on an engraved atlas plate. The foundation is the star at the centre;",
+           "the lab is the system forming around it.", "",
+           "## What each colour means", "",
+           "- **Warm (star)** is the foundation and only the foundation: the star, its glow, the companion star that gives the",
+           "  second look, the line of sight and the bracket around a body waiting to join. Never use warm for lab features.",
+           "- **Ice (dark) / steel (light)** is the lab: orbits, planets (shared vocabularies, whole datasets), the fenced",
+           "  experiment and its dashed fence, and the second line of the tagline.",
+           "- **The dashed outer arc is the forming disk: growing.** It stands for lab work that is designed but not built yet.",
+           "  Draw it dashed, never solid.",
+           "- **Night / paper** are grounds; **text** and **muted** are for words; **line** and **faint** are for leaders,",
+           "  construction lines and plate ticks only.", "",
+           "## Dark (primary)", "",
+           f"Ground `{d['bg']}`, with a warm radial glow from the star (star colour at {int(d['glow']*100)}% at the centre, fading to 0) and a soft vignette.", "",
+           "| Token | Hex | Role | Contrast on ground | Use |", "|---|---|---|---|---|",
+           row("text", "Headlines, wordmark, body", d, "fg"),
+           row("muted", "Proposal and secondary copy", d, "muted"),
+           row("star", "Foundation; first tagline line; foundation labels", d, "star"),
+           row("ice", "Lab; second tagline line; lab labels", d, "lab"),
+           row("line", "Leader lines, plate ticks", d, "labDim", True),
+           f"| faint | `{d['faint']}` | Construction axis | n/a | graphics only |", "",
+           "## Light", "",
+           f"Ground `{l['bg']}` (star-chart paper), with a fainter warm glow and no vignette.", "",
+           "| Token | Hex | Role | Contrast on ground | Use |", "|---|---|---|---|---|",
+           row("text", "Headlines, wordmark, body", l, "fg"),
+           row("muted", "Proposal and secondary copy", l, "muted"),
+           row("star (on paper)", "Foundation; first tagline line; foundation labels", l, "star"),
+           row("steel", "Lab; second tagline line; lab labels", l, "lab"),
+           row("line", "Leader lines, plate ticks", l, "labDim", True),
+           f"| faint | `{l['faint']}` | Construction axis | n/a | graphics only |", "",
+           "Warm on paper passes only as large text (3:1), so set warm words on paper at 18px or above, or 14px bold and above. "
+           "(Hardened in the kit: the v3 mockup value #C8730F was 2.98:1 and is nudged to #C4700D.)", "",
+           "## Type", "",
+           "| Family | Weight | Role |", "|---|---|---|",
+           "| Newsreader Display (OFL), optical size 72 | SemiBold 600 | Wordmark, headlines, tagline |",
+           "| Inter (OFL), optical size 14 | Regular 400, Medium 500, SemiBold 600 | Body copy (Regular); plate labels in caps with +11% tracking (Medium, SemiBold for foundation and second look) |",
+           "| JetBrains Mono (OFL) | Medium 500 | Plate captions and small caps lines, +14 to 16% tracking |", "",
+           "All text in the kit is outlined to paths. Headline line one is star, line two is ice/steel.", "",
+           "## Mark", "",
+           "A full orbit ring that is also the O of Open (lab colour), the warm star off-centre inside it, and a companion",
+           "body sitting in a small gap in the ring. Clear space: one ring stroke width... use at least 25% of the mark's",
+           "width on every side. Minimum size: 16px (use favicon.svg, which has thicker strokes, below 24px).", "",
+           "## Files", "",
+           "| File | Use |", "|---|---|",
+           "| oml-mark.svg | Mark on dark grounds |",
+           "| oml-mark-light.svg | Mark on light grounds |",
+           "| oml-mark-mono.svg | One colour, follows `currentColor` |",
+           "| oml-icon.svg, oml-icon-512.png | App tile / avatar on the night ground; works in light and dark UIs |",
+           "| favicon.svg | Favicon tile, strokes tuned for 16px |",
+           "| oml-lockup-dark.svg / -light.svg | Mark, wordmark and tagline |",
+           "| oml-wordmark-dark.svg / -light.svg | Mark and wordmark, no tagline |",
+           "| readme-hero-dark.svg / -light.svg | 1280x380 README banner; pair them with a `<picture>` element and `prefers-color-scheme` so each theme gets its own |",
+           "| social-preview.svg / .png | 1280x640 link preview |", ""]
+    return "\n".join(out).replace("Clear space: one ring stroke width... use at least", "Clear space: at least")
+
+if __name__ == "__main__":
+    D = "Open Memory Lab mark: a full orbit ring forming the O of Open, a warm star off-centre inside it, and a companion body in a gap of the ring."
+    write("oml-mark.svg", mark_plain("dark"), "Open Memory Lab mark (for dark backgrounds)", D)
+    write("oml-mark-light.svg", mark_plain("light"), "Open Memory Lab mark (for light backgrounds)", D)
+    write("oml-mark-mono.svg", mark_mono(), "Open Memory Lab mark (one colour)", D + " Drawn in currentColor.")
+    write("oml-icon.svg", icon(), "Open Memory Lab icon", D + " On a night-indigo rounded tile.")
+    write("favicon.svg", favicon(), "Open Memory Lab", D + " Favicon tile tuned for 16px.")
+    for mode, ground in (("dark", "dark"), ("light", "light")):
+        write(f"oml-lockup-{mode}.svg", lockup(mode, True), "Open Memory Lab",
+              f"Open Memory Lab logo lockup for {ground} backgrounds: the mark, the wordmark, and the tagline: Steady at the centre. Forming at the edges.")
+        write(f"oml-wordmark-{mode}.svg", lockup(mode, False), "Open Memory Lab",
+              f"Open Memory Lab logo for {ground} backgrounds: the mark and the wordmark.")
+    HD = ("Open Memory Lab. Steady at the centre. Forming at the edges. Shared memory for AI agents and crews. Nothing joins until a second look. "
+          "Illustration: a star system on an atlas plate. The foundation is the star; a companion star gives a second look at a new body waiting to join an orbit; "
+          "a fenced experiment circles inside its own boundary; a dashed outer arc is growing.")
+    write("readme-hero-dark.svg", hero("dark"), "Open Memory Lab", HD)
+    write("readme-hero-light.svg", hero("light"), "Open Memory Lab", HD)
+    write("social-preview.svg", social(), "Open Memory Lab: Steady at the centre. Forming at the edges.",
+          "Open Memory Lab. Steady at the centre. Forming at the edges. " + PROPOSAL + " Open source, AI-first, human in the loop. "
+          "Illustration: the foundation as a star with shared vocabularies and whole datasets on orbits, a fenced experiment, a growing outer arc, "
+          "and a companion star giving a second look to a body waiting to join.")
+    with open(os.path.join(OUT, "tokens.md"), "w", encoding="utf-8") as f:
+        f.write(tokens_md())
+    print("ok", OUT)
