@@ -1986,6 +1986,49 @@ async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_names_the_server_by_scheme_host_and_port_alone() {
+    let crew = Crew::start().await;
+    let with_userinfo = crew
+        .lab
+        .server
+        .replacen("http://", "http://agent:hunter2@", 1)
+        + "/";
+    let (code, stdout, stderr) = hook(
+        &[
+            ("OML_URL", &with_userinfo),
+            ("OML_API_KEY", crew.agent.as_str()),
+        ],
+        &session("startup", "/home/op/src/metals"),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let context = context_of(&stdout);
+    assert!(
+        context.starts_with(&format!(
+            "OML memory for this session, from {}, ",
+            crew.lab.server
+        )),
+        "{context}"
+    );
+    assert!(!context.contains("hunter2"), "no userinfo: {context}");
+    crew.lab.stop().await;
+
+    for (url, origin) in [
+        (
+            "https://agent:hunter2@oml.example.com:8443/base/?token=abc#top",
+            "https://oml.example.com:8443",
+        ),
+        (
+            "https://oml.example.com?token=abc",
+            "https://oml.example.com",
+        ),
+        ("http://[::1]:8080/", "http://[::1]:8080"),
+        ("https://oml.example.com", "https://oml.example.com"),
+    ] {
+        assert_eq!(oml_cli::hook::origin(url), origin, "{url}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_query_is_the_words_of_the_working_directory_name() {
     let crew = Crew::start().await;
     crew.lab.take_requests();
