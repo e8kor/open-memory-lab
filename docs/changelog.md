@@ -40,18 +40,22 @@ read-only CLI as the views. Its number follows those that records on other branc
 binds nothing before its acceptance, and no accepted record changes until then.
 
 - **Proposed, not built:** transaction time and valid time as two named axes beside
-  `simulated_time` (d1); `valid_from` and `valid_to` in the signed submission, reviewed and never
-  inherited (d2); the as-of read at one resolved seq under rule `oml-asof/1`, the interval fold,
-  the `at` watermark and `request.as_of_ahead` (d3); `valid_at` and valid ranges as filters that
-  never rank (d4); a version's file set pinned by its file manifest, with two conditions on
-  ADR-0035's store (d5); MCP resources with no subscription (d6); `oml fs` and its snapshot (d7);
-  derived bitemporal tables in gold (d8); what time never permits (d9); the wire, one code and
-  four vocabulary rows (d10); the build order after iteration 3, beside ADR-0035 (d11).
-- **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-46 to FR-48 on
-  the roadmap, each marked proposed. No contract page changes, so `info.version` stays
-  `0.2.0-design`.
-- **Amends, on acceptance:** ADR-0005 (d4, d5), ADR-0014 (d2), ADR-0018 (d4) and ADR-0025 (d8, d9,
-  d12, d13); their Status lines gain the back-pointer then.
+  `simulated_time` (d1); `valid_from` and `valid_to` in the signed submission, sealed under the
+  version's DEK so an erase shreds them, reviewed and never inherited (d2); the as-of read at one
+  resolved seq under rule `oml-asof/1`, the interval fold, the `at` watermark kept off the journal,
+  one instant rule on the lead and on a follower, and `request.as_of_ahead` (d3); `valid_at` and
+  valid ranges as filters that never rank (d4); a version's file set pinned by its file manifest,
+  with one durability condition on ADR-0035's store (d5); MCP resources with no subscription,
+  resolved through the scoped listing and get (d6); `oml fs` and `oml fs export <workarea> <dir>`,
+  each `claim_key` one percent-encoded segment (d7); tip intervals in gold (d8); what time never
+  permits (d9); the wire, one code and three vocabulary rows (d10); the build order after
+  iteration 3, beside ADR-0035, with files in S6 (d11).
+- **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-47 to FR-49 on
+  the roadmap, each marked proposed; FR-46 is ADR-0035's on its branch. No contract page changes,
+  so `info.version` stays `0.2.0-design`.
+- **Amends, on acceptance:** ADR-0005 (d4), ADR-0014 (d2), ADR-0018 (d4) and ADR-0025 (d8, d9,
+  d12, d13); their Status lines gain the back-pointer then, and FR-31's row names the exact seq an
+  as-of instant resolves to.
 
 ### 2026-10-31 — M0 spikes: the Rust tests' copies of the vectors are compared with the page, S3.2 is two findings, and EXPLAIN's estimate is a recorded cross-tenant disclosure
 
