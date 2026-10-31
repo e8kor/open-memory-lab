@@ -6,7 +6,12 @@
     "design_spec_version": "0.2.0-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
-      "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet."
+      "oml_remember": "ADR-0026 d3, d4, d7: workarea takes the workarea's id or its name, resolved on the server so that an unknown or unreadable name answers exactly what its id would; a path is not accepted (request.validation), so the description's path sentence goes when the code lands; the build parses the value as an id only.",
+      "oml_learn": "ADR-0026 d3, d4: workarea takes the workarea's id or its name, as on oml_remember; the build parses the value as an id only.",
+      "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet. ADR-0026 d3, d4: scope takes the workarea's id or its name, resolved on the server, an unknown or unreadable name answering exactly what its id would; the build parses the value as an id only.",
+      "oml_my_work": "ADR-0026 d3, d4: workarea takes the workarea's id or its name, and a name the key holds no role on answers access.not_found, indistinguishable from a nonexistent node, exactly as its id would; the build parses the value as an id only.",
+      "oml_workarea_info": "ADR-0026 d3, d4: workarea takes the workarea's id or its name, and a name the key may not see answers access.not_found, as its id would; the build parses the value as an id only.",
+      "oml_events_tail": "ADR-0026 d4: scope takes the workarea's id or its name; the build parses the value as an id only."
     }
   },
   "tools": [
@@ -256,7 +261,7 @@
           "kind": {
             "type": "string",
             "enum": ["workarea", "claim"],
-            "description": "Which graph the edge lives in; endpoints are workarea node ids or artifact ids accordingly."
+            "description": "Which graph the edge lives in; endpoints are workareas, by node id or name, or artifact ids accordingly."
           },
           "label": {
             "type": "string",
@@ -264,11 +269,11 @@
           },
           "from": {
             "type": "string",
-            "description": "The from endpoint (workarea node id or artifact id, per kind)."
+            "description": "The from endpoint (a workarea's node id or name, or an artifact id, per kind)."
           },
           "to": {
             "type": "string",
-            "description": "The to endpoint (workarea node id or artifact id, per kind)."
+            "description": "The to endpoint (a workarea's node id or name, or an artifact id, per kind)."
           },
           "note": {
             "type": "string",
@@ -336,7 +341,7 @@
         "properties": {
           "scope": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the key's default workarea."
+            "description": "Optional workarea, by node id or name. Omitted: the key's default workarea."
           },
           "roots": {
             "type": "array",
@@ -405,7 +410,7 @@
           },
           "workarea_id": {
             "type": "string",
-            "description": "With action suggest: optionally restrict to one granted vocabulary workarea."
+            "description": "With action suggest: optionally restrict to one granted vocabulary workarea, by node id or name."
           },
           "curie": {
             "type": "string",

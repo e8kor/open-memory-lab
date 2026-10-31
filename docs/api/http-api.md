@@ -2,7 +2,7 @@
 id: api/http-api
 tier: engineering
 status: design draft for review · decided, not built
-answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab routes, authentication, idempotency records, the pagination convention, and the verb ceiling per endpoint; which events a key sees on the events tail
+answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab routes, authentication, idempotency records, the pagination convention, and the verb ceiling per endpoint; which events a key sees on the events tail; which records carry a name, what a name may spell, and how a name is accepted and resolved wherever an id is
 -->
 
 # HTTP API
@@ -38,16 +38,17 @@ both, and `/healthz` and `/readyz` stay unversioned.
   removed, no semantic changed, no status code repurposed; anything that would break a v1 client
   is, by definition, a v2 capability. A provider-ring request names no workarea: the target
   resolves from the key's journalled `default_workarea`, with the `X-OML-Workarea` header (a node
-  id, honored only within the key's grants — plain-passable because it is authorization-checked
-  data, never a secret) as the explicit override; a submit, recall or non-own listing from a key
+  id or [name](#names-and-ids), honored only within the key's grants — plain-passable because it is
+  authorization-checked data, never a secret) as the explicit override; a submit, recall or non-own listing from a key
   with neither answers `request.workarea_unresolved` ([errors.md](errors.md)). Get, the own-work
   listing (`own=true`) and supersede never answer it: get and `own=true` resolve no workarea, and
   supersede takes the target's workarea.
 - **The lab ring (`/v2`)** is the evolving memory lab: review and ratification ceremonies, claim
   edges, workarea, key and claim administration, bans, simulations, exports, settings, tenants,
   bootstrap, the events tail and vocabularies. It prefers additive change but may re-version to
-  `/v3` without ever touching `/v1`. Lab requests keep explicit workarea ids in paths and
-  bodies — an administration surface names what it administers.
+  `/v3` without ever touching `/v1`. Lab requests keep explicit workarea references — ids or
+  [names](#names-and-ids) — in paths and bodies: an administration surface names what it
+  administers.
 
 The split is a stability contract, not a trust boundary: the verb ceiling (R1), admission, RLS
 and every guarantee in [commitments](../product/commitments.md) apply identically on both rings,
@@ -63,7 +64,7 @@ the constitution.
 | Rate and quota | `429 limit.rate` / `limit.quota` may be answered by any operation; it is declared explicitly only on the v1 ring and high-traffic v2 surfaces ([errors.md](errors.md)). |
 | Timestamps | RFC 3339, UTC, e.g. `2026-10-29T14:03:17Z`. |
 | Digests | `sha256:<64 hex>`. An attachment is named by the SHA-256 of its plaintext ([storage.md](../architecture/storage.md)). |
-| Identifiers | Opaque strings (`artifact_id`, `workarea_id`, `key_id`, `serve_id`, …). Clients never parse them. |
+| Identifiers | Opaque strings (`artifact_id`, `workarea_id`, `key_id`, `serve_id`, …). Clients never parse them. The ids of workareas, crews, keys and tenants are UUIDs in RFC 9562 hex-and-dash text, so that the server can tell an id from a [name](#names-and-ids). |
 | Request id | Every response carries `X-Request-Id`; error bodies repeat it as `request_id`. |
 | Deletion | No endpoint is `DELETE`. Every removal is a journalled `POST` act — demote keeps bytes, erase is crypto-shredding (constitution R4; [audit-and-lineage.md](../architecture/audit-and-lineage.md)). |
 
@@ -139,6 +140,119 @@ Bearer keys are the shipped mechanism; whether and when the MCP facade adopts OA
 [RS-2](../product/roadmap.md). The role vocabulary and key authorization semantics are owned by
 [roles-and-keys.md](../architecture/roles-and-keys.md).
 
+## Names and ids
+
+This section is the single declaration site for names
+([ADR-0026](../adr/ADR-0026-names-are-keys.md)): which records carry one, what a name may spell,
+where a name is accepted in place of an id, and how the server resolves it. Ids stay the binding
+everywhere state is kept — grants, denials, journal payloads, idempotency scopes, the read log,
+cursors — and a name is only how a caller addresses a row.
+
+**Which records.** Workareas, crews, keys and tenants each carry a `name`, given at creation,
+unique in its namespace, never changed (no verb renames a row) and never released: a revoked or
+expired key keeps its name, and no other key may take it.
+
+| Kind | Namespace | Named at |
+|---|---|---|
+| workarea | its tenant, the whole tree | `POST /v2/workareas`; the root is `universe`, created with its tenant ([workareas](../architecture/workareas.md#the-tree-one-universe-per-tenant)) |
+| crew | its tenant | `POST /v2/crews` |
+| key | its tenant; operator keys share the provider's | `POST /v2/keys`, `POST /v2/keys/{key_id}/rotate` (the successor), `POST /v2/bootstrap/claim` |
+| tenant | the deployment | `POST /v2/tenants` |
+
+**The two forms.** An id of these four kinds is RFC 9562 §4 hex-and-dash text: 8-4-4-4-12
+hexadecimal digits, either case accepted, lowercase served
+([RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html), fetched 2026-10-30). A name is a
+lowercase RFC 1035 label — a letter first, then letters, digits and hyphens, a letter or digit
+last, 1–63 characters ([RFC 1035](https://www.rfc-editor.org/rfc/rfc1035.html) §2.3.1, fetched
+2026-10-30):
+
+```
+^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$
+```
+
+— and is none of these three spellings, so that no name ever looks like an id: the hex-and-dash
+form; 32 hexadecimal digits; `tenant-`, `wa-`, `crew-` or `key-` followed by 32 hexadecimal digits
+(the derived form, [below](#rows-created-before-names)). There is no normalization and no case
+mapping: every allowed character is ASCII, and names compare byte for byte. `Metals-Crew` is
+refused, never read as `metals-crew`.
+
+**Where a name is accepted.** Every request field, path parameter, query parameter and header
+that names one of the four kinds takes its id or its name. Field names do not change: a request
+field called `workarea_id` takes either, a response field called `workarea_id` always carries the
+id, and each object of the four kinds carries its `name`.
+
+| Kind | Accepted in |
+|---|---|
+| workarea | `X-OML-Workarea`; the `{id}` of every `/v2/workareas/{id}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/claim-edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue` and `GET /v2/keys/{key_id}/effective-access`; `parent_id` on create, `new_parent_id` on re-parent, `to_workarea_id` on an edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea_node_id` and its denies' `subtree_node_id`, a denial's `workarea_node_id`, and `default_workarea_id` on issuance |
+| crew | the `{crew_id}` of every `/v2/crews/{crew_id}` route; `crew` on workarea create, on `POST /v2/workareas/{id}/crew` and on issuance |
+| key | the `{key_id}` of every `/v2/keys/{key_id}` route; `key_id` in a simulation audience entry |
+| tenant | `tenant_id` on an operator key's issuance |
+
+The MCP tools pass their workarea arguments through to these fields
+([agent plugin](mcp-plugin.md)), and every CLI argument that names one of the four kinds takes
+either form ([CLI](../cli/reference.md#conventions)). Neither resolves anything itself.
+
+**Classification and resolution.** Two steps, on the server:
+
+1. **At parse**, before any check that consults state, each value is classified: in the id form,
+   it is an id; otherwise, if it matches the name grammar, a name; otherwise the request is
+   refused with `request.validation`, `details.field` naming the field. A derived path
+   (`universe.procurement`) contains `.`, so it is neither: paths are served and looked up, never
+   accepted as a reference, and `GET /v2/workareas?path=` is the lookup by path.
+2. **After the verb ceiling**, which needs no row — step 1 of the
+   [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), or
+   the key-role check of an admin or operator verb — each name is replaced by the id of the row
+   that holds it in the caller's namespace (the key's tenant; the deployment for a tenant; the
+   provider's for an operator key), or by an id that matches no row. The request then runs
+   exactly as the same request by id runs.
+
+Names therefore add no refusal path. An unknown name and a name outside the key's access both
+answer `access.not_found`, at the same step and with the same body as the id would, and no
+refusal names the id a name resolved to unless it would name that id for a request that sent it:
+the service never confirms that a name exists to a key that may not see its row.
+
+**Refusals.** A value that is neither form is `request.validation`. An unknown or unreadable name
+is `access.not_found`. A creation whose name its kind already holds in the namespace — a revoked
+key's included, and `universe` for any workarea but the root — is `409 name.taken`, `details`
+`{kind, name}` ([errors](errors.md)): it is checked after every other check of the creating
+request, the unique index is its authority, and a creation that loses the race to a concurrent one
+answers it and journals nothing. Only admin and operator keys hold a creating verb, and they see
+every row of their namespace, so no agent key ever learns that a name is taken.
+
+**Idempotency.** The request digest covers the request as sent ([Idempotency](#idempotency)), so
+a request that names a row and the same request by id are two requests; on the provider ring the
+record's workarea component is the resolved node id either way.
+
+**Paths.** A workarea's derived path is the names from `universe` to the node joined with `.`
+([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)); its last
+segment is the node's name, which the workarea read serves as a child's `path_leaf`. A re-parent
+changes a path and never a name.
+
+### Rows created before names
+
+At its first start on the schema version that adds names, and before it serves a request, the
+lead names every row that has no name, in four rules, and journals the result:
+
+1. Each tenant's root workarea is named `universe`, whatever its `workarea.create` says.
+2. For each kind and namespace, in journal order of creation, a row whose creation event carries
+   a name the grammar admits, that is not `universe` for a non-root workarea and that no earlier
+   row of its kind holds, keeps it.
+3. Every other row — one with no name, every key before ADR-0026 among them; one whose name the
+   grammar refuses; one whose name an earlier row holds — is named `<prefix>-<32 lowercase hex
+   digits of its id>`, the prefix `tenant`, `wa`, `crew` or `key`. Ids are unique and the grammar
+   refuses this form to every creation, so a derived name collides with nothing.
+4. Each workarea's current crew object — the latest of its `workarea.create` and
+   `workarea.crew_updated` — is read in journal order; each distinct `{name, charter_uri,
+   external_manager}` becomes one crew record with a fresh id, named by rules 2 and 3 in order of
+   first appearance, and each workarea with that object points at it. Keys that predate names
+   have no crew.
+
+One `system.names_assigned` event per chain that has anything to assign — each tenant's chain,
+and the provider chain for tenant and operator-key names — lists every assignment with its prior
+name and every crew record it creates ([event catalog](../data/event-catalog.md)). Every earlier
+event stays as it was signed. An admin who wants a chosen name on a key named by rule 3 issues a
+new key under that name and revokes the old one.
+
 ## Idempotency
 
 Every state-creating `POST` requires an `Idempotency-Key` header (missing →
@@ -166,7 +280,9 @@ and the record is claimed only after it passes, so a refusal at step 1 or 2 clai
 The request digest is SHA-256 over the RFC 8785 JSON of `{method, route, path_params, body}`:
 the HTTP method, the route template (`/v1/memories/{artifact_id}/supersede`, say), the path
 parameters by name, and the parsed request body (`null` when there is none). Two requests to
-different targets therefore never share a digest, whatever their bodies.
+different targets therefore never share a digest, whatever their bodies. Path parameters and body
+fields are digested as sent, before any [name](#names-and-ids) is resolved, so a request that
+names a row and the same request by its id have different digests.
 
 ```mermaid
 sequenceDiagram
@@ -252,10 +368,11 @@ join this table:
 | `GET /v2/claim-edges` | reader |
 | `POST /v2/claim-edges` | dreamer(propose) |
 | `POST /v2/claim-edges/{edge_id}/ratify` | dreamer(review); never the proposer (R2) |
-| `GET /v2/workareas` · `GET /v2/workareas/{id}` · `/tree` · `/edges` · `/status` | reader |
+| `GET /v2/workareas` · `GET /v2/workareas/{id}` · `/tree` · `/edges` · `/status` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) |
 | `POST /v2/workareas` | admin (key role) |
 | `POST /v2/workareas/{id}/reparent` | admin (key role) |
 | `POST /v2/workareas/{id}/crew` | admin (key role) |
+| `GET /v2/crews` · `GET /v2/crews/{crew_id}` · `POST /v2/crews` · `POST /v2/crews/{crew_id}/update` | admin (key role) |
 | `POST /v2/workareas/{id}/edges` | dreamer(propose) on ≥1 endpoint, reader on both (edge-authority rule, [workareas.md](../architecture/workareas.md)) |
 | `POST /v2/workarea-edges/{edge_id}/ratify` | dreamer(review) on both endpoints; never the proposer |
 | `POST /v2/workareas/{id}/transitions` | dreamer or admin |
@@ -556,24 +673,42 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
-Reads require reader effective access on the node; nodes outside scope are absent
-(`access.not_found`). The algebra — tree, universe, grants, denies — is owned by
+Reads require reader effective access on the node, and nodes outside scope are absent
+(`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
+tenant without grants and never claim content
+([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). The algebra — tree, universe, grants, denies — is owned by
 [workareas.md](../architecture/workareas.md); this page only carries the verbs.
 
 | Endpoint | Returns / does |
 |---|---|
-| `GET /v2/workareas?path=<ltree>` | Resolve a node by derived path. Grants bind to node ids, never paths; this is the lookup that bridges the two. |
-| `GET /v2/workareas/{id}` | Node: id, parent, derived path, status, crew record — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. |
+| `GET /v2/workareas?path=<ltree>` | Resolve a node by derived path. Grants bind to node ids, never paths, and no reference field accepts a path ([names](#names-and-ids)); this is the lookup that bridges the two. |
+| `GET /v2/workareas/{id}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. |
 | `GET /v2/workareas/{id}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
 | `GET /v2/workareas/{id}/edges` | Labelled `related` edges touching the node, `pending` and `ratified`, with proposer and ratifier. Edges confer zero access. |
 | `GET /v2/workareas/{id}/status` | Status, the review policy object in force, pending transitions. |
-| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). Refused under a `validated` parent (`workarea.frozen`). |
+| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}` — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). Refused under a `validated` parent (`workarea.frozen`). |
 | `POST /v2/workareas/{id}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
-| `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update; allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
+| `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`). Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
 | `POST /v2/workareas/{id}/edges` | Propose an edge `{to_workarea_id, label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`. Requires dreamer(propose) effective access on at least one endpoint and reader effective access on both (an admin who must act here holds a separate dreamer key — a key never combines admin with dreamer grants, `access.role_exclusive`). → `202`, pending. |
 | `POST /v2/workarea-edges/{edge_id}/ratify` | Ratify under dreamer(review) effective access on **both** endpoints; the proposer is refused (`review.ratifier_is_proposer`, R2 extends to edges). |
 | `POST /v2/workareas/{id}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
 | `POST /v2/workareas/{id}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot ([workareas.md](../architecture/workareas.md) transition matrix). |
+
+## Crews
+
+A crew is a named record of an externally operated AI crew — `{crew_id, name, charter_uri,
+external_manager}` — recorded, not operated; a workarea names at most one, and a key may name one
+at issuance. The record and its relations are declared on
+[workareas](../architecture/workareas.md#crews-recorded-not-operated). Admin key role throughout;
+no agent role reaches these verbs, and no MCP tool fronts them (R1). A key that can read a
+workarea sees that workarea's crew record in the [workarea read](#workareas), and no other crew.
+
+| Endpoint | Does |
+|---|---|
+| `POST /v2/crews` | Create: `{name, charter_uri?, external_manager?}` → `201` with the record. `name` is unique in the tenant (`name.taken`) and never changes. Journalled `crew.created`. |
+| `GET /v2/crews` | The tenant's crew records, paginated. |
+| `GET /v2/crews/{crew_id}` | One crew record, by id or name. |
+| `POST /v2/crews/{crew_id}/update` | `{charter_uri?, external_manager?}`, at least one present — a journalled crew-record update (`crew.updated`). The name is not updatable. A crew record has no status, so an update is admitted whatever the status of the workareas that name it. |
 
 ## Claim edges
 
@@ -633,7 +768,7 @@ the journal up to the event and on the key's current access, never on later row 
 | `lifecycle.*` | a key for which **(a)** or **(b)** holds, and no other. **(a) Reader clause:** the key has reader access on the subject's workarea, and the subject passes three conditions. *Promoted:* in the journal up to and including the event, the subject version's latest transition between held and promoted is a promotion (`lifecycle.promote` or `lifecycle.supersede`), not a `lifecycle.reassign` with `re_enters_held: true` or a `review.reopen`; a version never promoted fails it; a `lifecycle.reassign` is judged on the journal before it, so the readers it takes a promoted version from see it leave. *Audience:* the subject is not a simulation row or sim-derived version outside the key's audience ([simulations](../architecture/simulations.md)). *Self-signed:* the subject is not `self_signed` unless the tail's `workarea_id` is the subject's own workarea ([retrieval](../architecture/retrieval.md)). **(b) Author clause:** the key's [own](../architecture/roles-and-keys.md#own) key set holds the subject version's authoring key, read from the journal as the version's submission event (`submission.*` or `simulation.write`) says; the subject's workarea lies within the tail's subtree minus the key's global denials; and the subject is not a simulation row or sim-derived version outside the key's audience. So the erase of another author's held or never-promoted version reaches no reader, and an author sees every `lifecycle.*` event of its own versions in the tail's subtree |
 | `workarea.*` | keys with reader access on the subject workarea, per the table below |
 | `submission.*`, `simulation.write` | only a key whose [own](../architecture/roles-and-keys.md#own) key set holds the subject version's authoring key, `memories.author_key_id` — for `submission.*` and `simulation.write` the envelope's `api_key_id`, for `lifecycle.*` the `api_key_id` of the subject's submission event, read from the journal — within the tail's subtree minus its global denials, and only while the subject is not a simulation row or sim-derived version outside the key's audience, with no reader grant needed on the event's own workarea: the own-work rule |
-| `review.*`, `claim_edge.*`, `key.*`, `grant.*`, `tenant.*`, `system.*` | no key on this tail; they belong to the [evidence export](#evidence-export) |
+| `review.*`, `claim_edge.*`, `crew.*`, `key.*`, `grant.*`, `tenant.*`, `system.*` | no key on this tail; they belong to the [evidence export](#evidence-export) |
 
 The subject and its workarea come from the event's own payload, plus the subject's earlier events
 — its submission, and the `lifecycle.promote` or `lifecycle.supersede` that promoted it — for the
@@ -717,23 +852,25 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 | Endpoint | Does |
 |---|---|
-| `POST /v2/keys` | Issue: `{role, grants: [{workarea_node_id, role, deny: [{subtree_node_id}]}], default_workarea_id?, held_by?, expiry?, label?, principal?, tenant_id?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused; the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. An operator key must add `tenant_id`, an admin key must not send it, and an operator key may issue only a tenant's first admin key. |
-| `GET /v2/keys` · `GET /v2/keys/{key_id}` | Listing and detail: role, principal, `default_workarea_id`, `held_by`, grants, denials, epoch, issuance/revocation events. Never values. |
+| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea_node_id, role, deny: [{subtree_node_id}]}], default_workarea_id?, held_by?, crew?, expiry?, label?, principal?, tenant_id?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused; the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key must add `tenant_id`, an admin key must not send it, and an operator key may issue only a tenant's first admin key. The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. |
+| `GET /v2/keys` · `GET /v2/keys/{key_id}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events. Never values. A revoked or expired key's name still resolves here. |
 | `POST /v2/keys/{key_id}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
-| `POST /v2/keys/{key_id}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants reproduced from the journalled records — with `{grace}` bounding the old key's remaining life. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
+| `POST /v2/keys/{key_id}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `POST /v2/keys/{key_id}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
 | `POST /v2/keys/{key_id}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
 | `POST /v2/keys/{key_id}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. |
 | `POST /v2/keys/{key_id}/denials/{denial_id}/lift` | Journalled lift. |
 | `GET /v2/keys/{key_id}/effective-access?workarea=…` | The resolved answer: what this key may do where, and which deny produced each hole — reproducible from journalled grants by construction (permission epoch). |
 
-`POST /v2/tenants` (**operator**) creates a tenant; the operator then issues its first admin key
-and nothing else — operator keys never read, write or review content (`access.verb_ceiling`).
+`POST /v2/tenants` (**operator**) creates a tenant, `{name}` — unique in the deployment
+(`name.taken`) — together with its root workarea, named `universe`; the operator then issues its
+first admin key and nothing else — operator keys never read, write or review content
+(`access.verb_ceiling`).
 
 `POST /v2/bootstrap/claim` is the one endpoint authenticated by something other than an API key:
 the single-use, expiring **enrollment token** the Helm bootstrap job minted
-([deployment.md](../operations/deployment.md)). `{enrollment_token}` → `201` with the root
-operator key, value shown once; the token is consumed on first use, and a consumed, expired or
+([deployment.md](../operations/deployment.md)). `{enrollment_token, name}` → `201` with the root
+operator key, named `name` in the provider's namespace, value shown once; the token is consumed on first use, and a consumed, expired or
 unknown token answers `auth.invalid` with `details.reason` naming which. The `oml bootstrap claim`
 ceremony fronts exactly this call ([cli/reference.md](../cli/reference.md)).
 

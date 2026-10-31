@@ -2,7 +2,7 @@
 id: api/mcp-plugin
 tier: engineering
 status: design draft for review · decided, not built
-answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape
+answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape; how a tool's workarea argument takes an id or a name
 -->
 
 # The agent plugin: MCP over streamable HTTP
@@ -182,6 +182,13 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
 - **Out-of-scope reads fail closed without leaking existence**: asking about
   a workarea or artifact the key cannot read returns the same typed error as
   asking about one that does not exist.
+- **A workarea by id or name.** Every argument that names a workarea —
+  `workarea`, `scope`, `workarea_id`, and a workarea edge's `from` and `to` —
+  takes the node's id or its [name](http-api.md#names-and-ids)
+  ([ADR-0026](../adr/ADR-0026-names-are-keys.md)). The facade passes the value
+  through and the server resolves it, so a name the key may not see answers
+  `access.not_found` exactly as its id would. A derived path is neither, and
+  is refused with `request.validation`.
 - **Pagination** is cursor-based everywhere a list can grow; the client holds
   the cursor (stateless), and the cursor contract — including the events
   tail's deliberate `after_seq` exception — is owned by
@@ -258,7 +265,7 @@ review*, never *published*. (Rides `POST /v1/memories` — the provider ring.)
 
 ```json
 {
-  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "workarea": "metals-crew",
   "claim_key": "supplier-quote-am-7741",
   "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.",
   "attachments": [
@@ -274,9 +281,9 @@ review*, never *published*. (Rides `POST /v1/memories` — the provider ring.)
 - `workarea` — **optional** (ADR-0022 d4): omitted, the submission targets
   the key's journalled default workarea; present, it is an override honored
   only within the key's grants. A key with neither a default nor a value here
-  is refused (`request.workarea_unresolved`). The value is the target node
-  id — paths are derived, grants bind to node ids; a path given here is
-  resolved to its node first
+  is refused (`request.workarea_unresolved`). The value is the target node's
+  id or name, which the server resolves to the id grants bind to; a derived
+  path is not accepted
   ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
 - `attachments` — upload sessions previously completed via
   [`oml_attach`](#oml_attach). The session's recorded digest is bound into
@@ -318,7 +325,7 @@ review*, never *published*. (Rides `POST /v1/memories` — the provider ring.)
   "claim_key": "supplier-quote-am-7741",
   "version": 1,
   "state": "held",
-  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
   "attachments_bound": 1,
   "idempotent_replay": false
 }
@@ -342,7 +349,7 @@ an idempotency-key reuse with a different request; a banned author or source
   "error": {
     "code": "workarea.frozen",
     "rule": "status ladder: a validated workarea refuses new writes (D8)",
-    "message": "workarea wa_01JB2XCQ… is validated; writes are refused. Demote, erasure and crew-metadata update are its only admissible mutations, none on this surface.",
+    "message": "workarea fbbb41c5… is validated; writes are refused. Demote, erasure and crew-metadata update are its only admissible mutations, none on this surface.",
     "retryable": false
   }
 }
@@ -365,7 +372,7 @@ truncation, timestamp ([retrieval](../architecture/retrieval.md#the-read-log)).
 ```json
 {
   "query": "current aluminium quote Accra Metals validity",
-  "scope": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "scope": "metals-crew",
   "k": 8,
   "include_own_held": true,
   "max_tokens": 500
@@ -373,8 +380,8 @@ truncation, timestamp ([retrieval](../architecture/retrieval.md#the-read-log)).
 ```
 
 `scope` is **optional** (ADR-0022 d4): omitted, the search covers the key's
-default workarea's subtree; present, it names one node as an override within
-the key's grants. Either way the search covers that node's subtree intersected
+default workarea's subtree; present, it names one node, by id or name, as an
+override within the key's grants. Either way the search covers that node's subtree intersected
 with the key's effective read access. Subtree scoping rides the derived-path
 filter column of the serving indexes
 ([retrieval](../architecture/retrieval.md#the-serving-tier)); hybrid
@@ -404,7 +411,7 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
       "tip": true,
       "retirement": false,
       "replaces": null,
-      "workarea": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+      "workarea": "1351b2b6-5c7c-492d-9aff-630bc95035db",
       "workarea_path": "universe.procurement",
       "tokens": 20,
       "created_at": "2026-10-02T09:20:41Z",
@@ -422,7 +429,7 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
       "tip": true,
       "retirement": false,
       "replaces": null,
-      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
       "workarea_path": "universe.procurement.metals-crew",
       "tokens": 26,
       "created_at": "2026-10-27T13:58:20Z",
@@ -439,7 +446,7 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
       "tip": false,
       "retirement": false,
       "replaces": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "version": 1 },
-      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
       "workarea_path": "universe.procurement.metals-crew",
       "tokens": 30,
       "created_at": "2026-10-29T15:40:02Z",
@@ -481,7 +488,7 @@ Example:
   "error": {
     "code": "access.not_found",
     "rule": "effective access (D7); unknown and out-of-scope are indistinguishable",
-    "message": "no readable workarea wa_01JB2ZZZ… for this key",
+    "message": "no readable workarea 821e1387… for this key",
     "retryable": false
   }
 }
@@ -512,7 +519,7 @@ the target (ADR-0022 d4).
 
 ```json
 {
-  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
   "claim_key": "accra-metals-price-anchor",
   "text": "Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations.",
   "derives_from": [
@@ -592,7 +599,7 @@ and `attachments`:
   "tip": false,
   "retirement": false,
   "replaces": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "version": 1 },
-  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
   "workarea_path": "universe.procurement.metals-crew",
   "tokens": 30,
   "created_at": "2026-10-29T15:40:02Z",
@@ -686,7 +693,7 @@ retirement included; no proposer is then its reviewer (R2).
   "state": "held",
   "retirement": false,
   "replaces": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "version": 1 },
-  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
   "idempotent_replay": false
 }
 ```
@@ -812,8 +819,8 @@ edge-authority rule is declared in
 {
   "kind": "workarea",
   "label": "continues",
-  "from": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-  "to": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3",
+  "from": "fbbb41c5-9630-4274-ae53-166f562f5286",
+  "to": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
   "note": "metals-crew Q1 planning continues the Q4 negotiation workarea"
 }
 ```
@@ -835,7 +842,7 @@ event's payload shape is owned by the
   "kind": "workarea",
   "label": "continues",
   "state": "pending",
-  "proposer_key": "key_01JB2W1A3C5E7G9J2L4N6Q8SUW",
+  "proposer_key": "d405428e-4c99-426d-8826-76d28436e423",
   "awaiting": "ratification by a dreamer(review) key on both endpoints, ratifier ≠ proposer (R2)"
 }
 ```
@@ -872,13 +879,13 @@ are refused — the operator never writes, reads or reviews content.
 
 ```json
 {
-  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "workarea": "metals-crew",
   "state": "held",
   "limit": 20
 }
 ```
 
-Every filter is optional. `workarea` is a subtree filter; omitted, the listing
+Every filter is optional. `workarea` is a subtree filter, by id or name; omitted, the listing
 covers every workarea the key wrote to, minus its globally denied subtrees.
 It must name a node the key holds some role on, else `access.not_found`,
 indistinguishable from a node that does not exist
@@ -901,7 +908,7 @@ key wrote, newest first ([http-api.md](http-api.md#search-get-v1memories)).
       "tip": false,
       "retirement": false,
       "replaces": null,
-      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
       "workarea_path": "universe.procurement.metals-crew",
       "tokens": 36,
       "created_at": "2026-10-29T16:02:51Z",
@@ -917,7 +924,7 @@ key wrote, newest first ([http-api.md](http-api.md#search-get-v1memories)).
       "tip": true,
       "retirement": false,
       "replaces": null,
-      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
       "workarea_path": "universe.procurement.metals-crew",
       "tokens": 26,
       "created_at": "2026-10-27T13:58:20Z",
@@ -962,7 +969,7 @@ needs before writing — the verbs this key's effective access carries there.
 **Input**
 
 ```json
-{ "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
+{ "workarea": "metals-crew" }
 ```
 
 `workarea` is **optional**: omitted, the facade takes the key's journalled
@@ -974,23 +981,25 @@ same one call; a key with no default is refused with
 
 ```json
 {
-  "id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+  "name": "metals-crew",
   "path": "universe.procurement.metals-crew",
   "status": "committed",
   "crew": {
+    "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
     "name": "metals-crew",
     "charter_uri": "https://crews.example.com/metals/charter.md",
     "external_manager": "crewd.example.com"
   },
-  "parent": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+  "parent": "1351b2b6-5c7c-492d-9aff-630bc95035db",
   "children": [
-    { "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3", "path_leaf": "q1-2027", "status": "development" }
+    { "id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8", "path_leaf": "q1-2027", "status": "development" }
   ],
   "edges": [
     {
       "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-      "from": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-      "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX",
+      "from": "fbbb41c5-9630-4274-ae53-166f562f5286",
+      "to": "7724e9d7-ddd6-4b94-8855-aad97c28224c",
       "label": "continues",
       "state": "ratified"
     }
@@ -1005,7 +1014,9 @@ same one call; a key with no default is refused with
 `committed` requires full non-author review; `validated` refuses new writes
 entirely ([the status ladder](../architecture/workareas.md#the-status-ladder-d8)).
 The crew record is recorded, not operated — OML stores it and journals its
-changes; the crew is managed elsewhere. `my_effective_verbs` is a derived
+changes; the crew is managed elsewhere. It is the record of the crew the
+workarea names, or null, and the only crew read on this surface
+([crews](../architecture/workareas.md#crews-recorded-not-operated)). `my_effective_verbs` is a derived
 answer — the union, over the grant roles effective on the node, of the
 [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs) —
 reproducible from journalled grants at the stated permission epoch
@@ -1040,7 +1051,7 @@ logged like any read.
 
 ```json
 {
-  "scope": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "scope": "fbbb41c5-9630-4274-ae53-166f562f5286",
   "roots": ["art_01JB2XJH8K1M3P5R7T9W2YA4CE"],
   "depth": 2,
   "limit": 100
@@ -1052,8 +1063,8 @@ logged like any read.
 ```json
 {
   "claims": [
-    { "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "claim_key": "accra-metals-price-anchor", "version": 1, "kind": "derived_fact", "state": "promoted", "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" },
-    { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1, "kind": "memory", "state": "promoted", "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
+    { "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "claim_key": "accra-metals-price-anchor", "version": 1, "kind": "derived_fact", "state": "promoted", "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286" },
+    { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1, "kind": "memory", "state": "promoted", "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286" }
   ],
   "edges": [
     { "kind": "derives_from", "from": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "to": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "state": "declared" },
@@ -1100,7 +1111,7 @@ outside.
 
 ```json
 {
-  "scope": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "scope": "fbbb41c5-9630-4274-ae53-166f562f5286",
   "after_seq": 418,
   "limit": 50
 }
@@ -1121,14 +1132,14 @@ types and payload shapes are owned by the
       "event_type": "lifecycle.promote",
       "at": "2026-10-29T16:40:12Z",
       "subject": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1 },
-      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND"
+      "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286"
     },
     {
       "seq": 423,
       "event_type": "workarea.relate_ratified",
       "at": "2026-10-29T16:52:30Z",
-      "subject": { "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P", "from": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND", "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX" },
-      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND"
+      "subject": { "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P", "from": "fbbb41c5-9630-4274-ae53-166f562f5286", "to": "7724e9d7-ddd6-4b94-8855-aad97c28224c" },
+      "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286"
     }
   ],
   "head_seq": 431,
@@ -1207,7 +1218,7 @@ so an agent whose citation is stale self-heals in one hop:
 ```json
 {
   "curie": "proc:supplier-quote",
-  "workarea_id": "wa_01JB2Z1C3E5G7J9L2N4Q6S8UWY",
+  "workarea_id": "408324c0-55dd-4eb7-b39f-2d7f7147dc66",
   "version": 4,
   "term_status": "deprecated",
   "definition_state": "present",
@@ -1268,8 +1279,15 @@ Operational notes:
 - **One key per agent.** Issue each crew member its own key
   ([key issuance](../architecture/roles-and-keys.md#key-lifecycle), via the
   [CLI](../cli/reference.md)); attribution, review independence and the
-  collusion statistics depend on it. Keep the key in the environment, never
-  in the config file you commit.
+  collusion statistics depend on it. `oml keys issue-agent <key-name>
+  --principal <principal> --workarea <workarea>` issues the one key this plugin
+  needs and prints the `OML_URL` and `OML_API_KEY` lines it reads
+  ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)), and the
+  [`oml-admin` plugin](../cli/reference.md#the-oml-admin-plugin) runs it for an
+  operator with `--out`, so the value lands in an owner-only file and never in
+  a transcript; this plugin cannot issue keys, since key issuance is an
+  admin verb (R1). Keep the key in the environment, never in the config file
+  you commit.
 - **One key does the agent's whole loop.** An agent that writes and recalls
   holds one writer-role key with a writer grant and a reader grant on its
   workarea, and that workarea as its default
@@ -1300,4 +1318,6 @@ are [ADR-0022](../adr/ADR-0022-two-ring-api.md)'s. `oml_get`,
 `oml_supersede`, the claim item, own held rows and budgets on recall, the
 own-work and workarea reads, and the events-tail visibility rule are
 the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
-which would amend ADR-0014 d2.
+which would amend ADR-0014 d2. Workarea arguments that take a name as well as
+an id, and the named crew record the workarea read serves, are the proposed
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s.

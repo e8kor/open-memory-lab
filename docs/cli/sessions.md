@@ -50,14 +50,14 @@ oml-bootstrap: this log carries progress only — no key or secret material appe
 oml-bootstrap: next step: oml bootstrap claim
 
 $ kubectl -n oml get secret oml-enrollment -o jsonpath='{.data.token}' | base64 -d \
-    | oml bootstrap claim --url https://oml.internal.example --token-stdin
+    | oml bootstrap claim --url https://oml.internal.example --name root-operator --token-stdin
 enrollment secret accepted — consumed (single-use; a second claim is refused)
 root operator key — SHOWN ONCE, NOT RECOVERABLE, NOT JOURNALLED AS VALUE
 
-    operator key id : key_op_000001
-    operator key    : oml_zj4Qm9tW8xKpN2rLcVbH7eGd1sYfA0uJn5iXqB3wTk6
+    operator key    : root-operator (key id key_op_000001)
+    operator value  : oml_zj4Qm9tW8xKpN2rLcVbH7eGd1sYfA0uJn5iXqB3wTk6
 
-journal (provider) seq 1: key.issued {id: key_op_000001, role: operator, value_disclosed: false}
+journal (provider) seq 1: key.issued {id: key_op_000001, name: root-operator, role: operator, value_disclosed: false}
 store this value now; the server keeps only its hash.
 
 $ oml context add root --url https://oml.internal.example --key-stdin
@@ -70,15 +70,15 @@ journal (aurora) seq 1: tenant.genesis {tenant_id: t_9d41, name: aurora, provide
 tenant aurora created — chain opened, rooted at provider seq 2;
 universe workarea wa_000001 (status: committed, permanent)
 
-$ oml tenants issue-admin aurora --label "aurora founding admin"
+$ oml tenants issue-admin aurora aurora-admin --label "aurora founding admin"
 issuing first admin key for tenant aurora — SHOWN ONCE
 
-    key id : key_a1f3e2
-    key    : oml_Hq7dPw3nXsYvK0mBtRj5E8cUa2LgZ1oD6fNyWm4SkP9
+    key    : aurora-admin (key id key_a1f3e2)
+    value  : oml_Hq7dPw3nXsYvK0mBtRj5E8cUa2LgZ1oD6fNyWm4SkP9
 
-journal (aurora) seq 2: key.issued {id: key_a1f3e2, role: admin, value_disclosed: false}
+journal (aurora) seq 2: key.issued {id: key_a1f3e2, name: aurora-admin, role: admin, value_disclosed: false}
 
-$ oml tenants issue-admin aurora --label "second attempt"
+$ oml tenants issue-admin aurora aurora-admin-2 --label "second attempt"
 refused: access.issuer_ceiling — aurora already has its first admin key; an operator
 key issues nothing beyond a tenant's first admin key. Further keys come from that
 admin under the issuer ceiling.
@@ -88,61 +88,76 @@ The last refusal is the shape of the operator role: a bootstrap channel, not a s
 
 ## 2. Issuing a crew's keys
 
-The aurora admin provisions the `corrosion` crew: a workarea, writer keys for its working agents,
-and dreamer keys for the crew that reviews it. Grants bind to node ids; paths are a convenience
-([workareas](../architecture/workareas.md)). An issuance journals `key.issued` without the value,
-then one `grant.issued` per grant.
+The aurora admin provisions the `corrosion` crew: a crew record, a workarea, writer keys for its
+working agents, and dreamer keys for the crew that reviews it. Grants bind to node ids; names are
+how a person types them, and the server resolves each name to its id
+([names](../api/http-api.md#names-and-ids)). An issuance journals `key.issued` without the value,
+then one `grant.issued` per grant — and the CLI sends a reader grant beside every writer grant
+unless told `--write-only` ([CLI reference](reference.md#oml-keys-issuance-revocation-rotation)).
 
 ```console
 $ oml context use aurora-admin
-$ oml workareas create universe/research corrosion \
-    --crew-name "Corrosion Crew" --external-manager "crewd.example/corrosion"
-created wa_00004e universe/research/corrosion (status: development)
+$ oml crews create corrosion --external-manager "crewd.example/corrosion"
+created crew corrosion (crew_3b17)
+journal seq 811: crew.created
+
+$ oml workareas create research corrosion --crew corrosion
+created corrosion (wa_00004e) universe.research.corrosion (status: development)
 journal seq 812: workarea.create
 
-$ oml keys issue --role writer \
-    --grant wa_00004e:writer --grant wa_00004e:reader \
-    --default-workarea wa_00004e \
-    --expires 90d --label corrosion-agent-1
+$ oml keys issue corrosion-agent-1 --role writer \
+    --grant corrosion:writer --default-workarea corrosion \
+    --crew corrosion --expires 90d
+adding corrosion:reader beside corrosion:writer (pass --write-only to issue writer grants alone)
 key issued — SHOWN ONCE
 
-    key id : key_9c44b7
-    key    : oml_Wn2gLx8cQe5rTv0zYhDkJ7bMa3SfU1iGp9eC6nRw4Xj
-    default workarea : wa_00004e (universe/research/corrosion) — provider-ring (/v1)
+    key    : corrosion-agent-1 (key id key_9c44b7)
+    value  : oml_Wn2gLx8cQe5rTv0zYhDkJ7bMa3SfU1iGp9eC6nRw4Xj
+    default workarea : corrosion (wa_00004e, universe.research.corrosion) — provider-ring (/v1)
                        requests from this key target it when they name none
 
-journal seq 813: key.issued {id: key_9c44b7, role: writer, value_disclosed: false, default_workarea_id: wa_00004e}
+journal seq 813: key.issued {id: key_9c44b7, name: corrosion-agent-1, role: writer, value_disclosed: false, default_workarea_id: wa_00004e, crew_id: crew_3b17}
 journal seq 814: grant.issued {key: key_9c44b7, wa_00004e: writer}
 journal seq 815: grant.issued {key: key_9c44b7, wa_00004e: reader}
 
-$ oml keys issue --role dreamer \
-    --grant wa_00004e:dreamer --expires 90d --label corrosion-reviewer-1
+$ oml keys issue corrosion-reviewer-1 --role dreamer \
+    --grant corrosion:dreamer --expires 90d
 key issued — SHOWN ONCE
 
-    key id : key_51d0ac
-    key    : oml_Fb6mZq1jUs4xNc9pKtRvA3eWd8HgL2oY7sBk5TmQ0Jx
+    key    : corrosion-reviewer-1 (key id key_51d0ac)
+    value  : oml_Fb6mZq1jUs4xNc9pKtRvA3eWd8HgL2oY7sBk5TmQ0Jx
 
-journal seq 816: key.issued {id: key_51d0ac, role: dreamer, value_disclosed: false}
+journal seq 816: key.issued {id: key_51d0ac, name: corrosion-reviewer-1, role: dreamer, value_disclosed: false}
 journal seq 817: grant.issued {key: key_51d0ac, wa_00004e: dreamer}
 
 $ oml context use corrosion-reviewer-1
-$ oml keys issue --role writer --grant wa_00004e:writer --label corrosion-agent-2
+$ oml keys issue corrosion-agent-2 --role writer --grant corrosion:writer
 refused: access.verb_ceiling — key_51d0ac (dreamer) is an agent key calling an
 admin verb (keys issue); issuance belongs to admin and operator keys (R1), and a
 key is in any case issued with a role no higher than the issuer's.
 
 $ oml context use aurora-admin
 $ oml keys list --expiring 120d
-KEY ID      ROLE     LABEL                  EXPIRES     GRANTS
-key_9c44b7  writer   corrosion-agent-1      2027-01-27  wa_00004e:writer, wa_00004e:reader
-key_51d0ac  dreamer  corrosion-reviewer-1   2027-01-27  wa_00004e:dreamer
+NAME                  KEY ID      ROLE     EXPIRES     GRANTS
+corrosion-agent-1     key_9c44b7  writer   2027-01-27  corrosion:writer, corrosion:reader
+corrosion-reviewer-1  key_51d0ac  dreamer  2027-01-27  corrosion:dreamer
+
+$ eval "$(oml keys issue-agent corrosion-agent-3 --principal crew-corrosion/agent-3 --workarea corrosion)"
+key corrosion-agent-3 (key id key_7e21d0) issued — value exported as OML_API_KEY, printed nowhere else
+journal seq 818: key.issued {id: key_7e21d0, name: corrosion-agent-3, role: writer, value_disclosed: false, default_workarea_id: wa_00004e}
+journal seq 819: grant.issued {key: key_7e21d0, wa_00004e: writer}
+journal seq 820: grant.issued {key: key_7e21d0, wa_00004e: reader}
+$ echo "$OML_URL"
+https://oml.internal.example
 ```
 
 A writer that must also recall holds explicit reader scope — roles never imply one another. The
 writer key's `--default-workarea` is a journalled issuance attribute like its grants: a
 provider-ring (`/v1`) request from key_9c44b7 that names no workarea targets wa_00004e
 ([ADR-0022](../adr/ADR-0022-two-ring-api.md)). The
-key values above appeared exactly once; `oml keys list` and the journal know only ids and hashes.
+key values above appeared exactly once; `oml keys list` and the journal know only names, ids and
+hashes. `oml keys issue-agent` printed its value only into the two export lines the `eval`
+consumed, which the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) reads.
 
 ## 3. A review session
 
@@ -157,7 +172,7 @@ not serve it to them.
 
 ```console
 $ oml context use corrosion-reviewer-1
-$ oml review next --workarea universe/research/corrosion
+$ oml review next --workarea corrosion
 serving 1 of 3 held items
 
   artifact  art_02b8e1 @ v1   kind: memory   writer: key_9c44b7 (corrosion-agent-1)
@@ -182,7 +197,7 @@ journal seq 902: review.ratify {subject: art_02b8e1@v1, verdicts: [seq 901],
 journal seq 903: lifecycle.promote {artifact: art_02b8e1@v1, previous_tip_version: none}
 art_02b8e1@v1 promoted; serve srv_f3a91c consumed.
 
-$ oml review next --workarea universe/research/corrosion
+$ oml review next --workarea corrosion
 refused for next item art_031c77@v2: review.author_in_lineage
   your key key_51d0ac proposed art_031c77@v2 (edit-as-proposal, derives_from art_031c77@v1);
   the reviewer is never the author — computed over the lineage closure at promotion time.
@@ -205,7 +220,7 @@ the `validated` proposal is refused while a child is not yet validated.
 
 ```console
 $ oml context use aurora-admin
-$ oml workareas status propose universe/research/corrosion --to committed
+$ oml workareas status propose corrosion --to committed
 transition trn_0a40 proposed (development -> committed); awaiting a second ratifier.
 journal seq 1198: workarea.status_proposed {wa_00004e: development -> committed, proposer: key_a1f3e2}
 
@@ -219,14 +234,14 @@ journal seq 1203: workarea.status_transition {wa_00004e: development -> committe
   proposer: key_a1f3e2, ratifier: key_51d0ac, policy_snapshot: pol_77e2}
 
 $ oml context use aurora-admin
-$ oml workareas status propose universe/research/corrosion --to validated
+$ oml workareas status propose corrosion --to validated
 refused: workarea.transition_refused
-  universe/research/corrosion/scratch (wa_000061) is development
+  scratch (wa_000061, universe.research.corrosion.scratch) is development
 an area may only become validated when all its children are validated.
 
 $ # …scratch walks the same two rungs under distinct principals
 $ #   (trn_0a44: development -> committed; trn_0a51: committed -> validated), then:
-$ oml workareas status propose universe/research/corrosion --to validated
+$ oml workareas status propose corrosion --to validated
 transition trn_0a58 proposed (committed -> validated); awaiting a second ratifier.
 journal seq 1236: workarea.status_proposed {wa_00004e: committed -> validated, proposer: key_a1f3e2}
 
@@ -235,7 +250,7 @@ $ oml workareas status ratify trn_0a58
 journal seq 1240: workarea.status_transition {wa_00004e: committed -> validated, …}
 
 $ oml context use aurora-admin
-$ oml workareas create universe/research/corrosion post-mortem
+$ oml workareas create corrosion post-mortem
 refused: workarea.frozen — a validated area accepts no new children.
 remaining mutations on wa_00004e: demote, erase, crew-metadata update.
 ```
@@ -249,7 +264,7 @@ mass-reach act, so it defaults to `--dry-run`.
 
 ```console
 $ oml context use aurora-admin
-$ oml simulations open --audience key_9c44b7,key_51d0ac --label "what-if: 40 °C baseline"
+$ oml simulations open --audience corrosion-agent-1,corrosion-reviewer-1 --label "what-if: 40 °C baseline"
 simulation sim_0007 opened (state: open, audience: 2 keys)
 note: audience contains 1 dreamer key — promotion inside the simulation is possible.
 journal seq 1302: simulation.opened

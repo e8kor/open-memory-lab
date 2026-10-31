@@ -29,6 +29,58 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-30 — names as keys (ADR-0026)
+
+[ADR-0026](adr/ADR-0026-names-are-keys.md) (proposed) gives workareas, crews, keys and tenants a
+name that is a unique, immutable key beside the id. It proposes amending ADR-0008 (d7), ADR-0010
+(d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4) and ADR-0025 (d1, d2, d14);
+each of those records' Status lines gains the back-pointer when ADR-0026 is accepted.
+
+- **Decided:** one flat namespace per kind — the tenant for workareas, crews and keys (operator
+  keys share the provider's), the deployment for tenants — with names never changed and never
+  released; a lowercase RFC 1035 label as the grammar, refusing every spelling that could read as
+  an id, with no case mapping; the ids of the four kinds fixed as RFC 9562 hex-and-dash UUID text,
+  so a value in that form is always an id; names accepted wherever an id is — `/v1` and `/v2`
+  path parameters, query parameters and body fields, `X-OML-Workarea`, MCP tool arguments and CLI
+  arguments — and resolved on the server by substituting the id after the verb ceiling, so an
+  unknown or unreadable name answers exactly what its id would; the request digest over the
+  request as sent; `name.taken` (409) for a taken name at creation, which only admin and operator
+  keys can receive; the root named `universe` in every tenant; paths derived from names, served
+  and looked up but never accepted as a reference; crews as named records that workareas and keys
+  reference, created and updated by admins only, with the independence axis reading a key's crew
+  and failing closed where none is named; a key's name distinct from its principal and label, and
+  a rotation's successor named afresh; the naming of rows that predate names by a deterministic
+  rule journalled as `system.names_assigned`; the key's name as the positional argument of `oml
+  keys issue-agent`, whose verb, `--out` key file, reader grant default and `oml-admin` plugin
+  moved to [ADR-0028](adr/ADR-0028-agent-key-issuance.md) so they ship before names (d12–d14 keep their handles and point there); and
+  admin keys reading the structure of every workarea in their tenant without grants —
+  the workarea read, the lookup by path, the tree, edges and status — and never claim content,
+  declared in the roles-and-keys permission matrix (d15).
+- **Surface:** the `name` error family with `name.taken` (errors.md, the OpenAPI `ErrorCode`
+  enum and http-api.md's tables together); `GET /v2/crews`, `POST /v2/crews`, `GET
+  /v2/crews/{crew_id}` and `POST /v2/crews/{crew_id}/update`; the `crew.created`, `crew.updated`
+  and `system.names_assigned` events; `crew_id` in place of the crew object on `workarea.create`
+  and `workarea.crew_updated`; `name` and `crew_id` on `key.issued`, `new_name` on `key.rotated`;
+  the `oml_name` domain, the `tenants` and `crews` tables and the `name` columns with their unique
+  indexes. Example ids of the four kinds are rewritten to UUID text on the OpenAPI document, the
+  agent plugin and the reviewer-crews pages; the other example ids are untouched.
+- **`info.version` stays `0.2.0-design`.** `/v1` changes on the request side only, additively
+  (`X-OML-Workarea` and the listing's `workarea_id` accept names), and this record lands in the
+  same unreleased revision as ADR-0025, whose bump covers it.
+- **Pages touched:** [ADR-0026](adr/ADR-0026-names-are-keys.md), the
+  [decision register](adr/index.md) (row and the D7, D9, D13 and D14 cells),
+  [workareas](architecture/workareas.md), [roles and keys](architecture/roles-and-keys.md),
+  [concepts](concepts.md), [HTTP API](api/http-api.md), [OpenAPI](api/openapi.yaml),
+  [errors](api/errors.md), [mcp-tools.json](api/mcp-tools.json) (unserved tools' descriptions and
+  `_meta.pending_design`; the tool count is unchanged), [agent plugin](api/mcp-plugin.md),
+  [reviewer crews](api/reviewer-crews.md) (example ids), [PostgreSQL schema](data/postgres-schema.md),
+  [event catalog](data/event-catalog.md), [CLI reference](cli/reference.md),
+  [CLI sessions](cli/sessions.md), [deployment](operations/deployment.md) and
+  [runbooks](operations/runbooks.md) (the CLI invocations whose arguments changed),
+  [llms.txt](llms.txt), this changelog, `mkdocs.yml` and `CONTRIBUTING.md` (the vocabulary row).
+- **Roadmap:** no row opens or closes. Name resolution's request-path cost is unmeasured and is
+  tracked against FR-25.
+
 ### 2026-10-31 — The agent-only memory surface (implementation)
 
 An implementation milestone; no decision changes. The code now serves what
