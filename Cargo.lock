@@ -1144,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "oml-app"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "ed25519-dalek",
  "oml-domain",
@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "oml-cli"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "axum",
  "clap",
@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "oml-domain"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "oml-pg"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "hex",
  "oml-app",
@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "oml-port-contracts"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -1217,7 +1217,7 @@ dependencies = [
 
 [[package]]
 name = "oml-server-lead"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "oml-transport-http"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "axum",
  "getrandom 0.2.17",

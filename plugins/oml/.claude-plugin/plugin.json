@@ -1,6 +1,6 @@
 {
   "name": "oml",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Remember and recall through an Open Memory Lab server over MCP. Writes are held until a different identity ratifies them.",
   "author": {
     "name": "e8kor"
