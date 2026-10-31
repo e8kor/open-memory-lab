@@ -45,6 +45,11 @@ pub struct KeyRecord {
     /// The crew record named at issuance, fixed for the key's life; `None`
     /// for a key with no crew (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
+    /// The `at` of the key's `key.revoked`; the row stays as history, so a
+    /// revoked key reads back with it. `None` for a live key, as every
+    /// issuance folds one (postgres-schema.md `api_keys.revoked_at`;
+    /// ADR-0026 d10).
+    pub revoked_at: Option<EventTime>,
 }
 
 /// A stored grant row: the domain grant and its epoch, the journal seq of

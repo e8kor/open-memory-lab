@@ -23,7 +23,7 @@ use oml_app::domain::{
     sha256_digest_string, sign,
 };
 use oml_app::ed25519_dalek::SigningKey;
-use oml_app::ports::{IdGen as _, JournalStore};
+use oml_app::ports::{CommitRequest, IdGen as _, JournalStore, MetadataFold, OutboxRow};
 use oml_pg::{MIGRATOR, PgStore};
 use oml_server_lead::{
     OsIds, enumerate_tenants, lead_state, pg_ping, start_lead, startup_fork_check,
@@ -2152,6 +2152,7 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "default_workarea_id": quarter,
             "held_by": "agent",
             "expiry": null,
+            "revoked_at": null,
             "rotated_from": null,
             "grants": issued["grants"],
             "denials": [{
@@ -2187,6 +2188,116 @@ async fn get_v2_keys_by_name_answers_the_key() {
     let (status, _, refused) = read("claude-laptop".to_owned(), agent).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
     assert_envelope(&refused, "access.verb_ceiling");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Commits the `key.revoked` an issuance that fails after its `key.issued`
+/// journals (roles-and-keys.md issuance order), signed by the lead's key and
+/// folded by the store, since no route revokes a key in this build; answers
+/// the event's `at`.
+async fn revoke_in_the_store(rig: &Rig, tenant: Uuid, revoker: &Value, key_id: Uuid) -> EventTime {
+    let head = rig
+        .store
+        .chain_head(tenant)
+        .await
+        .expect("head")
+        .expect("chain");
+    let prev = rig
+        .store
+        .events_range(tenant, head.seq, 1)
+        .await
+        .expect("the head event")
+        .remove(0);
+    let at = EventTime::parse("2026-11-02T10:30:00.123456Z").expect("time");
+    let draft = EventDraft {
+        tenant_id: tenant,
+        event_id: OsIds.new_id(),
+        event_type: event_types::KEY_REVOKED.to_owned(),
+        principal: revoker["principal"].as_str().expect("principal").to_owned(),
+        api_key_id: Some(
+            Uuid::parse_str(revoker["key_id"].as_str().expect("key id")).expect("uuid"),
+        ),
+        at: at.clone(),
+        payload: json!({
+            "key_id": key_id.to_string(),
+            "revoked_by_key_id": revoker["key_id"],
+            "reason_digest": sha256_digest_string(b"issuance_incomplete"),
+        }),
+    };
+    let event = sign(
+        next_envelope(Some(&prev), draft).expect("lawful"),
+        &rig.signing,
+    )
+    .expect("signs");
+    rig.store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({
+                    "tenant_id": tenant.to_string(),
+                    "seq": event.envelope.seq,
+                    "event_type": event.envelope.event_type,
+                }),
+            },
+            event,
+            fold: MetadataFold::KeyRevoked { key_id },
+            idempotency: None,
+        })
+        .await
+        .expect("the revocation commits");
+    at
+}
+
+/// A revoked key's name still resolves, so `GET /v2/keys/{key_id}` answers
+/// it by name as history, with `revoked_at` the `at` of its `key.revoked`,
+/// where a live key's is null (http-api.md keys, grants, denials; ADR-0026
+/// d4, d10).
+#[tokio::test]
+async fn get_v2_keys_by_name_answers_a_revoked_key_with_its_revoked_at() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "claude/laptop",
+        json!([{ "workarea_node_id": crew, "role": "writer" }]),
+    )
+    .await;
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
+    let laptop = issued["name"].as_str().expect("name").to_owned();
+    let read = |key: String| {
+        let admin = admin.clone();
+        async move {
+            send(
+                router,
+                "GET",
+                &format!("/v2/keys/{key}"),
+                Call::auth(&admin),
+            )
+            .await
+        }
+    };
+    let (status, _, live) = read(laptop.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{live}");
+    assert_eq!(live.get("revoked_at"), Some(&Value::Null), "{live}");
+    let (_, _, root_admin) = read("root-admin".to_owned()).await;
+
+    let at = revoke_in_the_store(&rig, tenant, &root_admin, key_id).await;
+    let (status, _, revoked) = read(laptop.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{revoked}");
+    let mut expected = live.clone();
+    expected["revoked_at"] = json!(at.as_str());
+    assert_eq!(
+        revoked, expected,
+        "the revocation time and nothing else moves"
+    );
+    let (status, _, by_id) = read(key_id.to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_id, revoked, "one revoked key by either spelling");
 
     drop_db(&rig.db_name).await;
 }

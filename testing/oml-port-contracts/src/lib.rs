@@ -490,6 +490,7 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         key_hash: sha256_digest_string(key_id.as_bytes()),
         name: None,
         crew_id: None,
+        revoked_at: None,
     }
 }
 
@@ -1416,6 +1417,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         key_hash: "sha256:feed".to_owned(),
         name: Some(name("wanda-laptop")),
         crew_id: None,
+        revoked_at: None,
     };
     rig.commit(
         store,
@@ -3796,10 +3798,13 @@ pub async fn a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_
     );
 }
 
-/// A key reads back by its id in its own tenant, a revoked key's included,
+/// A key reads back by its id in its own tenant, a live one with no
+/// revocation time and a revoked one with the `at` of its `key.revoked`,
 /// since its name and role stay history; another tenant reads nothing
 /// (roles-and-keys.md key lifecycle; ADR-0026 d10).
-pub async fn a_key_reads_by_its_id_in_its_tenant_a_revoked_keys_included<S: JournalStore>(
+pub async fn a_key_reads_by_its_id_in_its_tenant_a_revoked_one_with_the_at_of_its_key_revoked<
+    S: JournalStore,
+>(
     store: &S,
 ) {
     let mut a = ChainRig::new(43);
@@ -3816,11 +3821,21 @@ pub async fn a_key_reads_by_its_id_in_its_tenant_a_revoked_keys_included<S: Jour
         store.key(ta, key.key_id).await.expect("read"),
         Some(key.clone())
     );
-    a.revoke_key(store, key.key_id).await.expect("revoke");
+    let receipt = a.revoke_key(store, key.key_id).await.expect("revoke");
+    let at = store
+        .events_range(ta, receipt.seq, 1)
+        .await
+        .expect("range")
+        .remove(0)
+        .envelope
+        .at;
     assert_eq!(
         store.key(ta, key.key_id).await.expect("read"),
-        Some(key.clone()),
-        "a revoked key's row stays as history"
+        Some(KeyRecord {
+            revoked_at: Some(at),
+            ..key.clone()
+        }),
+        "a revoked key's row stays as history, stamped with its key.revoked's at"
     );
     assert_eq!(
         store.key(b.tenant_id, key.key_id).await.expect("read"),
@@ -3931,7 +3946,10 @@ where
     crews_lists_the_tenants_crew_records_in_name_byte_order(&new_store().await).await;
     a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant(&new_store().await)
         .await;
-    a_key_reads_by_its_id_in_its_tenant_a_revoked_keys_included(&new_store().await).await;
+    a_key_reads_by_its_id_in_its_tenant_a_revoked_one_with_the_at_of_its_key_revoked(
+        &new_store().await,
+    )
+    .await;
     every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed(&new_store().await).await;
 }
 

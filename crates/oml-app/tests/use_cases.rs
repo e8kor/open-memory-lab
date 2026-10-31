@@ -2191,6 +2191,41 @@ async fn a_failed_grant_commit_discloses_no_key_value() {
     issue(&app, admin, Role::Reader, "rhea", crew).await;
 }
 
+/// A key whose issuance failed after its `key.issued` keeps its name, so the
+/// key read answers it by that name as history, with the `at` of the
+/// `key.revoked` that followed as its revocation time (roles-and-keys.md
+/// issuance order; ADR-0026 d10).
+#[tokio::test]
+async fn a_key_whose_issuance_failed_part_way_reads_back_by_name_revoked_at_its_key_revoked() {
+    let store = MemStore::new().refusing_next_commit_of(event_types::GRANT_ISSUED);
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let req = issue_req(
+        Role::Writer,
+        "crew/agent-7",
+        vec![grant(crew, Role::Writer)],
+    );
+    app.issue_key(admin, &req)
+        .await
+        .expect_err("the grant's commit is refused");
+    let tail = journal(&store, boot.tenant_id).await;
+    let revocation = tail.last().expect("a chain");
+    assert_eq!(revocation.envelope.event_type, event_types::KEY_REVOKED);
+
+    let detail = app
+        .key(admin, Reference::Name(req.name.clone()))
+        .await
+        .expect("a revoked key's name still resolves");
+    assert_eq!(detail.key.name, Some(req.name.clone()));
+    assert_eq!(
+        detail.key.revoked_at,
+        Some(revocation.envelope.at.clone()),
+        "the key.revoked's at, not the key.issued's"
+    );
+    assert_ne!(revocation.envelope.at, tail[tail.len() - 2].envelope.at);
+}
+
 // ---------------------------------------------------------------------------
 // The workarea read: the caller's children, verbs and epoch (ADR-0025 d14)
 // ---------------------------------------------------------------------------

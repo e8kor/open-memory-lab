@@ -401,9 +401,13 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
     })
 }
 
-/// The `api_keys` columns a key read selects.
-const KEY_COLUMNS: &str =
-    "id, tenant_id, role, principal, held_by, default_workarea_id, issued_by, hash, name, crew_id";
+/// The `api_keys` columns a key read selects. `revoked_at` comes back
+/// through `to_char` in the fixed-width signed form, as a memory's
+/// `promoted_at` does, so `EventTime` round-trips exactly.
+const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_workarea_id, \
+     issued_by, hash, name, crew_id, \
+     to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS revoked_at_signed";
 
 /// A key row as the port's record. A provider-level row names no tenant
 /// (postgres-schema.md api_keys): it resolves under the provider tenant, so
@@ -414,6 +418,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
     let role: String = row.try_get("role").map_err(backend)?;
     let held_by: String = row.try_get("held_by").map_err(backend)?;
     let stored_hash: Vec<u8> = row.try_get("hash").map_err(backend)?;
+    let revoked: Option<String> = row.try_get("revoked_at_signed").map_err(backend)?;
     Ok(KeyRecord {
         key_id: row.try_get("id").map_err(backend)?,
         tenant_id: tenant_id.unwrap_or(PROVIDER_TENANT),
@@ -425,6 +430,11 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         key_hash: format!("sha256:{}", hex::encode(stored_hash)),
         name: stored_name(row, "name")?,
         crew_id: row.try_get("crew_id").map_err(backend)?,
+        revoked_at: revoked
+            .as_deref()
+            .map(EventTime::parse)
+            .transpose()
+            .map_err(backend)?,
     })
 }
 
@@ -802,8 +812,8 @@ async fn fold_names_assigned(
 /// Applies the metadata fold rows of one commit (ADR-0002 d1: same
 /// transaction as the journal insert; `memories.created_event_id` references
 /// the journal row, so this runs after it). `seq` and `at` are the commit's
-/// event seq and time: a key's `issued_seq`, a grant's or denial's epoch and
-/// a memory's `promoted_at`.
+/// event seq and time: a key's `issued_seq` and `revoked_at`, a grant's or
+/// denial's epoch and a memory's `promoted_at`.
 async fn apply_fold(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -1020,16 +1030,18 @@ async fn apply_fold(
             }
         }
         MetadataFold::KeyRevoked { key_id } => {
-            // The row stays as history; key_by_hash stops resolving it. A key
-            // the tenant does not hold matches no row under tenant_isolation,
-            // and that aborts the commit rather than journalling a
-            // revocation of nothing.
+            // The row stays as history, stamped with the event's `at`, which
+            // the key read serves (ADR-0026 d10); key_by_hash stops resolving
+            // it. A key the tenant does not hold matches no row under
+            // tenant_isolation, and that aborts the commit rather than
+            // journalling a revocation of nothing.
             let revoked = sqlx::query(
-                "UPDATE api_keys SET revoked_at = now() \
+                "UPDATE api_keys SET revoked_at = ($3)::timestamptz \
                  WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL",
             )
             .bind(tenant_id)
             .bind(key_id)
+            .bind(at.as_str())
             .execute(&mut **tx)
             .await
             .map_err(backend)?;

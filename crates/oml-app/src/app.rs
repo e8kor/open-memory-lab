@@ -916,6 +916,7 @@ where
             key_hash: sha256_digest_string(value.as_bytes()),
             name: Some(req.name.clone()),
             crew_id,
+            revoked_at: None,
         };
         (record, value)
     }

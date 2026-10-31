@@ -1741,10 +1741,12 @@ fn grant_json(g: &GrantRecord) -> Value {
 /// openapi.yaml `Key` as the key read serves it: the row, its attestation as
 /// `key.issued` journalled it, its stored grants, its denials in force and
 /// its permission epoch, and never the value (ADR-0025 d2; ADR-0026 d8, d9).
-/// Expiry and rotation are unbuilt, so `expiry` and `rotated_from` are null.
-/// The key row this build reads carries neither the label, which nothing
-/// stores, nor the revocation time, so the read omits `label` and
-/// `revoked_at` rather than serve a value it has not read.
+/// `revoked_at` is the row's, the `at` of the key's `key.revoked`, and null
+/// for a live key, so a revoked key, whose name still resolves, reads as
+/// history and never as live (ADR-0026 d10). Expiry and rotation are
+/// unbuilt, so `expiry` and `rotated_from` are null. Nothing stores the
+/// label, so the read omits `label` rather than serve a value it has not
+/// read.
 fn key_json(detail: &KeyDetail) -> Value {
     let key = &detail.key;
     json!({
@@ -1756,6 +1758,7 @@ fn key_json(detail: &KeyDetail) -> Value {
         "default_workarea_id": key.default_workarea,
         "held_by": detail.held_by.map(HeldBy::as_str),
         "expiry": Value::Null,
+        "revoked_at": key.revoked_at.as_ref().map(|at| at.as_str()),
         "rotated_from": Value::Null,
         "grants": detail.access.grants.iter().map(grant_json).collect::<Vec<_>>(),
         "denials": detail

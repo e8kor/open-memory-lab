@@ -108,12 +108,11 @@ struct TenantState {
     unnamed_workareas: BTreeMap<Uuid, UnnamedWorkarea>,
     crews: BTreeMap<Uuid, CrewRecord>,
     /// Every key the tenant was issued, revoked ones included, so their
-    /// names stay held (ADR-0026 d10).
+    /// names stay held (ADR-0026 d10); a key `key.revoked` folded carries
+    /// its `revoked_at` and resolves by hash no more.
     keys_by_hash: BTreeMap<String, KeyRecord>,
     /// Per key id, in commit order — which is epoch order.
     access: BTreeMap<Uuid, KeyAccess>,
-    /// Keys `key.revoked` folded: they resolve by hash no more.
-    revoked: BTreeSet<Uuid>,
     queue: Vec<QueueEntry>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
@@ -323,6 +322,7 @@ fn fold_poc_event(
                     key_hash: format!("poc-unhashed:{key_id}"),
                     name: None,
                     crew_id: None,
+                    revoked_at: None,
                 },
             );
         }
@@ -356,7 +356,10 @@ fn fold_poc_event(
             }
         }
         event_types::KEY_REVOKED => {
-            state.revoked.insert(poc_required_id(payload, "key_id")?);
+            let key_id = poc_required_id(payload, "key_id")?;
+            if let Some(key) = state.keys_by_hash.values_mut().find(|k| k.key_id == key_id) {
+                key.revoked_at = Some(env.at.clone());
+            }
         }
         _ => {}
     }
@@ -506,7 +509,8 @@ fn require_free_ordinal(state: &TenantState, memory: &MemoryRecord) -> Result<()
 /// Applies one fold, or refuses it before changing anything — what the
 /// schema refuses, the double refuses, so the commit stays all or nothing.
 /// `seq` and `at` are the commit's event seq and time: a key's
-/// `issued_seq`, a grant's or denial's epoch and a memory's `promoted_at`.
+/// `issued_seq` and `revoked_at`, a grant's or denial's epoch and a
+/// memory's `promoted_at`.
 fn apply_fold(
     state: &mut TenantState,
     tenant_id: Uuid,
@@ -631,13 +635,20 @@ fn apply_fold(
             access.denials.remove(at);
             access.lift_epochs.push(seq);
         }
+        // The row stays as history, stamped with the event's `at`, as the
+        // store's guarded update stamps it; a key the tenant does not hold,
+        // or one already revoked, is refused.
         MetadataFold::KeyRevoked { key_id } => {
-            if !state.access.contains_key(&key_id) || state.revoked.contains(&key_id) {
+            let Some(key) = state
+                .keys_by_hash
+                .values_mut()
+                .find(|k| k.key_id == key_id && k.revoked_at.is_none())
+            else {
                 return Err(StoreError::Backend(format!(
                     "key {key_id} is not a live key of this tenant"
                 )));
-            }
-            state.revoked.insert(key_id);
+            };
+            key.revoked_at = Some(at.clone());
         }
         MetadataFold::MemoryHeld { memory, enqueue } => {
             require_free_ordinal(state, &memory)?;
@@ -1270,7 +1281,7 @@ impl JournalStore for MemStore {
         for tenant in tenants {
             let state = tenant.lock().expect("tenant lock");
             if let Some(key) = state.keys_by_hash.get(key_hash) {
-                if state.revoked.contains(&key.key_id) {
+                if key.revoked_at.is_some() {
                     return Ok(None);
                 }
                 return Ok(Some(key.clone()));
