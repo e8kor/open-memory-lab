@@ -135,9 +135,9 @@ Concretely:
   ([permission matrix](../architecture/roles-and-keys.md#permission-matrix)).
 - Signing is done by `oml-server` with the deployment key
   ([storage](../architecture/storage.md)); no client signs anything.
-- Review verdicts and connection ratification are dreamer(review) verbs on
-  the [HTTP API](http-api.md), bound to the serve ceremony — a server-issued,
-  expiring `serve_id` consumed by its first verdict (D14,
+- Review verdicts and the ratification of connection proposals are
+  dreamer(review) verbs on the [HTTP API](http-api.md), bound to the serve
+  ceremony — a server-issued, expiring `serve_id` consumed by its first verdict (D14,
   [review guide](../review-guide.md)). They are deliberately not MCP tools:
   the catalog stays writer/reader/propose-safe, so handing an agent this
   plugin config hands it no path to a verdict, whatever role its key carries.

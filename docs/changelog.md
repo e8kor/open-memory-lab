@@ -68,7 +68,9 @@ Caddy's `log` directive documentation, all fetched 2026-10-31.
   family (d13); the configuration keys, doctor fields, proxy routing and access logs, and cluster
   mode with the follower serving the lead's issuer (d14); the build order (d16).
 - **The vocabulary** gains three rows, *connection*, *connect code*, and *access token, refresh
-  token*, because "grant" belongs to workarea grants and "token" alone could mean a key (d7).
+  token*, because "grant" belongs to workarea grants and "token" alone could mean a key (d7). The
+  claim↔claim and workarea↔workarea sense is always "connection edge" or "connection proposal",
+  reworded where it stood bare.
 - **`info.version` 0.2.0-design → 0.3.0-design** (d15): the error taxonomy, which the rule on this
   page names, gains eleven `oauth` codes, and the OpenAPI document gains `/mcp`, the two discovery
   documents, four OAuth operations and two `/v2` key operations. No `/v1` operation changes; on
@@ -92,7 +94,9 @@ Caddy's `log` directive documentation, all fetched 2026-10-31.
   [observability](operations/observability.md), [CLI reference](cli/reference.md),
   [roadmap](product/roadmap.md), [positioning](product/positioning.md) ("key" where it said
   "token"), [admission](architecture/admission.md) (the token formats in
-  `secret.api_token`), [the overview](index.md),
+  `secret.api_token`), [audit and lineage](architecture/audit-and-lineage.md) and
+  [concepts](concepts.md) ("connection edge" or "connection proposal" where "connection" stood
+  bare for an edge), [the overview](index.md),
   [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md)
   (the revision), and this page; outside `docs/`, `README.md` (using OML from claude.ai and a
   phone) and `CONTRIBUTING.md` (the revision and the vocabulary rows).

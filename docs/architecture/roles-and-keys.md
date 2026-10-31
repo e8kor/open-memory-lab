@@ -27,7 +27,7 @@ and the row's derivation lineage closure, not just at key issuance.
 |---|---|
 | `reader` | Recall, read, search and graph-read within scope. Every read is logged ([retrieval.md](retrieval.md)). |
 | `writer` | Remember and learn — every write is held on arrival — plus attachments, supersession proposals on its own claims, and steering rows. Never a verdict. |
-| `dreamer` | One role name, two capability classes: **propose** (edit-as-proposal, connection proposals) and **review** (verdicts, connection ratification). The review class is refused per row by lineage-closure exclusion (below). |
+| `dreamer` | One role name, two capability classes: **propose** (edit-as-proposal, connection proposals) and **review** (verdicts, ratification of connection proposals). The review class is refused per row by lineage-closure exclusion (below). |
 | `admin` | Tenant governance: keys, workareas, reassignment, bans, erasure, crew metadata, simulations. Admin verdicts on content are refused: admin ≠ reviewer. |
 | `operator` | Provider level: creates tenants and issues each tenant's first admin key. Never writes, reads or reviews content. |
 
@@ -80,9 +80,9 @@ settings, tenants — a column names the key's role itself.
 | propose supersession of own claim (including retirement) | — | ✓ | — | — ¹ | — |
 | write steering row (held + reviewed) | — | ✓ | — | — ¹ | — |
 | edit-as-proposal (new attributed submission with `derives_from`, including retirement) | — | — | ✓ propose | — | — |
-| propose connection, claim↔claim or workarea↔workarea | — | — | ✓ propose ² | — | — |
+| propose a connection edge, claim↔claim or workarea↔workarea | — | — | ✓ propose ² | — | — |
 | verdict on a held item | — | — | ✓ review ³ | — (refused) | — |
-| ratify a connection | — | — | ✓ review ³ | — | — |
+| ratify a connection proposal | — | — | ✓ review ³ | — | — |
 | reopen a rejection (non-author) | — | — | ✓ review ³ | — | — |
 | re-enqueue a dead-lettered held item (journalled; [admission.md](admission.md)) | — | — | ✓ | ✓ | — |
 | propose workarea status transition | — | — | ✓ | ✓ | — |
@@ -309,7 +309,7 @@ A dreamer key carries one role name and two capability classes:
 - **propose** — edit-as-proposal: a change to someone else's claim is a new, attributed submission
   carrying `derives_from`, which enters the pipeline held like any write. Connection proposals,
   claim↔claim and workarea↔workarea, follow the same shape: proposed, then separately ratified.
-- **review** — verdicts on held items and ratification of proposed connections. A verdict counts
+- **review** — verdicts on held items and ratification of connection proposals. A verdict counts
   only against a valid serve: the reviewer was served the full item — all attachments, and for a
   supersession the version it replaces — under a server-side serve binding
   ([cli/reference.md](../cli/reference.md)).
@@ -565,9 +565,9 @@ code is minted for the same key or when the key is revoked, in that `key.revoked
 Minting a code, or revoking a connection of the key (`connection.revoked`, whatever its cause),
 also ends every live authorization request
 holding a code of that key and every `authorized` connection of it, in the same commit: it voids
-every code of the key from which no connection has opened, spent or not, and Connect and the token
-exchange refuse a voided code, so a later Connect answers `oauth.authorization_expired` and a later
-exchange `invalid_grant` (`oauth.authorization_code_invalid`). A page holding a code someone else
+every code of the key from which no connection has opened, spent or not, and code entry, Connect and
+the token exchange refuse a voided code, so a later Connect answers `oauth.authorization_expired`
+and a later exchange `invalid_grant` (`oauth.authorization_code_invalid`). A page holding a code someone else
 entered therefore cannot open a connection after the admin mints a new one. The
 idempotency record of an issuance or a minting stores its response without the code, so a replay
 returns no code ([HTTP API — idempotency](../api/http-api.md#idempotency)). With L live codes and G wrong entries

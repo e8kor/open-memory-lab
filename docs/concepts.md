@@ -43,7 +43,7 @@ retiring the claim: once ratified, its **retirement version** is the tip, the cl
 
 Claims also declare where they came from. A submission may carry `derives_from` edges naming
 the claims it was built from; the transitive closure over those edges and claim↔claim
-connections is the claim's **lineage closure**. That closure is load-bearing: a reviewer who
+connection edges is the claim's **lineage closure**. That closure is load-bearing: a reviewer who
 appears anywhere in it may not judge the claim, and simulation taint travels along it. The
 honest boundary is stated wherever lineage is used: derivation is *declared* — a writer who
 omits `derives_from` produces a row the service cannot connect to its sources, and lineage

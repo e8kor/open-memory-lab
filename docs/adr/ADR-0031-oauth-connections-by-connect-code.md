@@ -362,7 +362,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 
     | Term | Means | Never |
     |---|---|---|
-    | connection | one OAuth client's standing authority to act as one connector key at `/mcp`, opened at the token exchange after a connect code is redeemed, and ended by revocation | "grant" or "OAuth grant" (a grant is a workarea grant), "session", "authorization" as the object's name; a database or network connection is always qualified, as in "Postgres connection" |
+    | connection | one OAuth client's standing authority to act as one connector key at `/mcp`, opened at the token exchange after a connect code is redeemed, and ended by revocation | "grant" or "OAuth grant" (a grant is a workarea grant), "session", "authorization" as the object's name; bare "connection" for a claim↔claim or workarea↔workarea link, which is always "connection edge" or "connection proposal" — the wire value `kind: "connection"` is code, and the bare "connection" of accepted ADR-0010 d5, ADR-0012's context and ADR-0025's rejected alternatives for that link is the link, kept as history |
     | connect code | the short, single-use secret, alive for minutes, that binds one connection to one connector key | "pairing code", "PIN", "OTP", "token" |
     | access token, refresh token | a connection's two OAuth credentials, `oml_at_…` and `oml_rt_…`, stored as digests; on the pages that declare connections, "token" alone means one of them | "key" for either; "token" alone for an API key or a budget token — the "token" of accepted ADR-0022 d4 and ADR-0025 for the key is the key, kept as history |
 
@@ -393,8 +393,8 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     revoking a connection of the key (`connection.revoked`, whatever its cause), also ends every
     live authorization request holding a code of that key and every `authorized` connection of
     it, in the same commit: it voids every code of the key from which no connection has opened,
-    spent or not, and Connect and the token exchange refuse a voided code, so a later Connect
-    answers `oauth.authorization_expired` and a later exchange `invalid_grant`
+    spent or not, and code entry, Connect and the token exchange refuse a voided code, so a later
+    Connect answers `oauth.authorization_expired` and a later exchange `invalid_grant`
     (`oauth.authorization_code_invalid`). The admin's usual reason to mint again is a code someone
     else may have entered; a page that holds that code, or the 60-second authorization it
     produced, then cannot open a connection that would replace the one the admin meant. Code entry
@@ -433,8 +433,9 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        handle that does not open under the lead's key, or whose expiry has passed, names no live
        request; a restart or a takeover therefore ends every page in progress, which starts again.
        A row is written only when a correct code is entered (step 2), which only an admin-minted
-       code can cause, so unauthenticated page opens cannot grow the lead's tables at all and need
-       no cap. The page shows the client — a metadata-document client as its `client_name`
+       code can cause, so unauthenticated page opens write no authorization-request row; the only
+       table they write is `oauth_clients`, as the document cache of d5, capped at 10 000 documents.
+       The page shows the client — a metadata-document client as its `client_name`
        "verified by `<host>`", a registered one as its `client_name` marked "name not verified" —
        and the redirect URI's host. The host after
        "verified by" is the document URL's whole host, in lower-case ASCII (the punycode A-label
@@ -459,8 +460,8 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        tenant policy permits `self_signed` rows, it adds, for each such workarea: "In `<workarea>`,
        its writes may be self-signed and readable there without review." Last, always: "It cannot
        approve, demote, delete or administer anything." The buttons are Connect and Cancel. A wrong
-       code answers the same form with one sentence for an unknown, expired, spent or dead key's
-       code alike — "This code is not valid. Check it, or ask your administrator for a new one." —
+       code answers the same form with one sentence for an unknown, expired, voided, spent, or revoked
+       or expired key's code alike — "This code is not valid. Check it, or ask your administrator for a new one." —
        and the attempts left, under a new sealed handle with one attempt fewer. The fifth wrong
        entry ends the request and redirects with `access_denied`. An earlier handle sent again
        carries its earlier count, which costs nothing: the five attempts bound one page's typing
@@ -788,6 +789,12 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   by this record on acceptance and the row leaving the register then; FR-34, FR-35 and FR-36
   opened.
 - `README.md`: how to add OML on claude.ai and use it from a phone, marked decided, not built.
+- The claim↔claim and workarea↔workarea sense written "connection edge" or "connection proposal"
+  (d7's vocabulary row) on [roles and keys](../architecture/roles-and-keys.md) (the dreamer row,
+  the matrix and the dreamer split), [security](../architecture/security.md) (residual risk 8),
+  [audit and lineage](../architecture/audit-and-lineage.md), [concepts](../concepts.md), the
+  [HTTP API](../api/http-api.md) (the `POST /v1/memories` ceiling), `openapi.yaml` and the
+  [agent plugin](../api/mcp-plugin.md).
 
 **Opened.** [FR-34](../product/roadmap.md): the connection flow is designed, not built, and no live
 connection has run. It closes on the end-to-end test of the in-process lead passing in CI and a

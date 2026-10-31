@@ -115,7 +115,7 @@ and is load-bearing twice:
 
 - **Reviewer independence.** A verdict is refused when the reviewing key or principal appears
   anywhere in the closure, not merely as the row's direct author. Pending edges count, so a
-  proposer cannot launder authorship through an unratified connection
+  proposer cannot launder authorship through an unratified connection proposal
   ([admission](admission.md)).
 - **Simulation taint.** A closure that touches a simulation row makes the claim sim-derived,
   with everything that follows ([simulations](simulations.md)).
