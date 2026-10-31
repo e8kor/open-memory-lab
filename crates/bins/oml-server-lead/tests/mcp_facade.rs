@@ -1149,10 +1149,12 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         "/v2/workareas",
         Some(&admin),
         Some("wa-1"),
+        // A workarea names a crew record, which no route of this build
+        // creates yet (ADR-0026 d8); this one names none, so `crew` stays
+        // absent.
         Some(&json!({
             "parent_id": root,
             "name": "metals-crew",
-            "crew": {"name": "metals-crew"},
         })),
     )
     .await;
@@ -1211,7 +1213,6 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
             "id": crew,
             "path": "universe.metals-crew",
             "status": "development",
-            "crew": {"name": "metals-crew"},
             "parent": root,
             "children": [],
             "edges": [],
@@ -1258,8 +1259,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
 }
 
 #[tokio::test]
-async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_not_it_has_a_default()
- {
+async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_default() {
     let (router, db) = fresh_router().await;
     let (status, boot) = send(
         &router,
@@ -1290,17 +1290,24 @@ async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_
         .expect("show-once value")
         .to_owned();
 
-    // Step 1 of the refusal order needs no node, so it answers before the
-    // default resolves: both admin keys get the same code, and neither is
-    // told about its default workarea.
-    for (id, token) in [(1, &bootstrap_admin), (2, &second_admin)] {
-        let refused = call_tool(&router, token, id, "oml_workarea_info", json!({})).await;
-        assert_eq!(refused["isError"], true, "{refused}");
-        assert_eq!(
-            refused["structuredContent"]["error"]["code"], "access.verb_ceiling",
-            "{refused}"
-        );
-    }
+    // The facade rides the ring, whose workarea read answers an admin key by
+    // its key role, structure only (ADR-0026 d15): the bootstrap admin reads
+    // its default, the root, with no effective verb, and the admin key with
+    // no default is refused by name.
+    let read = call_tool(&router, &bootstrap_admin, 1, "oml_workarea_info", json!({})).await;
+    assert_eq!(read["isError"], false, "{read}");
+    assert_eq!(read["structuredContent"]["path"], "universe", "{read}");
+    assert_eq!(
+        read["structuredContent"]["my_effective_verbs"],
+        json!([]),
+        "{read}"
+    );
+    let refused = call_tool(&router, &second_admin, 2, "oml_workarea_info", json!({})).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"], "request.workarea_unresolved",
+        "{refused}"
+    );
 
     drop_db(&db).await;
 }

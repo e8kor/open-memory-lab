@@ -26,7 +26,8 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     ClaimKeyState, Crew, CrewRecord, DenialRecord, GrantRecord, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, RecallCandidate, WorkareaRecord,
+    ListingFilter, ListingPosition, ListingScope, MemoryRecord, RecallCandidate, UnnamedRows,
+    WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -3491,6 +3492,261 @@ pub async fn a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it<S: 
     );
 }
 
+/// `crew.updated` replaces a crew record's charter URI and external manager
+/// with the full new values and never its name: an update that carries
+/// another name, or names a crew its tenant does not hold, is refused and
+/// commits nothing (event-catalog.md `crew.updated`; ADR-0026 d8).
+pub async fn a_crew_update_replaces_its_charter_and_manager_and_never_its_name<S: JournalStore>(
+    store: &S,
+) {
+    let mut a = ChainRig::new(37);
+    a.seed_chain(store, 0).await;
+    let mut b = ChainRig::new(38);
+    b.seed_chain(store, 0).await;
+    let ta = a.tenant_id;
+    let redline = crew_record(ta, Uuid::from_u128(0xC370), "redline");
+    a.create_crew(store, redline.clone()).await.expect("crew");
+    let updated = CrewRecord {
+        charter_uri: Some("https://crews.example.com/redline/charter.md".to_owned()),
+        external_manager: Some("crewd.example.com".to_owned()),
+        ..redline.clone()
+    };
+    let crew_updated = |crew: &CrewRecord| {
+        (
+            event_types::CREW_UPDATED,
+            json!({ "crew_id": crew.crew_id.to_string() }),
+            MetadataFold::CrewUpdated(crew.clone()),
+        )
+    };
+    let (event_type, payload, fold) = crew_updated(&updated);
+    a.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("update");
+    assert_eq!(
+        store.crew(ta, redline.crew_id).await.expect("read"),
+        Some(updated.clone())
+    );
+
+    let head = store.chain_head(ta).await.expect("head");
+    let renamed = CrewRecord {
+        name: name("blueline"),
+        ..updated.clone()
+    };
+    let (event_type, payload, fold) = crew_updated(&renamed);
+    let refused = a.commit(store, event_type, payload, fold, None).await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
+    // Another tenant's update names a crew it does not hold.
+    let (event_type, payload, fold) = crew_updated(&CrewRecord {
+        tenant_id: b.tenant_id,
+        ..updated.clone()
+    });
+    let b_head = store.chain_head(b.tenant_id).await.expect("head");
+    let refused = b.commit(store, event_type, payload, fold, None).await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
+    assert_eq!(store.chain_head(ta).await.expect("head"), head);
+    assert_eq!(store.chain_head(b.tenant_id).await.expect("head"), b_head);
+    assert_eq!(
+        store.crew(ta, redline.crew_id).await.expect("read"),
+        Some(updated),
+        "the refused updates changed nothing"
+    );
+}
+
+/// The tenant's crew records list in name byte order, and only its own
+/// (http-api.md crews; ADR-0026 d8).
+pub async fn crews_lists_the_tenants_crew_records_in_name_byte_order<S: JournalStore>(store: &S) {
+    let mut a = ChainRig::new(39);
+    a.seed_chain(store, 0).await;
+    let mut b = ChainRig::new(40);
+    b.seed_chain(store, 0).await;
+    let ta = a.tenant_id;
+    let mut created = Vec::new();
+    for (n, crew_name) in [
+        (0, "redline"),
+        (1, "alpha"),
+        (2, "metals-crew"),
+        (3, "alpha-2"),
+    ] {
+        let crew = crew_record(ta, Uuid::from_u128(0xC390 + n), crew_name);
+        a.create_crew(store, crew.clone()).await.expect("crew");
+        created.push(crew);
+    }
+    b.create_crew(
+        store,
+        crew_record(b.tenant_id, Uuid::from_u128(0xC3A0), "zulu"),
+    )
+    .await
+    .expect("another tenant's crew");
+    let names: Vec<String> = store
+        .crews(ta)
+        .await
+        .expect("list")
+        .iter()
+        .map(|c| c.name.as_str().to_owned())
+        .collect();
+    assert_eq!(names, vec!["alpha", "alpha-2", "metals-crew", "redline"]);
+    assert_eq!(
+        store.crews(ta).await.expect("list")[0],
+        created[1],
+        "each record whole"
+    );
+    assert_eq!(
+        store.crews(rig_tenant(99)).await.expect("list"),
+        Vec::<CrewRecord>::new(),
+        "a tenant with no crew lists none"
+    );
+}
+
+/// `workarea.crew_updated` points a workarea at a crew record of its own
+/// tenant; one naming another tenant's crew, or a workarea the tenant does
+/// not hold, is refused and commits nothing (postgres-schema.md `crews`;
+/// ADR-0026 d8).
+pub async fn a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut a = ChainRig::new(41);
+    a.seed_chain(store, 0).await;
+    let mut b = ChainRig::new(42);
+    b.seed_chain(store, 0).await;
+    let ta = a.tenant_id;
+    let universe = workarea_record(ta, Uuid::from_u128(0xB410), None, "universe");
+    a.create_workarea(store, universe.clone()).await;
+    let redline = crew_record(ta, Uuid::from_u128(0xC410), "redline");
+    a.create_crew(store, redline.clone()).await.expect("crew");
+    let theirs = crew_record(b.tenant_id, Uuid::from_u128(0xC420), "redline");
+    b.create_crew(store, theirs.clone()).await.expect("crew");
+
+    let point = |workarea_id: Uuid, crew_id: Uuid| {
+        (
+            event_types::WORKAREA_CREW_UPDATED,
+            json!({ "workarea_id": workarea_id.to_string(), "crew_id": crew_id.to_string() }),
+            MetadataFold::WorkareaCrewUpdated {
+                workarea_id,
+                crew_id,
+            },
+        )
+    };
+    let (event_type, payload, fold) = point(universe.workarea_id, redline.crew_id);
+    a.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("point");
+    assert_eq!(
+        store
+            .workarea(ta, universe.workarea_id)
+            .await
+            .expect("read")
+            .expect("node")
+            .crew_id,
+        Some(redline.crew_id)
+    );
+
+    let head = store.chain_head(ta).await.expect("head");
+    for (workarea_id, crew_id) in [
+        (universe.workarea_id, theirs.crew_id),
+        (universe.workarea_id, Uuid::from_u128(0xC4FF)),
+        (Uuid::from_u128(0xB4FF), redline.crew_id),
+    ] {
+        let (event_type, payload, fold) = point(workarea_id, crew_id);
+        let refused = a.commit(store, event_type, payload, fold, None).await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(store.chain_head(ta).await.expect("head"), head);
+    assert_eq!(
+        store
+            .workarea(ta, universe.workarea_id)
+            .await
+            .expect("read")
+            .expect("node")
+            .crew_id,
+        Some(redline.crew_id)
+    );
+}
+
+/// A key reads back by its id in its own tenant, a revoked key's included,
+/// since its name and role stay history; another tenant reads nothing
+/// (roles-and-keys.md key lifecycle; ADR-0026 d10).
+pub async fn a_key_reads_by_its_id_in_its_tenant_a_revoked_keys_included<S: JournalStore>(
+    store: &S,
+) {
+    let mut a = ChainRig::new(43);
+    a.seed_chain(store, 0).await;
+    let mut b = ChainRig::new(44);
+    b.seed_chain(store, 0).await;
+    let ta = a.tenant_id;
+    let key = KeyRecord {
+        name: Some(name("claude-laptop")),
+        ..key_record(ta, Uuid::from_u128(0xD430), Role::Admin, None)
+    };
+    a.issue_key(store, key.clone()).await;
+    assert_eq!(
+        store.key(ta, key.key_id).await.expect("read"),
+        Some(key.clone())
+    );
+    a.revoke_key(store, key.key_id).await.expect("revoke");
+    assert_eq!(
+        store.key(ta, key.key_id).await.expect("read"),
+        Some(key.clone()),
+        "a revoked key's row stays as history"
+    );
+    assert_eq!(
+        store.key(b.tenant_id, key.key_id).await.expect("read"),
+        None
+    );
+    assert_eq!(
+        store.key(ta, Uuid::from_u128(0xD4FF)).await.expect("read"),
+        None
+    );
+}
+
+/// Every row a creation folds is named, so a store this build writes lists
+/// no tenant and no workarea without a name; a key issued without one is
+/// listed, as a key that predates names is (ADR-0026 d11).
+pub async fn every_row_a_creation_folds_is_named_and_a_key_issued_without_a_name_is_listed<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(45);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0xB450), None, "universe");
+    rig.create_workarea(store, universe).await;
+    let named = KeyRecord {
+        name: Some(name("named-key")),
+        ..key_record(t, Uuid::from_u128(0xD450), Role::Writer, None)
+    };
+    rig.issue_key(store, named).await;
+    let unnamed = key_record(t, Uuid::from_u128(0xD451), Role::Writer, None);
+    rig.issue_key(store, unnamed.clone()).await;
+    assert_eq!(
+        store.unnamed_rows(t).await.expect("read"),
+        UnnamedRows {
+            tenant: false,
+            workareas: Vec::new(),
+            keys: vec![unnamed.key_id],
+        }
+    );
+    assert!(
+        store
+            .unnamed_rows(rig_tenant(98))
+            .await
+            .expect("read")
+            .is_empty(),
+        "a tenant with no rows lists none"
+    );
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
@@ -3547,6 +3803,15 @@ where
     .await;
     a_revoked_keys_name_still_resolves(&new_store().await).await;
     a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it(&new_store().await).await;
+    a_crew_update_replaces_its_charter_and_manager_and_never_its_name(&new_store().await).await;
+    crews_lists_the_tenants_crew_records_in_name_byte_order(&new_store().await).await;
+    a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant(&new_store().await)
+        .await;
+    a_key_reads_by_its_id_in_its_tenant_a_revoked_keys_included(&new_store().await).await;
+    every_row_a_creation_folds_is_named_and_a_key_issued_without_a_name_is_listed(
+        &new_store().await,
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------

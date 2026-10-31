@@ -17,8 +17,13 @@ pub mod event_types {
     pub const TENANT_CREATED: &str = "tenant.created";
     /// New workarea node under an existing parent.
     pub const WORKAREA_CREATE: &str = "workarea.create";
+    /// A workarea now names another crew record (ADR-0026 d8).
+    pub const WORKAREA_CREW_UPDATED: &str = "workarea.crew_updated";
     /// A named crew record, created by an admin (ADR-0026 d8).
     pub const CREW_CREATED: &str = "crew.created";
+    /// A crew record's charter URI or external manager, corrected by an
+    /// admin, the full new values; never its name (ADR-0026 d8).
+    pub const CREW_UPDATED: &str = "crew.updated";
     /// Key issuance without its value (show-once ceremony).
     pub const KEY_ISSUED: &str = "key.issued";
     /// One grant on an issued key; its seq is the grant's epoch (ADR-0025 d2).
@@ -48,6 +53,10 @@ pub mod event_types {
     pub const LIFECYCLE_ERASE: &str = "lifecycle.erase";
     /// Deployment signing-key rotation, first event the new key signs.
     pub const SYSTEM_SIGNING_KEY_ROTATED: &str = "system.signing_key_rotated";
+    /// The names of a chain's rows that predate names, and the crew records
+    /// made from their crew objects, journalled once per chain by the lead
+    /// (ADR-0026 d11).
+    pub const SYSTEM_NAMES_ASSIGNED: &str = "system.names_assigned";
 }
 
 /// A SHA-256 value. Displayed and journalled as `sha256:` + 64 lowercase hex

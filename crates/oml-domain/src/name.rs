@@ -1,15 +1,17 @@
 //! Names — the unique, immutable key a workarea, crew, key or tenant carries
 //! beside its id: the grammar a name may spell, the parse-time
-//! classification of a reference as an id or a name, the derived name, and
-//! the naming of rows that predate names (ADR-0026 d1, d2, d3, d6, d11).
+//! classification of a reference as an id or a name, the derived name, the
+//! unresolved value an unknown name is replaced by, and the naming of rows
+//! that predate names (ADR-0026 d1, d2, d3, d4, d6, d11).
 //!
 //! The rules are declared on `docs/api/http-api.md`, "Names and ids" and
 //! "Rows created before names"; this module mirrors them and adds nothing.
-//! Resolving a name to its row needs the store and is not here
-//! (ADR-0026 d4).
+//! Looking a name up needs the store and is not here (ADR-0026 d4).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// The name of every tenant's root workarea, the one workarea name the
@@ -110,7 +112,7 @@ impl Name {
         if !is_label(value) {
             return Err(NameRefusal::Grammar);
         }
-        if is_id_form(value) || is_hex32(value) {
+        if is_hex_and_dash(value) || is_hex32(value) {
             return Err(NameRefusal::ReadsAsId);
         }
         Ok(Name(value.to_owned()))
@@ -147,14 +149,23 @@ fn is_label(value: &str) -> bool {
 }
 
 /// RFC 9562 §4 hex-and-dash text, 8-4-4-4-12 hexadecimal digits in either
-/// case (ADR-0026 d3).
-fn is_id_form(value: &str) -> bool {
+/// case (ADR-0026 d3), whatever its version digit: the spelling no name may
+/// take.
+fn is_hex_and_dash(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36
         && bytes.iter().enumerate().all(|(i, b)| match i {
             8 | 13 | 18 | 23 => *b == b'-',
             _ => b.is_ascii_hexdigit(),
         })
+}
+
+/// The id form: hex-and-dash text whose version digit, the first of the
+/// third group (RFC 9562 §4.2), is not `8`. Version 8 is what an
+/// unresolved value carries ([`unresolved_value`]), so a caller can never
+/// send one as an id (ADR-0026 d3).
+fn is_id_form(value: &str) -> bool {
+    is_hex_and_dash(value) && value.as_bytes()[14] != b'8'
 }
 
 fn is_hex32(value: &str) -> bool {
@@ -171,9 +182,10 @@ fn is_derived_form(value: &str) -> bool {
 }
 
 /// The id a value spells, when it is in the one form ids of the four named
-/// kinds take on input: RFC 9562 §4 hex-and-dash text, either case
-/// (ADR-0026 d3). Every other UUID spelling — 32 bare digits, braced, URN —
-/// is `None`.
+/// kinds take on input: RFC 9562 §4 hex-and-dash text, either case, of any
+/// version but 8 (ADR-0026 d3). Every other UUID spelling — 32 bare digits,
+/// braced, URN — is `None`, and so is a version-8 value, which is neither an
+/// id nor a name.
 #[must_use]
 pub fn parse_id(value: &str) -> Option<Uuid> {
     if is_id_form(value) {
@@ -204,6 +216,78 @@ impl Reference {
             None => Name::parse_reference(value).map(Reference::Name),
         }
     }
+}
+
+impl From<Uuid> for Reference {
+    fn from(id: Uuid) -> Self {
+        Reference::Id(id)
+    }
+}
+
+impl From<Name> for Reference {
+    fn from(name: Name) -> Self {
+        Reference::Name(name)
+    }
+}
+
+/// A reference as the request spelled it, an id in the lowercase form
+/// servers emit: the only way a refusal echoes one (http-api.md, "Names and
+/// ids"; ADR-0026 d3, d4).
+impl fmt::Display for Reference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Reference::Id(id) => write!(f, "{id}"),
+            Reference::Name(name) => f.write_str(name.as_str()),
+        }
+    }
+}
+
+/// The namespace a name resolves in, fixed by the caller and the kind
+/// (http-api.md, "Names and ids"; ADR-0026 d4): a tenant's, the deployment's
+/// for tenant names, or the provider's for operator keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Namespace {
+    Tenant(Uuid),
+    Deployment,
+    Provider,
+}
+
+impl Namespace {
+    /// *s* of the unresolved value: the tenant's id in lowercase
+    /// hex-and-dash text, `deployment` or `provider`.
+    fn spelling(self) -> String {
+        match self {
+            Namespace::Tenant(id) => id.to_string(),
+            Namespace::Deployment => "deployment".to_owned(),
+            Namespace::Provider => "provider".to_owned(),
+        }
+    }
+}
+
+/// The unresolved value of `name` of `kind` in `namespace`: the id a name
+/// that names no row is replaced by, so the request runs exactly as the
+/// same request by an unknown id runs (ADR-0026 d4). It is the version-8
+/// UUID that RFC 9562 Appendix B.2 builds for a name-based value — the
+/// first 128 bits of SHA-256 over the UTF-8 bytes of `oml-unresolved`, *s*,
+/// *k* and *n*, each of the first three followed by one zero byte, with the
+/// version field set to `8` and the variant to `0b10` (http-api.md, "The
+/// unresolved value"). It is deterministic, differs for every kind, name and
+/// namespace barring a SHA-256 collision, and never equals an id, since
+/// [`parse_id`] refuses version 8.
+#[must_use]
+pub fn unresolved_value(namespace: Namespace, kind: NamedKind, name: &Name) -> Uuid {
+    let mut hasher = Sha256::new();
+    for part in ["oml-unresolved", &namespace.spelling(), kind.as_str()] {
+        hasher.update(part.as_bytes());
+        hasher.update([0_u8]);
+    }
+    hasher.update(name.as_str().as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
 }
 
 /// A row of a named kind that predates names: its id and the name its

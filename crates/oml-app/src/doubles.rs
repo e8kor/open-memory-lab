@@ -10,11 +10,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
+use serde_json::Value;
 use uuid::Uuid;
 
+use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::{hit_order, steering_order};
-use oml_domain::name::{Name, NamedKind, UNIVERSE};
-use oml_domain::{ChainHead, EventTime, MemoryKind, MemoryStatus, Role};
+use oml_domain::name::{Name, NamedKind, Naming, UNIVERSE};
+use oml_domain::{
+    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types,
+};
 
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyRecord,
@@ -22,9 +26,9 @@ use crate::ports::{
     ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use crate::types::{
-    ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
+    ClaimKeyState, Crew, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
     ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
-    WorkareaRecord,
+    UnnamedRows, WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -87,11 +91,21 @@ struct QueueEntry {
     claimed_by: Option<Uuid>,
 }
 
+/// A workarea row migration 0006 left without a name: served to no one
+/// until the lead's naming names it (postgres-schema.md names and tenants;
+/// ADR-0026 d11).
+#[derive(Debug, Clone)]
+struct UnnamedWorkarea {
+    parent_id: Option<Uuid>,
+    crew: Option<Crew>,
+}
+
 #[derive(Debug, Default, Clone)]
 struct TenantState {
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
     workareas: BTreeMap<Uuid, WorkareaRecord>,
+    unnamed_workareas: BTreeMap<Uuid, UnnamedWorkarea>,
     crews: BTreeMap<Uuid, CrewRecord>,
     /// Every key the tenant was issued, revoked ones included, so their
     /// names stay held (ADR-0026 d10).
@@ -122,6 +136,8 @@ pub struct MemStore {
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
     /// The next idempotency lookup answers no record, then reads normally.
     miss_next_lookup: Arc<AtomicBool>,
+    /// How many names `resolve_name` has looked up, across every handle.
+    name_lookups: Arc<AtomicU64>,
 }
 
 impl MemStore {
@@ -184,6 +200,166 @@ impl MemStore {
         self.tenant_existing(tenant_id)
             .map_or(0, |t| t.lock().expect("tenant lock").outbox.len())
     }
+
+    /// Test visibility: how many names have been looked up through
+    /// `resolve_name` on any handle, so a test can show that a refusal came
+    /// before any resolution (ADR-0026 d4).
+    #[must_use]
+    pub fn name_lookups(&self) -> u64 {
+        self.name_lookups.load(Ordering::SeqCst)
+    }
+
+    /// Holds `events` as one tenant's chain in the state migration 0006
+    /// leaves a PoC store in: every event as it was signed, and a row with
+    /// no name for each `tenant.genesis`, `workarea.create` and `key.issued`,
+    /// with the crew objects, grants, denials and revocations the PoC folded
+    /// (postgres-schema.md, "The migration that adds names"; ADR-0026 d11).
+    /// A PoC `key.issued` never carried its value or its hash, so such a key
+    /// authenticates nothing here. The chain must be the tenant's first.
+    pub fn migrated_poc_chain(&self, events: Vec<SignedEnvelope>) -> Result<(), StoreError> {
+        let Some(first) = events.first() else {
+            return Err(StoreError::Backend(
+                "an empty chain holds no row".to_owned(),
+            ));
+        };
+        let tenant_id = first.envelope.tenant_id;
+        let tenant = self.tenant(tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        if !state.events.is_empty() {
+            return Err(StoreError::Backend(format!(
+                "tenant {tenant_id} already holds a chain"
+            )));
+        }
+        let mut staged = state.clone();
+        for event in events {
+            fold_poc_event(&mut staged, tenant_id, &event)?;
+            staged.events.push(event);
+        }
+        *state = staged;
+        Ok(())
+    }
+}
+
+/// One payload field naming a row, as the PoC journalled it.
+fn poc_id(payload: &Value, field: &str) -> Option<Uuid> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+}
+
+fn poc_required_id(payload: &Value, field: &str) -> Result<Uuid, StoreError> {
+    poc_id(payload, field).ok_or_else(|| {
+        StoreError::Backend(format!(
+            "a PoC event carries no {field} the double can fold"
+        ))
+    })
+}
+
+fn role_from_str(role: &str) -> Result<Role, StoreError> {
+    [
+        Role::Reader,
+        Role::Writer,
+        Role::Dreamer,
+        Role::Admin,
+        Role::Operator,
+    ]
+    .into_iter()
+    .find(|r| r.as_str() == role)
+    .ok_or_else(|| StoreError::Backend(format!("{role:?} is not a key role")))
+}
+
+/// What the PoC folded from one event, every row it creates left without a
+/// name, as 0006 leaves it.
+fn fold_poc_event(
+    state: &mut TenantState,
+    tenant_id: Uuid,
+    event: &SignedEnvelope,
+) -> Result<(), StoreError> {
+    let env = &event.envelope;
+    let payload = &env.payload;
+    match env.event_type.as_str() {
+        event_types::WORKAREA_CREATE => {
+            let crew = payload
+                .get("crew")
+                .filter(|c| !c.is_null())
+                .map(|c| serde_json::from_value(c.clone()))
+                .transpose()
+                .map_err(|e| StoreError::Backend(e.to_string()))?;
+            state.unnamed_workareas.insert(
+                poc_required_id(payload, "workarea_id")?,
+                UnnamedWorkarea {
+                    parent_id: poc_id(payload, "parent_id"),
+                    crew,
+                },
+            );
+        }
+        event_types::KEY_ISSUED => {
+            let key_id = poc_required_id(payload, "key_id")?;
+            let role = role_from_str(payload.get("role").and_then(Value::as_str).unwrap_or(""))?;
+            state.access.insert(
+                key_id,
+                KeyAccess {
+                    issued_seq: env.seq,
+                    grants: Vec::new(),
+                    denials: Vec::new(),
+                },
+            );
+            state.keys_by_hash.insert(
+                format!("poc-unhashed:{key_id}"),
+                KeyRecord {
+                    key_id,
+                    tenant_id,
+                    role,
+                    principal: payload
+                        .get("principal")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    held_by: HeldBy::Agent,
+                    default_workarea: poc_id(payload, "default_workarea_id"),
+                    issued_by: poc_id(payload, "issued_by_key_id"),
+                    key_hash: format!("poc-unhashed:{key_id}"),
+                    name: None,
+                    crew_id: None,
+                },
+            );
+        }
+        event_types::GRANT_ISSUED => {
+            let key_id = poc_required_id(payload, "key_id")?;
+            let grant = Grant {
+                grant_id: poc_required_id(payload, "grant_id")?,
+                node: poc_required_id(payload, "workarea_node_id")?,
+                role: role_from_str(payload.get("role").and_then(Value::as_str).unwrap_or(""))?,
+                deny: Vec::new(),
+            };
+            if let Some(access) = state.access.get_mut(&key_id) {
+                access.grants.push(GrantRecord {
+                    grant,
+                    epoch: env.seq,
+                });
+            }
+        }
+        event_types::KEY_DENIED => {
+            let key_id = poc_required_id(payload, "key_id")?;
+            let denial = KeyDenial {
+                denial_id: poc_required_id(payload, "denial_id")?,
+                node: poc_required_id(payload, "workarea_node_id")?,
+            };
+            if let Some(access) = state.access.get_mut(&key_id) {
+                access.denials.push(DenialRecord {
+                    denial,
+                    created_by: env.api_key_id.unwrap_or_default(),
+                    epoch: env.seq,
+                });
+            }
+        }
+        event_types::KEY_REVOKED => {
+            state.revoked.insert(poc_required_id(payload, "key_id")?);
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// The rows a grant or denial names must be held by its own tenant, as the
@@ -239,6 +415,31 @@ fn require_universe_root(workarea: &WorkareaRecord) -> Result<(), StoreError> {
     }
 }
 
+/// A workarea that has no name yet is served to no one, as the Postgres
+/// store refuses it (postgres-schema.md names and tenants; ADR-0026 d11).
+fn require_named(state: &TenantState, workarea_id: Uuid) -> Result<(), StoreError> {
+    if state.unnamed_workareas.contains_key(&workarea_id) {
+        return Err(StoreError::Backend(format!(
+            "workarea {workarea_id} has no name: the lead names every row that predates names \
+             before it serves (ADR-0026 d11)"
+        )));
+    }
+    Ok(())
+}
+
+/// A read that would list a child with no name yet fails closed, as
+/// [`require_named`] does for the child itself.
+fn require_no_unnamed_child(state: &TenantState, parents: &[Uuid]) -> Result<(), StoreError> {
+    match state
+        .unnamed_workareas
+        .iter()
+        .find(|(_, w)| w.parent_id.is_some_and(|p| parents.contains(&p)))
+    {
+        Some((child, _)) => require_named(state, *child),
+        None => Ok(()),
+    }
+}
+
 /// A crew a row names must be its own tenant's, as the tenant-scoped
 /// foreign keys onto `crews` require (postgres-schema.md `crews`).
 fn require_crew(state: &TenantState, crew_id: Option<Uuid>) -> Result<(), StoreError> {
@@ -260,6 +461,24 @@ fn name_tenant(
 ) -> Result<(), StoreError> {
     if names.contains_key(&tenant_id) {
         return Ok(());
+    }
+    require_free_name(names.values(), NamedKind::Tenant, name)?;
+    names.insert(tenant_id, name.clone());
+    Ok(())
+}
+
+/// Names a tenant that predates names, as the naming's fold of its row
+/// does: one that already has its name is refused, and so is a name another
+/// tenant holds (ADR-0026 d11).
+fn assign_tenant_name(
+    names: &mut BTreeMap<Uuid, Name>,
+    tenant_id: Uuid,
+    name: &Name,
+) -> Result<(), StoreError> {
+    if names.contains_key(&tenant_id) {
+        return Err(StoreError::Backend(format!(
+            "tenant {tenant_id} is not a row without a name"
+        )));
     }
     require_free_name(names.values(), NamedKind::Tenant, name)?;
     names.insert(tenant_id, name.clone());
@@ -289,6 +508,7 @@ fn require_free_ordinal(state: &TenantState, memory: &MemoryRecord) -> Result<()
 /// `issued_seq`, a grant's or denial's epoch and a memory's `promoted_at`.
 fn apply_fold(
     state: &mut TenantState,
+    tenant_id: Uuid,
     fold: MetadataFold,
     seq: u64,
     at: &EventTime,
@@ -313,6 +533,37 @@ fn apply_fold(
                 &crew.name,
             )?;
             state.crews.insert(crew.crew_id, crew);
+        }
+        MetadataFold::CrewUpdated(crew) => {
+            let Some(held) = state.crews.get_mut(&crew.crew_id) else {
+                return Err(StoreError::Backend(format!(
+                    "crew {} is not held by this tenant",
+                    crew.crew_id
+                )));
+            };
+            if held.name != crew.name {
+                return Err(StoreError::Backend(format!(
+                    "crew {}'s name never changes",
+                    crew.crew_id
+                )));
+            }
+            held.charter_uri = crew.charter_uri;
+            held.external_manager = crew.external_manager;
+        }
+        MetadataFold::WorkareaCrewUpdated {
+            workarea_id,
+            crew_id,
+        } => {
+            require_crew(state, Some(crew_id))?;
+            let Some(workarea) = state.workareas.get_mut(&workarea_id) else {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            };
+            workarea.crew_id = Some(crew_id);
+        }
+        MetadataFold::NamesAssigned(naming) => {
+            assign_names_fold(state, tenant_id, &naming)?;
         }
         MetadataFold::KeyIssued(key) => {
             if let Some(name) = &key.name {
@@ -446,6 +697,96 @@ fn apply_fold(
     Ok(())
 }
 
+/// The fold of `system.names_assigned` within the tenant: each crew record,
+/// then each listed workarea and key, which must hold no name yet, named as
+/// the event assigns, each workarea pointing at the crew it is listed under.
+/// The tenant's own name is the deployment's, applied by the commit
+/// (postgres-schema.md folds; ADR-0026 d11).
+fn assign_names_fold(
+    state: &mut TenantState,
+    tenant_id: Uuid,
+    naming: &Naming,
+) -> Result<(), StoreError> {
+    let mut crew_of = BTreeMap::new();
+    for crew in &naming.crews {
+        require_free_name(
+            state.crews.values().map(|c| &c.name),
+            NamedKind::Crew,
+            &crew.name,
+        )?;
+        state.crews.insert(
+            crew.crew_id,
+            CrewRecord {
+                crew_id: crew.crew_id,
+                tenant_id,
+                name: crew.name.clone(),
+                charter_uri: crew.charter_uri.clone(),
+                external_manager: crew.external_manager.clone(),
+            },
+        );
+        for workarea_id in &crew.workarea_ids {
+            crew_of.insert(*workarea_id, crew.crew_id);
+        }
+    }
+    for assignment in &naming.names {
+        let id = assignment.id;
+        match assignment.kind {
+            NamedKind::Tenant if id == tenant_id => {}
+            NamedKind::Workarea => {
+                let Some(unnamed) = state.unnamed_workareas.remove(&id) else {
+                    return Err(StoreError::Backend(format!(
+                        "workarea {id} is not a row without a name"
+                    )));
+                };
+                let workarea = WorkareaRecord {
+                    workarea_id: id,
+                    tenant_id,
+                    parent_id: unnamed.parent_id,
+                    name: assignment.name.clone(),
+                    crew: unnamed.crew,
+                    crew_id: crew_of.remove(&id),
+                };
+                require_universe_root(&workarea)?;
+                require_free_name(
+                    state.workareas.values().map(|w| &w.name),
+                    NamedKind::Workarea,
+                    &workarea.name,
+                )?;
+                state.workareas.insert(id, workarea);
+            }
+            NamedKind::Key => {
+                require_free_name(
+                    state.keys_by_hash.values().filter_map(|k| k.name.as_ref()),
+                    NamedKind::Key,
+                    &assignment.name,
+                )?;
+                let Some(key) = state
+                    .keys_by_hash
+                    .values_mut()
+                    .find(|k| k.key_id == id && k.name.is_none())
+                else {
+                    return Err(StoreError::Backend(format!(
+                        "key {id} is not a row without a name"
+                    )));
+                };
+                key.name = Some(assignment.name.clone());
+            }
+            kind => {
+                return Err(StoreError::Backend(format!(
+                    "{} {id} is not a row of this tenant's chain to name",
+                    kind.as_str()
+                )));
+            }
+        }
+    }
+    if let Some((workarea_id, _)) = crew_of.pop_first() {
+        return Err(StoreError::Backend(format!(
+            "a crew record names workarea {workarea_id}, which the event does not name"
+        )));
+    }
+    Ok(())
+}
+
 /// Appends one event to `state` if it extends the head, with its fold,
 /// idempotency record and outbox row, or refuses it.
 fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, StoreError> {
@@ -461,7 +802,13 @@ fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, 
     {
         return Err(StoreError::PrevHashConflict { seq: expected_seq });
     }
-    apply_fold(state, req.fold, expected_seq, &req.event.envelope.at)?;
+    apply_fold(
+        state,
+        req.event.envelope.tenant_id,
+        req.fold,
+        expected_seq,
+        &req.event.envelope.at,
+    )?;
     if let Some(put) = req.idempotency {
         // One scope holds one record; the caller drops the staged state on
         // a refusal, so the fold above is undone with it.
@@ -492,10 +839,16 @@ impl JournalStore for MemStore {
                 return Err(error);
             }
         }
-        let genesis_names: Vec<Name> = reqs
+        // The deployment's tenant names, which a genesis and a naming give.
+        let tenant_names: Vec<(bool, Name)> = reqs
             .iter()
             .filter_map(|r| match &r.fold {
-                MetadataFold::TenantGenesis { name } => Some(name.clone()),
+                MetadataFold::TenantGenesis { name } => Some((true, name.clone())),
+                MetadataFold::NamesAssigned(naming) => naming
+                    .names
+                    .iter()
+                    .find(|a| a.kind == NamedKind::Tenant)
+                    .map(|a| (false, a.name.clone())),
                 _ => None,
             })
             .collect();
@@ -522,11 +875,15 @@ impl JournalStore for MemStore {
             }
             receipt = append(&mut staged, req)?;
         }
-        if !genesis_names.is_empty() {
+        if !tenant_names.is_empty() {
             let mut names = self.tenant_names.lock().expect("tenant names lock");
             let mut staged_names = names.clone();
-            for name in &genesis_names {
-                name_tenant(&mut staged_names, tenant_id, name)?;
+            for (genesis, name) in &tenant_names {
+                if *genesis {
+                    name_tenant(&mut staged_names, tenant_id, name)?;
+                } else {
+                    assign_tenant_name(&mut staged_names, tenant_id, name)?;
+                }
             }
             *names = staged_names;
         }
@@ -919,6 +1276,7 @@ impl JournalStore for MemStore {
         kind: NamedKind,
         name: &Name,
     ) -> Result<Option<Uuid>, StoreError> {
+        self.name_lookups.fetch_add(1, Ordering::SeqCst);
         // This store keeps operator keys under the provider tenant; their
         // names are the provider's namespace, which no tenant read consults
         // (ADR-0026 d4).
@@ -958,6 +1316,53 @@ impl JournalStore for MemStore {
         Ok(state.crews.get(&crew_id).cloned())
     }
 
+    async fn crews(&self, tenant_id: Uuid) -> Result<Vec<CrewRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut crews: Vec<CrewRecord> = state.crews.values().cloned().collect();
+        // `str` orders by its bytes.
+        crews.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
+        Ok(crews)
+    }
+
+    async fn key(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<KeyRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .keys_by_hash
+            .values()
+            .find(|k| k.key_id == key_id)
+            .cloned())
+    }
+
+    async fn unnamed_rows(&self, tenant_id: Uuid) -> Result<UnnamedRows, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(UnnamedRows::default());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut keys: Vec<Uuid> = state
+            .keys_by_hash
+            .values()
+            .filter(|k| k.name.is_none())
+            .map(|k| k.key_id)
+            .collect();
+        keys.sort_unstable();
+        Ok(UnnamedRows {
+            tenant: !state.events.is_empty()
+                && !self
+                    .tenant_names
+                    .lock()
+                    .expect("tenant names lock")
+                    .contains_key(&tenant_id),
+            workareas: state.unnamed_workareas.keys().copied().collect(),
+            keys,
+        })
+    }
+
     async fn workarea(
         &self,
         tenant_id: Uuid,
@@ -967,6 +1372,7 @@ impl JournalStore for MemStore {
             return Ok(None);
         };
         let state = tenant.lock().expect("tenant lock");
+        require_named(&state, workarea_id)?;
         Ok(state.workareas.get(&workarea_id).cloned())
     }
 
@@ -979,12 +1385,14 @@ impl JournalStore for MemStore {
             return Ok(None);
         };
         let state = tenant.lock().expect("tenant lock");
+        require_named(&state, workarea_id)?;
         let Some(node) = state.workareas.get(&workarea_id) else {
             return Ok(None);
         };
         let mut ancestry = vec![node.clone()];
         let mut parent = node.parent_id;
         while let Some(parent_id) = parent {
+            require_named(&state, parent_id)?;
             // A walk that leaves the tenant before the root would drop
             // ancestors' grants and denials; refuse it instead.
             let Some(next) = state.workareas.get(&parent_id) else {
@@ -1008,12 +1416,14 @@ impl JournalStore for MemStore {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
+        require_named(&state, workarea_id)?;
         let Some(node) = state.workareas.get(&workarea_id) else {
             return Ok(Vec::new());
         };
         let mut subtree = vec![node.clone()];
         let mut depth = vec![workarea_id];
         while !depth.is_empty() {
+            require_no_unnamed_child(&state, &depth)?;
             // The map iterates in id order, so each depth comes out in id
             // order.
             let next: Vec<WorkareaRecord> = state
@@ -1037,6 +1447,7 @@ impl JournalStore for MemStore {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
+        require_no_unnamed_child(&state, &[workarea_id])?;
         let mut children: Vec<WorkareaRecord> = state
             .workareas
             .values()

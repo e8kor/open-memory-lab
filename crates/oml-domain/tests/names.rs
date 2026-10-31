@@ -4,8 +4,8 @@
 //! and ids" and "Rows created before names").
 
 use oml_domain::name::{
-    CrewObject, CrewRecord, Name, NameRefusal, NamedKind, Naming, Reference, UnnamedRow,
-    assign_names, parse_id,
+    CrewObject, CrewRecord, Name, NameRefusal, NamedKind, Namespace, Naming, Reference, UnnamedRow,
+    assign_names, parse_id, unresolved_value,
 };
 use oml_domain::{KeyCrew, satisfies_crew_inequality, satisfies_manager_inequality};
 use proptest::prelude::*;
@@ -80,6 +80,86 @@ fn a_value_in_the_hex_and_dash_form_is_an_id_in_either_case() {
         )))
     );
     assert_eq!(Name::parse(lettered), Err(NameRefusal::ReadsAsId));
+}
+
+#[test]
+fn a_version_8_value_in_the_id_form_is_neither_an_id_nor_a_name() {
+    // Version 8 is what an unresolved value carries, so the id form is the
+    // hex-and-dash text whose version digit is not 8, and a caller can never
+    // send an unresolved value as an id (ADR-0026 d3, d4).
+    for (value, refusal) in [
+        // A label, refused because it reads as an id.
+        (
+            "abcdef01-2345-8789-abcd-ef0123456789",
+            NameRefusal::ReadsAsId,
+        ),
+        // A digit first or an uppercase letter: no label either.
+        ("201a2910-ec3b-8ea0-a0be-0502c22ed358", NameRefusal::Grammar),
+        ("ABCDEF01-2345-8789-ABCD-EF0123456789", NameRefusal::Grammar),
+    ] {
+        assert_eq!(parse_id(value), None, "{value:?}");
+        assert_eq!(
+            Reference::parse(value),
+            Err(refusal),
+            "{value:?} answers request.validation"
+        );
+    }
+}
+
+#[test]
+fn the_unresolved_value_is_the_version_8_sha_256_uuid_of_its_namespace_kind_and_name() {
+    // Vectors computed outside this crate from the construction of
+    // http-api.md "The unresolved value": SHA-256 over `oml-unresolved`, s,
+    // k and n, the first three each followed by one zero byte, its first 128
+    // bits with version 8 and variant 0b10 (RFC 9562 Appendix B.2).
+    let tenant = Uuid::from_u128(0x0190_f2a4_7c3e_4b1d_9a6f_e2d8_c51b_3a07);
+    let metals = Name::parse("metals").expect("a name");
+    for (namespace, kind, expected) in [
+        (
+            Namespace::Tenant(tenant),
+            NamedKind::Workarea,
+            "201a2910-ec3b-8ea0-a0be-0502c22ed358",
+        ),
+        (
+            Namespace::Tenant(tenant),
+            NamedKind::Crew,
+            "00b4e0e2-ddec-82d1-bd81-affb9851ea0f",
+        ),
+        (
+            Namespace::Deployment,
+            NamedKind::Tenant,
+            "3744e3db-36c0-84ca-8a27-1e5a272fbb6d",
+        ),
+        (
+            Namespace::Provider,
+            NamedKind::Key,
+            "fccc9791-f66e-8abe-90f7-d37107698e50",
+        ),
+    ] {
+        let value = unresolved_value(namespace, kind, &metals);
+        assert_eq!(value.to_string(), expected, "{namespace:?} {kind:?}");
+        assert_eq!(value.get_version_num(), 8);
+        assert_eq!(value.get_variant(), uuid::Variant::RFC4122);
+        // Deterministic, and never an id a request may send.
+        assert_eq!(unresolved_value(namespace, kind, &metals), value);
+        assert_eq!(parse_id(&value.to_string()), None);
+    }
+}
+
+#[test]
+fn a_reference_displays_as_the_request_spelled_it() {
+    // A refusal echoes a reference only as the request spelled it
+    // (http-api.md names and ids), an id lowercase as servers emit it
+    // (ADR-0026 d3).
+    let id = Uuid::from_u128(0x0190_f2a4_7c3e_4b1d_9a6f_e2d8_c51b_3a07);
+    assert_eq!(
+        Reference::Id(id).to_string(),
+        "0190f2a4-7c3e-4b1d-9a6f-e2d8c51b3a07"
+    );
+    assert_eq!(
+        Reference::parse("metals-crew").expect("a name").to_string(),
+        "metals-crew"
+    );
 }
 
 #[test]

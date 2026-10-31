@@ -37,11 +37,11 @@ use uuid::Uuid;
 use oml_app::App;
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
-use oml_app::domain::name::Name;
+use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
-    AppError, BootstrapRequest, Crew, GrantRequest, IssueKeyRequest, IssuedKey, ListRequest,
+    AppError, BootstrapRequest, CrewRecord, GrantRequest, IssueKeyRequest, IssuedKey, ListRequest,
     RecallRequest, ServedMemory, SubmitRequest, SupersedeRequest, TailedEvent, Verdict,
     WorkareaInfo,
 };
@@ -763,9 +763,9 @@ where
             .iter()
             .map(|g| {
                 Ok(GrantRequest {
-                    node: g.workarea_node_id,
+                    node: g.workarea_node_id.into(),
                     role: parse_grant_role(&g.role)?,
-                    deny: g.deny.iter().map(|d| d.subtree_node_id).collect(),
+                    deny: g.deny.iter().map(|d| d.subtree_node_id.into()).collect(),
                 })
             })
             .collect::<Result<Vec<_>, ApiError>>()?;
@@ -774,11 +774,14 @@ where
             .clone()
             .or_else(|| req.label.clone())
             .unwrap_or_else(|| "unnamed".to_owned());
+        // The body takes neither a name nor a crew yet (ADR-0026 d8, d9).
         let issue = IssueKeyRequest {
             role,
+            name: None,
             principal,
             held_by,
-            default_workarea: req.default_workarea_id,
+            default_workarea: req.default_workarea_id.map(Reference::Id),
+            crew: None,
             grants,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
@@ -817,9 +820,12 @@ where
         // Ids are opaque; one that can name no key is absent.
         let key_id = Uuid::parse_str(key_id).map_err(|_| ApiError::not_found())?;
         let req: DenialBody = parse_json(headers, body)?;
-        let denial = retry_chain(|| st.app.deny_key(&token, key_id, req.workarea_node_id))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let denial = retry_chain(|| {
+            st.app
+                .deny_key(&token, key_id.into(), req.workarea_node_id.into())
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::CREATED,
             &json!({
@@ -855,9 +861,20 @@ where
             ));
         }
         let name = creation_name("name", &req.name)?;
+        // A crew record's id or name (ADR-0026 d8).
+        let crew = req
+            .crew
+            .as_deref()
+            .map(|crew| {
+                Reference::parse(crew).map_err(|refusal| {
+                    ApiError::validation(format!("crew {crew:?}: {refusal}"))
+                        .with_details(json!({ "field": "crew" }))
+                })
+            })
+            .transpose()?;
         let created = retry_chain(|| {
             st.app
-                .create_workarea(&token, &name, Some(req.parent_id), req.crew.clone())
+                .create_workarea(&token, &name, Some(req.parent_id.into()), crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -871,10 +888,10 @@ where
             "status": workarea.status(),
             "created_at": system_event_time().as_str(),
         });
-        // The crew as stored, which the workarea read serves: absent when
-        // none was sent, since `Workarea.crew` is never null (openapi.yaml).
-        if let (Some(crew), Some(obj)) = (&workarea.crew, response.as_object_mut()) {
-            obj.insert("crew".to_owned(), json!(crew));
+        // The crew record as stored, which the workarea read serves: absent
+        // when none was named (ADR-0026 d8).
+        if let (Some(crew), Some(obj)) = (&created.crew, response.as_object_mut()) {
+            obj.insert("crew".to_owned(), crew_json(crew));
         }
         Ok(json_response(StatusCode::CREATED, &response))
     }
@@ -892,8 +909,9 @@ where
     }
 
     /// `GET /v2/workareas/{workarea_id}`: the node and the calling key's
-    /// view of it in one call, at reader effective access and otherwise
-    /// `access.not_found` (http-api.md workareas; ADR-0025 d14). `None` is
+    /// view of it in one call, at reader effective access, or for an admin
+    /// key its structure by its key role, and otherwise `access.not_found`
+    /// (http-api.md workareas; ADR-0025 d14; ADR-0026 d15). `None` is
     /// the MCP facade's omitted workarea: the key's default, which the app
     /// resolves after step 1 of the refusal order (mcp-plugin.md
     /// `oml_workarea_info`).
@@ -909,7 +927,7 @@ where
             .transpose()?;
         let info = st
             .app
-            .workarea_info(&token, id)
+            .workarea_info(&token, id.map(Reference::Id))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
@@ -953,7 +971,7 @@ where
             .transpose()?;
         let page = st
             .app
-            .tail_events(&token, workarea_id, after_seq, limit)
+            .tail_events(&token, workarea_id.map(Reference::Id), after_seq, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // head_seq for measuring lag, next_after_seq to resume from, both
@@ -1173,8 +1191,9 @@ struct DenialBody {
 struct WorkareaCreateBody {
     parent_id: Uuid,
     name: String,
+    /// A crew record's id or name (ADR-0026 d8).
     #[serde(default)]
-    crew: Option<Crew>,
+    crew: Option<String>,
     #[serde(default)]
     prefix: Option<String>,
 }
@@ -1285,14 +1304,16 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
 
 /// `X-OML-Workarea`: the provider ring's explicit per-request target override
 /// (ADR-0022 d4); absent, the key's journalled default resolves in the app.
-fn workarea_override(headers: &HeaderMap) -> Result<Option<Uuid>, ApiError> {
+/// This transport parses an id only; the app resolves a reference of either
+/// form (ADR-0026 d4).
+fn workarea_override(headers: &HeaderMap) -> Result<Option<Reference>, ApiError> {
     match headers.get("x-oml-workarea") {
         None => Ok(None),
         Some(value) => value
             .to_str()
             .ok()
             .and_then(|s| Uuid::parse_str(s).ok())
-            .map(Some)
+            .map(|id| Some(Reference::Id(id)))
             .ok_or_else(|| ApiError::validation("X-OML-Workarea must be a workarea node id")),
     }
 }
@@ -1430,10 +1451,9 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
                 };
             }
             "workarea_id" => {
-                req.workarea_id =
-                    Some(Uuid::parse_str(value).map_err(|_| {
-                        ApiError::validation("workarea_id must be a workarea node id")
-                    })?);
+                req.workarea_id = Some(Reference::Id(Uuid::parse_str(value).map_err(|_| {
+                    ApiError::validation("workarea_id must be a workarea node id")
+                })?));
             }
             "claim_key" => req.claim_key = Some(value.clone()),
             "state" => req.state = Some(parse_state(value)?),
@@ -1604,9 +1624,21 @@ fn budget_json(budget: &Budget) -> Value {
     })
 }
 
-/// openapi.yaml `WorkareaView`: the `Workarea` fields — `crew` absent when
-/// none was recorded — and the calling key's children, edges, effective
-/// verbs and permission epoch (ADR-0025 d14).
+/// openapi.yaml `Crew`: a crew record, recorded and not operated
+/// (ADR-0026 d8).
+fn crew_json(crew: &CrewRecord) -> Value {
+    json!({
+        "crew_id": crew.crew_id,
+        "name": crew.name.as_str(),
+        "charter_uri": crew.charter_uri,
+        "external_manager": crew.external_manager,
+    })
+}
+
+/// openapi.yaml `WorkareaView`: the `Workarea` fields — `crew` the record
+/// the workarea names, absent when it names none — and the calling key's
+/// children, edges, effective verbs and permission epoch (ADR-0025 d14;
+/// ADR-0026 d8).
 #[must_use]
 pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
     let w = &info.workarea;
@@ -1625,8 +1657,8 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
         "my_effective_verbs": info.my_effective_verbs,
         "permission_epoch": info.permission_epoch,
     });
-    if let (Some(crew), Some(obj)) = (&w.crew, value.as_object_mut()) {
-        obj.insert("crew".to_owned(), json!(crew));
+    if let (Some(crew), Some(obj)) = (&info.crew, value.as_object_mut()) {
+        obj.insert("crew".to_owned(), crew_json(crew));
     }
     value
 }

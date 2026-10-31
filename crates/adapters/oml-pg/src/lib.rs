@@ -11,7 +11,7 @@
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
 use oml_app::domain::access::{Grant, KeyDenial};
-use oml_app::domain::name::{Name, NamedKind, UNIVERSE};
+use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, VerifyError, verify_chain,
@@ -24,7 +24,7 @@ use oml_app::ports::{
 use oml_app::types::{
     ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
     ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
-    WorkareaRecord,
+    UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
@@ -119,9 +119,10 @@ impl PgStore {
     /// every row it finds and every creation since names its row, so a NULL
     /// here is a row the lead names before it serves (ADR-0026 d11;
     /// http-api.md "Rows created before names"). `api_keys` is not read:
-    /// issuance names no key yet (ADR-0026 d9), so a key with no name is
-    /// every key, not a sign of a row that predates names, and every key
-    /// that predates names belongs to a tenant this check counts.
+    /// the HTTP issuance body carries no name yet (ADR-0026 d9), so a key
+    /// with no name is every key, not a sign of a row that predates names,
+    /// and every key that predates names belongs to a tenant this check
+    /// counts.
     pub async fn rows_without_names(
         &self,
         tenants: &[Uuid],
@@ -396,6 +397,47 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
     })
 }
 
+/// The `api_keys` columns a key read selects.
+const KEY_COLUMNS: &str =
+    "id, tenant_id, role, principal, held_by, default_workarea_id, issued_by, hash, name, crew_id";
+
+/// A key row as the port's record. A provider-level row names no tenant
+/// (postgres-schema.md api_keys): it resolves under the provider tenant, so
+/// its refusals are the use-cases' own, never a storage failure (ADR-0025
+/// d13).
+fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
+    let tenant_id: Option<Uuid> = row.try_get("tenant_id").map_err(backend)?;
+    let role: String = row.try_get("role").map_err(backend)?;
+    let held_by: String = row.try_get("held_by").map_err(backend)?;
+    let stored_hash: Vec<u8> = row.try_get("hash").map_err(backend)?;
+    Ok(KeyRecord {
+        key_id: row.try_get("id").map_err(backend)?,
+        tenant_id: tenant_id.unwrap_or(PROVIDER_TENANT),
+        role: role_from_str(&role)?,
+        principal: row.try_get("principal").map_err(backend)?,
+        held_by: held_by_from_str(&held_by)?,
+        default_workarea: row.try_get("default_workarea_id").map_err(backend)?,
+        issued_by: row.try_get("issued_by").map_err(backend)?,
+        key_hash: format!("sha256:{}", hex::encode(stored_hash)),
+        name: stored_name(row, "name")?,
+        crew_id: row.try_get("crew_id").map_err(backend)?,
+    })
+}
+
+/// A crew row as the port's record; every crew record is created named
+/// (ADR-0026 d8, d11).
+fn crew_from_row(row: &PgRow) -> Result<CrewRecord, StoreError> {
+    let crew_id: Uuid = row.try_get("id").map_err(backend)?;
+    Ok(CrewRecord {
+        crew_id,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        name: stored_name(row, "name")?
+            .ok_or_else(|| StoreError::Backend(format!("crew {crew_id} has no name")))?,
+        charter_uri: row.try_get("charter_uri").map_err(backend)?,
+        external_manager: row.try_get("external_manager").map_err(backend)?,
+    })
+}
+
 /// A grant's deny list as `grants.deny` stores it: the `grant.issued`
 /// spelling, `[{"subtree_node_id": …}]`, in the grant's order.
 fn deny_to_json(deny: &[Uuid]) -> Value {
@@ -641,6 +683,118 @@ async fn supersede_tip(
     promote_memory(tx, tenant_id, successor, at).await
 }
 
+/// The fold of `system.names_assigned` into the columns 0006 added: each
+/// crew record inserted, each listed row — the tenant, its workareas, its
+/// keys — named where its `name` is still NULL, each listed workarea
+/// pointed at its crew record, and every workarea path that is still NULL
+/// derived from the names, root first. A listed row that already has a
+/// name, or that the tenant does not hold, refuses the commit; a name its
+/// kind already holds is [`StoreError::NameTaken`] (postgres-schema.md
+/// folds; ADR-0026 d11).
+async fn fold_names_assigned(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    at: &EventTime,
+    naming: &Naming,
+) -> Result<(), StoreError> {
+    for crew in &naming.crews {
+        sqlx::query(
+            "INSERT INTO crews (id, tenant_id, name, charter_uri, external_manager, \
+             created_at) VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz)",
+        )
+        .bind(crew.crew_id)
+        .bind(tenant_id)
+        .bind(crew.name.as_str())
+        .bind(crew.charter_uri.as_deref())
+        .bind(crew.external_manager.as_deref())
+        .bind(at.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+            name_taken_or_backend(e, "crews_tenant_id_name", NamedKind::Crew, &crew.name)
+        })?;
+    }
+    for assignment in &naming.names {
+        let (sql, constraint) = match assignment.kind {
+            NamedKind::Tenant if assignment.id == tenant_id => (
+                "UPDATE tenants SET name = $3 WHERE id = $1 AND id = $2 AND name IS NULL",
+                "tenants_name",
+            ),
+            // A non-root `universe` meets the CHECK that ties the name to
+            // the root; the naming never assigns one (ADR-0026 d6).
+            NamedKind::Workarea => (
+                "UPDATE workareas SET name = $3 WHERE tenant_id = $1 AND id = $2 \
+                 AND name IS NULL",
+                if assignment.name.as_str() == UNIVERSE {
+                    "workareas_universe_is_root"
+                } else {
+                    "workareas_tenant_id_name"
+                },
+            ),
+            NamedKind::Key => (
+                "UPDATE api_keys SET name = $3 WHERE tenant_id = $1 AND id = $2 \
+                 AND name IS NULL",
+                "api_keys_tenant_id_name",
+            ),
+            kind => {
+                return Err(StoreError::Backend(format!(
+                    "{} {} is not a row of this tenant's chain to name",
+                    kind.as_str(),
+                    assignment.id
+                )));
+            }
+        };
+        let named = sqlx::query(sql)
+            .bind(tenant_id)
+            .bind(assignment.id)
+            .bind(assignment.name.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| name_taken_or_backend(e, constraint, assignment.kind, &assignment.name))?;
+        if named.rows_affected() != 1 {
+            return Err(StoreError::Backend(format!(
+                "{} {} is not a row without a name",
+                assignment.kind.as_str(),
+                assignment.id
+            )));
+        }
+    }
+    for crew in &naming.crews {
+        let pointed =
+            sqlx::query("UPDATE workareas SET crew_id = $3 WHERE tenant_id = $1 AND id = ANY($2)")
+                .bind(tenant_id)
+                .bind(&crew.workarea_ids)
+                .bind(crew.crew_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+        if pointed.rows_affected() != u64::try_from(crew.workarea_ids.len()).map_err(backend)? {
+            return Err(StoreError::Backend(format!(
+                "crew {} names a workarea this tenant does not hold",
+                crew.crew_id
+            )));
+        }
+    }
+    // Each path is its parent's with the node's name appended, the root's
+    // its name alone (ADR-0026 d7).
+    sqlx::query(
+        "WITH RECURSIVE tree (id, path) AS ( \
+             SELECT id, text2ltree(name) FROM workareas \
+              WHERE tenant_id = $1 AND parent_id IS NULL AND name IS NOT NULL \
+             UNION ALL \
+             SELECT w.id, tree.path || text2ltree(w.name) FROM workareas w \
+               JOIN tree ON w.parent_id = tree.id \
+              WHERE w.tenant_id = $1 AND w.name IS NOT NULL \
+         ) UPDATE workareas w SET path = tree.path FROM tree \
+            WHERE w.tenant_id = $1 AND w.id = tree.id AND w.path IS NULL",
+    )
+    .bind(tenant_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
 /// Applies the metadata fold rows of one commit (ADR-0002 d1: same
 /// transaction as the journal insert; `memories.created_event_id` references
 /// the journal row, so this runs after it). `seq` and `at` are the commit's
@@ -718,6 +872,52 @@ async fn apply_fold(
             .map_err(|e| {
                 name_taken_or_backend(e, "crews_tenant_id_name", NamedKind::Crew, &c.name)
             })?;
+        }
+        MetadataFold::CrewUpdated(c) => {
+            // The name is matched, never written: a crew record's name never
+            // changes (ADR-0026 d8).
+            let updated = sqlx::query(
+                "UPDATE crews SET charter_uri = $3, external_manager = $4 \
+                 WHERE tenant_id = $1 AND id = $2 AND name = $5",
+            )
+            .bind(tenant_id)
+            .bind(c.crew_id)
+            .bind(c.charter_uri.as_deref())
+            .bind(c.external_manager.as_deref())
+            .bind(c.name.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "crew {} named {} is not held by this tenant",
+                    c.crew_id,
+                    c.name.as_str()
+                )));
+            }
+        }
+        // The tenant-scoped foreign key onto crews refuses another tenant's
+        // crew (0006_names.sql `workareas_crew`).
+        MetadataFold::WorkareaCrewUpdated {
+            workarea_id,
+            crew_id,
+        } => {
+            let updated =
+                sqlx::query("UPDATE workareas SET crew_id = $3 WHERE tenant_id = $1 AND id = $2")
+                    .bind(tenant_id)
+                    .bind(workarea_id)
+                    .bind(crew_id)
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(backend)?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            }
+        }
+        MetadataFold::NamesAssigned(naming) => {
+            fold_names_assigned(tx, tenant_id, at, &naming).await?;
         }
         MetadataFold::KeyIssued(k) => {
             let hash = key_hash_bytes(&k.key_hash).ok_or_else(|| {
@@ -1523,38 +1723,15 @@ impl JournalStore for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(backend)?;
-        let row = sqlx::query(
-            "SELECT id, tenant_id, role, principal, held_by, default_workarea_id, issued_by, \
-             hash, name, crew_id FROM api_keys WHERE hash = $1 AND revoked_at IS NULL",
-        )
+        let row = sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE hash = $1 AND revoked_at IS NULL"
+        ))
         .bind(&hash)
         .fetch_optional(&mut *tx)
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        // A provider-level row names no tenant (postgres-schema.md
-        // api_keys): it resolves under the provider tenant, so its refusals
-        // are the use-cases' own, never a storage failure (ADR-0025 d13).
-        let tenant_id: Option<Uuid> = row.try_get("tenant_id").map_err(backend)?;
-        let tenant_id = tenant_id.unwrap_or(PROVIDER_TENANT);
-        let role: String = row.try_get("role").map_err(backend)?;
-        let held_by: String = row.try_get("held_by").map_err(backend)?;
-        let stored_hash: Vec<u8> = row.try_get("hash").map_err(backend)?;
-        Ok(Some(KeyRecord {
-            key_id: row.try_get("id").map_err(backend)?,
-            tenant_id,
-            role: role_from_str(&role)?,
-            principal: row.try_get("principal").map_err(backend)?,
-            held_by: held_by_from_str(&held_by)?,
-            default_workarea: row.try_get("default_workarea_id").map_err(backend)?,
-            issued_by: row.try_get("issued_by").map_err(backend)?,
-            key_hash: format!("sha256:{}", hex::encode(stored_hash)),
-            name: stored_name(&row, "name")?,
-            crew_id: row.try_get("crew_id").map_err(backend)?,
-        }))
+        row.as_ref().map(key_from_row).transpose()
     }
 
     async fn key_access(
@@ -1677,19 +1854,76 @@ impl JournalStore for PgStore {
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        // Every crew record is created named (ADR-0026 d8, d11).
-        let name = stored_name(&row, "name")?
-            .ok_or_else(|| StoreError::Backend(format!("crew {crew_id} has no name")))?;
-        Ok(Some(CrewRecord {
-            crew_id: row.try_get("id").map_err(backend)?,
-            tenant_id: row.try_get("tenant_id").map_err(backend)?,
-            name,
-            charter_uri: row.try_get("charter_uri").map_err(backend)?,
-            external_manager: row.try_get("external_manager").map_err(backend)?,
-        }))
+        row.as_ref().map(crew_from_row).transpose()
+    }
+
+    async fn crews(&self, tenant_id: Uuid) -> Result<Vec<CrewRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // COLLATE "C" compares the UTF-8 bytes, whatever the locale.
+        let rows = sqlx::query(
+            "SELECT id, tenant_id, name, charter_uri, external_manager FROM crews \
+             WHERE tenant_id = $1 ORDER BY name COLLATE \"C\" ASC",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(crew_from_row).collect()
+    }
+
+    async fn key(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<KeyRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // A revoked key's row stays as history and is read here (ADR-0026
+        // d10).
+        let row = sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE tenant_id = $1 AND id = $2"
+        ))
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(key_from_row).transpose()
+    }
+
+    async fn unnamed_rows(&self, tenant_id: Uuid) -> Result<UnnamedRows, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let tenant: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND name IS NULL)",
+        )
+        .bind(tenant_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let workareas: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM workareas WHERE tenant_id = $1 AND name IS NULL ORDER BY id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let keys: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM api_keys WHERE tenant_id = $1 AND name IS NULL ORDER BY id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(UnnamedRows {
+            tenant,
+            workareas,
+            keys,
+        })
     }
 
     async fn workarea(

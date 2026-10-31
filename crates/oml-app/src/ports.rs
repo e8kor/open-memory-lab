@@ -12,12 +12,12 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use oml_domain::access::{Grant, KeyDenial};
-use oml_domain::name::{Name, NamedKind};
+use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{
     ClaimKeyState, CrewRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
-    RecallCandidate, WorkareaRecord,
+    RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -77,6 +77,24 @@ pub enum MetadataFold {
     KeyIssued(KeyRecord),
     /// `crew.created`: one crew record (ADR-0026 d8).
     CrewCreated(CrewRecord),
+    /// `crew.updated`: the record's charter URI and external manager, the
+    /// full new values; the store refuses a crew the tenant does not hold,
+    /// and never changes a name (ADR-0026 d8).
+    CrewUpdated(CrewRecord),
+    /// `workarea.crew_updated`: the node now names `crew_id`, a crew record
+    /// of its own tenant, or the store refuses it (ADR-0026 d8).
+    WorkareaCrewUpdated {
+        workarea_id: Uuid,
+        crew_id: Uuid,
+    },
+    /// `system.names_assigned`: each listed row of the commit's tenant, and
+    /// the tenant itself, takes the name the event assigns, every workarea's
+    /// path derives from those names, and each crew record is created and
+    /// named by the workareas listed under it. Every listed row must hold
+    /// no name yet, or the store refuses the commit, which writes nothing; a
+    /// name its kind already holds is [`StoreError::NameTaken`]
+    /// (postgres-schema.md folds; ADR-0026 d11).
+    NamesAssigned(Naming),
     /// `grant.issued`: one grant row on `key_id`, its epoch this commit's
     /// seq. The store refuses a grant on a key or node it does not hold, and
     /// a grant role other than reader, writer or dreamer (postgres-schema.md
@@ -472,6 +490,30 @@ pub trait JournalStore: Send + Sync {
         tenant_id: Uuid,
         crew_id: Uuid,
     ) -> impl Future<Output = Result<Option<CrewRecord>, StoreError>> + Send;
+
+    /// Every crew record of the tenant, ordered by name in byte order
+    /// (http-api.md crews; ADR-0026 d8).
+    fn crews(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<CrewRecord>, StoreError>> + Send;
+
+    /// One key row of the tenant by its id, a revoked key's included, since
+    /// its name and role stay history; `None` for a key the tenant does not
+    /// hold (roles-and-keys.md key lifecycle; ADR-0026 d10).
+    fn key(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's rows that have no name yet: its own row, its workareas
+    /// and its keys, which the lead names before it serves (http-api.md
+    /// rows created before names; ADR-0026 d11).
+    fn unnamed_rows(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<UnnamedRows, StoreError>> + Send;
 
     fn workarea(
         &self,

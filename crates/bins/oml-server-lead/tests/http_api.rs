@@ -17,12 +17,16 @@ use sqlx::{Connection, Executor};
 use tower::ServiceExt as _;
 use uuid::Uuid;
 
+use oml_app::App;
+use oml_app::domain::name::Name;
 use oml_app::domain::sha256_digest_string;
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{IdGen as _, JournalStore};
+use oml_app::types::CrewCreateRequest;
 use oml_pg::{MIGRATOR, PgStore};
 use oml_server_lead::{
-    OsIds, enumerate_tenants, lead_state, pg_ping, startup_fork_check, startup_names_check,
+    LeadSigner, MarkerScanner, OsIds, SystemClock, enumerate_tenants, lead_state, pg_ping,
+    startup_fork_check, startup_names_check,
 };
 use oml_transport_http::DbPing;
 use sqlx::migrate::Migrate as _;
@@ -91,6 +95,19 @@ async fn fresh_rig() -> Rig {
         signing,
         db_name,
     }
+}
+
+/// The composition the router serves, over the rig's store and signing key,
+/// for a verb this transport does not route yet: the crew records of
+/// ADR-0026 d8.
+fn rig_app(rig: &Rig) -> App<PgStore, LeadSigner, SystemClock, OsIds, MarkerScanner> {
+    App::new(
+        rig.store.clone(),
+        LeadSigner::new(rig.signing.clone()),
+        SystemClock,
+        OsIds,
+        MarkerScanner,
+    )
 }
 
 async fn drop_db(name: &str) {
@@ -3531,16 +3548,53 @@ async fn the_body_limit_counts_the_nfc_text() {
 // The workarea read (ADR-0025 d14)
 // ---------------------------------------------------------------------------
 
+/// `crew` on workarea create names a crew record by id or name, and the
+/// create and the read serve the record as stored (ADR-0026 d8). The crew
+/// routes are not served yet, so the record is created through the app the
+/// router composes.
 #[tokio::test]
 async fn crew_given_at_create_is_persisted_and_returned() {
     let rig = fresh_rig().await;
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = rig_app(&rig)
+        .create_crew(
+            &admin,
+            &CrewCreateRequest {
+                name: Name::parse("metals-crew").expect("a name"),
+                charter_uri: Some("https://crews.example.com/metals/charter.md".to_owned()),
+                external_manager: Some("crewd.example.com".to_owned()),
+            },
+        )
+        .await
+        .expect("create crew");
     let crew_record = json!({
+        "crew_id": crew.crew_id,
         "name": "metals-crew",
         "charter_uri": "https://crews.example.com/metals/charter.md",
         "external_manager": "crewd.example.com",
     });
+
+    // A crew that names no crew record of the tenant is absent, and a value
+    // that is neither an id nor a name is refused at parse.
+    for (idem, value, code) in [
+        ("wa-no-crew", "nowhere-crew", "access.not_found"),
+        ("wa-bad-crew", "Metals Crew", "request.validation"),
+    ] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/workareas",
+            Call::auth(&admin).idem(idem).body(json!({
+                "parent_id": root,
+                "name": "orphan",
+                "crew": value,
+            })),
+        )
+        .await;
+        assert_eq!(refused["error"]["code"], code, "{status} {refused}");
+    }
+
     let (status, _, created) = send(
         router,
         "POST",
@@ -3548,7 +3602,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
         Call::auth(&admin).idem("wa-crew").body(json!({
             "parent_id": root,
             "name": "metals-crew",
-            "crew": crew_record,
+            "crew": "metals-crew",
         })),
     )
     .await;

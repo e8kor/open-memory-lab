@@ -518,12 +518,14 @@ where
         Ok(json!({ "items": items, "next_cursor": page["next_cursor"] }))
     }
 
-    /// `oml_workarea_info`: one `GET /v2/workareas/{id}`. An omitted
-    /// workarea is the key's journalled default, which the app resolves from
-    /// the authenticated key record after step 1 of the refusal order, so an
-    /// admin key is the verb ceiling with or without a default, and a key
-    /// past step 1 with none is `request.workarea_unresolved` (mcp-plugin.md;
-    /// roles-and-keys.md refusal order; ADR-0025 d14).
+    /// `oml_workarea_info`: one `GET /v2/workareas/{id}`, so the tool answers
+    /// exactly what the ring answers. An omitted workarea is the key's
+    /// journalled default, which the app resolves from the authenticated key
+    /// record after step 1 of the refusal order; a key past step 1 with none
+    /// is `request.workarea_unresolved`, and an admin key, which the ring's
+    /// read answers with structure by its key role, reads its default the
+    /// same way (mcp-plugin.md; roles-and-keys.md refusal order; ADR-0025
+    /// d14; ADR-0026 d15).
     async fn tool_workarea_info(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
         let args: WorkareaInfoArgs = parse_args(args)?;
         let view = ring_outcome(

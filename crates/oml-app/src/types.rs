@@ -2,7 +2,7 @@
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
-use oml_domain::name::Name;
+use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
     SignedEnvelope, TransitionError, VerdictError, VerifyError,
@@ -40,8 +40,8 @@ pub struct KeyRecord {
     /// provider's one namespace, and never released, a revoked key's
     /// included (roles-and-keys.md key names; ADR-0026 d1, d9, d10). `None`
     /// on a key issued before names, until the lead names it (ADR-0026 d11),
-    /// and on every key this build issues, since issuance does not take a
-    /// `name` yet.
+    /// and on a key issued without one, which the HTTP issuance body cannot
+    /// send yet ([`IssueKeyRequest::name`]).
     pub name: Option<Name>,
     /// The crew record named at issuance, fixed for the key's life; `None`
     /// for a key with no crew (ADR-0026 d8).
@@ -116,7 +116,9 @@ pub struct WorkareaRecord {
     /// Unique in the tenant across the whole tree and never changed; the
     /// root's is `universe` (ADR-0026 d1, d6).
     pub name: Name,
-    /// The crew object the create recorded; `None` when it named no crew.
+    /// The crew object a PoC `workarea.create` copied in, kept as the
+    /// history the naming of rows that predate names reads it from; `None`
+    /// on every workarea created since crews are records (ADR-0026 d8, d11).
     pub crew: Option<Crew>,
     /// The crew record the workarea names; `None` when it names none
     /// (ADR-0026 d8).
@@ -158,26 +160,92 @@ impl WorkareaRecord {
 pub struct CreatedWorkarea {
     pub workarea: WorkareaRecord,
     pub path: String,
+    /// The crew record the create named, as the workarea read serves it.
+    pub crew: Option<CrewRecord>,
 }
 
 /// One workarea as the calling key may see it (http-api.md workareas;
 /// ADR-0025 d14): the node, its path derived from the `parent_id` names
-/// from `universe`, the immediate children the key can read, the verbs its
-/// effective access confers there, and its permission epoch. No workarea
-/// edge can exist in this build, so the read serves no edges.
+/// from `universe`, the crew record it names, the immediate children the
+/// key can read, the verbs its effective access confers there, and its
+/// permission epoch. No workarea edge can exist in this build, so the read
+/// serves no edges. An admin key reads it by its key role: every child, no
+/// effective verb (ADR-0026 d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkareaInfo {
     pub workarea: WorkareaRecord,
     pub path: String,
+    /// The crew record the workarea names, read from the store; `None` when
+    /// it names none (ADR-0026 d8).
+    pub crew: Option<CrewRecord>,
     /// Ordered by name in byte order, then id; a child the key cannot read
     /// is absent, not marked.
     pub children: Vec<WorkareaRecord>,
     /// The effective-verbs table of roles-and-keys.md over the roles
-    /// effective on the node, in table order.
+    /// effective on the node, in table order; empty for an admin key, which
+    /// holds no grant role.
     pub my_effective_verbs: Vec<&'static str>,
     /// The key's permission epoch as its access was read for this request
     /// (workareas.md permission epoch).
     pub permission_epoch: u64,
+}
+
+/// One node of a workarea tree read, with its derived path (http-api.md
+/// workareas, `GET /v2/workareas/{id}/tree`; ADR-0026 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeNode {
+    pub workarea: WorkareaRecord,
+    pub path: String,
+}
+
+/// The rows of one tenant's chain that have no name yet: the tenant's own
+/// row, workareas and keys. Every row a creation writes is named, so on the
+/// names schema these are the rows that predate names, and keys issued
+/// without one (ADR-0026 d11; postgres-schema.md names and tenants).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnnamedRows {
+    pub tenant: bool,
+    /// In id order.
+    pub workareas: Vec<Uuid>,
+    /// In id order.
+    pub keys: Vec<Uuid>,
+}
+
+impl UnnamedRows {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        !self.tenant && self.workareas.is_empty() && self.keys.is_empty()
+    }
+}
+
+/// One chain the lead named at its start: the seq of its
+/// `system.names_assigned` and what that event assigns (ADR-0026 d11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssignedNames {
+    pub tenant_id: Uuid,
+    pub journal_seq: u64,
+    pub naming: Naming,
+}
+
+/// Why the lead did not name a chain's rows that predate names; the chain
+/// journals nothing (http-api.md rows created before names; ADR-0026 d11).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum NamingRefusal {
+    /// The chain already journals `system.names_assigned` at `seq`, yet a
+    /// row has no name: the names of a chain are assigned once.
+    #[error(
+        "the chain journals system.names_assigned at seq {seq}, yet a row has no name (postgres-schema.md names and tenants)"
+    )]
+    AlreadyAssigned { seq: u64 },
+    /// Rule 5 lifts this global denial on an admin key in the commit that
+    /// names the chain, and lifting a denial is not built.
+    #[error(
+        "rule 5 lifts denial {denial_id} on admin key {key_id} in the commit that names the chain, and lifting a denial is not built (http-api.md rows created before names)"
+    )]
+    AdminKeyDenial { denial_id: Uuid, key_id: Uuid },
+    /// A row with no name has no creation event in the chain to name it by.
+    #[error("the {} row {id} has no name and no creation event in the chain", .kind.as_str())]
+    NoCreationEvent { kind: NamedKind, id: Uuid },
 }
 
 /// The metadata row of one memory version. The body lives here, never in the
@@ -301,6 +369,11 @@ pub struct IssuedKey {
     /// The sent default, else the first grant's node; `None` for a
     /// zero-grant key.
     pub default_workarea: Option<Uuid>,
+    /// The key's name as journalled ([`IssueKeyRequest::name`]).
+    pub name: Option<Name>,
+    /// The crew record named at issuance, fixed for the key's life
+    /// (ADR-0026 d8).
+    pub crew_id: Option<Uuid>,
     pub access: KeyAccess,
 }
 
@@ -313,27 +386,57 @@ pub struct BootstrapResult {
 
 /// `POST /v2/keys`, validated in the issuance order (roles-and-keys.md
 /// grant admissibility and refusal order; ADR-0025 d2).
+///
+/// Every workarea and crew reference takes an id or a name, resolved in the
+/// issuer's tenant after the issuer's role is checked and before step 1
+/// (roles-and-keys.md issuance order; ADR-0026 d4).
 #[derive(Debug, Clone)]
 pub struct IssueKeyRequest {
     pub role: Role,
+    /// The key's name, distinct from its principal and its label, checked
+    /// after every other check (step 7, `name.taken`; ADR-0026 d5, d9).
+    /// The HTTP issuance body does not carry one yet, so `None` issues the
+    /// key unnamed and journals `name: null`, as every key before names was.
+    pub name: Option<Name>,
     pub principal: String,
     /// The issuing admin's attestation; `None` journals null and stores the
     /// schema default, `agent`.
     pub held_by: Option<HeldBy>,
     /// `None` takes the first grant's node; a key never inherits its
     /// issuer's default.
-    pub default_workarea: Option<Uuid>,
+    pub default_workarea: Option<Reference>,
+    /// The key's crew record, fixed for its life; one the tenant does not
+    /// hold is absent at step 4 (ADR-0026 d8).
+    pub crew: Option<Reference>,
     pub grants: Vec<GrantRequest>,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
 /// subtrees of `deny`, each of which must lie inside it (workareas.md
-/// per-grant attenuation).
+/// per-grant attenuation), every node by id or name.
 #[derive(Debug, Clone)]
 pub struct GrantRequest {
-    pub node: Uuid,
+    pub node: Reference,
     pub role: Role,
-    pub deny: Vec<Uuid>,
+    pub deny: Vec<Reference>,
+}
+
+/// `POST /v2/crews` (http-api.md crews; ADR-0026 d8): every field but the
+/// name optional.
+#[derive(Debug, Clone)]
+pub struct CrewCreateRequest {
+    pub name: Name,
+    pub charter_uri: Option<String>,
+    pub external_manager: Option<String>,
+}
+
+/// `POST /v2/crews/{crew_id}/update`: the fields to change, at least one;
+/// a field not sent keeps its value, and the name never changes
+/// (http-api.md crews; ADR-0026 d8).
+#[derive(Debug, Clone, Default)]
+pub struct CrewUpdate {
+    pub charter_uri: Option<String>,
+    pub external_manager: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -343,9 +446,9 @@ pub struct SubmitRequest {
     pub kind: MemoryKind,
     /// The claim text as sent; capture normalizes it to NFC (admission.md).
     pub body: String,
-    /// `None` resolves to the key's default workarea
-    /// (http-api.md, ADR-0022 d4).
-    pub workarea_id: Option<Uuid>,
+    /// `X-OML-Workarea`, by id or name; `None` resolves to the key's
+    /// default workarea (http-api.md, ADR-0022 d4; ADR-0026 d4).
+    pub workarea_id: Option<Reference>,
     pub derives_from: Vec<Uuid>,
 }
 
@@ -391,10 +494,10 @@ pub const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedF
 pub struct RecallRequest {
     pub query: String,
     pub k: usize,
-    /// The scope node; `None` resolves to the key's default workarea, and a
-    /// key with neither is refused — there is no tenant-wide fallback
-    /// (ADR-0025 d1).
-    pub workarea_id: Option<Uuid>,
+    /// The scope node, by id or name; `None` resolves to the key's default
+    /// workarea, and a key with neither is refused — there is no tenant-wide
+    /// fallback (ADR-0025 d1; ADR-0026 d4).
+    pub workarea_id: Option<Reference>,
     /// The hit kinds the request admits; empty when it sent no filter. It
     /// narrows the hits only, never the steering (retrieval.md, the
     /// recall-ordering contract; ADR-0025 d8).
@@ -520,11 +623,11 @@ pub struct ListRequest {
     /// reads no `scope` (the transport refuses an `X-OML-Workarea` sent
     /// with it).
     pub own: bool,
-    /// The scoped listing's scope node; `None` resolves to the key's
-    /// default workarea, and a key with neither is refused.
-    pub scope: Option<Uuid>,
-    /// The `workarea_id` subtree filter.
-    pub workarea_id: Option<Uuid>,
+    /// The scoped listing's scope node, by id or name; `None` resolves to
+    /// the key's default workarea, and a key with neither is refused.
+    pub scope: Option<Reference>,
+    /// The `workarea_id` subtree filter, by id or name.
+    pub workarea_id: Option<Reference>,
     pub state: Option<MemoryStatus>,
     pub kind: Option<MemoryKind>,
     pub claim_key: Option<String>,
@@ -562,8 +665,9 @@ pub struct SupersedeRequest {
     pub derives_from: Vec<Uuid>,
     /// Digested with the request, never journalled.
     pub reason: Option<String>,
-    /// `X-OML-Workarea`: when sent, it must be the target's workarea.
-    pub workarea_id: Option<Uuid>,
+    /// `X-OML-Workarea`, by id or name: when sent, it must be the target's
+    /// workarea.
+    pub workarea_id: Option<Reference>,
     /// Set by `oml_supersede`, which carries no vocabulary fields: a target
     /// of a vocabulary kind is refused, and superseded on the HTTP API
     /// instead (mcp-plugin.md `oml_supersede`; ADR-0025 d12).
@@ -650,17 +754,19 @@ pub enum AppError {
         workarea_id: Uuid,
         needed_role: Role,
     },
+    /// The deny node as the request spelled it (http-api.md names and ids).
     #[error(
-        "deny node {subtree_node_id} lies outside grant {grant_index}'s subtree (roles-and-keys.md issuance order, request.validation)"
+        "deny node {subtree_node} lies outside grant {grant_index}'s subtree (roles-and-keys.md issuance order, request.validation)"
     )]
     DenyOutsideGrant {
         grant_index: usize,
-        subtree_node_id: Uuid,
+        subtree_node: Reference,
     },
+    /// The default as the request spelled it.
     #[error(
-        "no grant of the key covers default workarea {workarea_id} (roles-and-keys.md issuance order, request.validation)"
+        "no grant of the key covers default workarea {workarea} (roles-and-keys.md issuance order, request.validation)"
     )]
-    DefaultUncovered { workarea_id: Uuid },
+    DefaultUncovered { workarea: Reference },
     #[error(
         "no workarea: the key has no default and the request names none (http-api.md request.workarea_unresolved)"
     )]
@@ -688,10 +794,11 @@ pub enum AppError {
         "the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)"
     )]
     TipConflict { current_tip: Option<VersionRef> },
+    /// The header as the request spelled it.
     #[error(
-        "X-OML-Workarea names {workarea_id}, not the target's workarea: a supersession is captured in its target's (http-api.md supersede, request.validation)"
+        "X-OML-Workarea names {workarea}, not the target's workarea: a supersession is captured in its target's (http-api.md supersede, request.validation)"
     )]
-    WorkareaNotTarget { workarea_id: Uuid },
+    WorkareaNotTarget { workarea: Reference },
     #[error(
         "a {target:?} target admits no {sent:?} successor: a kind changes only within its class, and a retirement keeps the target's (audit-and-lineage.md, request.validation)"
     )]
@@ -723,6 +830,30 @@ pub enum AppError {
     IdempotencyDigestMismatch,
     #[error("stored idempotent response is unreadable: {0}")]
     StoredResponse(String),
+    /// A creation's name its kind already holds in the namespace, a revoked
+    /// key's included; nothing was journalled. Only admin and operator keys
+    /// hold a creating verb, and the bootstrap claim checks its token first,
+    /// so no agent key ever receives it (errors.md `name.taken`; ADR-0026
+    /// d5, d10).
+    #[error("the {} name {} is already taken in its namespace (errors.md name.taken)", .kind.as_str(), .name.as_str())]
+    NameTaken { kind: NamedKind, name: Name },
+    /// Denials attenuate grants and an admin key holds none, so no denial on
+    /// one is journalled (http-api.md keys, grants, denials; ADR-0026 d15).
+    #[error(
+        "a global denial on an admin key is refused: an admin key carries no grant for it to attenuate (roles-and-keys.md permission matrix footnote 6, request.validation, field key_id)"
+    )]
+    DenialOnAdminKey,
+    #[error(
+        "a crew update sends charter_uri or external_manager, at least one (http-api.md crews, request.validation)"
+    )]
+    EmptyCrewUpdate,
+    /// The lead's naming of a chain's rows that predate names refused; the
+    /// chain journals nothing (ADR-0026 d11).
+    #[error("the rows of tenant {tenant_id} that predate names were not named: {refusal}")]
+    NamingRefused {
+        tenant_id: Uuid,
+        refusal: NamingRefusal,
+    },
     /// A listing cursor this server will not resume from (http-api.md
     /// pagination, request.validation).
     #[error(transparent)]
@@ -738,5 +869,17 @@ pub enum AppError {
     #[error(transparent)]
     Jcs(#[from] JcsError),
     #[error(transparent)]
-    Store(#[from] StoreError),
+    Store(StoreError),
+}
+
+/// A store refusal as the application answers it: the unique index's
+/// refusal of a creation's name is [`AppError::NameTaken`], whichever
+/// commit carried it; every other refusal passes through (ADR-0026 d5).
+impl From<StoreError> for AppError {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::NameTaken { kind, name } => AppError::NameTaken { kind, name },
+            other => AppError::Store(other),
+        }
+    }
 }

@@ -18,12 +18,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use oml_app::App;
 use oml_app::domain::access::{Grant, KeyDenial};
-use oml_app::domain::name::NamedKind;
+use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::{
     Envelope, EventDraft, EventTime, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, event_types, next_envelope, sign, verify_chain,
 };
+use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, JournalStore, MetadataFold, OutboxRow, StoreError,
 };
@@ -1674,8 +1676,9 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
 /// The store reports, per table, the rows that predate names: after 0006 a
 /// PoC tenant row and each of its workarea rows has none, while a tenant
 /// created since, with its `universe` root, a workarea and a key, reports
-/// nothing, its key's missing name included, since issuance names no key
-/// yet (ADR-0026 d9, d11; http-api.md "Rows created before names").
+/// nothing, its key's missing name included, since the HTTP issuance body
+/// carries no name yet (ADR-0026 d9, d11; http-api.md "Rows created before
+/// names").
 #[tokio::test]
 async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_are_not() {
     let created = Mutex::new(Vec::new());
@@ -1735,6 +1738,260 @@ async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_a
             .expect("the check reads"),
         Vec::<(&str, u64)>::new(),
         "a tenant created since names reports nothing"
+    );
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// The lead's naming over a database migration 0006 left: one
+/// `system.names_assigned` on the chain, whose fold alone fills the tenant's,
+/// each workarea's and each key's name, makes the crew records and points
+/// the workareas at them, and derives every path; the journal still
+/// verifies as signed, every workarea is served again, and a second run
+/// journals nothing (http-api.md rows created before names; ADR-0026 d11).
+#[tokio::test]
+async fn the_naming_fills_the_names_crews_and_paths_of_a_migrated_poc_database_once() {
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 5).await;
+    let tenant = Uuid::from_u128(0xA900);
+    let id = |n: u128| Uuid::from_u128(0xB900 + n);
+    let (root, procurement, team, again) = (id(0), id(1), id(2), id(3));
+    let (admin, writer) = (Uuid::from_u128(0xD900), Uuid::from_u128(0xD901));
+    let crew = json!({ "name": "Procurement Crew", "external_manager": "crewd.example.com" });
+    let created_wa = |w: Uuid, parent: Option<Uuid>, wa_name: &str, crew: &Value| {
+        json!({
+            "workarea_id": w, "parent_id": parent, "name": wa_name,
+            "status": if parent.is_none() { "committed" } else { "development" },
+            "crew": crew, "prefix": null,
+        })
+    };
+    let workareas = [
+        (root, None, "root", Value::Null),
+        (procurement, Some(root), "procurement", crew.clone()),
+        (team, Some(root), "Procurement Team", crew.clone()),
+        (again, Some(team), "procurement", Value::Null),
+    ];
+    let mut drafts = vec![(event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" }))];
+    for (w, parent, wa_name, crew) in &workareas {
+        drafts.push((
+            event_types::WORKAREA_CREATE,
+            created_wa(*w, *parent, wa_name, crew),
+        ));
+    }
+    drafts.push((
+        event_types::KEY_ISSUED,
+        json!({ "key_id": admin, "role": "admin", "principal": "oml/admin" }),
+    ));
+    drafts.push((
+        event_types::KEY_ISSUED,
+        json!({ "key_id": writer, "role": "writer", "principal": "crew/agent-7" }),
+    ));
+    let mut head: Option<SignedEnvelope> = None;
+    let mut events = Vec::new();
+    for (n, (event_type, payload)) in drafts.into_iter().enumerate() {
+        let n = u64::try_from(n).expect("seq");
+        let draft = EventDraft {
+            tenant_id: tenant,
+            event_id: Uuid::from_u128(0xE900 + u128::from(n)),
+            event_type: event_type.to_owned(),
+            principal: "oml/admin".to_owned(),
+            api_key_id: None,
+            at: EventTime::parse(&format!("2026-10-01T09:00:{n:02}.000000Z")).expect("time"),
+            payload,
+        };
+        let event = sign(
+            next_envelope(head.as_ref(), draft).expect("lawful"),
+            &test_signing_key(),
+        )
+        .expect("signing");
+        head = Some(event.clone());
+        events.push(event);
+    }
+
+    // The rows the PoC folded from that chain, at the pre-0006 schema.
+    let mut tx = conn.begin().await.expect("begin");
+    poc_tenant(&mut tx, tenant).await;
+    for event in &events {
+        let env = &event.envelope;
+        sqlx::query(
+            "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+             api_key_id, at, payload, signed_bytes, signed_bytes_hash, sig) \
+             VALUES ($1, $2, $3, $4, $5, $6, NULL, ($7)::timestamptz, $8, $9, $10, $11)",
+        )
+        .bind(tenant)
+        .bind(i64::try_from(env.seq).expect("seq"))
+        .bind(env.event_id)
+        .bind(&env.event_type)
+        .bind(env.prev_hash.0.to_vec())
+        .bind(&env.principal)
+        .bind(env.at.as_str())
+        .bind(&env.payload)
+        .bind(&event.signed_bytes)
+        .bind(event.hash.0.to_vec())
+        .bind(event.sig.to_bytes().to_vec())
+        .execute(&mut *tx)
+        .await
+        .expect("journal row");
+    }
+    let last = head.expect("the chain has a head");
+    sqlx::query("INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES ($1, $2, $3)")
+        .bind(tenant)
+        .bind(i64::try_from(last.envelope.seq).expect("seq"))
+        .bind(last.hash.0.to_vec())
+        .execute(&mut *tx)
+        .await
+        .expect("chain head");
+    for (w, parent, wa_name, crew) in &workareas {
+        sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status, crew) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(w)
+        .bind(tenant)
+        .bind(parent)
+        .bind(wa_name)
+        .bind(if parent.is_none() {
+            "committed"
+        } else {
+            "development"
+        })
+        .bind((!crew.is_null()).then(|| crew.clone()))
+        .execute(&mut *tx)
+        .await
+        .expect("workarea row");
+    }
+    for (key_id, role, principal, seq) in [
+        (admin, "admin", "oml/admin", 6_i64),
+        (writer, "writer", "crew/agent-7", 7),
+    ] {
+        sqlx::query(
+            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
+             default_workarea_id, issued_seq) VALUES ($1, $2, $3, $4, $5, 'agent', $6, $7)",
+        )
+        .bind(key_id)
+        .bind(tenant)
+        .bind(Sha256Hash::digest(key_id.as_bytes()).0.to_vec())
+        .bind(role)
+        .bind(principal)
+        .bind(root)
+        .bind(seq)
+        .execute(&mut *tx)
+        .await
+        .expect("key row");
+    }
+    tx.commit().await.expect("commit the PoC rows");
+    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
+    store.migrate().await.expect("0006 applies");
+
+    let app = App::new(
+        store.clone(),
+        MemSigner::new(oml_port_contracts::TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let assigned = app
+        .name_rows_that_predate_names(&[tenant])
+        .await
+        .expect("the naming folds");
+    assert_eq!(assigned.len(), 1);
+    assert_eq!(assigned[0].journal_seq, last.envelope.seq + 1);
+    let crews = &assigned[0].naming.crews;
+    assert_eq!(crews.len(), 1, "one record per distinct crew object");
+    let crew_id = crews[0].crew_id;
+    let derived = |kind: NamedKind, id: Uuid| Name::derived(kind, id).as_str().to_owned();
+
+    // Every row reads back with its name, path and crew, through the port.
+    assert!(store.unnamed_rows(tenant).await.expect("read").is_empty());
+    let named: Vec<(String, Option<Uuid>)> = {
+        let mut rows = Vec::new();
+        for w in [root, procurement, team, again] {
+            let record = store
+                .workarea(tenant, w)
+                .await
+                .expect("a named workarea is served")
+                .expect("the node");
+            rows.push((record.name.as_str().to_owned(), record.crew_id));
+        }
+        rows
+    };
+    assert_eq!(
+        named,
+        vec![
+            ("universe".to_owned(), None),
+            ("procurement".to_owned(), Some(crew_id)),
+            (derived(NamedKind::Workarea, team), Some(crew_id)),
+            (derived(NamedKind::Workarea, again), None),
+        ]
+    );
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let paths: Vec<String> =
+        sqlx::query_scalar("SELECT path::text FROM workareas WHERE tenant_id = $1 ORDER BY id")
+            .bind(tenant)
+            .fetch_all(&mut *tx)
+            .await
+            .expect("paths");
+    let tenant_name: Option<String> =
+        sqlx::query_scalar("SELECT name::text FROM tenants WHERE id = $1")
+            .bind(tenant)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("the tenant's name");
+    tx.rollback().await.expect("rollback");
+    let team_path = format!("universe.{}", derived(NamedKind::Workarea, team));
+    assert_eq!(
+        paths,
+        vec![
+            "universe".to_owned(),
+            "universe.procurement".to_owned(),
+            team_path.clone(),
+            format!("{team_path}.{}", derived(NamedKind::Workarea, again)),
+        ]
+    );
+    assert_eq!(tenant_name.as_deref(), Some("oml"));
+    let record = store
+        .crew(tenant, crew_id)
+        .await
+        .expect("read")
+        .expect("the crew record");
+    assert_eq!(record.name.as_str(), derived(NamedKind::Crew, crew_id));
+    assert_eq!(
+        record.external_manager.as_deref(),
+        Some("crewd.example.com")
+    );
+    for key in [admin, writer] {
+        let key_name = Name::parse_reference(&derived(NamedKind::Key, key)).expect("a name");
+        assert_eq!(
+            store
+                .resolve_name(tenant, NamedKind::Key, &key_name)
+                .await
+                .expect("resolve"),
+            Some(key)
+        );
+    }
+
+    let keys = KeySet::new(vec![test_signing_key().verifying_key()]);
+    let verified = store
+        .verify_stored_chain(tenant, &keys)
+        .await
+        .expect("the named chain verifies");
+    assert_eq!(verified.seq, last.envelope.seq + 1);
+
+    // A second run finds nothing to name and journals nothing.
+    assert!(
+        app.name_rows_that_predate_names(&[tenant])
+            .await
+            .expect("the second run")
+            .is_empty()
+    );
+    assert_eq!(
+        store.chain_head(tenant).await.expect("head").map(|h| h.seq),
+        Some(verified.seq)
     );
     drop(conn);
     drop_dbs(&created).await;
