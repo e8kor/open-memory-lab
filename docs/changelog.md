@@ -48,17 +48,17 @@ hold. It binds nothing before its acceptance, and no accepted record changes unt
   in its own frame with provenance on every line (d6); a cap and no partial set (d7); the
   `oml-gr/1` rule, deny or ask only (d8); `oml hook pre-tool-use`, its 0600 per-session cache
   and its failure modes (d9); `oml_remember` with kind `guardrail`, two scan classes and a human
-  verdict no policy removes (d10); `oml guardrails export` and an MCP prompt for other harnesses
-  (d11); a change freeze through proposed ADR-0036's valid time (d12); what the hooks never do
-  (d13); the wire and three vocabulary rows (d14); the build after v0.3.1 (d15).
+  verdict no policy removes, never a self-signature (d10); `oml guardrails export` and an MCP
+  prompt for other harnesses (d11); a change freeze through proposed ADR-0036's valid time (d12); what the hooks never do
+  (d13); the wire and three vocabulary rows (d14); the build on main after v0.3.0 (d15).
 - **Pages touched:** the record, its register row and nav entry, `llms.txt`, a new engineering
   page, [session claims](engineering/session-claims.md), which catalogues the other claim kinds
   the same hook points could carry, proposed and not decided, with its sources quoted, and
   FR-50 to FR-59 on the roadmap, each marked proposed. No contract page changes, so
   `info.version` stays `0.3.0-design`.
-- **Amends, on acceptance:** ADR-0008 (d4), ADR-0012 (d3, d5), ADR-0013 (d5), ADR-0014 (d2),
-  ADR-0018 (d4), ADR-0025 (d12) and ADR-0029 (d7); their Status lines gain the back-pointer then,
-  and proposed ADR-0036 (d2, d4) and ADR-0030 (d8) take d12 and d3 when each is accepted.
+- **Amends, on acceptance:** ADR-0001 (d5), ADR-0008 (d4), ADR-0012 (d3, d5), ADR-0013 (d5),
+  ADR-0014 (d2), ADR-0018 (d4), ADR-0025 (d11, d12) and ADR-0029 (d7); their Status lines gain
+  the back-pointer then, and proposed ADR-0036 (d2, d4) and ADR-0030 (d8) take d12 and d3 when each is accepted.
 
 ## 0.4.0-design
 
