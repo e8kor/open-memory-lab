@@ -124,7 +124,8 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
   first admin key, so its `name` is checked in that tenant's namespace, not the provider's.
 - **Pages touched:** this page and the [agent plugin](api/mcp-plugin.md) (the `issue-agent`
   synopsis); [mcp-tools.json](api/mcp-tools.json) and the [CLI reference](cli/reference.md)
-  change with the code that serves them; outside `docs/`, `README.md` (the honest status),
+  change with the code that serves them; the [runbooks](operations/runbooks.md) spell every key
+  argument `<key>`, as the CLI reference does; outside `docs/`, `README.md` (the honest status),
   `plugins/oml/README.md`, `plugins/oml/skills/oml-memory/SKILL.md`,
   `plugins/oml-admin/skills/issue-agent-key/SKILL.md` and `scripts/check_plugin.py`; and, with
   the SDKs and the chart, [SDKs](engineering/sdks.md), [deployment](operations/deployment.md),
