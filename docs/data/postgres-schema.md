@@ -385,9 +385,12 @@ CREATE TABLE oauth_clients (           -- clients the authorization server knows
     metadata_digest bytea       NOT NULL,      -- SHA-256 of the document or registration as received
     fetched_at      timestamptz,               -- cimd: when the cached document was fetched;
                                                -- kept at most 24 hours from it; at most 10 000
-                                               -- cimd rows, the least recently used one no open
-                                               -- connection names evicted first (ADR-0031 d5)
+                                               -- cimd rows, the least recently used one with no
+                                               -- connected_at evicted first (ADR-0031 d5)
     last_used_at    timestamptz,               -- cimd: the eviction order
+    connected_at    timestamptz,               -- the first Connect that named this client; a
+                                               -- refetch keeps it; read by eviction and by the
+                                               -- removal of a dcr row (ADR-0031 d5)
     created_at      timestamptz NOT NULL
 );
 
@@ -486,11 +489,13 @@ matched row's `tenant_id` then sets `oml.tenant_id` for everything after. At `/m
 matches only a row of kind `access`, and at a refresh only a row of kind `refresh`
 ([roles and keys](../architecture/roles-and-keys.md#connections)). The token endpoint never reads
 `oauth_clients`: the client is the connection's `client_id`, so evicting a cached `cimd` row, or
-removing a lapsed one, never affects a connection. A confirmation, Connect or Cancel, deletes
+its document lapsing, never affects a connection. A confirmation, Connect or Cancel, deletes
 its `oauth_authorizations` row by `handle_hash` under the provider tenant (`DELETE … RETURNING`),
 then sets `oml.tenant_id` from the returned `code_tenant_id` before it reads `connect_codes` and
-writes `oauth_connections`, in one transaction; a later confirmation with that handle finds no row
-and answers `oauth.authorization_expired`.
+writes `oauth_connections`, in one transaction. Connect, before the switch, also stamps
+`oauth_clients.connected_at` for the returned `client_id` where it is null, and the stamp commits
+only with the connection row. A later confirmation with that handle finds no row and answers
+`oauth.authorization_expired`.
 
 **Redemption and rotation are conditional updates.** Two racing requests with one code or one
 refresh token cannot both pass, because each mints only when its own update matched a row. The
@@ -532,7 +537,7 @@ connection's, and the key's state and the connection's resource; a failed check 
 `invalid_grant` and rotates nothing. Removal is
 operational: an authorization request's row at Connect or Cancel, in that step's commit, or 24
 hours after it lapses unused; a registered client 24 hours
-after its registration when no connection used it; an `authorized` connection row once its
+after its registration while its `connected_at` is null; an `authorized` connection row once its
 `auth_code_expires_at` has passed unexchanged; a token row only at its own `expires_at` or at its
 connection's revocation, so a rotated refresh token keeps its row, and reuse of it inside that
 window is always recognized; and `auth_code_hash`, cleared with the connection's token rows once
@@ -646,7 +651,7 @@ CREATE TABLE idempotency (
     request_digest bytea       NOT NULL,
     state          text        NOT NULL CHECK (state IN ('in_progress', 'committed')),
     response       jsonb,                 -- a connect-code response is stored without
-                                          -- connect_code.code (http-api Idempotency)
+                                          -- the code (http-api Idempotency)
     created_at     timestamptz NOT NULL,
     PRIMARY KEY (key_id, workarea_id, idem_key)
 );

@@ -87,7 +87,7 @@ use only the first, and only if the authorization server sends `iss`.
 `oml-server` on the same origin, and bearer keys keep working unchanged. (2) The binding is a
 one-time connect code: the admin issues the agent key and a connect code together, building on
 [ADR-0028](ADR-0028-agent-key-issuance.md)'s `issue-agent`; the authorization page asks for the
-code and, on a correct one, opens the authorization bound to that key, so claude.ai holds only
+code and, on a correct one, opens the connection bound to that key, so claude.ai holds only
 tokens bound to that one key and no key value is pasted anywhere. Pasting the key value on OML's
 sign-in page is rejected, because the value would pass through the person's clipboard and browser.
 (3) The build follows iteration 3, names as keys (the proposed ADR-0026, on another branch); the
@@ -184,13 +184,16 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   token is bound to the one resource anyway. The token response is `{access_token, token_type:
   "Bearer", expires_in, refresh_token, scope: "mcp"}` with `Cache-Control: no-store`. An authorize
   request's parameters are bounded before anything else is checked or fetched: `state` at most 512
-  bytes, `client_id` at most 2 048 bytes, `redirect_uri` at most 2 048 bytes, and a
+  bytes, `client_id` at most 2 048 bytes, `redirect_uri` at most 2 048 bytes, a
   `code_challenge` that is present exactly 43 base64url characters (`^[A-Za-z0-9_-]{43}$`, the
-  length of an S256 challenge). A request past a bound, a present `code_challenge` that does not
-  match that pattern included, is `request.validation`, answered on the page and never redirected,
-  since neither its redirect URI nor its `state` has been accepted. An absent `code_challenge`, or a
-  `code_challenge_method` that is absent (which RFC 7636 §4.3 reads as `plain`) or not `S256`, is
-  `oauth.pkce_required`, redirected after the client and the redirect URI are accepted.
+  length of an S256 challenge), and no parameter sent more than once (RFC 6749 §3.1). A request
+  past a bound, a repeated parameter and a present `code_challenge` that does not match that
+  pattern included, is `request.validation`, answered on the page and never redirected, since
+  neither its redirect URI nor its `state` has been accepted. At `/oauth/token` a parameter sent
+  more than once is `request.validation` as `invalid_request` (RFC 6749 §3.2, §5.2). An absent
+  `code_challenge`, or a `code_challenge_method` that is absent (which RFC 7636 §4.3 reads as
+  `plain`) or not `S256`, is `oauth.pkce_required`, redirected after the client and the redirect
+  URI are accepted.
 
     The endpoints are unversioned because their contract is the RFCs', reached by the URLs the
     discovery documents name, and a ring's re-version would move URLs that connected clients
@@ -207,13 +210,15 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     - **Client ID metadata documents.** A `client_id` that is an `https` URL with a path is a
       document URL. Its form is checked first, more strictly than the draft asks: no userinfo, no
       fragment, no query, no `.` or `..` path segment, no percent-encoded `/` or `.`, no port but
-      the default, and the string must be exactly its own WHATWG URL serialization, so that one
-      client has one spelling; anything else is `oauth.client_invalid` (`reason:
-      client_id_form`). At the authorize request, before anything is shown, `oml-server` fetches it
-      under fixed bounds. The addresses are an allow-list: an AAAA answer is admitted only inside
-      `2000::/3`, the global unicast space, and never inside `2001::/23`, `2001:db8::/32`,
-      `2002::/16` or `3fff::/20`, the blocks inside it that the IANA IPv6 Special-Purpose Address
-      Registry (fetched 2026-10-31, last updated 2025-10-09) marks not globally reachable or that
+      the default, a host that is a domain name and never an IP literal, so that every address
+      fetched is a resolver answer the allow-list below checks, and the string must be exactly its
+      own WHATWG URL serialization, so that one client has one spelling; anything else is
+      `oauth.client_invalid` (`reason: client_id_form`). At the authorize request, before
+      anything is shown, `oml-server` fetches it under fixed bounds. The addresses are an
+      allow-list: an AAAA answer is admitted only inside `2000::/3`, the global unicast space, and
+      never inside `2001::/23`, `2001:db8::/32`, `2002::/16` or `3fff::/20`, the blocks inside it
+      that the IANA IPv6 Special-Purpose Address Registry (fetched 2026-10-31, last updated
+      2025-10-09) marks not globally reachable or that
       embed an IPv4 address; an A answer is admitted only when it is unicast, outside
       `224.0.0.0/4`, and inside no block the IANA IPv4 Special-Purpose Address Registry marks
       "Globally Reachable: False" (fetched 2026-10-31, last updated 2025-10-09), and outside the
@@ -242,10 +247,14 @@ constant, a policy choice; nothing about OML is measured, and what would need me
       at most 24 hours from its fetch; within those 24 hours a copy past its `Cache-Control`
       lifetime is served when a fresh fetch fails or a fetch cap is full. At most 10 000 documents
       are cached at once. A full cache never refuses: it evicts the least recently used document
-      that no open connection names, and when every cached document is named by one, the fetched
-      document serves its request uncached. Nothing after the authorize request reads the cache —
-      the authorization request carries what the page and the token exchange need (d9) — so
-      evicting a document never affects a page in progress or a connection.
+      whose client has not connected, and when every cached document's client has connected, the
+      fetched document serves its request uncached. A client has connected once a Connect on the
+      page names it (d9): Connect stamps `oauth_clients.connected_at`, a column of the provider
+      tenant's own table, in the transaction that creates the connection, so the cache and the
+      removal of registrations read that column and never a tenant's connections. Nothing after
+      the authorize request reads the cache — the authorization request carries what the page and
+      the token exchange need (d9) — so evicting a document never affects a page in progress or a
+      connection.
     - **Dynamic client registration.** `POST /oauth/register` admits `redirect_uris` (each inside
       the allowlist), `client_name`, `token_endpoint_auth_method: "none"`, `grant_types` within
       `["authorization_code", "refresh_token"]` and `response_types` `["code"]`, and answers `201`
@@ -254,9 +263,9 @@ constant, a policy choice; nothing about OML is measured, and what would need me
       absence is `request.validation` as `invalid_client_metadata`. An absent
       `token_endpoint_auth_method`, which RFC 7591 §2 reads as `client_secret_basic`, is registered
       as `none` and echoed as `none`; any other value is `request.validation` as
-      `invalid_client_metadata`. A registered client that opens no connection within 24 hours is
-      removed. At most 10 000 such unused registrations exist at once; past that, registration
-      answers `limit.rate` until some lapse.
+      `invalid_client_metadata`. A registered client that has not connected within 24 hours of its
+      registration is removed. At most 10 000 such unused registrations exist at once; past that,
+      registration answers `limit.rate` until some lapse.
     - **The token endpoint identifies the client by the connection.** At `POST /oauth/token` the
       client is the one stored on the connection the code or the refresh token belongs to
       (`oauth_connections.client_id`), and the client tables are never read there, so a
@@ -274,7 +283,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 
     What a flood stalls: a flood of registrations stalls new dynamic registrations only. A flood of
     throwaway document URLs only churns the cache, since a full cache evicts and never refuses, and
-    the document of a client with an open connection is never evicted. A flood of slow document
+    the document of a client that has connected is never evicted. A flood of slow document
     hosts on distinct addresses can hold the 16 fetch slots and stall every document client the
     cache holds no copy of, for as long as it lasts; a cached copy, and every open connection, is
     unaffected, and the residual is carried in
@@ -333,7 +342,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 
     **A replay carries no connect code.** The idempotency record of `POST /v2/keys`
     with `connect_code: true` and of `POST /v2/keys/{key_id}/connect-codes` stores its response
-    without `connect_code.code`, and a replay returns that body with `Idempotency-Replay: true`,
+    without the code, and a replay returns that body with `Idempotency-Replay: true`,
     so no idempotency record holds a connect code and the first answer is the only one that
     carries it. A bearer key's replay stays as ADR-0014 d3 has it; that its stored response holds
     the value is [FR-36](../product/roadmap.md), opened by this record. This amends ADR-0014 d3
@@ -362,9 +371,9 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 
     | Term | Means | Never |
     |---|---|---|
-    | connection | one OAuth client's standing authority to act as one connector key at `/mcp`, opened at the token exchange after a connect code is redeemed, and ended by revocation | "grant" or "OAuth grant" (a grant is a workarea grant), "session", "authorization" as the object's name; bare "connection" for a claim↔claim or workarea↔workarea link, which is always "connection edge" or "connection proposal" — the wire value `kind: "connection"` is code, and the bare "connection" of accepted ADR-0010 d5, ADR-0012's context and ADR-0025's rejected alternatives for that link is the link, kept as history |
-    | connect code | the short, single-use secret, alive for minutes, that binds one connection to one connector key | "pairing code", "PIN", "OTP", "token" |
-    | access token, refresh token | a connection's two OAuth credentials, `oml_at_…` and `oml_rt_…`, stored as digests; on the pages that declare connections, "token" alone means one of them | "key" for either; "token" alone for an API key or a budget token — the "token" of accepted ADR-0022 d4 and ADR-0025 for the key is the key, kept as history |
+    | connection | one OAuth client's standing authority to act as one connector key at `/mcp`, opened at the token exchange after a connect code is redeemed, and ended by revocation | "grant", "OAuth grant", "session" or "authorization" as this object's name (a grant is a workarea grant); bare "connection" for a claim↔claim or workarea↔workarea link, which is always "connection edge" or "connection proposal" — the wire value `kind: "connection"` is code |
+    | connect code | the short, single-use secret, alive for minutes, that binds one connection to one connector key | "pairing code", "PIN", "OTP" |
+    | access token, refresh token | a connection's two OAuth credentials, `oml_at_…` and `oml_rt_…`, stored as digests | "key" for either; "token" alone for an API key or a budget token |
 
     The cost: one agent identity cannot act both from claude.ai and from a header-configured
     client such as Claude Code; each gets its own key and principal, which is what one key per
@@ -396,7 +405,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     spent or not, and code entry, Connect and the token exchange refuse a voided code, so a later
     Connect answers `oauth.authorization_expired` and a later exchange `invalid_grant`
     (`oauth.authorization_code_invalid`). The admin's usual reason to mint again is a code someone
-    else may have entered; a page that holds that code, or the 60-second authorization it
+    else may have entered; a page that holds that code, or the authorization code it
     produced, then cannot open a connection that would replace the one the admin meant. Code entry
     reads the key's state as `/mcp` does (d11): the code of a revoked or expired key answers the one
     message for a code that is not valid, `oauth.connect_code_invalid`, so the page never shows a
@@ -824,8 +833,14 @@ answers for all three. None is measured.
 
 **On acceptance, and not before.** This record's Status line and frontmatter `status` become
 `accepted design` with the date, and its register row follows; the Status lines of ADR-0010,
-ADR-0014, ADR-0015, ADR-0018, ADR-0025 and ADR-0028 gain "· amended by ADR-0031"; RS-2 leaves the
-register;
+ADR-0014, ADR-0015, ADR-0018, ADR-0025 and ADR-0028 gain "· amended by ADR-0031"; the accepted
+records' spellings that d7's rows put in the "never" column are reworded as page edits: the bare
+"connection" for a claim↔claim or workarea↔workarea link in ADR-0010 d5 ("connection
+ratification"), ADR-0012's context ("connection-establishment") and ADR-0025's d1 rejected
+alternative ("ratify connections") becomes "connection edge" or "connection proposal", ADR-0025's
+"needs one connection" in its agent-facing results becomes "needs one key", and the "token" that
+names a key in ADR-0022 (its context, d4, d5, d6 and rejected alternatives) and ADR-0025 (d13, d14
+and d13's rejected alternative) becomes "key"; RS-2 leaves the register;
 [commitments](../product/commitments.md) drops RS-2 from its open questions and lists FR-34,
 FR-35 and FR-36; the
 `spec-vX.Y` tag of d15 is cut. With the proposal, the record registers at its three points, the
