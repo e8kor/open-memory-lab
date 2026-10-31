@@ -2,14 +2,16 @@
 id: adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing
 tier: engineering
 status: proposed
-answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role split fences instead; the two Postgres roles, their privileges and the default privileges of later tables; how the lead migrates under postgres.owner_url and serves under postgres.url; why one URL is refused at startup; why _sqlx_migrations is the one table without row-level security; how a single-role install, the live host among them, is split; the checks and the CI change that close it; the build order after iteration 3
+answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role split fences instead; the two Postgres roles, their privileges and the default privileges of later tables; how the lead migrates under postgres.owner_url and serves under postgres.url; why one URL is refused at startup; why _sqlx_migrations is the one table without row-level security; how a single-role install, the live host among them, is split; the per-tenant FTS index, how a read reaches its tenant's partition, who creates a partition and which channels stay open; foreign keys that carry tenant_id; the checks and the CI change that close it; the build order after iteration 3
 -->
 
 # ADR-0034 — The lead migrates as an owner role and serves as a role that owns nothing; `_sqlx_migrations` is the one table without row-level security
 
 **Status:** proposed · 2026-10-31
 
-**Amends:** ADR-0007 (d2) — names `_sqlx_migrations` as the one table without row-level security (d6); the reading of `FORCE` in d1 amends nothing
+**Amends:** ADR-0007 (d2) — names `_sqlx_migrations` as the one table without row-level security
+(d6); the reading of `FORCE` in d1, the per-tenant FTS index (d12) and the tenant-carrying keys
+(d13) amend nothing
 
 ## Context
 
@@ -29,19 +31,25 @@ path](../product/critical-path.md#spike-3-rls-hardening) on 2026-10-31, on the h
 - sqlx's migrator creates `_sqlx_migrations` with no row-level security and no policy. It holds no
   tenant data and no `tenant_id`, and ADR-0007 d2 exempts no table.
 
-The maintainer decided on 2026-10-31 what d1 and d6 state, and that the split is built; d2–d5 and
-d7–d11 are what building it takes. Decided, not built.
+CI's `rls-spike` then ran every scenario on the pinned PostgreSQL 17.11 as an owner and a service
+role (2026-10-31; the page at `bb20087` and its CI log): the service role sees 0 `pg_stats` rows;
+EXPLAIN's estimate for an FTS query still tells either role whether another tenant's memories hold
+a word, `memories_claim_fts` being one GIN index over every tenant; `@@` (`ts_match_vq`) is not
+leakproof, so under RLS that index serves no query and every FTS read scans; three foreign keys
+let a tenant store, and test for, another tenant's ids (d13); `pg_class.reltuples` spans tenants.
+
+The maintainer decided on 2026-10-31 what d1 and d6 state and that the split is built, and after
+that run that the FTS index becomes per tenant (d12) and keys into tenant tables carry `tenant_id`
+(d13), as ADR-0007 d4 and security.md's STRIDE row already promise ("no cross-tenant index to leak
+through"): implementation fixes, not amendments. Decided, not built.
 
 ## Decision
 
 - **d1 — `FORCE` fences table reads; the split fences `pg_stats` and DDL.** `FORCE` stays on every
   table but `_sqlx_migrations` (d6) and is held to what S3.1 showed: the owner's table reads are
   filtered. The owner's `pg_stats` view and DDL are kept from workloads by d2–d5, since no request
-  is served as the owner. No split closes EXPLAIN's row estimate, which follows the same statistics
-  for every role the policy binds (S3.4's reading of PostgreSQL's source); it stays the spike's open
-  finding against ADR-0007 d4 and security.md's STRIDE row, ADR amendment needed, awaiting the
-  maintainer. The serving role's `pg_stats` and estimate are unmeasured until `rls-spike` runs on
-  pg17 (d10). `pg_class.reltuples` stays an S3.4 observation for M6.
+  is served as the owner. No split closes EXPLAIN's row estimate, which reached both roles on
+  17.11: d12 closes it for the reads the server sends, and FR-45 holds the rest with `reltuples`.
 
 - **d2 — Two roles: an owner that owns everything, a serving role that owns nothing.** The operator
   names them; this repository's payloads call them `oml_owner` and `oml_server`. Each holds no
@@ -67,11 +75,11 @@ d7–d11 are what building it takes. Decided, not built.
   URL.** `Config` gains `postgres.owner_url` (`OML_POSTGRES__OWNER_URL`), required. Boot: both
   pools; d5's first checks; `migrate()` on the owner pool, `oml.serving_role` set; d5's second
   checks; the owner pool closed and both role names logged; then, as today, keyring, fork check,
-  enrollment token and listener, over the serving pool. No request is served while an owner
-  connection is open, and the lead migrates until [deployment](../operations/deployment.md)'s
-  bootstrap workload exists. The cost: the owner credential stays in the lead's file or environment,
-  so the split fences a serving connection's statements (a server bug, an injection), not a
-  compromised lead.
+  enrollment token and listener, over the serving pool. No request is served while the owner pool
+  is open; after it closes, the lead opens an owner connection only for d12's partition DDL, and it
+  migrates until [deployment](../operations/deployment.md)'s bootstrap workload exists. The cost:
+  the owner credential stays in the lead's file or environment, so the split fences a serving
+  connection's statements (a server bug, an injection), not a compromised lead.
 
 - **d5 — One URL is refused at startup, by name; no single-URL mode exists.** The lead exits
   non-zero with `postgres.role_split` and a reason before any listener binds: before migrating, when
@@ -81,11 +89,11 @@ d7–d11 are what building it takes. Decided, not built.
   create in the database or `public` (`serving_role_privileged`); or it owns the database or any
   object in it (`serving_role_owns`), the state of every unsplit install. After migrating, when it
   holds any privilege on `_sqlx_migrations`, as `has_table_privilege` computes it, so a grant
-  through `PUBLIC` or a role counts (`serving_role_reads_migrations`); a table other than that one
-  is not the owner's, lacks `ENABLE` or `FORCE`, or has no policy (`table_unfenced`); a function in
-  `public` is `SECURITY DEFINER` (`prosecdef`), which runs a serving call as the owner
-  (`definer_function`); or it cannot `SELECT` a table the migrations created, as when `postgres.url`
-  names a role they did not grant (`serving_role_ungranted`).
+  through `PUBLIC` or a role counts (`serving_role_reads_migrations`); a table other than that one,
+  a partition included, is not the owner's, lacks `ENABLE` or `FORCE`, or has no policy
+  (`table_unfenced`); a function in `public` is `SECURITY DEFINER` (`prosecdef`), which runs a
+  serving call as the owner (`definer_function`); or it cannot `SELECT` a table the migrations
+  created, as when `postgres.url` names a role they did not grant (`serving_role_ungranted`).
 
 - **d6 — `_sqlx_migrations` is the one table without row-level security, and only the owner
   reaches it.** ADR-0007 d2's "row-level security keyed by `tenant_id` on every Postgres table"
@@ -116,9 +124,9 @@ d7–d11 are what building it takes. Decided, not built.
        `ALTER TABLE` per table in `public` and `ALTER FUNCTION` per function there, each `OWNER TO`
        the owner; a table's indexes, TOAST table and owned sequences follow it (`tablecmds.c`).
     4. Add `postgres.owner_url`, and for a superuser point `postgres.url` at the serving role;
-       install and start the build carrying this record, whose first boot applies the split's
-       migration and its grants (d3). Rollback before this step reverses step 3; after it, the
-       backup and [restore](../operations/restore.md).
+       install and start the build carrying this record, whose first boot applies its migrations
+       (d3, d12, d13). Rollback before this step reverses step 3; after it, the backup and
+       [restore](../operations/restore.md).
 
 - **d8 — The live host's entry, not run.** As the maintainer's deployment notes of 2026-10-31 record
   it (not in this repository), `oml.doublegate.io` runs server 0.2.0 on PostgreSQL 18 as
@@ -141,53 +149,111 @@ d7–d11 are what building it takes. Decided, not built.
       no privilege on `_sqlx_migrations`;
     - a boot over one URL (`same_role`), with no owner URL (`owner_url_missing`) or over an
       unsplit database (`serving_role_owns`) exits with `postgres.role_split`, no listener bound;
-    - once the listener binds, `pg_stat_activity` shows no connection of the owner;
+    - once the listener binds, `pg_stat_activity` shows no owner connection outside d12's DDL;
     - a new table is readable by the serving role and refuses its `INSERT` until granted.
 
-- **d10 — `rls-spike` runs with the split, and its `pg_stats` expectations move to the serving
-  role.** In `testing/spikes/rls/spike_rls.py` (on `feat/m0-spikes`) the harness creates
-  `_sqlx_migrations` as sqlx's migrator does before it applies the files, and the service role takes
-  its privileges from them through `oml.serving_role`, not the harness's own `GRANT` over every
-  table. S3.1 keeps its owner checks of table reads, all `FORCE` is held to, and its `pg_stats`
-  check becomes an observation; S3.4's `pg_stats` verdict is the serving role's
-  (`S3.4/service/pg_stats`), the owner's leak its control, which must leak. `S3.1/owner/pg_stats`
-  and `S3.4/owner/pg_stats` leave `RECORDED_FAILURES`; `S3.4/owner/estimate` stays on it and
-  `S3.4/service/estimate` joins it, both pointing to `spike-3-rls.md#s34`, open (d1). S3.2 gains the
-  serving role's refused `ALTER TABLE` and `DROP TABLE`. If `S3.4/service/pg_stats` fails on pg17,
-  d1's reading fails and returns to the maintainer as ADR amendment needed.
+- **d10 — `rls-spike` runs with the split, d12 and d13.** In `testing/spikes/rls/spike_rls.py` (on
+  `feat/m0-spikes`) the harness creates `_sqlx_migrations` as sqlx's migrator does before it
+  applies the files, and the service role takes its privileges from them through
+  `oml.serving_role`, not the harness's own `GRANT`. S3.1 keeps its owner checks of table reads and
+  observes its `pg_stats`; S3.4's verdict is `S3.4/service/pg_stats`, the owner's leak its control;
+  S3.2 gains the serving role's refused `ALTER TABLE` and `DROP TABLE`; `S3.1/owner/pg_stats` and
+  `S3.4/owner/pg_stats` leave `RECORDED_FAILURES`. `S3.4/<role>/estimate` takes the adapter's FTS
+  read, tenant A bound at planning; once d12 lands, `S3.4/service/estimate` and
+  `S3.4/owner/estimate` leave the list, and the same read with no planning-time tenant, or naming
+  tenant B, joins it as `S3.4/<role>/estimate_unbound` (FR-45). With d13 comes
+  `S3.4/<role>/fk_oracle`, not recorded: under tenant A, a reference to tenant B's row and one to a
+  random id are refused alike, `23503` on one constraint, for d13's three keys. The adapter's FTS
+  plan and each partition's `reltuples` are observations. If `S3.4/<role>/estimate` fails once d12
+  lands, d12's reading returns to the maintainer as ADR amendment needed.
 
 - **d11 — The build lands after iteration 3, in dependency order, each step closed by a check.**
     1. `feat/iteration-3` (the rewrite of `crates/` and `migrations/`) and `feat/m0-spikes` merge.
-       Check: `rls-spike`'s first pg17 run, its result recorded on `spike-3-rls.md`.
+       Check: `rls-spike`'s first pg17 run recorded on `spike-3-rls.md`, met (17.11, `bb20087`).
     2. The split, in one landing: its migration after iteration 3's last (d6's revoke, `REVOKE
        CREATE ON SCHEMA public FROM PUBLIC`, each table's privileges, d3's defaults);
        postgres-schema.md's matrix and journal sketch; d4 and d5 in `oml-pg` and
-       `oml-server-lead`; d9's suites; d10's harness change; both roles and both URLs in
+       `oml-server-lead`; d9's suites; d10's harness change; both roles and URLs in
        `docker-compose.yml`, `scripts/poc-demo.sh` (a role pair per run), CI's demo job and
        README's "Running the PoC", which then needs a superuser; the Dockerfile's migrate-on-boot
        comment; a second Secret key in the proposed ADR-0033's chart if it has landed. Check:
-       d9's tests, `rls-spike` green with `RECORDED_FAILURES` holding only the two estimate
-       checks, and CI's `cargo test (Postgres)`, `demo and quickstart` and `docker profile` jobs.
-    3. A release, then d8. Check: d8's output, recorded there.
+       d9's tests, `rls-spike` with `RECORDED_FAILURES` holding the two `estimate` checks alone,
+       and CI's `cargo test (Postgres)`, `demo and quickstart` and `docker profile` jobs.
+    3. d13's migration and `fk_oracle`. Check:
+       `a_reference_to_another_tenants_row_is_refused_as_one_to_no_row` for each of the three
+       keys, `every_key_into_a_tenant_table_carries_tenant_id` over `pg_constraint` but the
+       migration's named exceptions, and `fk_oracle` green.
+    4. d12's migration, partition DDL and tenant predicate, and postgres-schema.md's FTS sketch.
+       Check: `creating_a_tenant_creates_its_fenced_partition_before_the_tenant_commits`,
+       `a_failed_partition_creation_journals_no_tenant`,
+       `the_adapters_fts_read_plans_its_tenants_partition_alone`,
+       `the_serving_role_sees_no_pg_stats_row_of_a_partition`, d5's boot checks over partitions,
+       and `rls-spike` with `RECORDED_FAILURES` holding the two `estimate_unbound` checks alone.
+    5. A release, then d8. Check: d8's output, recorded there.
+
+- **d12 — The FTS index is per tenant: `memories` is list-partitioned by `tenant_id`, each
+  partition with its own GIN index.** The migration rebuilds `memories`, which iteration 3's recall
+  searches, as `PARTITION BY LIST (tenant_id)`, a partition per existing tenant filled under that
+  tenant's context. Its key becomes `(tenant_id, id)`, since a partitioned table's unique keys
+  "must include all of the partition key columns", and `memories_claim_fts` a partitioned index,
+  so each partition, a later one included, has its own
+  ([partitioning](https://www.postgresql.org/docs/17/ddl-partitioning.html), fetched 2026-10-31).
+  The designed `memories_fts` and `held_fts` take the same form. Every adapter statement on
+  `memories` adds `tenant_id = $n`, bound to the tenant it sets in `oml.tenant_id`, so the plan
+  keeps that tenant's partition alone, or drops the rest as it starts (the same page); RLS stays
+  the fence. That closes any index across tenants, and the estimate of the adapter's FTS read,
+  tenant bound at planning, which draws on that tenant's statistics alone (d10).
+    - *Who creates a partition:* the owner, at tenant creation. The act mints the id; on one owner
+      connection it creates the partition with `ENABLE`, `FORCE` and its parent's policy, so d5
+      holds for it; only then does the serving transaction journal `tenant.created`, so a failed
+      DDL journals nothing. This runtime DDL joins what the Costs leave to the bootstrap workload
+      or a record of its own; until one takes it the lead runs it, as it migrates (d4), and
+      `memory_embeddings`' partitions (ADR-0013 d4) take the same path once that table is built.
+    - *Stays open*, by this record's reading of the planner (`REL_17_STABLE` at `f1ba2b8`, fetched
+      2026-10-31): a partition's GIN index serves no RLS-bound query either, since the parent's
+      policy reaches each partition as a security qual (`apply_child_basequals`) that `@@` cannot
+      precede (`restriction_is_securely_promotable`), so FTS reads scan one tenant's rows (FR-4,
+      FR-7). SQL the server does not send still reads another tenant's statistics by naming its
+      id, or with no planning-time tenant, where an Append sums every partition's estimate
+      (`set_append_rel_size`); each partition's `reltuples` and bound give every role one
+      tenant's row count and id (FR-45). A candidate for the estimate, unmeasured: statistics
+      target 0 on each partition's FTS expression, which "disables collection of statistics for
+      that column" ([ANALYZE](https://www.postgresql.org/docs/17/sql-analyze.html), fetched
+      2026-10-31).
+
+- **d13 — A foreign key into a tenant table carries `tenant_id`.** The pg17 run accepted three
+  cross-tenant references to bare ids: `workareas.parent_id` → `workareas (id)`,
+  `memories.created_event_id` → `journal (event_id)` and `review_queue.memory_id` → `memories
+  (id)`. The migration rewrites these, and every other key whose referenced table has `tenant_id`
+  (iteration 3 has more, `memories.workarea_id` and `superseded_by` among them), as `(tenant_id,
+  col)` → `(tenant_id, id)`, the form 0004 gave `grants`, adding each `UNIQUE (tenant_id, …)` it
+  needs, so a cross-tenant reference is refused as one to no row is. Where the referencing
+  `tenant_id` is NULL, as on `api_keys`' provider-level rows, "the row is not required to have a
+  match" ([CREATE TABLE](https://www.postgresql.org/docs/17/sql-createtable.html), fetched
+  2026-10-31), and a key that names a provider-level row by design cannot take this form: the
+  migration names each such key and how it stays checked.
 
 ## Consequences
 
-- **FR-44 opens** on the [roadmap](../product/roadmap.md), marked proposed, for the split and for
-  the partition DDL under Costs; the estimate checks stay open (d1, d10).
+- **FR-44 and FR-45 open** on the [roadmap](../product/roadmap.md), marked proposed: FR-44 for the
+  split and the read log's partition DDL, FR-45 for the estimate and catalog channels d12 leaves.
 - **On acceptance, and not before:** ADR-0007's Status line gains `amended by ADR-0034`, its d2 text
   kept as history ([status lifecycle](index.md#status-lifecycle)). security.md's tenancy paragraph
   says that `FORCE` binds an owner's table reads, not its `pg_stats` view or DDL, which the split
-  keeps from every workload; that the owner role only migrates, in the lead's boot until a bootstrap
-  workload exists; and that `_sqlx_migrations` is the one table exempted, fenced by privilege.
-  configuration.md (`postgres.owner_url`), deployment.md's lead row, upgrades.md and
-  postgres-schema.md (who migrates), the critical path's S3.1 row and the register's D6 cell follow.
+  keeps from every workload; that the owner role only migrates and creates tenants' partitions, in
+  the lead until a bootstrap workload exists; and that `_sqlx_migrations` is the one table
+  exempted, fenced by privilege; its STRIDE information-disclosure row adds FR-45's channels to
+  timing and contention. configuration.md, deployment.md's lead row, upgrades.md,
+  postgres-schema.md, retrieval.md's FTS paragraph, the critical path's S3.1 row and the
+  register's D6 cell follow.
 - **Costs:** the owner credential in the lead's configuration (d4); one outage per single-role
   install (d7); every new table's migration names its writes (d3); a second credential in every
   install, the development rig's included (d5); a superuser for the test suites and the demo (d9,
-  d11). The per-tenant `memory_embeddings` partitions (ADR-0013 d4) and `read_events` partition
-  creation and `DROP`, its retention act ([postgres-schema](../data/postgres-schema.md)), are DDL no
-  serving connection can run: they wait for the bootstrap workload or a record of their own, and
-  nothing creates or drops them until then.
+  d11); a partition, an index and an owner connection per tenant, planning that grows with tenants
+  where a statement is not pruned at planning, and a tenant predicate on every `memories`
+  statement (d12); `tenant_id` in every key into a tenant table (d13). `read_events` partition
+  creation and `DROP`, its retention act ([postgres-schema](../data/postgres-schema.md)), wait for
+  the bootstrap workload or a record of their own, and nothing creates or drops them until then.
 - **No surface change:** no HTTP operation, error code or event type, so `info.version` stays
   `0.2.0-design`; `postgres.role_split` is a startup error outside the [error
   taxonomy](../api/errors.md). Other workloads' roles come with those workloads.
@@ -202,3 +268,7 @@ d7–d11 are what building it takes. Decided, not built.
 | **Row-level security on `_sqlx_migrations`** | No `tenant_id` to key a policy on; a policy keyed on the role restates the privilege fence, and under `FORCE` binds the migrator's own reads. |
 | **A migrate-only invocation, so the serving process never holds the owner URL** | That is the bootstrap workload [deployment](../operations/deployment.md) designs, with the standalone migrate verb of FR-28; it changes every payload's upgrade step and is its own change, which removes d4's cost. |
 | **Keeping the old role as owner and adding a new serving role** | No ownership moves, but the credential that has sat in the serving process all along keeps ownership, and `postgres.url` changes; d7 hands ownership to a fresh credential. |
+| **Statistics target 0 on the one FTS index, instead of partitions** | By the source above it would leave every role FTS's default selectivity, unmeasured, but one index would still span tenants, which ADR-0007 d4 and the STRIDE row rule out; d12 keeps it as FR-45's candidate beside the partitions. |
+| **A `DEFAULT` partition for tenants without one of their own** | The tenants in it share one index again, and a later partition for one of them must first move its rows out. |
+| **A `SECURITY DEFINER` function the serving role calls to create a partition** | Any serving connection could call it, an injection included; d5 refuses definer functions for that reason. d12's owner connection is reachable from the tenant-creating act alone. |
+| **A leakproof `@@` wrapper, so the GIN index serves RLS-bound queries** | Only a superuser can mark a function `LEAKPROOF` (S3.4), PostgreSQL does not mark `ts_match_vq` so, and d2's roles hold no superuser; it is FR-4's and FR-7's question, with numbers. |

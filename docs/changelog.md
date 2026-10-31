@@ -35,22 +35,27 @@ implementation milestone where it changes what the repository holds.
 records what the maintainer decided that day on M0 spike 3's findings: `FORCE ROW LEVEL SECURITY`
 fences table reads only, an owner/serving role split keeps the `pg_stats` view and DDL from every
 workload, and `_sqlx_migrations` is ADR-0007 d2's one named exemption, reachable by the owner
-alone. EXPLAIN's row estimate, which no split closes, stays the spike's open finding. It decides
-the two roles and their privileges, the lead's boot under `postgres.owner_url` and
-`postgres.url`, the startup refusal `postgres.role_split` when one URL serves both, the
-one-time split of a single-role install with the live host's entry marked not run, the checks,
-the `rls-spike` change and the build order after iteration 3. Numbers 0026, 0027 and 0030 to 0033
+alone. After the spike's first pinned PostgreSQL 17.11 run, the maintainer added that the FTS
+index becomes per tenant and that foreign keys into tenant tables carry `tenant_id`, as
+implementation fixes of what ADR-0007 d4 already decides. It decides the two roles and their
+privileges, the lead's boot under `postgres.owner_url` and `postgres.url`, the startup refusal
+`postgres.role_split` when one URL serves both, the one-time split of a single-role install with
+the live host's entry marked not run, `memories` list-partitioned by `tenant_id` with a GIN index
+per partition that the owner creates at tenant creation (d12), the composite keys (d13), the
+checks, the `rls-spike` change and the build order after iteration 3. What the per-tenant index
+leaves open, EXPLAIN's estimate for SQL the server does not send and per-tenant catalog counts and
+ids, is FR-45. Numbers 0026, 0027 and 0030 to 0033
 are taken by records on other branches. It amends ADR-0007 (d2), whose Status line gains the
 back-pointer at acceptance; it binds nothing before then.
 
-- **Opened:** FR-44 on the [roadmap](product/roadmap.md), marked proposed; FR-34, FR-35 and FR-40
-  to FR-43 are used on other branches.
+- **Opened:** FR-44 and FR-45 on the [roadmap](product/roadmap.md), marked proposed; FR-34 to
+  FR-36 and FR-40 to FR-43 are used on other branches.
 - **No surface change:** no HTTP operation, error code or event type; `info.version` stays
   `0.2.0-design`.
 - **Pages touched:** the record, its [register](adr/index.md) row, `mkdocs.yml`,
   `llms.txt` (which also stops calling ADR-0029 proposed), the roadmap and this page.
-  security.md, configuration.md, deployment.md, upgrades.md, postgres-schema.md, the critical
-  path and ADR-0007 change at the record's acceptance.
+  security.md, configuration.md, deployment.md, upgrades.md, postgres-schema.md, retrieval.md,
+  the critical path and ADR-0007 change at the record's acceptance.
 - **Not built.**
 
 ### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
