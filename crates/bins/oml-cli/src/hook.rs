@@ -224,13 +224,13 @@ fn render(r: &Rendered<'_>) -> String {
     match r.own.iter().find_map(|m| m["workarea_path"].as_str()) {
         Some(path) => out.push(format!(
             "OML memory for this session, from {}, workarea {}.",
-            r.server,
+            origin(r.server),
             capped(path)
         )),
         None => out.push(format!(
             "OML memory for this session, from {}, in this key's default workarea \
              (oml_workarea_info names it).",
-            r.server
+            origin(r.server)
         )),
     }
     out.push(
@@ -309,6 +309,23 @@ fn push_or_none(out: &mut Vec<String>, lines: Vec<String>, none: &str) {
         out.push(none.to_owned());
     } else {
         out.extend(lines);
+    }
+}
+
+/// The server as the context names it: scheme, host and port alone, so no
+/// userinfo, path, query or fragment of `OML_URL` enters the context
+/// (ADR-0029 d6).
+#[must_use]
+pub fn origin(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if scheme.is_empty() {
+        host.to_owned()
+    } else {
+        format!("{scheme}://{host}")
     }
 }
 

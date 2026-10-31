@@ -407,6 +407,8 @@ Memories matching "metals":
   one `…` when cut: neither counts toward the budget.
 - When the budget cut hits, the matching section ends with `- <n> more matched beyond the
   <budget>-token budget; oml_recall shows them.`
+- The header names the server by the scheme, host and port of `OML_URL` alone: no userinfo,
+  path, query or fragment in it enters the context.
 - The header's workarea is the path of the newest own submission that carries one, since neither
   request names the key's default workarea; with none it reads `…, from <url>, in this key's
   default workarea (oml_workarea_info names it).`
