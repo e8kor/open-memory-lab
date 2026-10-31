@@ -1,0 +1,6 @@
+# Patterns helm package leaves out of the chart archive.
+.DS_Store
+*.swp
+*.bak
+*.tmp
+*~

@@ -1,0 +1,17 @@
+{
+  "description": "Start every session from what Open Memory Lab holds for this agent's key.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook session-start || exit 0",
+            "timeout": 10,
+            "statusMessage": "Loading OML memory"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -61,8 +61,19 @@ pub struct Client {
 impl Client {
     #[must_use]
     pub fn new(server: String, key: Option<String>) -> Self {
+        Self::with_timeout(server, key, Duration::from_secs(30))
+    }
+
+    /// A client whose every request ends after `timeout`, its TCP connect
+    /// included. The DNS lookup has no deadline here: ureq gives it none, so
+    /// a caller that must end in time bounds the whole call itself, as `oml
+    /// hook session-start` does (ADR-0029 d5).
+    #[must_use]
+    pub fn with_timeout(server: String, key: Option<String>, timeout: Duration) -> Self {
+        // `timeout` alone leaves ureq's own 30-second connect timeout in force.
         let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
+            .timeout_connect(timeout)
+            .timeout(timeout)
             .build();
         Self {
             agent,

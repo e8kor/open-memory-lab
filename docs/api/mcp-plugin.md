@@ -1306,6 +1306,14 @@ Operational notes:
 - **Expect `held`.** A successful write is a claim under test. Poll
   [`oml_my_work`](#oml_my_work) or [`oml_events_tail`](#oml_events_tail) if
   the agent's plan depends on its memory becoming visible to others.
+- **Start each session from memory.** In Claude Code the `oml` plugin's
+  SessionStart hook runs `oml hook session-start` when the CLI is on `PATH`,
+  which injects the workarea's steering, the key's recent submissions and the
+  memories matching the working directory's name, under a token budget and
+  under the same `OML_URL` and `OML_API_KEY` as the entry above; it is
+  declared, with its variables and how it fails open, on the
+  [CLI reference](../cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin)
+  ([ADR-0029](../adr/ADR-0029-session-start-hook.md)).
 - Liveness for your own infrastructure: `oml-server` exposes `/healthz` and
   `/readyz` ([deployment](../operations/deployment.md)); the MCP endpoint
   itself has no separate probe.
