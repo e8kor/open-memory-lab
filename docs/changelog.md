@@ -29,6 +29,40 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-31 — M0: the chain-format vectors reproduce outside Rust, and spike 3 runs on PostgreSQL 18.6
+
+An M0 change: two of the critical path's de-risking experiments are built and run, and their
+findings are recorded. No decision changes, no record is amended or proposed, and the harness
+decisions live on an engineering page, [M0 spikes](engineering/spikes/index.md).
+
+- **Built:** `scripts/check_chain_vectors.py`, which rebuilds the three
+  [chain format](data/chain-format.md) vectors from their inputs with two RFC 8785
+  implementations (`rfc8785`, `jcs`), two Ed25519 implementations (`cryptography`, PyNaCl) and
+  two SHA-256 implementations (`hashlib`, libsodium). It runs the verification procedure and its
+  mutation claims, and fails on any difference. Also built: `testing/spikes/rls/spike_rls.py`,
+  which applies `migrations/*.sql` to a throwaway database and asserts S3.1–S3.4. Both pin their
+  libraries through uv, inline and in a committed lock file. `.github/workflows/m0-spikes.yml`
+  adds the jobs `chain-vectors` and `rls-spike`, the latter on `pgvector/pgvector:pg17`.
+- **Found:** the vectors reproduce byte for byte
+  ([finding](engineering/spikes/chain-vectors.md)). On PostgreSQL 18.6, as the table owner, every
+  read shape of the fold tables stayed inside its tenant. A read with no tenant set returns zero
+  rows, which is now the recorded behaviour. `pg_stats` shows the owner other tenants' lexemes
+  through the expression index `memories_claim_fts`, so S3.1 and S3.4 fail for the owner, and the
+  harness records both as expected failures. Under RLS that GIN index serves no FTS plan, since
+  `@@` is not leakproof. S3.2 did not run, for lack of a role that can create roles
+  ([findings](engineering/spikes/spike-3-rls.md)).
+- **Page edit:** chain format now says that omitting the last event fails step 9, against the
+  stated head, and not step 1 or 5. The check's first run failed on the old sentence.
+- **Not verified here:** any result on the pinned pg17, any result for a non-owner role, and
+  S3.2. The two CI jobs have not run. Spikes 1, 2 and 4 are not run.
+- **No surface change:** no HTTP operation, error code, event type or claim state changes, and
+  `info.version` stays `0.2.0-design`.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md) and its two finding pages (new),
+  [chain format](data/chain-format.md), [critical path](product/critical-path.md) (M0
+  progress), [CI and toolchain](engineering/ci-and-toolchain.md) (the M0 spikes gate),
+  `mkdocs.yml`, [llms.txt](llms.txt) and this page. Outside `docs/`, the two scripts, their lock
+  files and the workflow.
+
 ### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
 
 [ADR-0029](adr/ADR-0029-session-start-hook.md), accepted by the maintainer on 2026-10-31 with release v0.2.2, records what the maintainer decided on

@@ -16,7 +16,8 @@ supply chain inside the build is only a security property if the build is pinned
 attested — which is this page's job to specify. The first pipeline is an M1 item on the
 [critical path](../product/critical-path.md). Since 2026-10-30 `.github/workflows/ci.yml` runs
 the format, lint, test, docs, cargo-deny and end-to-end gates, and `release.yml` ships the signed
-artifacts below. Not running yet: the MSRV build, the sqlx offline check, container tests against
+artifacts below. Since 2026-10-31 `m0-spikes.yml` holds the M0 spike gate below, which has not
+yet run on GitHub. Not running yet: the MSRV build, the sqlx offline check, container tests against
 MinIO, the scheduled `cargo audit` and the bench job.
 
 ## Toolchain pins and MSRV
@@ -51,6 +52,7 @@ ratchet that only ever loosens, so it starts tight:
 | Docs | `cargo doc` with `RUSTDOCFLAGS="-D warnings"` | every public item documented; broken intra-doc links fail |
 | Site | `mkdocs build --strict` | this documentation set keeps building; a broken link is a failure, not a warning |
 | Schema sync | sqlx offline check: compile-time-checked queries against committed query metadata, regenerated whenever `migrations/` changes | queries and migrations cannot drift apart silently; the companion shape-vs-bytes rule is declared in the [schema page](../data/postgres-schema.md#migrations) |
+| M0 spikes | `uv run --locked --script scripts/check_chain_vectors.py`; `uv run --locked --script testing/spikes/rls/spike_rls.py --require-all` against `pgvector/pgvector:pg17` | the chain-format vectors keep reproducing outside Rust, and spike 3's findings keep standing, recorded failures included ([M0 spikes](spikes/index.md)) |
 
 ## Supply chain: cargo-deny and cargo-audit
 

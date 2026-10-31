@@ -118,6 +118,23 @@ than self-confirmed, and committed as the fixtures every later tier verifies
 ([test strategy](../engineering/test-strategy.md)). **Everything depends on M0's findings
 standing.**
 
+**Progress.** The recorded findings, and the experiments that have not run, are listed on the
+[M0 spikes](../engineering/spikes/index.md) page. Two experiments ran on 2026-10-31:
+
+- The chain-format test vectors were reproduced byte for byte by independent implementations
+  outside Rust: two of the canonical form and two of the signature. The cross-check also
+  corrected one sentence on the chain format page
+  ([finding](../engineering/spikes/chain-vectors.md)).
+- Spike 3 ran on the host's PostgreSQL 18, not yet on the pinned version, and the scenario that
+  needs a separate application role did not run at all. In that run, every kind of read the
+  server makes stayed inside its tenant. The database's statistics about indexed text did not: the account that owns
+  the tables can read other tenants' words in them. That is one more reason the owning account
+  must never serve requests, and the first working slice does not yet keep the two apart. The
+  same run found that, with tenant isolation on, the full-text index is never used
+  ([findings](../engineering/spikes/spike-3-rls.md)).
+
+Spikes 1, 2 and 4 have not run. M0's exit stays open.
+
 ## M1 — System of record
 
 **Goal.** The one commit point exists and the constitution is code.
