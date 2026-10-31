@@ -16,8 +16,9 @@ supply chain inside the build is only a security property if the build is pinned
 attested — which is this page's job to specify. The first pipeline is an M1 item on the
 [critical path](../product/critical-path.md). Since 2026-10-30 `.github/workflows/ci.yml` runs
 the format, lint, test, docs, cargo-deny and end-to-end gates, and `release.yml` ships the signed
-artifacts below. Not running yet: the MSRV build, the sqlx offline check, container tests against
-MinIO, the scheduled `cargo audit` and the bench job.
+artifacts below; since 2026-10-31 `ci.yml` also runs the three jobs of the
+[client SDKs](sdks.md). Not running yet: the MSRV build, the sqlx offline check, container tests
+against MinIO, the scheduled `cargo audit` and the bench job.
 
 ## Toolchain pins and MSRV
 
