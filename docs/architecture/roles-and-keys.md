@@ -72,7 +72,6 @@ settings, tenants — a column names the key's role itself.
 |---|---|---|---|---|---|
 | recall / search (FTS, vector) — logged | ✓ | — | — | — | — |
 | read body / fetch — logged | ✓ ⁵ | — | — | — | — |
-| Proposed in ADR-0030, binding only on its acceptance: read another key's held claim inside an in-progress workarea — logged | ✓ ⁶ | — | — | — | — |
 | graph and lineage read (serialize, don't compute) | ✓ | — | — | — | — |
 | workarea info / events tail | ✓ | — | — | — | — |
 | own-work status (own submissions only) | ✓ | ✓ | ✓ | ✓ | — |
@@ -86,8 +85,8 @@ settings, tenants — a column names the key's role itself.
 | ratify a connection | — | — | ✓ review ³ | — | — |
 | reopen a rejection (non-author) | — | — | ✓ review ³ | — | — |
 | re-enqueue a dead-lettered held item (journalled; [admission.md](admission.md)) | — | — | ✓ | ✓ | — |
-| propose workarea status transition | — | — | ✓ ⁷ | ✓ | — |
-| ratify status transition (non-proposer) | — | — | ✓ ⁷ | ✓ | — |
+| propose workarea status transition | — | — | ✓ | ✓ | — |
+| ratify status transition (non-proposer) | — | — | ✓ | ✓ | — |
 | issue / revoke / rotate keys (issuer ceiling) | — | — | — | ✓ | ✓ ⁴ |
 | create / re-parent workareas | — | — | — | ✓ | — |
 | reassign claims between workareas | — | — | — | ✓ | — |
@@ -113,49 +112,7 @@ next section.
 ⁴ The operator issues only each tenant's first admin key, and operator keys (see
 [issuer ceiling](#issuer-ceiling)).
 ⁵ The calling key may fetch its [own](#own) rows in any state (own-work path); everyone else
-sees promoted rows only ([http-api](../api/http-api.md)), and held rows of other keys only
-under footnote 6.
-
-⁶ **Unreviewed reads.** Proposed in [ADR-0030](../adr/ADR-0030-in-progress-workareas.md),
-binding only on its acceptance: this footnote is the single declaration site for which keys read
-the held claims of other keys (ADR-0030 d5–d7). Each
-reader grant carries `unreviewed`, `allow` or `block`, default `allow`; a grant of another role
-that carries it is `request.validation`. A key may read the held claims of other keys on node N
-exactly when:
-
-1. N lies inside an [in-progress subtree](workareas.md#in-progress-workareas), the scope
-   ADR-0030 d3 sets.
-2. `reader` is in `effective_roles(N)`.
-3. No reader grant effective on N carries `unreviewed: block` — **a block wins**, as a deny
-   does. A grant is effective on N when its node is N or an ancestor of N and its own deny list
-   names neither N nor an ancestor of N, so a grant whose deny masks N neither allows nor
-   blocks there.
-
-The answer is a pure `oml-domain` function beside `effective_roles`, computed on every request
-with no cache. Global denials, the simulation audience and the [naming rule](#own) still apply. A
-key whose grants block reads its own held rows in any state, under [own](#own). The attribute is
-journalled on `grant.issued` and stored on the grant, and a grant's value never changes:
-another value is a revoked grant and a new one. The workarea read reports the answer as
-`reads_unreviewed` ([http-api](../api/http-api.md#workareas)); what recall, get, the listings
-and the events tail serve under it is declared in
-[retrieval](retrieval.md#held-claims-inside-an-in-progress-workarea) and on the
-[events tail](../api/http-api.md#events-tail), where condition 1 is judged at the event and
-conditions 2 and 3 on current access. A held claim inside an in-progress subtree that the key
-may read under this footnote is readable as a `derives_from` target and as a claim-edge endpoint,
-wherever the submission's resolved workarea or the edge's other endpoint lies, and the
-pointers `derives_from` and `replaces` name it on every read; readability never depends on where
-a submission lands. A target or endpoint inside an in-progress subtree, held or promoted, named
-from outside that subtree is then refused with `workarea.in_progress_refused`, the boundary rule
-declared in the [refusal matrix](workareas.md#refusal-matrix)
-([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d5).
-
-⁷ An [in-progress workarea](workareas.md#in-progress-workareas)'s `development` → `committed`
-transition, its commit, is proposed and ratified by admin keys only, two admin principals: a
-dreamer key that proposes or ratifies it answers `access.verb_ceiling` at step 1a of the
-[refusal order](#grant-admissibility-and-refusal-order), once the node resolves within its reader
-effective access and before the held test
-([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d12, proposed). Every other transition
-keeps the dreamer column's ✓.
+sees promoted rows only ([http-api](../api/http-api.md)).
 
 Promote, sign and delete appear in no column: promotion is an effect of ratification inside the
 admission pipeline, signing is done by `oml-server` with the deployment key
@@ -170,11 +127,7 @@ beyond it. How a
 `self_signed` version may take a claim's tip is declared in
 [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). The
 exception is declared in [workareas.md](workareas.md) and ADR-0001; it does not change this
-matrix — it changes the review policy a development workarea applies. The proposed
-[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) would add a second bounded
-relaxation, the [in-progress workarea](workareas.md#in-progress-workareas), relaxing only R3's
-"nothing is readable by others until it is ratified", for the keys footnote 6 names; R2 holds
-there in full, and no ratification inside one is self-signed (ADR-0030 d4).
+matrix — it changes the review policy a development workarea applies.
 
 ## Grant admissibility and refusal order
 
@@ -211,8 +164,7 @@ first checks that `tenant_id` is present if and only if the issuer is an operato
    admissible, grant_index}`: `role` the first refused grant's role, `admissible` the key role's
    admissible set, `grant_index` that grant's 0-based position in `grants`;
 4. every grant node and deny node exists in the tenant — else `access.not_found`;
-5. each deny node lies inside its own grant's subtree, and `unreviewed` appears only on a
-   reader grant ([footnote 6](#permission-matrix)) — else `request.validation`;
+5. each deny node lies inside its own grant's subtree — else `request.validation`;
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
    key has none, and a key never inherits its issuer's default.
@@ -232,18 +184,12 @@ disclosed, so it authenticates no request either way, including before that comm
 formula evaluated at N, on every request:
 
 1. R is not admissible under the key's role → `access.verb_ceiling`;
-
-    **1a.** After N resolves, and only where reader is in `effective_roles(N)`: if the verb is the
-    propose or ratify of an [in-progress workarea](workareas.md#in-progress-workareas)'s commit
-    and the key's role is dreamer → `access.verb_ceiling` ([footnote 7](#permission-matrix);
-    proposed in ADR-0030, binding only on its acceptance); otherwise continue to step 2;
-
 2. R is in `effective_roles(N)` → allowed;
 3. `reader` is in `effective_roles(N)` → `access.grant_refused`, details `{workarea_id, needed_role}`;
 4. otherwise → `access.not_found`.
 
-Step 1 needs no node; step 1a is the one ceiling that needs the node, because the mark is the
-node's. Step 1 therefore runs before the workarea is resolved: `request.workarea_unresolved` is answered only to a call that has passed step 1, and a
+Step 1 depends only on the key's role and needs no node, so it runs before the workarea is
+resolved: `request.workarea_unresolved` is answered only to a call that has passed step 1, and a
 reader key submitting answers `access.verb_ceiling` whether or not it has a default workarea.
 
 **The role each verb needs.**
@@ -280,9 +226,7 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
     `access.author_only`, and a dreamer may still propose its revision or retirement.
 
 - **dreamer** — status-transition propose and ratify, and dead-letter re-enqueue, on the node;
-  admin keys act on these verbs by their key role. An in-progress workarea's commit is an admin
-  verb only: a dreamer key that proposes or ratifies it answers `access.verb_ceiling` at step 1a
-  ([footnote 7](#permission-matrix)).
+  admin keys act on these verbs by their key role.
 - **review next and verdict** — dreamer on the row's workarea, in addition to the
   [lineage-closure exclusion](#the-dreamer-split): a row outside dreamer effective access is never
   served, and a verdict on one resolves by the refusal order like every other verb —

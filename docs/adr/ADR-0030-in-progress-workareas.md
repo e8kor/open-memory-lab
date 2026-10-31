@@ -2,869 +2,322 @@
 id: adr/ADR-0030-in-progress-workareas
 tier: engineering
 status: proposed
-answers: what an in-progress workarea is and who makes one; which keys read its held claims, marked, and how a reader grant blocks that; how recall, get, the listings, the graph reads and the events tail treat it inside and outside, and what crosses its boundary; why R2 still holds there and how it excludes self-signing; how its whole subtree contributes at once at an admin commit that nothing held may precede
+answers: what an in-progress workarea is and how an admin marks one; the one boundary function every read calls, computed at read time; which keys read the held claims inside, marked, and how a reader grant blocks that; how R2 holds inside; what any serving index must guarantee outside; how the whole subtree contributes at a commit that nothing held may precede
 -->
 
-# ADR-0030 — An in-progress workarea serves its held claims to its readers at once, marked, and contributes everything at once when a commit finds nothing held
+# ADR-0030 — An in-progress workarea serves its held claims to its readers at once, marked, and contributes its whole subtree at a commit that nothing held may precede
 
 **Status:** proposed · 2026-10-31
 
-**Amends:** ADR-0001 (d3, d5), ADR-0008 (d4, d6), ADR-0009 (d1, d2, d3, d4), ADR-0012 (d1), ADR-0013 (d1, d4), ADR-0018 (d4), ADR-0019 (d1), ADR-0022 (d2), ADR-0024 (d1), ADR-0025 (d1, d2, d3, d4, d5, d8, d9, d12, d13, d14, d15), ADR-0028 (d1, d2)
+**Amends:** ADR-0001 (d3, d5), ADR-0008 (d4, d6), ADR-0009 (d1, d2, d3), ADR-0012 (d1), ADR-0013 (d1, d4), ADR-0018 (d4), ADR-0019 (d1), ADR-0022 (d2), ADR-0024 (d1), ADR-0025 (d1, d2, d3, d4, d5, d8, d9, d12, d13, d14, d15), ADR-0028 (d1, d2)
 
 ## Context
 
-**What a crew working on one project needs.** A crew of agents on one project writes memory
-that the next agent in the same crew needs within minutes. Under R3 every write is held and
-readable by its author alone until a non-author ratifies it
-([ADR-0001](ADR-0001-the-constitution.md) d3), so a crew's own agents cannot use each other's
-work before review catches up. Review throughput is unmeasured
-([FR-2](../product/roadmap.md)), and a crew that waits on it either stalls or writes outside the
-gate.
+A crew of agents on one project needs, within minutes, the memory its other agents wrote. Under
+R3 a held write is readable by its author alone until a non-author ratifies it
+([ADR-0001](ADR-0001-the-constitution.md) d3), so a crew waits on review, whose throughput is
+unmeasured ([FR-2](../product/roadmap.md)). Reopening for one bounded case the *optimistic
+review* that [ADR-0012](ADR-0012-admission-and-review.md) rejected amends its d1, under which
+ratification was the first moment another key read a claim. ADR-0001 d5 makes a change to its
+exception's scope a new decision on that record, which this record proposes.
 
-**What the design already rejected, and why it is reopened bounded.**
-[ADR-0012](ADR-0012-admission-and-review.md) rejected *optimistic review — visible until
-rejected*: serving a held claim to others breaks R3, and a rejection would have to claw back
-what other agents read and derived from. This record reopens that alternative for one bounded
-case and answers both objections. Visibility before review is confined to one subtree an admin
-created for the purpose, every held claim it serves is marked `reviewed: false`, and nothing leaves the
-subtree until two admins commit it, which they can do only once nothing in it awaits review. A
-rejection still claws nothing back from the readers inside; that cost is stated in Consequences.
-This amends ADR-0012 d1, whose release was the first moment another key read a claim, and
-reopens, bounded, its rejected optimistic review.
+**The maintainer's decisions**, fixed on 2026-10-31 and not reopened here:
 
-**What the constitution allows today.** [ADR-0001](ADR-0001-the-constitution.md) d5 scopes one
-bounded exception: a `development` workarea may, by journalled tenant policy, relax R2 and R3
-for rows marked `self_signed`. That relaxation lets an author's own row be ratified marked
-`self_signed`. The maintainer wants the opposite trade: R2 kept, review deferred, visibility
-widened inside and held back outside. d5 says no other page may widen its scope and that a
-change to it is a new decision on that record. This record proposes that decision, and its
-acceptance amends d5 by back-pointer (Process obligations).
+1. An in-progress workarea is a `development` workarea that a journalled admin act opts in.
+2. Inside it, every key with read access on the workarea recalls its memories in state held or
+   promoted; held rows are mixed in at their usual rank, because review never reorders, marked
+   `state: "held"` and `reviewed: false`. The scan still runs at admission.
+3. R2 is kept: review is deferred, never self-signed, and a non-author reviews every memory.
+4. Contribution is whole-workarea: nothing in the subtree, promoted claims included, reaches a
+   read scoped outside it until its commit, which a second identity ratifies and which is
+   refused while any memory inside is held. Rejected memories do not block it.
+5. Each reader grant carries `unreviewed: allow | block`, default `allow`, applying only inside
+   in-progress subtrees: a grant on `universe` sets it for the whole tree, a grant per node for
+   that node, and a block wins. `oml keys issue` and `oml keys issue-agent` gain a flag to
+   block. A key-level setting is rejected.
+6. Transitions stay forward only ([ADR-0009](ADR-0009-status-ladder.md) d3).
 
-**The maintainer's decisions.** The maintainer fixed these points on 2026-10-31, and this record
-designs around them without reopening them:
-
-1. an in-progress workarea is a `development` workarea that a journalled admin act opts in;
-2. inside, held claims are readable at once by every reader, ranked with the promoted hits and
-   marked `state: "held"` and `reviewed: false`, and recall gains `include_unreviewed`, on by
-   default when the scope is in-progress;
-3. R2 is kept: review is deferred, never self-signed;
-4. contribution is all at once, for the whole workarea, at its move to `committed`, which is
-   refused while anything in it is held;
-5. errors and wire land in the contract surfaces, and `info.version` moves to `0.3.0-design`;
-6. a key's access to the held claims of other keys reaches only inside in-progress
-   workareas;
-7. a reader grant allows it unless issuance blocks it;
-8. that access is an attribute on reader grants, `unreviewed: allow | block`.
-
-How the workarea read reports that access, and how recall answers a blocked key, the
-maintainer left to this record (d8, d11).
-
-**The pages this record is held against.** The ladder and its refusals are declared on
-[workareas](../architecture/workareas.md) (D8); who may read is the
-[permission matrix](../architecture/roles-and-keys.md#permission-matrix) (D9); recall and its
-indexes are [retrieval](../architecture/retrieval.md) (D12); the wire is the
-[HTTP API](../api/http-api.md) (D13), [openapi.yaml](../api/openapi.yaml),
-[errors](../api/errors.md), the [agent plugin](../api/mcp-plugin.md) and
-[mcp-tools.json](../api/mcp-tools.json). Each rule below is declared on one of those pages and
-linked from the rest ([ADR-0018](ADR-0018-the-documentation-set.md) d5).
-
-Decided, not built.
+Review of an earlier draft, which stamped the boundary on index rows, did not converge, so the
+maintainer also fixed the mechanism readings that the decisions marked "maintainer's reading"
+take. Proposed, not built.
 
 ## Decision
 
-- **d1 — An in-progress workarea is created as one, by an admin, and stays one until its
-  commit.** `POST /v2/workareas` takes `in_progress` (boolean, default `false`), and
-  `workarea.create` journals it. The verb keeps its ceiling, the admin key role: no MCP tool and
-  no agent role reaches it (R1), because the mark changes what other keys can read. The mark is
-  set only at creation. No later verb sets it, and none clears it: the workarea stops being
-  in-progress only when its own `development` → `committed` transition is ratified, and that
-  transition is an admin verb here for the same reason (d12), so no agent role clears it. It is
-  not a fourth status: `development`, `committed` and `validated` stay the only statuses
-  ([ADR-0009](ADR-0009-status-ladder.md) d1), and an in-progress workarea is a `development`
-  workarea carrying the mark.
+- **d1 — An admin marks a `development` workarea in progress, at creation or later; a node's
+  root is its nearest marked ancestor-or-self still in `development`.** `POST /v2/workareas`
+  with `in_progress: true` sets the mark, journalled in `workarea.create`, and so does
+  `POST /v2/workareas/{workarea_id}/in-progress`, journalled as `workarea.in_progress_marked`
+  (d11). Both keep the admin key role's ceiling (R1), and no verb clears the mark. A node is
+  **inside** its root's subtree while it has a root, so the root's move to `committed`, the
+  commit (d12), ends the subtree. The mark is not a status.
 
-    Creation with `in_progress: true` is refused under a `validated` parent
-    (`workarea.frozen`, as today), inside another in-progress workarea's subtree
-    (`workarea.in_progress_refused`: subtrees never nest), and together with `prefix`
-    (`request.validation`). A vocabulary's terms are cited across the tenant by permanent CURIE,
-    and a CURIE readable before its term is reviewed could be cited, and its citations scanned,
-    against a term that is then rejected.
+    The later act is the maintainer's reading: the maintainer's crew workarea `crew/oml` already
+    exists and holds rows. Either act is refused with `workarea.in_progress_refused` unless every
+    node of the subtree is `development`, none is a vocabulary workarea, and neither the node nor
+    an ancestor or descendant has a root; `in_progress` with `prefix` is `request.validation`. So every node
+    inside stays `development` until the commit, and `committed` and `validated` workareas keep R3
+    without exception. Marking an existing workarea applies d4 and d5 at once to the rows already
+    in it, by the one journalled act and no row write.
 
-    The workarea read carries `in_progress_root_id`: the in-progress workarea whose subtree holds
-    the node, the node itself for that workarea, while that workarea is `development`, and null
-    otherwise; each entry of `children` carries it too (d11). The read carries no `in_progress`
-    boolean. On the create body and in `workarea.create`, `in_progress` is the creation mark,
-    true on the root alone and still true after its commit; a read field of that name would mean
-    something else on the same resource, and whether a node is inside is already
-    `in_progress_root_id != null`.
+- **d2 — Until the commit nothing crosses a subtree's boundary, and only its root moves up the
+  ladder.** Each case is `workarea.in_progress_refused`, as the `in_progress` module of
+  `oml-domain` on the `feat/in-progress-domain` branch decides it:
 
-    A mark set only at creation cannot reach a row written before it. A later opt-in would show
-    every reader the held rows their authors wrote when only they could read them, and would
-    take promoted rows away from the readers of the parents with no per-row journalled act, the
-    read-path visibility switch [ADR-0009](ADR-0009-status-ladder.md) rejected as a fourth
-    status. An off switch would be a second way to contribute that skips the two-admin commit
-    and its precondition.
+    - a status transition proposed or ratified on a node whose root is another node;
+    - a reassignment whose source and destination have different roots;
+    - a re-parent of a node whose subtree holds no root that changes its root, and a re-parent of
+      a node whose subtree holds a root to a destination that has one: subtrees never nest;
+    - a child created under a node that has a root, with `in_progress: true` or a `prefix`;
+    - a claim-edge proposal whose endpoints have different roots, answered after both endpoints
+      pass readability, each read at its own node (d4), since a proposal resolves no workarea.
 
-- **d2 — The in-progress workarea and its descendants are one subtree: every node in it stays
-  `development` until the commit, and no claim, node, lineage or edge crosses its boundary
-  before.** A child
-  created under an in-progress workarea, or under any node in its subtree, is a `development`
-  workarea inside that subtree. While the subtree is in progress:
+    A `derives_from` target inside, named by a submission outside, needs no rule (maintainer's
+    reading): a submission reads its ancestors at its resolved workarea, so d4 hides the target and
+    the answer is `access.not_found`, as for any claim the key cannot read. A claim inside may
+    derive from one outside. This amends ADR-0008 d6 (the re-parent gains the refusal) and
+    ADR-0009 d3 (a transition was proposable on any node).
 
-    - a status transition proposed on any node in it other than the in-progress workarea itself
-      is refused with `workarea.in_progress_refused`: the subtree moves up the ladder only at
-      its root. This sits beside ADR-0009 d4's child-status constraint, which still governs the
-      later move to `validated`;
-    - a reassignment of a claim into or out of the subtree is refused with
-      `workarea.in_progress_refused`; a reassignment between two nodes inside it is allowed
-      under the existing rules;
-    - a re-parent that would move a node into or out of the subtree is refused with
-      `workarea.in_progress_refused`; re-parenting the in-progress workarea itself moves the
-      subtree whole and is allowed under the existing rules, except that re-parenting an
-      in-progress workarea, or any node whose subtree holds one, to a destination inside another
-      in-progress subtree is refused with `workarea.in_progress_refused`: subtrees never nest;
-    - a `prefix` on a child created inside it is refused with `workarea.in_progress_refused`
-      (d1);
-    - a `derives_from` target or a claim-edge endpoint inside the subtree, held or promoted, is
-      admitted only when the submission's resolved workarea, or the edge's other endpoint, lies
-      inside the same subtree. Otherwise the submission or the edge proposal is refused with
-      `workarea.in_progress_refused`, answered only after the target passes the readability
-      check of d5, which does not depend on where the submission lands, so a key that cannot
-      read the target gets `access.not_found` as before and learns nothing.
+- **d3 — The constitution gains a second bounded relaxation, of R3's first sentence, inside an
+  in-progress subtree only, and R2 holds there without exception.** "Nothing is readable by
+  others until it is ratified" holds everywhere outside; inside, the keys d5 admits read held
+  claims, marked, and nothing inside reaches a read scoped outside until the commit (d4). "Review
+  never reorders results" holds inside too (d7, d8). Self-signing stays as ADR-0001 d5 states it,
+  amended by ADR-0025 d17; this record restates none of it.
 
-    The refusals are declared in the
-    [refusal matrix](../architecture/workareas.md#refusal-matrix) of workareas. A crew
-    structures a project in sub-areas, so the rule covers the subtree, not one node. A descendant marked `committed` or `validated` before the root would
-    claim a stage the subtree has not reached, since nothing in it has left the subtree. A
-    reassignment out would contribute one claim ahead of the rest; one in would take a promoted
-    claim away from the readers of its old workarea without a demotion. A claim outside that
-    derives from one inside, once promoted, would carry the inside claim's id to every reader
-    outside through the lineage read, which names an unreadable ancestor as a redacted bare id
-    ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d3), and its text would carry
-    unreviewed content out ahead of the commit; an edge between the two would name the inside
-    claim at a claim-edge read scoped outside. A root re-parented inside another subtree would
-    keep its rows stamped with its own root, so its commit would release them at scopes outside
-    the enclosing subtree before that subtree's commit. This amends ADR-0009 d1, which lists what a
-    status refuses, and d4, beside which the new constraint sits, and ADR-0008 d6, whose
-    re-parent gains the boundary refusal.
+    R2 is kept (maintainer's reading): a promotion, by `lifecycle.promote` or
+    `lifecycle.supersede`, of a version inside counts at least one non-author verdict, applies
+    `k` = max(policy `k`, 1) whatever the
+    [review policy](../architecture/admission.md#review-policy-objects) says, and never sets
+    `self_signed` whatever tenant policy says. The server checks it where the `self_signed` mark
+    is made, beside the R2 lineage check; property **`P-R2-INPROGRESS`** states it. This amends
+    ADR-0001 d3 and d5, and ADR-0019 d1: `oml-domain` encodes the second relaxation and its floor.
 
-- **d3 — The constitution gains a second bounded relaxation, of R3's first sentence only, and R2
-  holds inside it unconditionally.** ADR-0001 d3 reads: "Nothing is readable by others until it
-  is ratified. Review never reorders results, and steering rows, which precede hits, are never
-  ranked." Under this record the first sentence holds everywhere outside an in-progress
-  subtree. Inside one, a held claim is readable by the keys
-  that the [permission matrix](../architecture/roles-and-keys.md#permission-matrix) allows (d5,
-  d6, d7), marked `state: "held"` and `reviewed: false`, and nothing in the subtree is readable
-  at any scope outside it until its commit (d10, d12). The second sentence holds inside without
-  exception (d9).
+- **d4 — One boundary function decides every read at read time, from the workarea tree and the
+  marks.** This is the maintainer's reading, declared here once; every other page links here. A
+  read at node N may serve a row whose workarea is D only if D has no root, or N has D's root: D
+  lies outside every in-progress subtree, or N lies inside D's. A **scoped read** (recall, the
+  scoped listing, the graph reads) serves the **served node set**, the nodes of subtree(N) the
+  key reads today that pass at N, so a read scoped outside leaves every subtree out whole. A
+  **read with no scope** (get by id, the lineage read, the attachment fetch, one event) is at the
+  row's own node, which always passes, and d5 decides who reads a held row. Related rows, a
+  lineage closure's and every read's `derives_from` and `replaces`, take the decision at the
+  subject's node or the scope node, and a submission reads its `derives_from` targets at its
+  resolved workarea. Grants, denials, the simulation predicate
+  ([ADR-0013](ADR-0013-reads-served-from-postgres.md) d3) and the `self_signed` scope apply
+  beside it. The key's own rows obey it too: scoped outside, `include_own_held` and the listing
+  serve none from inside, while get and `own=true` still do.
 
-    ADR-0001 d5 reads: "R2 and R3 hold unconditionally in `committed` and `validated`
-    workareas. A `development` workarea MAY relax them by journalled tenant policy." Once this
-    record is accepted, it scopes two relaxations, the second scoped by this decision, which
-    ADR-0001 d5 reaches by back-pointer; no other page restates either scope (Process
-    obligations):
+    `oml-domain` holds it as one pure function beside `in_progress_root`, giving the decision for
+    the roots of N and D and the served node set over a list of nodes; every read path in
+    `oml-app` calls it. Nothing is stamped on a memory row, so a re-parent updates no row and the
+    commit rewrites nothing. This amends ADR-0009 d2: who reads a row is answered from grants,
+    permission epochs, the journalled marks and the roots' statuses.
 
-    1. **self-signing**: as ADR-0001 d5 states it, amended by ADR-0025 d17, unchanged by this
-       record;
-    2. **in-progress**: R3's first sentence relaxed inside an in-progress subtree, as above. R2
-       is not relaxed, and every claim inside promotes only by ratification on non-author
-       verdicts under its workarea's review policy with at least one non-author verdict (d4).
+- **d5 — Inside, a key with reader effective access reads other keys' held claims, marked,
+  unless a grant there blocks.** This is the maintainer's reading. A key reads another key's held
+  version on node D exactly when D has a root, reader is in `effective_roles(D)`
+  ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d1), and no reader grant effective on D
+  (its node D or an ancestor, its deny list masking neither) carries `unreviewed: block` (d6); one
+  block wins over any inherited allow. `oml-domain` holds this as a pure function beside
+  `effective_roles`, computed on every request. Held means state `held`, dead-lettered versions
+  included, of any kind; other states inside are served as everywhere else.
 
-    R2 and R3 hold unconditionally in `committed` and `validated` workareas, as before, and R2
-    also holds unconditionally inside every in-progress subtree, where relaxation 1 is never
-    admitted (d4). No other page may widen either scope.
+    Every served claim version carries `reviewed`, true exactly when it is `promoted` and not
+    `self_signed` (ADR-0001 d5). Every read applies d4 and then this rule, pointers included:
+    `derives_from` and `replaces` name a held version inside to exactly these keys, and
+    `410 lifecycle.erased` also answers them for a version erased while held; every other key gets
+    `access.not_found`. This amends ADR-0025 d3 (the readability test) and d5 (held text matched
+    for its author alone), ADR-0013 d1 (a serving tier of promoted rows) and ADR-0022 d2 (`/v1`
+    reads own and promoted rows).
 
-    The constitution states its exceptions on the day they are made (ADR-0001 d5). A relaxation
-    that keeps R2 is narrower in authority than self-signing and wider in audience, so it is
-    named separately rather than folded into the first. This amends ADR-0001 d3 and d5, and
-    ADR-0018 d4's "held" row (d13). It also amends ADR-0019 d1, under which `oml-domain` encodes
-    R1–R4 and the one bounded development exception, nowhere else: the domain core gains the
-    second relaxation and the checks of d4 beside them.
+- **d6 — `unreviewed` is a nullable attribute of reader grants, null meaning allow, set to block
+  at issuance.** This is the maintainer's reading. A reader grant carries
+  `unreviewed: "allow" | "block"`, absent meaning allow, so a crew's keys read its held work with
+  no setting; on a grant of any other role it is `request.validation`. The nullable column
+  `grants.unreviewed`, null meaning allow and valid on reader rows only, needs no backfill:
+  `grant.issued` carries the value when sent, an event without it folds as null, and
+  `key.rotated` reproduces each grant with its value. A value never changes; another value is a
+  revoked grant and a new one. The wire schema declares no default, and the descriptions state
+  what absent means. `POST /v2/keys` and `POST /v2/keys/{key_id}/grants` take it on each reader
+  grant and echo it; `oml keys issue` and `oml keys issue-agent` gain `--block-unreviewed`, which
+  sets `block` on every reader grant they send, the one [ADR-0028](ADR-0028-agent-key-issuance.md)
+  d2 adds included. This amends ADR-0008 d4 (an attribute that narrows a read), ADR-0025 d1 and d2
+  (the reader grant and the issuance body) and ADR-0028 d1 and d2 (the flag and its value).
 
-- **d4 — Self-signing and in-progress exclude each other: no ratification inside an in-progress
-  subtree is self-signed.** A ratification of a version whose workarea is inside an in-progress
-  subtree never counts an author-key or author-principal verdict and never sets `self_signed`,
-  whatever tenant policy says. It also counts at least one non-author verdict, a verdict by a
-  key and a principal outside the row's lineage closure, and applies `k` = max(policy `k`, 1),
-  whatever the workarea's review policy says. The server checks both inside round trip two's
-  statement, beside the R2 lineage check ([ADR-0024](ADR-0024-performance-foundation.md) d1).
-  The rule is declared once, on the
-  [refusal matrix](../architecture/workareas.md#refusal-matrix) of workareas. A
-  `development` workarea's review policy may be permissive to the limit the constitution allows
-  ([admission](../architecture/admission.md#review-policy-objects)): without the floor, a policy
-  with `k: 0`, or one permissive enough that a row would otherwise be marked `self_signed`,
-  would ratify a row inside on no verdict at all, unmarked, reading `reviewed: true`, and the
-  commit would release it outside with no one having reviewed it. A tenant policy that
-  admits self-signing in `development` workareas therefore never applies to a node inside an
-  in-progress subtree, and a row is never both `self_signed` and inside one. Creating an
-  in-progress workarea under a parent that self-signs is allowed, because the relaxation stops at
-  the subtree's boundary. After the commit (d12) the former subtree's `development` descendants
-  are ordinary `development` workareas, and the tenant policy applies to them from then on.
+- **d7 — Today's PoC searches `memories` directly, so the boundary is exact there, and any
+  future serving index must keep it exact.** This is the maintainer's reading. The PoC has no
+  `memories_fts`, `held_fts` or `memory_embeddings` table: recall matches `memories` through the
+  GIN index on `to_tsvector('simple', claim)` (`migrations/0001_init.sql`), scores by `ts_rank`
+  at normalization 0, which reads only the row and the query, and filters `workarea_id` in the
+  statement that applies `LIMIT` (`crates/adapters/oml-pg/src/lib.rs`, `recall_fts`). A held row
+  inside therefore scores as it will once promoted, and nothing inside changes an outside recall.
+  The use case passes the served node set where it passes `readable` today, and `recall_fts` and
+  `ListingFilter` gain `unreviewed: &[Uuid]`, the served nodes where d5 admits the key, which
+  match held versions of any author.
 
-    No refusal attaches to a policy act, because none is declared: ADR-0001 d5 says only
-    "journalled tenant policy", and the
-    [review policy object](../architecture/admission.md#review-policy-objects) carries no
-    self-signing field. The record that declares that act names its endpoint and field, and
-    states whether it refuses a node inside an in-progress subtree.
+    The record that builds the designed indexes (ADR-0013 d1 and d4, ADR-0025 d5, the
+    per-simulation index included) must apply the outside exclusion before an approximate scan's
+    ceiling and any corpus statistic a score uses, by partition or pre-filter, never by
+    post-filtering a shared scan, and must score a held row inside as it will once promoted.
+    Property **`P-R3-BOUNDARY`** states the result: a read scoped outside an in-progress subtree
+    returns the same rows, count (`hits_omitted` and the budget counts included), order and scores
+    whatever rows inside it are added, changed or removed. This amends ADR-0013 d4, whose indexer
+    read promoted text only.
 
-    The maintainer keeps R2 inside. A self-signed row inside would also reach readers outside at
-    the commit with no second identity behind it, which ADR-0001 d5 forbids ("never promote
-    beyond it"). The check sits where the `self_signed` mark is made, so it binds whatever a
-    policy says. This amends ADR-0001 d5.
+- **d8 — Recall's `include_unreviewed` defaults to `true` and can only narrow; held hits rank and
+  count like every hit.** This is the maintainer's reading. `RecallRequest` and `oml_recall`
+  gain `include_unreviewed` (boolean, default `true`). With `true`, the candidates also include
+  every held version of any author, the key's own included, of kind `memory` or `derived_fact`,
+  never a retirement version, on the served nodes where d5 admits the key; `include_own_held`
+  still adds own held rows elsewhere in the served set, and nothing is served twice. With `false`
+  none is added. Where d5 admits nothing, `true` adds nothing, and the field never answers an
+  error. The added hits join ADR-0025 d8's total order, score descending then `artifact_id`
+  ascending, with `state: "held"`, `tip: false` and `reviewed: false`, counting against `k` and
+  `max_tokens`; a held successor is served beside the tip it would replace. Steering stays
+  promoted only. The read log records the held ids served, and the request digest carries
+  `include_unreviewed` with its default applied. This amends ADR-0025 d4 (own held rows inside
+  reach scopes inside only), d8 (hits gain held versions), d9 (the digest) and d12 (`oml_recall`
+  gains the field and the claim item `reviewed`; the catalog stays twelve tools).
 
-- **d5 — A key reads other keys' held claims only inside in-progress workareas.** Access to
-  the held claims that other keys wrote, **unreviewed access**, reaches only nodes inside an
-  in-progress subtree. A reader grant on `universe` that allows it reads held claims in every
-  in-progress workarea of the tenant and in no other workarea. `committed` and `validated` workareas, and `development`
-  workareas outside any in-progress subtree, keep R3 unconditionally. Which keys read within
-  that scope is declared once, on the
-  [permission matrix](../architecture/roles-and-keys.md#permission-matrix); every other page
-  links there.
+- **d9 — The listings, the graph reads, get and the attachment fetch take d4 and d5, and nothing
+  else.** Inside, the scoped listing lists every held version d5 admits beside the promoted
+  served tips, marked by `state` and `reviewed`, and `state=promoted` narrows it; the graph reads
+  (`GET /v2/claim-edges`, `oml_graph`) serve the held claims d5 admits; get and the attachment
+  fetch of a held version serve the keys d5 admits on its workarea. Scoped outside, each serves
+  nothing from inside. This amends ADR-0025 d13 (the scoped listing).
 
-    The claims readable this way are the held versions of every kind, dead-lettered ones
-    included, under every other read predicate: global denials, the simulation audience
-    ([simulations](../architecture/simulations.md)) and the naming rule of
-    [own](../architecture/roles-and-keys.md#own). Each served claim carries `reviewed`, which is
-    true exactly when its state is `promoted` and it is not `self_signed`, on the ring's
-    `MemorySummary` and on the agent plugin's claim item, everywhere a claim version is served.
-    A `self_signed` promoted row therefore reads `reviewed: false` too, since a self-signature is
-    never called a review (ADR-0001 d5). Rejected, demoted and erased versions are served
-    inside as everywhere else: to their author only.
+- **d10 — The events tail serves an event iff the key may read its subject.** This is the
+  maintainer's reading, one rule with no clause added: the read is at the subject's own node
+  (d4), so an event is served exactly when get of its subject would serve the key. For a subject
+  inside an in-progress subtree d5 decides; for any other, ADR-0025 d15's clauses are that test,
+  unchanged. A tail's `workarea_id` still filters to its subtree, `workarea.in_progress_marked`
+  maps as `workarea.create` does, and the test runs at the request on the current tree, marks and
+  access. This amends ADR-0025 d15: inside, visibility follows current state.
 
-    "Inside" and "outside" describe a read's scope, never the key: a key whose reader grant on
-    an ancestor covers an in-progress workarea is one of its readers under
-    [ADR-0008](ADR-0008-workarea-algebra.md) d4, and it reads the subtree by scoping inside it
-    or by id (d10).
+- **d11 — The workarea surface gains a create flag, an opt-in verb and the root on the read.**
+  `WorkareaCreate.in_progress` (boolean, default `false`); `POST
+  /v2/workareas/{workarea_id}/in-progress`, admin key role, no body, journalled as
+  `workarea.in_progress_marked`, answering `200` with the workarea; `Workarea.in_progress_root_id`,
+  the node's root computed at the read, the node itself for a root, null outside; and the CLI's
+  `oml workareas create --in-progress` and `oml workareas in-progress <workarea>`.
+  `my_effective_verbs` and `permission_epoch` are unchanged: d5 turns on a mark and a grant
+  attribute, not a role, and the mark is read beside the epoch. This amends ADR-0025 d14.
 
-    A supervisor-style access that read held claims anywhere the key can read would relax R3
-    per key across the whole tree and expose every crew's held work.
+- **d12 — The commit is the root's `development` → `committed` transition under ADR-0009's
+  rules, refused while any version inside is held.** This is the maintainer's reading. Different
+  identities propose and ratify it, each a dreamer or an admin (ADR-0009 d3). Both acts are
+  refused with `workarea.held_remaining`, details `{workarea_id}` and no count, while any version
+  in the subtree is in state `held`, dead-lettered ones included; rejected, demoted and erased
+  versions do not block, and a refused ratification journals nothing. The ratification's test
+  runs in round trip two's statement under the chain lock, which every capture takes, so no held
+  version arrives between test and commit: one `EXISTS` over the subtree's nodes through the
+  declared index `memories_workarea (tenant_id, workarea_id, state)`
+  ([Postgres schema](../data/postgres-schema.md)), one probe per node, unmeasured
+  ([FR-25](../product/roadmap.md)). d1's subtree test runs the same way. This amends
+  [ADR-0024](ADR-0024-performance-foundation.md) d1, whose lock admits no scan; ADR-0008 d6's
+  re-parent already holds a lock proportional to its subtree.
 
-    This amends ADR-0025 d3, whose readability test gains the held versions inside an
-    in-progress subtree that the permission matrix (footnote 6) lets the key read, in three
-    places:
+    The commit journals the existing `workarea.status_transition` unchanged. From it no node of
+    the former subtree has a root, so its promoted claims reach every scope and its nodes are
+    ordinary `development` workareas. The refusal tells a proposer that some version in the
+    subtree is held, possibly where it cannot read, a signal [FR-31](../product/roadmap.md) gains
+    at acceptance. This amends ADR-0009 d3 (the precondition) and d1 (a `development` workarea's
+    only relaxation was self-signing).
 
-    - **Lineage and edges.** Such a held claim is readable as a `derives_from` target and as a
-      claim-edge endpoint, wherever the submission's resolved workarea or the edge's other
-      endpoint lies. A readable target or endpoint inside a subtree, held or promoted, named
-      from outside that subtree is then refused by the boundary rule of d2,
-      `workarea.in_progress_refused`. Readability never depends on where the submission lands,
-      so a submission never answers `access.not_found` for an ancestor the key can get by id. An admitted edge
-      between two claims inside is a pending edge of each endpoint's lineage closure, so R2
-      excludes their authors from judging either, as for every pending edge. A supersede target
-      must still be the served tip.
-    - **Pointers.** `derives_from` and `replaces` on get, recall and every listing name, besides
-      the key's own rows in any state and promoted rows within its reader effective access, the
-      held versions inside an in-progress subtree that footnote 6 lets it read. They then agree
-      with the lineage read, which follows the same test (d10).
-    - **Erasure.** `410 lifecycle.erased` answers, besides the author's key set and, for a
-      version promoted then, a key with reader effective access on its workarea, a key that
-      footnote 6 allowed on the workarea of a held version inside an in-progress subtree
-      immediately before its erasure. Every other key gets `access.not_found`, as before.
-
-- **d6 — A reader grant confers unreviewed access by default, and issuance can block it per
-  grant.** A reader grant that says nothing allows its holder to read the held claims of the in-progress
-  workareas it covers, so every key in a crew reads its crew's held work with no setting at
-  issuance. A key holding no reader grant reads none. A key whose reader grants block it still
-  reads its own held rows, in any state, under the own-work rule
-  ([own](../architecture/roles-and-keys.md#own)): unreviewed access concerns other keys' claims.
-
-    A default of block would make every agent key in an in-progress crew need the setting at
-    issuance, and an omitted setting would fail silently, as an empty recall. The block exists
-    for a key that must read a crew's reviewed claims only: an outside monitor, or an agent whose
-    instructions say to trust nothing a non-author has not reviewed.
-
-- **d7 — Unreviewed access is the `unreviewed` attribute of a reader grant, `allow` or `block`,
-  and a block on any reader grant effective on a node wins there.** Each reader grant carries
-  `unreviewed: "allow" | "block"`, default `allow`. A grant of another role that carries the
-  attribute is refused with `request.validation`. The key may read held claims of other keys on
-  node N exactly when:
-
-    1. N lies inside an in-progress subtree (d5);
-    2. reader is in `effective_roles(N)` ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
-       d1);
-    3. no reader grant effective on N carries `unreviewed: block`. A grant is effective on N when
-       its node is N or an ancestor of N and its own deny list names neither N nor an ancestor of
-       N, so a grant whose deny masks N neither allows nor blocks there.
-
-    A key that needs it everywhere holds one reader grant on `universe` with `allow`. A key that
-    needs it per workarea holds one reader grant per node, resolved the usual way: the union of
-    grants, attenuated by their deny lists, minus global denials. The result is a pure
-    `oml-domain` function beside `effective_roles`, computed on every request with no cache, like
-    effective access ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
-
-    The attribute is journalled like every grant attribute, in the style of the proposed
-    ADR-0027's `edge_labels` narrowing on dreamer grants: `grant.issued` carries it, the grant
-    row stores it, the `201` of issuance and the key detail echo it, and the permission epoch
-    labels it. A grant's value never changes; another value is a revoked grant and a new
-    `grant.issued`. A reader grant's `grant.issued` that carries no `unreviewed`, as every one
-    journalled before this record does, folds as `allow`, and `key.rotated` reproduces each
-    grant with its source grant's value
-    ([event catalog](../data/event-catalog.md#grantissued)).
-
-    - On the wire, `POST /v2/keys` and `POST /v2/keys/{key_id}/grants` take `unreviewed` on each
-      reader grant.
-    - In the [CLI](../cli/reference.md), `oml keys issue`, `oml keys issue-agent` and
-      `oml grants add` gain `--unreviewed <allow|block>`, default `allow`. It sets the value on
-      every reader grant the command sends, the reader grant that
-      [ADR-0028](ADR-0028-agent-key-issuance.md) d2 adds beside a writer grant included.
-
-    A block wins for the reason a deny wins: a grant that withholds one read must not be undone
-    by a broader grant the issuer added for another purpose. The rule is declared on the
-    [permission matrix](../architecture/roles-and-keys.md#permission-matrix).
-
-    This amends three records:
-
-    - ADR-0008 d4: a grant attribute narrows one read, resolved block-wins over the same grants;
-    - ADR-0025 d1 and d2: a reader grant carries an attribute as well as a role, and the issuance
-      body carries it;
-    - ADR-0028 d1 and d2: `issue-agent` gains the flag, and the added reader grant carries its
-      value.
-
-- **d8 — Recall's `include_unreviewed` defaults to the key's unreviewed access on the scope node,
-  and the hits it adds are ranked and marked like every other hit.** `RecallRequest` and
-  `oml_recall` gain `include_unreviewed` (boolean).
-
-    - **The default** is `true` when the key may read held claims of other keys on the scope node
-      (d7), and `false` otherwise: outside every in-progress subtree, and wherever a reader grant
-      effective on the scope blocks it.
-    - **With `true` at a scope inside an in-progress subtree**, the hit candidates also include
-      every held version, of any author, of kind `memory` or `derived_fact`, never a retirement
-      version, that lies in a workarea within subtree(scope) where the key may read held claims of
-      other keys, and that the query and the `kinds` filter admit. The key's own held rows in
-      those workareas are among them; `include_own_held` adds its own held rows elsewhere in the
-      subtree, and nothing is served twice.
-      Workareas in the subtree where a grant blocks contribute their promoted hits only; that is
-      absence, as a per-grant deny is absence in any subtree read.
-    - **An explicit `true` at a scope node inside an in-progress subtree where a reader grant
-      effective on it carries `unreviewed: block`** is refused with
-      `access.grant_refused`, details `{workarea_id, needed_role: "reader", unreviewed: "block"}`:
-      the request names rows that exist under the rule and that the key's grants withhold. A
-      default recall never asks for them, so it never refuses.
-    - **With `true` at a scope outside every in-progress subtree**, nothing is added and nothing
-      is refused, whatever a reader grant effective there carries. No held claim of another key
-      is readable at such a scope (R3), so the answer
-      is exact. The key's own held rows still join only under `include_own_held`.
-
-    The added hits merge with the promoted hits under the one total order of ADR-0025 d8, score
-    descending then `artifact_id` ascending. They carry `state: "held"`, `tip: false` and
-    `reviewed: false`, a held successor carries `replaces` beside the promoted tip it would
-    replace, and they count against `k` and `max_tokens` like any hit. Applicable steering stays
-    promoted steering only, so a held steering row never enters segment 1, and a held retirement
-    version never takes a claim out of recall. Both are reachable by get and the listings.
-
-    The read log records the held ids served like any others. The request digest gains the
-    member `include_unreviewed`, with the scope's default applied, so one request digests alike
-    on every server. Absent, the field gives exactly the prior answer at every scope that could
-    exist before this record. The rule is declared on
-    [retrieval](../architecture/retrieval.md#held-claims-inside-an-in-progress-workarea).
-
-    One ranked list marked by state is the shape ADR-0025 d4 chose for the author's own held rows,
-    for the same reason: a second list would need its own order and its own share of the budget.
-    Steering stays promoted because the vocabulary defines it as a promoted standing
-    instruction (ADR-0018 d4), and an instruction no one has reviewed, served ahead of every hit and never
-    cut is the most privileged place for the least checked text. This amends ADR-0025 d4, whose
-    own held rows inside an in-progress subtree are reached at scopes inside it only (d10), d8,
-    whose hits gain these rows, and d9, whose digest gains a member.
-
-- **d9 — Inside an in-progress subtree, held and promoted claims are indexed alike, behind a
-  fence keyed by the subtree and in a vector graph of the subtree's own, so ratification changes
-  no score and the commit releases every row at once.** Every non-simulation held and promoted
-  version in a workarea inside an in-progress subtree has the `memories_fts` row and the
-  `memory_embeddings` row it would have once promoted outside one, a held one from its capture
-  on. Each such row carries `in_progress_root_id`, the in-progress workarea whose subtree holds
-  it, and `held_fts` holds none of them. The version's `memories` row carries the same
-  `in_progress_root_id`, set by the capture's round trip two exactly as the index row is
-  stamped. It never changes, because no version crosses the boundary while its root is in
-  progress (d2); the commit's held test (d12), the reads outside the indexes and the events tail
-  (d10) read it. A restrictive row-level security policy on each index table serves a row whose
-  `in_progress_root_id` names a workarea still in `development` only to a transaction whose
-  `oml.in_progress_root` names that workarea. Its `WITH CHECK` equals its `USING`, so an insert
-  or update of such a row passes only there, and on `memory_embeddings` it is created on the
-  parent and on every partition below it, so a statement that names a partition directly is
-  fenced too.
-
-    - **The subtree's own vector graph.** Each `memory_embeddings_t_<tenant>` partition is itself
-      list-partitioned on `in_progress_root_id`. One partition, `FOR VALUES IN (NULL)`, holds the
-      rows with no root, and each in-progress root has a partition of its own with its own HNSW
-      index. `workarea.create` with `in_progress: true` creates that partition and its index as a
-      table and attaches it in its own transaction, before round trip one, so the chain lock holds
-      none of that DDL. The attach takes `SHARE UPDATE EXCLUSIVE` on the tenant partition, and
-      `ACCESS EXCLUSIVE` on a default partition only if one exists, which it then scans
-      ([ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html), fetched 2026-10-31). There is no `DEFAULT` partition, so the attach locks and
-      scans no other partition, and an insert whose root has no partition fails rather than
-      landing in a shared graph.
-        - A recall scoped inside scans its root's partition, which holds every embedded version
-          of subtree(scope).
-        - A recall scoped outside scans the no-root partition and the partitions of committed
-          roots only, never a partition whose root is `development`. Held writes inside therefore
-          use up no part of an outside scan's ceiling, and change neither which hits an outside
-          recall returns nor how many.
-        - After the commit an asynchronous move takes a committed root's rows into the no-root
-          partition, clearing their `in_progress_root_id`, and drops the root's partition once it
-          is empty and no indexer work item names that root. Until then a recall scoped outside
-          reads both and deduplicates by `(artifact_id, version)`. No row is served nowhere at any
-          moment, and nothing moves under the chain lock.
-        - A unique or primary key constraint on a partitioned table must include every
-          partition key column ([Table Partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html), fetched 2026-10-31), and a primary key column cannot
-          be null while `in_progress_root_id` must be, so `memory_embeddings` carries no primary
-          key. Each
-          leaf partition carries a unique index on `(artifact_id, version)`, and one row per
-          version across a tenant's partitions is held by the writes: each version's row is
-          inserted once, under its root, and moved, never copied.
-        - The DDL's cost inside `workarea.create` and the move's cost are unmeasured, tracked
-          against [FR-25](../product/roadmap.md).
-    - **Simulation rows.** A simulation row keeps its per-simulation index. A simulation row
-      inside an in-progress subtree is indexed there from its capture on, carrying
-      `in_progress_root_id` under the same policy, so its score does not change at ratification
-      and an audience key's recall scoped outside skips it too. The per-simulation index has no
-      declared DDL, an open detail named on the
-      [Postgres schema](../data/postgres-schema.md#full-text-search-and-embeddings).
-    - **The root.** A version's root is the nearest ancestor-or-self of its workarea with
-      `in_progress = true` and `status = 'development'`, or none. `oml-server` computes it in
-      round trip one's statement, beside `pg_advisory_xact_lock` and the chain-head read
-      ([ADR-0024](ADR-0024-performance-foundation.md) d1), and sets `oml.in_progress_root` to it
-      with `set_config(…, true)`, transaction-local, never from the client.
-    - **The row lock comes before the chain lock.** A transaction that moves a version out of
-      `held` or `promoted`, a rejection, demotion or erasure, locks the version's `memories` row
-      `FOR UPDATE` in a sub-select that round trip one's advisory-lock call consumes, for example
-      `SELECT pg_advisory_xact_lock($tenant), <chain-head read> FROM (SELECT 1 FROM memories WHERE tenant_id = $t AND artifact_id = $a AND version = $v FOR UPDATE) r`.
-      The wait for that row, behind an `oml-indexer` insert that holds it `FOR SHARE`, therefore
-      happens before the chain lock is held, and a statement that returns no row aborts the
-      transaction. This amends ADR-0024 d1: that row lock is the one thing admitted before the
-      chain lock in round trip one's statement.
-    - **Placement is decided under the chain lock.** Round trip two's statement, which runs once
-      the lock is held, reads the root's status again. A capture or a reopen into `held` inserts
-      a `memories_fts` row stamped with that root only while the root is still `development`, and
-      otherwise a `held_fts` row with no root, so a capture serialized after a commit is an
-      ordinary held row. A reassignment between two nodes of one subtree, into `held` or not,
-      inserts nothing: it is the checked `UPDATE` of the existing rows' workarea and path. The
-      capture's `tsv` is still computed before `BEGIN`, since it does not depend on the
-      placement.
-    - **Reads.** `oml-server` sets the setting, transaction-local, at the start of every read
-      transaction to the resolved scope node's root, and leaves it empty at a scope outside.
-    - **Writes and removals.** Every statement that writes or removes a fenced index row runs
-      under the version's own root, set the same way: the capture insert, `oml-indexer`'s insert
-      (below), the reassignment `UPDATE` of the rows' workarea and path between two nodes of one
-      subtree, and the removals at rejection, demotion and erasure.
-    - **Re-parenting.** A re-parent rewrites the `workarea_path` of fenced `memory_embeddings`
-      rows once per in-progress root in the moved subtree, each `UPDATE` preceded by
-      `set_config('oml.in_progress_root', <root>, true)`, plus one `UPDATE` with the setting empty
-      for the unfenced rows. The sum of the affected counts is checked against the count of the
-      moved subtree's embedding rows, counted under the same settings, and any mismatch aborts
-      with `system.internal`.
-    - **The checks.** For a version whose state at the transaction is `held` or `promoted` (the
-      rejection of a held version, the demotion of a promoted one, the erasure of a held or
-      promoted one) the `memories_fts` removal is checked to affect exactly one row, and so is the
-      reassignment `UPDATE`; any other count aborts the transaction with `system.internal`. An
-      erasure of a rejected or demoted version inside runs no `memories_fts` or
-      `memory_embeddings` statement, since its rows were removed at that transition. Both index
-      rows sit behind the same fence under the same setting, so a passing check also shows the
-      embedding statement ran where its row is visible. For a version inside an in-progress
-      subtree no `held_fts` statement runs and none is checked: capture, reopen and a
-      reassignment that re-enters held insert no `held_fts` row there, and promotion, rejection,
-      demotion, erasure and reassignment delete or update none.
-    - **Other reads.** The scoped listing, the graph and lineage reads, get and the attachment
-      fetch read `memories` through one SQL function, `served_memories(scope_root)`, that applies
-      the boundary on `memories.in_progress_root_id`, and no read path selects `memories`
-      directly for another key's row. The events tail applies the boundary condition in
-      `events_with_subjects`. Outside the indexes the boundary is a predicate, held by the
-      port-contract tests of the PoC form below, not a fence.
-
-    The policy reads the root's status, so the commit, which changes one `workareas` row, makes
-    every one of those index rows matchable at scopes outside in the same transaction.
-
-    **The indexer.** `oml-server`, never the indexer, chooses the root. The indexer's work item
-    carries `(artifact_id, version, in_progress_root_id)`, written by the transaction that made
-    the version indexable with the root that transaction placed it under. `oml-server` decrypts
-    the held body from its placement
-    ([admission](../architecture/admission.md#quarantine-placement)) and serves the plaintext
-    to the indexer, which holds no quarantine credential and no decrypt grant. The indexer's
-    insert is one `INSERT … SELECT` over the version's `memories` row, taken `FOR SHARE`, that
-    writes the embedding with the row's current `workarea_path` only while the row's state is
-    `held` or `promoted`, in a transaction that sets `oml.in_progress_root`, transaction-local,
-    to the root its work item carries. A rejection, demotion or erasure whose transaction ends first
-    leaves that insert nothing to write; one that arrives while the insert holds the row waits
-    for it, before taking the chain lock, and then removes the embedding it wrote. The indexer's
-    Postgres role holds exactly the privileges [security](../architecture/security.md) lists for
-    it, the `FOR SHARE` lock's included. Ratification inside changes no index row.
-    Held rows still never enter silver or gold: silver materialization stays promotion-only
-    ([ADR-0012](ADR-0012-admission-and-review.md) d1).
-
-    **Inside, the fence does not separate authors.** It filters by root alone, and the index
-    rows carry no state and no author. A key whose grants block, a recall with
-    `include_unreviewed: false` and a node a per-grant deny masks are kept from other keys' held
-    rows by the recall predicate, which joins each candidate to its `memories` row for state and
-    author, not by the fence. An own held row inside is matched the same way, through
-    `memories_fts` joined to `memories` on `author_key_id` under the caller's own key set, since
-    `held_fts` holds none there.
-
-    **The PoC form.** The PoC has two stores, `PgStore` and the `oml-app` double `MemStore`, and
-    neither has `memories_fts` or `memory_embeddings`: its migrations search `memories` through a
-    GIN index on `to_tsvector(claim)`. Its form is a port change. `recall_fts` gains
-    `unreviewed: &[Uuid]`, the nodes of subtree(scope) where footnote 6 holds, and
-    `own_key_ids: &[Uuid]`; on `unreviewed` it matches held versions of any author, and on
-    `readable` promoted served tips. The use case computes both sets, and at a scope outside it
-    excludes every node of a `development` in-progress subtree from both. `list_memories`'
-    `ListingFilter` gains the same `unreviewed` set, and `events_with_subjects`, and the graph read
-    once one is built, take the same exclusion. Port-contract tests run against both stores
-    assert, whatever the query:
-
-    - that a read scoped outside never returns a row inside, on each of those reads;
-    - that a blocked key's recall never returns another key's held row inside;
-    - that a capture serialized after the root's commit is returned to another key by no recall,
-      listing or tail scoped at a node of the former subtree, and to its author only under
-      `include_own_held`.
-
-    The code and the README state the gap to the designed form.
-
-    Held claims without a vector term score below their promoted rank (ADR-0025 d4), so
-    ratification would raise them in every reader's results, and review would reorder results
-    against R3. A fence keyed by the root and released by its status makes the commit one row
-    update, with no index or lake row rewritten. The commit's held test (d12) is the one
-    statement under the chain lock that the subtree reaches, one probe of a partial index on the
-    root, unmeasured, tracked against [FR-25](../product/roadmap.md). At the serving indexes the
-    boundary is containment by construction ([ADR-0013](ADR-0013-reads-served-from-postgres.md)
-    d3): a query of `memories_fts` or `memory_embeddings` scoped outside that forgets the boundary
-    sees nothing behind it, and its scan of each outside graph is unchanged by what an inside
-    graph holds. The other
-    reads hold the boundary by a predicate (Other reads, above), a residual
-    [security](../architecture/security.md) states. Inside, another author's held text is kept
-    from a blocked key by the recall predicate, not by the fence. This amends ADR-0013 d1, whose
-    serving tier held promoted rows, ADR-0013 d4, whose indexer read promoted text, and ADR-0025
-    d5, under which the shared indexes held promoted rows only and every held transition checked
-    one `held_fts` row.
-
-- **d10 — By-id reads see inside under access, scoped reads see inside only from inside, and no
-  read scoped outside serves anything from the subtree.**
-    - **Get** of a held version inside, and the fetch of its attachments, are served to a key
-      that may read held claims of other keys on its workarea (d7); any other key gets
-      `access.not_found`. Get takes the row's own workarea as its implicit scope, so it reads
-      inside under access. The lineage read follows the same test.
-    - **The scoped listing** (`GET /v1/memories` without `own`) at a scope inside an in-progress
-      subtree lists promoted served tips and every held version, of any kind, in the workareas
-      where the key may read held claims of other keys, each marked by `state` and `reviewed`;
-      `state=promoted` narrows it to reviewed rows. **The own-work listing** (`own=true`) is
-      unchanged.
-    - **The graph reads** (`GET /v2/claim-edges` and `oml_graph`) at a scope inside an
-      in-progress subtree serve other keys' held claims in the workareas where the key may read
-      them, each claim carrying `reviewed`.
-    - **The events tail** at a `workarea_id` inside an in-progress subtree shows a third clause,
-      the in-progress clause: a `submission.*`, `simulation.write` or `lifecycle.*` event whose
-      subject lay inside that subtree when the event was journalled is shown to a key for which,
-      on its current access, reader is in `effective_roles` of the subject's workarea and no
-      reader grant effective there carries `unreviewed: block`, under the audience condition,
-      with identities nulled as on every event served outside its actor's key set. Of the three
-      conditions of the [permission matrix](../architecture/roles-and-keys.md#permission-matrix)'s
-      footnote 6, the first, that the node lies inside an in-progress subtree, is judged at the
-      event on the journal up to and including it; the second and third are judged on current
-      access. The commit therefore removes nothing from a tail scoped inside. The first condition
-      is read from two stored values, not by replaying the tree: the subject is inside at event
-      `e` when its `memories.in_progress_root_id` is not null (d9) and that root's
-      `workareas.in_progress_released_seq`, folded from the `workarea.status_transition` that
-      carries `in_progress_released: true`, is null or greater than `e`'s seq; "that subtree" is
-      the root's subtree at the tail's request. After the commit claims can be reassigned and
-      nodes re-parented out of the former subtree, so the current tree no longer answers the
-      question.
-    - **The boundary**: every read scoped outside the subtree, at an ancestor up to `universe`,
-      skips it whole, the reading key's own rows included:
-        - recall serves nothing from it, and the budget's counts and `hits_omitted` count
-          nothing from it;
-        - the scoped listing lists nothing from it;
-        - the graph reads serve no claim and no edge from it;
-        - the events tail shows none of the claim events journalled while the subtree was in
-          progress, before the commit or after, under any clause.
-    - **The node** stays visible to its readers as structure: the workarea read lists it among
-      `children` with its `in_progress_root_id`, and its `workarea.*` events show at the tails of keys
-      that can read it.
-
-    The tail's rule is declared on the [HTTP API](../api/http-api.md#events-tail); recall's on
-    [retrieval](../architecture/retrieval.md#held-claims-inside-an-in-progress-workarea).
-
-    The maintainer chose the same treatment inside for get, the listings, the graph reads and the
-    tail. Submission events are how a tailing agent learns of a crew mate's new claim. A rule
-    judged on the journal up to the event shows two reads of one range the same events, which is
-    why the events of the in-progress period never reach an outside tail, even after the commit,
-    and never leave an inside tail at it (ADR-0025 d15). The outside tail learns of the commit
-    from its `workarea.status_transition`, and of the rows from recall. Skipping own rows at
-    outside scopes keeps one boundary rule for every scoped read. This amends ADR-0025 d13, whose
-    scoped listing never served another key's held row, and d15, and ADR-0022 d2: `/v1` get reads
-    own, promoted and, inside an in-progress subtree, held versions the permission matrix allows.
-
-- **d11 — The workarea read reports the mark and the caller's unreviewed access there.** `GET
-  /v2/workareas/{workarea_id}` and `oml_workarea_info` add two fields, and their `children`
-  entries one:
-
-    - `in_progress_root_id` (d1);
-    - `reads_unreviewed`, true exactly when the calling key may read held claims of other keys on
-      the node (d7), and therefore what `include_unreviewed` defaults to at that scope (d8);
-    - `in_progress_root_id` on each `children` entry.
-
-    `my_effective_verbs` is unchanged. Its set is the union over the grant roles effective on the
-    node (ADR-0025 d14), and unreviewed access turns on the node's mark and a grant attribute, not
-    on a role. An agent reads one boolean before it trusts what recall will mix in.
-
-    `permission_epoch` is unchanged: neither `workarea.create` nor the commit joins its event
-    list. It labels grant state only, and `in_progress_root_id` and `reads_unreviewed` are read beside it,
-    from the node's journalled mark and its root's journalled status. This amends ADR-0025 d14,
-    including its sentence that the epoch labels the journalled state an answer was computed
-    against: the epoch labels the grant state, and the in-progress state is read beside it.
-
-- **d12 — The whole subtree contributes at once: the commit is the in-progress workarea's
-  `development` → `committed` transition, refused while any version in the subtree is held.**
-  The transition is proposed and ratified by different identities exactly as
-  [ADR-0009](ADR-0009-status-ladder.md) d3 requires, and here both are admin-key verbs: the two
-  identities are two admin principals (`review.ratifier_is_proposer` otherwise). A dreamer key
-  that proposes or ratifies the commit is refused with `access.verb_ceiling`. That refusal is
-  decided once the node resolves, because the mark is the node's: a node outside the key's reader
-  effective access answers `access.not_found` first, as for every verb, and the ceiling is
-  answered before the held test and before the grant-role step, as step 1a of the
-  [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order).
-  Transitions on workareas that are not in-progress keep their
-  dreamer-or-admin rule. A proposal is refused with
-  `workarea.held_remaining`, details `{workarea_id}`, while any version in the subtree is in state
-  `held`, dead-lettered ones included. A ratification is refused with the same code under the
-  same test. The ratification's test is a condition inside round trip two's one statement, as the
-  supersession compare-and-set is ([ADR-0024](ADR-0024-performance-foundation.md) d1): every
-  capture takes the chain lock, so no held version can arrive unseen between the test and the
-  end of the ratifying transaction, and a capture serialized after it is placed as an ordinary
-  held row (d9). A refused ratification journals nothing and leaves the transition pending.
-  Rejected, demoted and erased versions do not block.
-
-    The test is one index probe,
-    `EXISTS (SELECT 1 FROM memories WHERE tenant_id = $t AND in_progress_root_id = $root AND state = 'held')`,
-    over the partial index `memories_held_by_root` on `(tenant_id, in_progress_root_id) WHERE state = 'held'`
-    ([Postgres schema](../data/postgres-schema.md#memories)). Every version inside carries its
-    root from its capture on and keeps it (d9), so one probe covers the whole subtree; a join
-    through the subtree's nodes would make one probe per node under the chain lock. Its cost is
-    unmeasured, tracked against [FR-25](../product/roadmap.md). This amends ADR-0024 d1: the
-    ratifying statement of an in-progress commit carries a held-existence test.
-
-    At the commit, in one journal event, `workarea.status_transition` with
-    `in_progress_released: true`:
-
-    - the in-progress workarea becomes `committed`, and its subtree stops being in progress;
-      its `workareas.in_progress_released_seq` folds to the event's seq, which the events tail
-      reads (d10);
-    - every promoted served tip in the subtree becomes readable at scopes outside under the
-      ordinary rules, in the same transaction (d9);
-    - the descendants keep their status, `development`, and become ordinary `development`
-      workareas: what is written in them afterwards is held, readable by its author alone, and
-      readable to others once promoted, claim by claim;
-    - nothing held exists in the subtree (the precondition), so no held claim changes audience,
-      and rejected rows stay unserved;
-    - no index row and no lake row is rewritten in the commit's transaction; the root's
-      embedding partition is emptied later by the asynchronous move of d9. A promoted version
-      inside entered silver at its own promotion, which serves no client read
-      ([ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md)).
-
-    The test covers the whole subtree, and the admin proposer reads no claim there: an admin key
-    carries no grant ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
-    The refusal therefore carries no count, and it tells the proposer only that some version in
-    the subtree is still held, in a node the proposer cannot read. That signal is tracked as
-    [FR-31](../product/roadmap.md).
-
-    The maintainer chose whole-workarea contribution. Committing with held rows left over would
-    take from the readers inside rows they relied on and would contribute a subtree not fully
-    reviewed. Rejecting them automatically would record verdicts no reviewer gave (ADR-0025 d10).
-    The commit clears the mark and opens the whole subtree to every reader outside, which changes
-    more of what other keys can read than setting the mark does, so it takes the ceiling creation
-    has (d1, R1). This amends ADR-0009 d3: the transition gains a precondition, an effect and, for
-    an in-progress workarea, the admin ceiling. It also amends ADR-0009 d2: a read's audience
-    inside and at the boundary of an in-progress subtree is answered from grants, permission
-    epochs, the journalled `workarea.create` mark and the root's `workarea.status_transition`.
-
-- **d13 — Two new codes, the wire changes, and the version moves to `0.3.0-design`.**
-    - **Codes**, each `409`, landing in the [errors](../api/errors.md) family table and the status
-      index, the `ErrorCode` enum and the [HTTP API](../api/http-api.md) in one change:
+- **d13 — Two codes, the wire, the version and the vocabulary.**
+    - **Codes**, each `409`, in the [errors](../api/errors.md) tables and the `ErrorCode` enum:
       `workarea.held_remaining` (d12) and `workarea.in_progress_refused` (d1, d2).
-    - **Reused codes**: `access.grant_refused` gains the case of d8, `access.verb_ceiling` gains
-      a dreamer key proposing or ratifying an in-progress workarea's commit (d12), and
-      `request.validation` gains `in_progress` with `prefix` and `unreviewed` on a grant that is
-      not a reader grant.
-    - **Shapes**:
-        - `WorkareaCreate.in_progress`;
-        - `Workarea.in_progress_root_id`;
-        - `WorkareaView.reads_unreviewed` and `children[].in_progress_root_id`;
-        - `RecallRequest.include_unreviewed`;
-        - `MemorySummary.reviewed`, required;
-        - `GrantRequest.unreviewed` and `Grant.unreviewed`;
-        - `workarea.create.in_progress`, `workarea.status_transition.in_progress_released`
-          and `grant.issued.unreviewed`;
-        - the columns `workareas.in_progress`, `workareas.in_progress_released_seq`,
-          `grants.unreviewed`, `memories.in_progress_root_id`,
-          `memories_fts.in_progress_root_id` and `memory_embeddings.in_progress_root_id`, the
-          index `memories_held_by_root`, and the per-root partitions of
-          `memory_embeddings_t_<tenant>`.
-    - **The agent plugin**: `oml_recall` gains `include_unreviewed`, the claim item gains
-      `reviewed`, and `oml_workarea_info` gains the d11 fields. [mcp-tools.json](../api/mcp-tools.json)
-      stays the exact `tools/list` payload with closed schemas: a served tool's entry changes with
-      the code that serves it, so until then `_meta.pending_design` names what this record adds
-      to `oml_recall`. This amends ADR-0025 d12: `oml_recall`, the claim item and
-      `oml_workarea_info` gain fields, and the catalog stays twelve tools.
-    - **The version**: this is a `/v1` change, so `info.version` moves from `0.2.0-design` to
-      `0.3.0-design` under the [changelog](../changelog.md)'s rule. The `spec-v0.3` tag waits for
-      this record's acceptance.
-
-    The vocabulary of ADR-0018 d4 changes. The "held" row reads "invisible to
-    every reader except its author, the reviewer it is served to, and, inside an in-progress
-    workarea, the keys its readers' grants allow", and keeps its "never" column, so "unreviewed"
-    names the access, the attribute and the parameter, never a state. Three rows are added:
+      `request.validation` gains `in_progress` with `prefix`, and `unreviewed` on a grant that is
+      not a reader grant. No other code changes.
+    - **Shapes**: those d5, d6, d8 and d11 name, optional while this record is proposed, with
+      `MemorySummary.reviewed` and `Workarea.in_progress_root_id` required from its acceptance; the
+      payload fields `workarea.create.in_progress` and `grant.issued.unreviewed`; the columns
+      `workareas.in_progress` and `grants.unreviewed`.
+    - **The version** moves to `0.3.0-design`, since `/v1` shapes change; the `spec-v0.3` tag
+      waits for acceptance. [mcp-tools.json](../api/mcp-tools.json)'s `_meta.pending_design`
+      names what this record adds to `oml_recall` and `oml_workarea_info`.
+    - **The vocabulary** of ADR-0018 d4, at acceptance: the "held" row's meaning gains "and,
+      inside an in-progress workarea, the readers ADR-0030 d5 admits", its "never" column
+      unchanged, so "unreviewed" names the attribute and the recall field, never a state. Two rows
+      are added, banning no spelling in current use:
 
     | Term | Means | Never |
     |---|---|---|
-    | in-progress workarea | a `development` workarea created with `in_progress: true`; inside its subtree its readers read held claims, marked, and nothing in it is served at a scope outside until its commit; unrelated to an idempotency record's `in_progress` state | "draft workarea", "staging", "live workarea", a status name |
-    | unreviewed access | a key's access, on a node inside an in-progress subtree, to the held claims other keys wrote, resolved from the `unreviewed` attribute of its reader grants, a block winning | "unreviewed" as a state; "permission" for the access itself |
-    | commit (of an in-progress workarea) | the ratified `development` → `committed` transition of an in-progress workarea, which releases its subtree | "merge" or "publish" for the commit itself; in a passage about an in-progress workarea, "commit" for a database transaction, which there says "transaction" |
+    | in-progress workarea | a `development` workarea a journalled admin act marked, with its subtree, until its commit; unrelated to `idempotency.in_progress` | "draft workarea", "live workarea" |
+    | commit (of an in-progress workarea) | the root's ratified `development` → `committed` transition, which ends its subtree | — |
 
 ## Consequences
 
-**What a crew gets, and the usage pattern**
-
-- **One crew, one subtree.** A crew on one project works in one in-progress workarea:
-    - its agents recall each other's claims at once, ranked with the reviewed ones and marked
-      `reviewed: false`;
-    - its reviewers work through the held claims at review's pace;
-    - two admin principals, a proposer and a different ratifier, commit the workarea when
-      nothing is held.
-- **A fresh in-progress workarea per project or iteration.** Transitions are forward only and
-  the mark is set only at creation, so a committed workarea never becomes in-progress again.
-  The next project or iteration gets a new in-progress workarea, typically a sibling with a
-  `continues` edge to the last ([workareas](../architecture/workareas.md#edges)).
-- **What outside readers see.** Before the commit they see nothing of the subtree but the node
-  itself. At the commit they see every promoted claim in it at once, and their tails see one
-  `workarea.status_transition`.
-
-**Costs, stated in the same breath**
-
-- **A rejection claws nothing back from the readers inside.** A held claim that agents read,
-  acted on or derived from and that is then rejected stays read: the read log records who read
-  it. A derived claim declares it in `derives_from`, so review excludes its author from judging
-  the derived claim and sees where it came from (R2 over the lineage closure). Undeclared
-  derivation stays undetectable (ADR-0001 d6). The `reviewed: false` mark is the mitigation,
-  and the `oml-memory` skill's instruction to weigh such claims rather than trust them joins it
-  with the code that serves the field. Nothing beyond the subtree is exposed: a declared
-  derivation or an edge that would cross its boundary is refused (d2).
-- **The commit waits on review.** A subtree with one held claim that no eligible reviewer can
-  judge cannot commit until that claim is reviewed, dead-lettered and re-enqueued, or erased.
-  That is R2's liveness cost (ADR-0001), now paid once per subtree.
-- **The commit costs two admin identities**: every transition takes two identities (ADR-0009
-  d3), and this one takes two admin keys of different principals (d12), so a tenant needs two
-  admin principals to commit an in-progress workarea.
-- **The fence's cost is unmeasured.** Its policy reads the root's status per candidate row,
-  the commit's held test probes one partial index under the chain lock, `workarea.create`
-  creates and attaches an embedding partition with its own HNSW index, an asynchronous move
-  empties that partition after the commit, and the indexer embeds held text inside. None of
-  these is measured; they are tracked against [FR-4](../product/roadmap.md) and
-  [FR-25](../product/roadmap.md), and no number is stated.
-- **The indexer reads held text inside the subtree**, so its input grows from promoted text to
-  promoted text plus the held text of in-progress subtrees, and its compromise exposes that held
-  text too ([security](../architecture/security.md)). Embedding rows are already in the erasure
-  inventory ([audit and lineage](../architecture/audit-and-lineage.md#the-erasure-inventory)).
-- **Inside, authors are separated by a predicate.** The fence separates inside from outside
-  only; inside, a blocked key is kept from other keys' held text by the recall predicate, held
-  by port-contract tests (d9).
-- **Outside the serving indexes, the boundary is a predicate.** The listing, get, the
-  attachment fetch, the graph and lineage reads and the events tail keep the subtree from reads
-  scoped outside through `served_memories` and `events_with_subjects`, held by port-contract
-  tests, not by a fence (d9); [security](../architecture/security.md) states the residual.
-- **FR-31 grows by one signal**: the commit refusal of d12.
-
-**Pages this record changes** (decided, not built): [workareas](../architecture/workareas.md),
-[roles and keys](../architecture/roles-and-keys.md), [retrieval](../architecture/retrieval.md),
-[admission](../architecture/admission.md), [overview](../architecture/overview.md), the
-[HTTP API](../api/http-api.md), [openapi.yaml](../api/openapi.yaml), [errors](../api/errors.md),
-the [agent plugin](../api/mcp-plugin.md), [mcp-tools.json](../api/mcp-tools.json), the
-[Postgres schema](../data/postgres-schema.md), the [event catalog](../data/event-catalog.md), the
-[CLI reference](../cli/reference.md), [concepts](../concepts.md),
-[commitments](../product/commitments.md), the [roadmap](../product/roadmap.md) (FR-31),
-[security](../architecture/security.md), the [test strategy](../engineering/test-strategy.md),
-the README, the [home page](../index.md), `llms.txt` and the [changelog](../changelog.md). The
-`oml-memory` skill gains the weigh-unreviewed instruction in the same change as the code that
-serves `include_unreviewed`, as mcp-tools.json's served entries do.
-
-**What stays unbuilt** after this record: all of it. The PoC has no in-progress mark, no
-`unreviewed` attribute and no `reviewed` field, and its served `oml_recall` entry carries none
-of this until the code that serves it lands.
+- **What a crew gets.** Its agents recall each other's claims at once, marked, while review keeps
+  its own pace. A committed root is never marked again, so the next iteration marks a new node,
+  such as a sibling with a `continues` edge ([workareas](../architecture/workareas.md#edges)).
+- **A rejection claws nothing back from the readers inside.** What agents read and derived from
+  stays read, as the read log records; a declared derivation puts its author in R2's exclusion
+  set, and undeclared derivation stays undetectable (ADR-0001 d6). `reviewed: false` is the
+  mitigation, and the `oml-memory` skill's instruction to weigh such claims lands with its code.
+- **Marking an existing workarea takes its promoted claims from every read scoped outside it**
+  until the commit; for `crew/oml`, every promoted claim in it.
+- **The commit waits on review**: one held claim no eligible reviewer can judge holds the whole
+  subtree until it is reviewed, dead-lettered and re-enqueued, or erased.
+- **Get and the tail read at the row's node** (d4, d10): a key with reader access on an ancestor
+  can get a promoted claim inside by id, and sees its events on a tail scoped above it, before the
+  commit, and a held one when d5 admits it; recall, the listings and the graph reads scoped
+  outside serve nothing from inside. Inside, the tail follows current state, so a range re-read
+  after a rejection or the commit can omit an event it showed.
+- **Two tests run under the chain lock** (d1, d12), one probe per subtree node, unmeasured
+  (FR-25), and **a future serving index meets d7's requirements**, which rule out one shared
+  approximate graph filtered after its ceiling. **All of it is unbuilt**: the domain's boundary
+  refusals sit on the unmerged `feat/in-progress-domain` branch, and no use case calls them.
 
 **Process obligations**
 
-- **With the proposal**:
-    - the record registers at its three points: this file, a [register](index.md) row and a
-      `mkdocs.yml` nav entry;
-    - the D7, D8, D9, D11, D12, D13 and D14 cells of the D-register name ADR-0030;
-    - `llms.txt` names it;
-    - one [changelog](../changelog.md) entry records the `0.3.0-design` bump.
+- **With the proposal**: this file, a [register](index.md) row, a `mkdocs.yml` nav entry,
+  `llms.txt`'s mention as proposed, a [changelog](../changelog.md) entry for `0.3.0-design`, and
+  d13 on [openapi.yaml](../api/openapi.yaml), [errors](../api/errors.md), the
+  [HTTP API](../api/http-api.md) and [mcp-tools.json](../api/mcp-tools.json), agreeing as
+  `scripts/check_contract_sync.py` checks, each mention marked "proposed (ADR-0030)". No other
+  page states the relaxation.
 - **On acceptance, and not before**:
-    - this record's Status line and frontmatter `status` become `accepted design` with the date,
-      and its register row follows;
-    - the Status lines and frontmatter `status` of ADR-0001, ADR-0008, ADR-0009, ADR-0012,
-      ADR-0013, ADR-0018, ADR-0019, ADR-0022, ADR-0024, ADR-0025 and ADR-0028 gain
-      "· amended by ADR-0030". Their text stays verbatim as history: the text of ADR-0001 d5,
-      its H1, `answers`, Context and [register](index.md) row, and ADR-0009 d1 and ADR-0019 d1,
-      keep their "one bounded exception" wording. ADR-0030 d3 is the declaration site of the
-      second relaxation's scope, and ADR-0001 d5 reaches it through the back-pointer, as it
-      reaches ADR-0025 d17;
-    - the pages, not the records, that call self-signing the constitution's one bounded
-      exception are reworded as page edits, each still linking ADR-0001 and this record:
-      [workareas](../architecture/workareas.md)'s `development` bullet and its refusal matrix's
-      promotion cell, [roles and keys](../architecture/roles-and-keys.md) beside the permission
-      matrix, the [overview](../architecture/overview.md)'s opening and invariants section,
-      [admission](../architecture/admission.md), [simulations](../architecture/simulations.md),
-      [concepts](../concepts.md), C4 of [commitments](../product/commitments.md) and section 1
-      of the [review guide](../review-guide.md); the in-progress sentences those pages carry
-      lose their "proposed" marker in the same change;
-    - a `spec-v0.3` tag is cut.
+    - this record and its register row become `accepted design`, dated, and every record on the
+      Amends line gains "· amended by ADR-0030" on its Status line and frontmatter;
+    - an accepted record whose sentence would otherwise read false gains a dated note beside its
+      kept text, as ADR-0012 d1's "(wording amended 2026-10-30 — …)" does: ADR-0001 d5, which per
+      its last sentence takes the second relaxation with a pointer to d3, and its H1 and
+      `answers`; ADR-0009 d1 and ADR-0019 d1 ("the one bounded … exception"); ADR-0018 d4's table;
+    - the pages: workareas (a section linking d4, the refusal matrix), roles and keys (the
+      permission matrix linking d5, d6), retrieval (d7, d8), admission (d3), the overview's R3 row,
+      simulations, security (d10), the Postgres schema and event catalog (d13), the CLI reference,
+      the agent plugin, the test strategy (`P-R3-BOUNDARY`, `P-R2-INPROGRESS`, `P-R3-VISIBILITY`),
+      the roadmap (FR-31), concepts, commitments C4, the review guide, the README, the home page,
+      `llms.txt`, `CONTRIBUTING.md`, and the D7, D8, D9, D11, D12, D13 and D14 cells;
+    - the contract surfaces drop "proposed", d13's two properties become required, and the
+      `spec-v0.3` tag is cut.
 
 ## Rejected alternatives
 
 | Alternative | Why not |
 |---|---|
-| **d1 — A later opt-in verb on an existing workarea** | Readers would see held rows their authors wrote when only they could read them, and readers of the parents would lose promoted rows with no per-row journalled act: the visibility switch ADR-0009 rejected. |
-| **d1 — A verb that turns the mark off** | A second way to contribute that skips the two-admin commit and its precondition; or, with held rows left, it would take from readers the rows they relied on with no act of review. |
-| **d1 — A fourth status, `in_progress`** | The maintainer's decision is a `development` workarea opted in. ADR-0009 d1 keeps three statuses, and its d2 makes a status select review policy, while this mark changes who reads. |
-| **d1 — An agent-callable opt-in, as an MCP tool or a writer verb** | Its success would change what other keys can read, which R1 keeps off every agent surface. |
-| **d1 — An in-progress vocabulary workarea** | A CURIE could be cited across the tenant before its term is reviewed, and the citation scanned against a term later rejected. |
-| **d1 — An in-progress workarea as a simulation whose audience is the crew** | Simulation provenance and taint are indelible and the simulation's end demotes its rows (ADR-0011), so the crew's real work could never contribute. |
-| **d1 — An `in_progress` boolean on the workarea read** | On the create body it is the creation mark, true on the root alone and still true after the commit, so one name would carry two meanings on one resource, and the read value would always equal `in_progress_root_id != null`. |
-| **d2 — Nested in-progress workareas** | Two boundaries on one row, and no single commit that releases it. |
-| **d2 — Children outside the boundary** | A crew could contribute claim by claim through a child, against the maintainer's whole-workarea decision. |
-| **d2 — No children under an in-progress workarea** | A project could not structure its work in sub-areas, and the subtree rule costs one predicate. |
-| **d2 — Descendants move up the ladder before the root** | A `committed` or `validated` descendant would claim a stage while nothing in it has left the subtree. |
-| **d2 — Reassignment and re-parenting across the boundary** | Out contributes one claim before the rest; in takes a promoted claim away from its readers without a demotion. |
-| **d2 — Lineage and claim edges across the boundary, the inside endpoint redacted outside** | The redacted bare id still tells every reader outside that the inside claim exists, and a derived claim's text carries the inside claim's unreviewed content out ahead of the commit. |
-| **d4 — Self-signing inside an in-progress workarea** | The maintainer keeps R2: review is deferred, never self-signed. |
-| **d4 — Refuse the policy act that would admit self-signing inside** | No such act or field is declared, so the refusal would attach to a verb an implementer must guess; the check where the `self_signed` mark is made binds whatever a policy says. |
-| **d4 — The workarea's review policy decides alone, `k: 0` included** | A row inside could be ratified on no verdict at all, unmarked and reading `reviewed: true`, and the commit would release it outside with no one having reviewed it. |
-| **d4 — Both relaxations on one workarea, self-signed rows staying at their own workarea** | A self-signed row would sit inside a subtree whose commit releases everything at once, and readers outside would face two release rules for one subtree. |
-| **d5 — Only the crew's own keys read held claims** | The maintainer chose every reader. "The crew's keys" is not a concept the access model has, and building one would be a second access mechanism beside grants (ADR-0008). |
-| **d5 — A supervisor view: a permitted key reads held claims anywhere it can read** | It relaxes R3 per key across the whole tree and exposes every crew's held work. |
-| **d5 — Ancestor grants stop at the boundary, so only grants on the in-progress workarea or inside it read inside** | The mark would change grant resolution, against ADR-0009 d2 and its rejected per-status grant models, and the maintainer's decision names reader effective access. A crew that needs it uses a per-grant deny or a global denial, or `unreviewed: block` (d7). |
-| **d5 — A held claim inside readable only for a submission inside the same subtree** | A submission outside naming a held claim the key can get by id would answer `access.not_found`, telling the key that a claim it can read does not exist, and the surfaces would disagree on 404 or 409. |
-| **d5 — A held successor or retirement takes effect inside at once** | The tip moves only at ratification (ADR-0025 d10), and a rejection would have to restore what readers were served. |
-| **d6 — Blocked unless granted** | Every agent key in an in-progress crew would need the attribute set at issuance, and an omitted setting fails silently, as an empty recall. |
-| **d7 — A key-level `unreviewed_scope` setting** | A second access mechanism beside grants that every check would have to combine with them. |
-| **d7 — An allow on any covering grant wins** | A broader grant added for another purpose would undo a block an issuer set deliberately; deny already wins for the same reason. |
-| **d7 — A mutable attribute on a stored grant** | A grant's journalled meaning would change in place; revoking and re-issuing keeps one `grant.issued` per meaning. |
-| **d8 — A separate list of held hits in the recall response** | The maintainer chose them mixed in and marked. A second list needs its own order and its own share of the budget (ADR-0025 d4's rejected `own_held` segment). |
-| **d8 — Serve only the promoted rows when a blocked key asks for held ones** | The request names rows that exist and that its grants withhold, so a silent narrowing is the coercion errors.md forbids. |
-| **d8 — Refuse `include_unreviewed: true` at a scope outside every in-progress subtree** | An agent configured once for its crew would fail every recall it scopes outside, and the answer there is exact: no held claim of another key is readable. |
-| **d8 — Held steering in segment 1** | An instruction no one has reviewed, never cut and served ahead of every hit, where steering is by definition promoted (ADR-0018 d4). |
-| **d9 — Held claims inside score by full text alone, as own held rows do** | Ratification would raise them in every reader's results, so review would reorder results (R3). |
-| **d9 — Separate in-progress index tables, moved into the shared indexes inside the commit's transaction, or moved asynchronously with nothing served from them meanwhile** | The first move is proportional to the subtree inside the chain lock (ADR-0024 d1); the second leaves a window in which the rows are served nowhere. The form chosen is a partition per root that outside scans read as soon as the root is committed, emptied into the no-root partition by an asynchronous move afterwards. |
-| **d9 — One HNSW graph per tenant, inside and outside rows alike, the fence filtering after the scan** | Held writes inside would use up an outside scan's ceiling and change which promoted hits, and how many, an outside recall returns, so rows nobody reviewed would change outside ranking, against R3; and a reader probing query vectors would learn where in embedding space the held rows lie, and so their topic. |
-| **d9 — A query predicate alone at the boundary of the shared indexes** | Held text would sit in a shared index behind a WHERE clause a future query scoped outside can forget: the filter discipline ADR-0013 d3 rejects. Inside the subtree the predicate is what separates authors, and outside the serving indexes it is what holds the boundary, both held by the port-contract tests (d9), the second a residual security states. |
-| **d9 — The indexer chooses the root from the version it embeds** | It would read workarea state outside the chain lock, and an embedding written with a stale or null root would be visible at every outside scope. |
-| **d10 — Submission events inside stay author-only** | A tailing agent would learn of a crew mate's claim only by polling recall. |
-| **d10 — Show the in-progress period's events at outside tails after the commit** | Two reads of one range would disagree, the visibility that changes over time ADR-0025 d15 rejected. |
-| **d10 — Outside reads skip the subtree but keep the reading key's own rows** | Two boundary rules for one subtree; the own-work listing and get already reach every own row. |
-| **d10 — A listing flag of its own for held rows** | The listing already filters by `state`. |
-| **d11 — A `read_unreviewed` member of `my_effective_verbs`** | That set is the union over effective grant roles (ADR-0025 d14), and unreviewed access turns on the node's mark and a grant attribute. |
-| **d12 — Per-claim contribution** | The maintainer chose whole-workarea contribution. |
-| **d12 — Commit with held claims left over, as ordinary held claims** | Readers inside would lose rows they relied on, and the contributed subtree would not be fully reviewed. |
-| **d12 — Reject the remaining held claims at the commit** | It records verdicts no reviewer gave (ADR-0025 d10). |
-| **d12 — The commit moves every node in the subtree to `committed`** | One ratification at the root would move every node's status, where ADR-0009 d3 makes each transition an act on its own node, and a descendant would reach `committed` with no transition of its own. |
-| **d12 — A dreamer may propose or ratify the commit, as on any workarea** | The commit clears the mark and opens the whole subtree to every reader outside; an agent key reaching that act would change what other keys read, which d1 keeps off every agent role for the smaller act of setting the mark (R1). |
-| **d12 — A held count in the refusal's details** | It would tell a proposer how many held claims sit in nodes it may not read. |
-| **d13 — Reuse `workarea.transition_refused` for the commit precondition** | Its rule is the shape of the ladder. This refusal's remedy is review, so it names its own rule. |
-| **d13 — Name the boundary code `workarea.in_progress`** | It reads as the `in_progress` state of `idempotency.in_progress`; `_refused` follows `workarea.transition_refused`. |
-| **d13 — Add `include_unreviewed` to the served `oml_recall` entry now** | `tools/list` is read from that file, so the server would advertise a field it refuses. |
+| **d1 — A mark set only at creation** | `crew/oml` already exists and holds rows, so it could never be marked. |
+| **d1 — Rows promoted before the opt-in stay visible outside** | Only a stamp per row could tell them apart, which d4 rejects, and one subtree would have two release rules. |
+| **d1 — Mark a subtree holding a `committed`, `validated` or vocabulary node** | R3 would hold on some nodes inside and not others, and a term's CURIE, cited across the tenant, could be cited before the term is reviewed. |
+| **d1 — A verb that clears the mark, or a fourth status** | The first contributes while skipping the commit's precondition; a status selects review policy (ADR-0009 d2), while the mark changes who reads. |
+| **d1 — An agent-callable mark, or a simulation whose audience is the crew** | The mark changes what other keys read, which R1 keeps off agent surfaces; a simulation's end demotes its rows (ADR-0011), so the crew's work could never contribute. |
+| **d2 — Nested subtrees** | A node would have two roots, and no single commit would release it. |
+| **d2 — Reassignment, re-parent, lineage or edges across the boundary** | Out contributes one claim ahead of the rest; in takes a promoted claim from its readers without a demotion; a lineage or edge carries an id, or text, out ahead of the commit. |
+| **d2 — `workarea.in_progress_refused` for a submission outside naming a target inside** | It would confirm, where the target is invisible, that the target exists; d4 already answers `access.not_found`. |
+| **d3 — Self-signing inside, or the review policy deciding alone, `k: 0` included** | The maintainer keeps R2; a row inside could be promoted on no verdict, read `reviewed: true`, and leave at the commit unreviewed. |
+| **d4 — The boundary stamped on rows: a root column on memory and index rows behind a row-level-security fence, or an event's inside-ness judged at the event** | Every re-parent, reassignment, removal and indexer write would need a checked row update under the right setting, and the release would depend on each having run; the earlier draft took that form, and review kept finding its failure modes. Judging an event needs a stamp or a replay of the journal per event. |
+| **d5 — Only the crew's own keys, or a supervisor access that reads held claims anywhere** | The maintainer chose every reader, and "the crew's keys" is not a concept the access model has; a supervisor access relaxes R3 per key across the tree. |
+| **d6 — A key-level setting, or block by default** | The maintainer rejected the first as a second access mechanism beside grants; under the second, an omitted setting fails silently, as an empty recall. |
+| **d6 — An allow on any covering grant wins** | A broader grant issued for another purpose would undo a deliberate block; a deny wins for the same reason. |
+| **d6 — A `NOT NULL` column, or a schema default of `allow`** | The first needs a backfill and a fold rule for every earlier reader grant; a client filling the second would send it on writer and dreamer grants and be refused. |
+| **d7 — One shared approximate scan, filtered after its ceiling** | Held rows inside would use up an outside scan's ceiling and change which promoted hits, and how many, an outside recall returns; a probe of query vectors would locate them. |
+| **d7 — Held claims inside scored by text alone, as own held rows are** | Ratification would raise them in every reader's results, so review would reorder results (R3). |
+| **d8 — Refuse `include_unreviewed: true` where a grant blocks** | An agent configured once would fail recalls over a narrowing its grants already make. |
+| **d8 — A separate list of held hits, or held steering in segment 1** | A list needs its own order and budget share (ADR-0025 d4's rejected segment); steering no one reviewed, served first and never cut, is the most privileged place for the least checked text. |
+| **d10 — A third tail clause for in-progress subjects, or outside tails that omit them** | Grafted onto "(a) or (b), and no other", the clause was unreachable; an event is a read at its subject's node, as get is (d4), and two rules for one read would drift. |
+| **d11 — An `in_progress` field, or a `reads_unreviewed` field, on the workarea read** | On the create body `in_progress` asks for the mark, so one name would mean two things; each served claim carries `reviewed` and `include_unreviewed` only narrows, so an agent needs no prior answer. |
+| **d12 — An admin-only commit** | ADR-0009 d3 already takes two identities, and a ceiling that depends on the node would need a new step in the refusal order. |
+| **d12 — Per-claim contribution, held claims left over, or rejecting them at the commit** | The maintainer chose whole-workarea; leftovers would leave unreviewed; an automatic rejection records verdicts no reviewer gave (ADR-0025 d10). |
+| **d12 — The commit moves every node to `committed`, or carries a held count** | A descendant would reach `committed` with no transition of its own (ADR-0009 d3); a count tells a proposer how many held claims sit where it may not read. |
+| **d13 — Reuse `workarea.transition_refused`** | Its rule is the ladder's shape; this refusal's remedy is review. |

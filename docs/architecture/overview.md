@@ -266,13 +266,7 @@ Where each constitutional rule is mechanically enforced. The rules are declared 
 One bounded exception exists and is named in the constitution, not discovered later: a
 `development` workarea may, by journalled tenant policy, relax R2/R3 for rows marked
 `self_signed`, which are readable only inside that workarea and never promote beyond it
-([workareas.md](workareas.md), [ADR-0001](../adr/ADR-0001-the-constitution.md)). The proposed
-[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) would add a second, relaxing only R3's first
-sentence: inside an [in-progress workarea](workareas.md#in-progress-workareas) its readers read
-held claims at once, marked, R2 holds in full, and nothing in it is readable outside until its
-commit. Under the proposed ADR-0030 (binding only on its acceptance), held rows inside an
-in-progress subtree are served behind its fence, marked `reviewed: false`, and the R3 row above
-gains that exception at its acceptance. One honesty limit sits beside the
+([workareas.md](workareas.md), [ADR-0001](../adr/ADR-0001-the-constitution.md)). One honesty limit sits beside the
 invariants: undeclared derivation — a writer omitting `derives_from` — is not detectable by the
 service; lineage exclusion is exactly as good as the declared graph.
 

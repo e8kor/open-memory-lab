@@ -6,12 +6,8 @@
     "design_spec_version": "0.3.0-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
-      "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet. ADR-0030 d8 (proposed): the input gains include_unreviewed, a boolean defaulting to the key's reads_unreviewed at the scope node, which adds other keys' held rows inside an in-progress workarea to the hits and is refused with access.grant_refused where a reader grant blocks it; every item gains reviewed. The served entry carries neither until the code that serves them lands.",
-      "oml_remember": "ADR-0030 d3 (proposed): inside an in-progress workarea a held write is readable at once, marked reviewed false, by the keys the permission matrix allows, and reaches readers outside only at the workarea's commit; the description's 'visible to others only after ratification' changes with the code that serves it.",
-      "oml_learn": "ADR-0030 d3 (proposed): as for oml_remember.",
-      "oml_get": "ADR-0030 d10 (proposed): inside an in-progress workarea, others' held versions the key may read are served too, marked reviewed false; the description changes with the code that serves it.",
-      "oml_workarea_info": "ADR-0030 d11 (proposed): the output gains in_progress_root_id, reads_unreviewed and children[].in_progress_root_id; the description changes with the code that serves them.",
-      "oml_events_tail": "ADR-0030 d10 (proposed): a tail scoped inside an in-progress workarea also shows other keys' submissions and the lifecycle events of held versions the key may read there, and a tail scoped outside shows none of its claim events from before its commit; the description's 'never another key's submission' changes with the code that serves it."
+      "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet. Proposed (ADR-0030 d8), binding only on its acceptance: the input gains include_unreviewed, a boolean defaulting to true that only narrows and is never refused, and every claim item gains reviewed.",
+      "oml_workarea_info": "Proposed (ADR-0030 d11), binding only on its acceptance: the output gains in_progress_root_id, the node's in-progress root or null."
     }
   },
   "tools": [

@@ -30,10 +30,7 @@ an explicitly future federation item, not a latent feature.
 The stored unit is a memory, and a memory asserts a **claim** — something an agent believes,
 not something the system certifies. The whole design follows from treating it that way: a new
 memory is *held* until an identity that did not write it has reviewed it, and only then does
-it become visible to anyone else — except, under the proposed
-[ADR-0030](adr/ADR-0030-in-progress-workareas.md), inside an
-[in-progress workarea](#in-progress-workareas), whose readers see it at once, marked as not yet
-reviewed, while nobody outside sees any memory in it until its commit.
+it become visible to anyone else.
 
 Claims come in **versions**. A `claim_key` groups the versions of one claim, and the version
 served to readers is the **tip** — exactly one per claim per workarea, changed only by a
@@ -57,7 +54,7 @@ The lifecycle of one version, simplified (the normative state machine is in
 
 ```mermaid
 stateDiagram-v2
-    [*] --> held : write — scanned in the same call<br/>(a scan veto refuses before capture,<br/>journalling nothing) · visible only to its author<br/>(proposed: in an in-progress workarea, also to its readers)
+    [*] --> held : write — scanned in the same call<br/>(a scan veto refuses before capture,<br/>journalling nothing) · visible only to its author
     held --> rejected : rejecting verdict<br/>(journalled, reopenable by a non-author)
     held --> promoted : ratified by a non-author —<br/>now visible to readers in scope
     promoted --> demoted : demote — journalled,<br/>off every read surface, bytes kept
@@ -87,8 +84,7 @@ Every workarea sits on a one-way **status ladder**:
 
 - **development** — review runs as everywhere; tenant policy may additionally permit marked
   `self_signed` rows, the constitution's one bounded exception — readable only inside that
-  workarea, never promoted beyond it. Under the proposed ADR-0030 an admin may instead
-  create a development workarea in-progress, a second relaxation (below).
+  workarea, never promoted beyond it.
 - **committed** — full non-author review; the working state of a governed crew space.
 - **validated (frozen)** — no new writes, no promotions into it, no new children; it keeps
   serving reads, and the only mutations it admits are journalled demote, erasure, and
@@ -97,18 +93,6 @@ Every workarea sits on a one-way **status ladder**:
 Transitions are forward only and each needs a proposer and a separate ratifier; there is no
 unfreeze. An area can become `validated` only when all its children already are, so a frozen
 node means a frozen subtree.
-
-### In-progress workareas
-
-Proposed in [ADR-0030](adr/ADR-0030-in-progress-workareas.md), binding only on its acceptance:
-an **in-progress workarea** is a `development` workarea an admin created with that mark, for one
-project or iteration; the mark is set only at creation. Inside its subtree every write is still
-held and reviewed by at least one non-author, and never self-signed, but its readers recall the held
-claims at once, ranked with the reviewed ones and marked `reviewed: false` — unless a reader grant
-of theirs carries `unreviewed: block`. Readers outside the subtree see no memory in it until its
-**commit**: its move to `committed`, proposed and ratified by two admin keys of different
-principals and refused while anything in it is still held. At the commit every reviewed claim in
-it becomes visible outside at once ([workareas](architecture/workareas.md#in-progress-workareas)).
 
 ```mermaid
 flowchart TD
@@ -166,14 +150,13 @@ re-key and no "show me the key again".
 
 ## Admission
 
-Admission is the pipeline every write crosses before anyone but its author can read it — under
-the proposed ADR-0030, inside an in-progress workarea, before anyone outside that workarea can:
+Admission is the pipeline every write crosses before anyone but its author can read it:
 
 > capture → quarantine → deterministic scan → non-author review → ratification → journal → release.
 
 A write lands **held**: journalled, quarantined, scanned by deterministic rules in the same
-call (the scan can veto, never promote), and invisible to everyone but its author (under the
-proposed ADR-0030, outside an in-progress workarea). It becomes visible exactly once, when a reviewer who is not the author — and not anywhere in the claim's
+call (the scan can veto, never promote), and invisible to everyone but its author. It becomes
+visible exactly once, when a reviewer who is not the author — and not anywhere in the claim's
 lineage closure — records a verdict and the workarea's review policy is satisfied. The
 **ratification** event carries a snapshot of that policy, so any later audit reads the
 promotion against the rules that actually governed it.
@@ -286,7 +269,6 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | Claim versions, the tip, lineage closure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) (erasure), [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md) (the record) |
 | Workarea tree, grants, denies, edges | [architecture/workareas.md](architecture/workareas.md) | [ADR-0008](adr/ADR-0008-workarea-algebra.md) |
 | The status ladder | [architecture/workareas.md](architecture/workareas.md) | [ADR-0009](adr/ADR-0009-status-ladder.md) |
-| In-progress workareas and unreviewed reads | [architecture/workareas.md](architecture/workareas.md#in-progress-workareas), [architecture/roles-and-keys.md](architecture/roles-and-keys.md#permission-matrix) | the proposed [ADR-0030](adr/ADR-0030-in-progress-workareas.md) |
 | Vocabularies, terms, releases | [architecture/ontologies.md](architecture/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |
 | Roles, the dreamer split, key lifecycle | [architecture/roles-and-keys.md](architecture/roles-and-keys.md) | [ADR-0010](adr/ADR-0010-roles-and-keys.md) |
 | The admission pipeline and review policies | [architecture/admission.md](architecture/admission.md) | [ADR-0012](adr/ADR-0012-admission-and-review.md) |
@@ -300,4 +282,4 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | The overlay tip | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
 | The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](architecture/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
 | The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
-| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add, and the three rows and the "held" wording the proposed [ADR-0030](adr/ADR-0030-in-progress-workareas.md) d13 adds |
+| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add |

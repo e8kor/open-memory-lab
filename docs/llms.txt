@@ -2,8 +2,7 @@
 
 > Design specification, revision 0.3.0-design, of an agentic external memory provider: every
 > memory an agent writes is a claim, held until an identity that did not write it has reviewed
-> it, and only then visible to others, except, under the proposed ADR-0030, inside an in-progress workarea, whose readers see
-> it at once, marked, while no memory in it is visible outside until its commit. PostgreSQL is the system of record with per-tenant
+> it, and only then visible to others. PostgreSQL is the system of record with per-tenant
 > Ed25519-signed hash chains; a Delta Lake lakehouse is derived and never authoritative; erasure
 > is crypto-shredding; the surface is one JSON HTTP API with two stability rings (/v1 provider,
 > /v2 lab), an MCP facade and a CLI. The design is the authority, and a first working slice is
@@ -24,7 +23,7 @@
 - [Storage](https://e8kor.github.io/open-memory-lab/architecture/storage/): the commit point, the per-tenant signed hash chain, the outbox protocol and the derived lake
 - [Admission](https://e8kor.github.io/open-memory-lab/architecture/admission/): the pipeline every write crosses — capture, quarantine, scan, non-author review, ratification, release
 - [Retrieval](https://e8kor.github.io/open-memory-lab/architecture/retrieval/): reads served from Postgres, result order, decryption, the journalled read log, token budgets
-- [Workareas](https://e8kor.github.io/open-memory-lab/architecture/workareas/): the universe tree, node-id grants, deny-wins semantics, edges, the status ladder, and in-progress workareas
+- [Workareas](https://e8kor.github.io/open-memory-lab/architecture/workareas/): the universe tree, node-id grants, deny-wins semantics, edges, and the status ladder
 - [Roles and keys](https://e8kor.github.io/open-memory-lab/architecture/roles-and-keys/): the five roles, their verb ceilings, key issuance and lifecycle, the independence axis, grant admissibility and the refusal order
 - [Security and tenancy](https://e8kor.github.io/open-memory-lab/architecture/security/): the tenancy model, the key custody map, and the threat model against hostile co-tenants
 - [Audit and lineage](https://e8kor.github.io/open-memory-lab/architecture/audit-and-lineage/): what the journal records, what an evidence export contains, and what erasure does to every copy class
@@ -80,4 +79,4 @@
 ## Decisions
 
 - [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0025, ADR-0028, ADR-0029, and the proposed ADR-0030, what each decides, and which page owns which decision
-- [ADR-0030](https://e8kor.github.io/open-memory-lab/adr/ADR-0030-in-progress-workareas/): proposed — in-progress workareas, whose readers read held claims at once, marked, under the `unreviewed` attribute of reader grants, and which contribute everything at once when a commit finds nothing held
+- [ADR-0030](https://e8kor.github.io/open-memory-lab/adr/ADR-0030-in-progress-workareas/): proposed, not accepted — a workarea an admin would mark in progress, whose readers would read its held claims at once, marked, and whose whole subtree would contribute at one commit

@@ -18,9 +18,7 @@ slice runs as a PoC in this repository (see the README's *Running the PoC*)
 Open Memory Lab (OML) is an external memory provider for AI agents and crews, built on one
 premise: **what an agent learns is a claim, not a fact.** A memory written by an agent is held
 until someone who did not write it has looked at it. Only then does it become visible to anyone
-else, except, under a proposed decision, inside a workarea created to be in progress, whose readers
-see it at once, marked as not yet reviewed, while nobody outside sees it until that workarea is
-completed.
+else.
 
 ## The problem
 
@@ -39,8 +37,7 @@ OML sits between your crews and their memory and makes the write path accountabl
   and must be approved by an identity that did not write it before anyone else can read it. The
   reviewer sees everything the claim carries — including every attached file — before their
   verdict counts. Approval changes visibility, not ranking: nothing is quietly reordered, and
-  nothing unreviewed is served to others, except, under the proposed decision above, marked as
-  such, inside a workarea created to be in progress.
+  nothing unreviewed is served to others.
 - **Files, images and PDFs, not just text.** Attachments travel with the claim, are named by
   their content so they cannot be swapped after the fact, and are stored encrypted. Where a
   file's text can be extracted deterministically, that text is scanned and reviewed too; where it
