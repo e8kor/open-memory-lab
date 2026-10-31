@@ -81,9 +81,9 @@ issuing first admin key for tenant aurora — SHOWN ONCE
 journal (aurora) seq 2: key.issued {id: a1f3e2c4-…, name: aurora-admin, role: admin, value_disclosed: false}
 
 $ oml tenants issue-admin aurora aurora-admin-2 --label "second attempt"
-refused: access.issuer_ceiling — aurora already has its first admin key; an operator
-key issues nothing beyond a tenant's first admin key. Further keys come from that
-admin under the issuer ceiling.
+refused: access.issuer_ceiling — aurora already holds a key; an operator key issues a
+tenant only its first admin key. Further keys come from that admin under the issuer
+ceiling.
 ```
 
 The last refusal is the shape of the operator role: a bootstrap channel, not a standing back door.

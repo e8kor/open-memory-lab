@@ -22,7 +22,8 @@ info:
     (request.workarea_unresolved when neither is present); /v2 keeps explicit workarea references
     in paths and bodies. Workareas, crews, keys and tenants are named (ADR-0026): every request
     field, path parameter, query parameter and header that names one of them takes the row's id
-    (RFC 9562 hex-and-dash UUID text) or its name (the Name schema), resolved server-side by
+    (RFC 9562 hex-and-dash UUID text, never version 8) or its name (the NameRef schema, the
+    reference grammar; creation bodies take Name, the creation grammar), resolved server-side by
     substituting the id before any check that reads state, so an unknown or unreadable name
     answers exactly what its id would; responses carry ids, and each of the four objects carries
     its name (docs/api/http-api.md, Names and ids). Authorization model: bearer API
@@ -1624,7 +1625,7 @@ paths:
       tags: [keys]
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
-      description: 'Requires: admin key role; operator only with tenant_id, for a tenant''s first admin key. Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).'
+      description: 'Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a tenant''s first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -2746,11 +2747,14 @@ components:
 
     Id:
       type: string
-      pattern: '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+      pattern: '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-79A-Fa-f][0-9A-Fa-f]{3}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
       description: >-
         The id of a workarea, crew, key or tenant: RFC 9562 section 4 hex-and-dash UUID text,
-        either case accepted, lowercase served. A value in this form is always an id
-        (ADR-0026 d3).
+        either case accepted, lowercase served, whose version digit (the first of the third
+        group) is not 8. The server mints these ids as version 4; version 8 is reserved for the
+        unresolved value of a name that names no row, so a hex-and-dash value of version 8 is
+        neither an id nor a name and is refused (request.validation). A value in this form is
+        always an id (docs/api/http-api.md, Names and ids; ADR-0026 d3, d4).
 
     Name:
       type: string
@@ -3655,7 +3659,7 @@ components:
         expiry: { type: string, format: date-time }
         label: { type: string, description: A free-text note; unique nowhere. }
         principal: { type: string, description: Who acts — the attribution identity, shared across one identity's keys; free text. }
-        tenant_id: { $ref: '#/components/schemas/TenantRef', description: "Operator keys only, for a tenant's first admin key; the tenant by id or name, resolved first, in the deployment. The key's name, its grant and deny nodes, default_workarea_id and crew then resolve in that tenant (ADR-0026 d4)." }
+        tenant_id: { $ref: '#/components/schemas/TenantRef', description: "Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant_id, and its name is in the provider's namespace (ADR-0026 d4, d5)." }
 
     KeyRotateRequest:
       type: object

@@ -159,9 +159,17 @@ expired key keeps its name, and no other key may take it.
 | key | its tenant; operator keys share the provider's | `POST /v2/keys`, `POST /v2/keys/{key_id}/rotate` (the successor), `POST /v2/bootstrap/claim` |
 | tenant | the deployment | `POST /v2/tenants` |
 
+The reserved provider tenant ([storage](../architecture/storage.md)) carries no name: it is not a
+row of the deployment's tenant namespace, its `tenant.genesis` carries `name: null`, and no
+reference resolves to it.
+
 **The two forms.** An id of these four kinds is RFC 9562 §4 hex-and-dash text: 8-4-4-4-12
 hexadecimal digits, either case accepted, lowercase served
-([RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html), fetched 2026-10-30). A name is a
+([RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html), fetched 2026-10-30), whose version
+digit — the first digit of the third group (§4.2) — is not `8`. The server mints every id of the
+four kinds as version 4 (§5.4); version 8 (§5.8) is reserved for the
+[unresolved value](#the-unresolved-value), so a hex-and-dash value of version 8 is not an id
+(RFC 9562 sections fetched 2026-10-31). A name is a
 lowercase RFC 1035 label — a letter first, then letters, digits and hyphens, a letter or digit
 last, 1–63 characters ([RFC 1035](https://www.rfc-editor.org/rfc/rfc1035.html) §2.3.1, fetched
 2026-10-30):
@@ -189,7 +197,7 @@ id, and each object of the four kinds carries its `name`.
 | workarea | `X-OML-Workarea`; the `{id}` of every `/v2/workareas/{id}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/claim-edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue`, on `POST /v2/review/next` and on `GET /v2/keys/{key_id}/effective-access`; `parent_id` on create, `new_parent_id` on re-parent, `to_workarea_id` on an edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea_node_id` and its denies' `subtree_node_id`, a denial's `workarea_node_id`, and `default_workarea_id` on issuance |
 | crew | the `{crew_id}` of every `/v2/crews/{crew_id}` route; `crew` on workarea create, on `POST /v2/workareas/{id}/crew` and on issuance |
 | key | the `{key_id}` of every `/v2/keys/{key_id}` route; `key_id` in a simulation audience entry |
-| tenant | `tenant_id` on an operator key's issuance |
+| tenant | `tenant_id` on an operator key's issuance of a tenant's first admin key |
 
 The MCP tools pass their workarea arguments through to these fields
 ([agent plugin](mcp-plugin.md)), and every CLI argument that names one of the four kinds takes
@@ -206,10 +214,9 @@ either form ([CLI](../cli/reference.md#conventions)). Neither resolves anything 
 2. **After the verb ceiling**, which needs no row — step 1 of the
    [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), or
    the key-role check of an admin or operator verb — each name is replaced by the id of the row
-   that holds it in the caller's namespace, or, when no row holds it, by its **unresolved
-   value**: unique to that kind and name in that namespace, matching no row, never the nil scope
-   value of a lab record, and never shared with another name or with any id. The request then
-   runs exactly as the same request by id runs.
+   that holds it in the caller's namespace, or, when no row holds it, by its
+   [unresolved value](#the-unresolved-value). The request then runs exactly as the same request
+   by id runs.
 
 The namespace is fixed by the caller and the kind:
 
@@ -217,30 +224,44 @@ The namespace is fixed by the caller and the kind:
 - An operator key resolves a tenant name in the deployment, and a key name in the provider's
   namespace, which holds operator keys only, so a key name an operator sends never resolves to a
   tenant's key.
-- On an operator key's `POST /v2/keys`, `tenant_id` resolves first, in the deployment; the new
-  key's `name`, which `name.taken` checks, and every grant node, deny node, `default_workarea_id`
-  and `crew` then resolve in that tenant.
+- An operator key's issuance of an operator key carries no `tenant_id`, and its `name` is in the
+  provider's namespace, where `name.taken` checks it. Only its issuance of a tenant's first admin
+  key resolves `tenant_id` first, in the deployment, and then the key's `name`, its `crew` and
+  every other reference of the body in that tenant.
 - The bootstrap claim's `name` is in the provider's namespace.
 
-Names therefore add no refusal path. An unknown name and a name outside the key's access both
-answer `access.not_found`, at the same step and with the same body as the id would, and no
-refusal names the id a name resolved to unless it would name that id for a request that sent it.
-Resolution never confirms that a name exists: a lookup by a name the key may not see answers
-`access.not_found`. The derived paths and parent ids of the nodes a key can read still disclose
-the names and ids of their ancestors, and a re-parented node's former parent, as
+<a id="the-unresolved-value"></a>**The unresolved value.** The unresolved value of name *n* of
+kind *k* in namespace *s* is the version-8 UUID that RFC 9562 Appendix B.2 builds for a
+name-based value: the first 128 bits of SHA-256 over the UTF-8 bytes of `oml-unresolved`, *s*,
+*k* and *n*, each of the first three followed by one zero byte, with the version field (bits
+48–51) set to `8` and the variant (bits 64–65) to `0b10` (§5.8, fetched 2026-10-31). *k* is
+`workarea`, `crew`, `key` or `tenant`; *s* is the tenant's id in lowercase hex-and-dash text
+for a tenant's namespace, `deployment` for the tenant names and `provider` for the operator
+keys. It is deterministic, so retries of one unknown name share a scope; it differs for every
+kind, name and namespace, barring a SHA-256 collision; and its version is 8, which no id carries
+and every request is refused for sending, so it never equals an id, a value a caller sent, or the
+nil scope value of a lab record.
+
+Names therefore add no refusal path. An unknown name and a name outside the key's access both answer
+`access.not_found`, at the same step and with the same code, rule and details, the echoed value
+aside, as the id would. A refusal echoes a reference only as the request spelled it. It names the id
+a name resolved to only where the naming rule of
+[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3 already discloses that id to the
+key, which means `access.grant_refused`'s `details.workarea_id` on a node where reader is effective.
+`access.not_found` never carries, in its message or its details, an id or an unresolved value that a
+name was replaced by. Resolution never confirms that a name exists: a lookup by a name the key may
+not see answers `access.not_found`. The derived paths and parent ids of the nodes a key can read
+still disclose the names and ids of their ancestors, and a re-parented node's former parent, as
 [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3's naming rule states
 ([own](../architecture/roles-and-keys.md#own)).
 
 **Refusals.** A value that is neither form is `request.validation`. An unknown or unreadable name
-is `access.not_found`. A creation whose name its kind already holds in the namespace — a revoked
-key's included, and `universe` for any workarea but the root — is `409 name.taken`, `details`
-`{kind, name}` ([errors](errors.md)): it is checked after every other check of the creating
-request, the unique index is its authority, and a creation that loses the race to a concurrent one
-answers it and journals nothing. Only admin and operator keys hold a creating verb, and they see
-every row of their namespace; the bootstrap claim's caller holds a valid enrollment token, checked
-before its `name` ([below](#keys-grants-denials)). Only an admin or operator key, or the holder of
-a valid enrollment token at the bootstrap claim, therefore receives `name.taken`, and no agent key
-ever learns that a name is taken.
+is `access.not_found`. A taken name at creation is `409 name.taken`, which fires as its
+[errors](errors.md) row states. Only admin and operator keys hold a creating verb. An admin sees
+every row of its tenant; an operator sees the deployment's tenants and the provider's namespace,
+and its one creation in a tenant's namespace, the first admin key, is refused at step 2 of the
+[issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) unless
+that namespace holds no key. No agent key therefore ever learns that a name is taken.
 
 **Idempotency.** Path parameters and body fields are digested as sent
 ([Idempotency](#idempotency)), so a `/v2` request that names a row in a path or a body and the
@@ -260,7 +281,8 @@ changes a path and never a name.
 ### Rows created before names
 
 At its first start on the schema version that adds names, and before it serves a request, the
-lead names every row that has no name, in four rules, and journals the result:
+lead names every row that has no name, under rules 1–4, lifts every denial rule 5 names, and
+journals the result:
 
 1. Each tenant's root workarea is named `universe`, whatever its `workarea.create` says.
 2. For each kind and namespace, in journal order of creation, a row whose creation event carries
@@ -275,14 +297,32 @@ lead names every row that has no name, in four rules, and journals the result:
    external_manager}` becomes one crew record with a fresh id, named by rules 2 and 3 in order of
    first appearance, and each workarea with that object points at it. Keys that predate names
    have no crew.
+5. Every global denial on an admin key that is not yet lifted is lifted by the lead in the same
+   start, journalled as `key.denial_lifted` with `reason_digest` over the fixed reason
+   `adr-0026-d15`, in the commit that carries `system.names_assigned`. The export then shows that
+   the denial ended and why, and no denial on an admin key outlives the upgrade
+   ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6).
 
 One `system.names_assigned` event per chain that has anything to assign — each tenant's chain,
-and the provider chain for tenant and operator-key names — lists every row of the chain that
+and the provider chain for tenant and operator-key names, the reserved provider tenant itself
+unnamed and unlisted — lists every row of the chain that
 predates names, those rule 2 keeps included (with `name` equal to `prior_name`), and every crew
 record it creates ([event catalog](../data/event-catalog.md)). The fold takes every such row's
-name from this event alone, never from a creation event. Every earlier event stays as it was
-signed. The schema steps around the event — the `name` columns added nullable, filled by the
-fold, then made `NOT NULL` — are on [PostgreSQL schema](../data/postgres-schema.md#names-and-tenants).
+name from this event alone, never from a creation event, and a re-fold reads it before the
+creation events it names ([folds](../data/postgres-schema.md#folds-of-the-journal-vs-operational-tables)).
+`prior_name` is read from the journal, as the creation event carried it; the migration carries no
+creation-time name into `name`, and keeps the PoC's `tenants.name` and `workareas.name` as
+`prior_name` columns that no reference reads. Every earlier event stays as it was signed. The
+schema steps around the event — the PoC's columns renamed, the new `name` columns added
+nullable, filled by the fold, then made `NOT NULL` — are on
+[PostgreSQL schema](../data/postgres-schema.md#names-and-tenants).
+
+A follower on the schema version that adds names reports not ready on `/readyz` until it has
+folded `system.names_assigned` for every chain; until then it serves no request. Because the
+migration renames columns the earlier binaries read, this upgrade stops every earlier binary
+before it migrates, and the deployment serves nothing until the lead has journalled the result
+([upgrades](../operations/upgrades.md#the-upgrade-order)).
+
 An admin who wants a chosen name on a key named by rule 3 issues a new key under that name and
 revokes the old one; the derived name stays on the old key, and still addresses it.
 
@@ -415,7 +455,7 @@ join this table:
 | `GET /v2/events` | reader |
 | `GET /v2/vocab/suggest` · `GET /v2/vocab/terms/{curie}` · `GET /v2/vocab/terms/{curie}/hierarchy` · `GET /v2/vocab/mappings` | reader |
 | `GET /v2/review/queue` · `POST /v2/review/next` · `POST /v2/review/verdicts` · `POST /v2/review/reopen` | dreamer(review); refused per row by lineage-closure exclusion |
-| `POST /v2/keys` and every key, grant, denial verb | admin (key role); operator only for a tenant's first admin key |
+| `POST /v2/keys` and every key, grant, denial verb | admin (key role); operator only for operator keys and a tenant's first admin key |
 | `GET /v2/bans` · `POST /v2/bans` · `POST /v2/bans/{ban_id}/lift` | admin (key role) |
 | `GET /v2/simulations` · `GET /v2/simulations/{id}` · `POST /v2/simulations` · `POST /v2/simulations/{id}/audience` · `POST /v2/simulations/{id}/end` | admin (key role) |
 | `POST /v2/memories/{artifact_id}/reassign` · `/demote` · `/erase`, `POST /v2/claims/tip-override` | admin (key role) |
@@ -887,7 +927,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 | Endpoint | Does |
 |---|---|
-| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea_node_id, role, deny: [{subtree_node_id}]}], default_workarea_id?, held_by?, crew?, expiry?, label?, principal?, tenant_id?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused; the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key must add `tenant_id`, an admin key must not send it, and an operator key may issue only a tenant's first admin key. The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. |
+| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea_node_id, role, deny: [{subtree_node_id}]}], default_workarea_id?, held_by?, crew?, expiry?, label?, principal?, tenant_id?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused; the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant_id`, and a tenant's first admin key, with `tenant_id` naming the tenant; an admin key never sends `tenant_id` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. |
 | `GET /v2/keys` · `GET /v2/keys/{key_id}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events. Never values. A revoked or expired key's name still resolves here. |
 | `POST /v2/keys/{key_id}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
 | `POST /v2/keys/{key_id}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
@@ -907,11 +947,10 @@ the single-use, expiring **enrollment token** the Helm bootstrap job minted
 ([deployment.md](../operations/deployment.md)). `{enrollment_token, name}` → `201` with the root
 operator key, named `name` in the provider's namespace, value shown once; the token is consumed on first use, and a consumed, expired or
 unknown token answers `auth.invalid` with `details.reason` naming which. The token is checked
-first; only then is `name` checked against the creation grammar (`request.validation`) and the
-provider's namespace (`name.taken`), so only the holder of a valid token learns that a name is
-taken. A refusal after the token check consumes no token and journals nothing; a re-run ceremony
-claims a name no earlier operator key held, since none is released. The `oml bootstrap claim`
-ceremony fronts exactly this call ([cli/reference.md](../cli/reference.md)).
+first; only then is `name` checked, against the creation grammar (`request.validation`) and then
+for [`name.taken`](errors.md), and a refusal after the token check consumes no token and journals
+nothing. The `oml bootstrap claim` ceremony fronts exactly this call
+([cli/reference.md](../cli/reference.md)).
 
 ## Bans
 
@@ -1006,8 +1045,10 @@ show/validate/apply shape and the retired-key refusal.
 - `GET /healthz` — liveness: `200 {"status": "ok"}` while the process runs.
 - `GET /readyz` — readiness: `200` only when the replica can serve — Postgres reachable and the
   startup fork check passed (the stored chain head verifies against the last signed head;
-  [storage.md](../architecture/storage.md)). Otherwise `503` with per-check detail. While a
-  replica refuses writes after a failed fork check, API writes on either ring answer
+  [storage.md](../architecture/storage.md)), and, for a follower on the schema version that adds
+  names, `system.names_assigned` folded for every chain
+  ([rows created before names](#rows-created-before-names)). Otherwise `503` with per-check
+  detail. While a replica refuses writes after a failed fork check, API writes on either ring answer
   `system.unavailable`. Ready or not, the body names the build that answered, in a `build`
   object:
 

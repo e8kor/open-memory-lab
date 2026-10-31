@@ -89,7 +89,7 @@ Postgres `ltree`) is derived from the tree at check time — the names from
 `universe` down to the node, joined with `.` — and the subtree a grant covers is
 "every node whose derived path is prefixed by the granted node's derived path". A
 request may name the node by its id or its unique name; the server substitutes
-the id before any check, and only the id is stored
+the id before any check that reads state, and only the id is stored
 ([names](../api/http-api.md#names-and-ids)). A path is never accepted as a
 reference: with unique names its last segment already identifies the node. Three
 consequences:

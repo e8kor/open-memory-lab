@@ -123,8 +123,9 @@ beside the crew records, keys, grants and denials its own rows of this matrix al
 No grant and no denial enters: denials attenuate grants, and an admin key can hold neither. A
 global denial on an admin key is refused, `request.validation` with `details.field: key_id`
 ([http-api](../api/http-api.md#keys-grants-denials)), so no denial is accepted, journalled and
-then ignored by a structure read. On the
-workarea read it sees every child and every workarea edge of the node, `my_effective_verbs`
+then ignored by a structure read, and one journalled before names is lifted by the lead at the
+upgrade ([rows created before names](../api/http-api.md#rows-created-before-names), rule 5). On
+the workarea read it sees every child and every workarea edge of the node, `my_effective_verbs`
 empty, since that field lists grant-role verbs, and its own permission epoch. It never reads claim
 content: recall, read, graph and lineage reads, the events tail, vocabulary reads and attachment
 fetch need reader, which no admin key can carry ([admissibility](#grant-admissibility-and-refusal-order)),
@@ -172,34 +173,39 @@ issuance and at every grant amendment. An admin who must write or recall
 holds a separate writer-role key ([Admin verbs](#admin-verbs)).
 
 **Issuance validation order.** `POST /v2/keys` ([http-api](../api/http-api.md#keys-grants-denials))
-first checks that `tenant_id` is present if and only if the issuer is an operator key — else
-`request.validation` (step 0) — and then validates in this order, and the first failure answers:
+first checks that `tenant_id` is present if and only if the issuer is an operator key and the
+requested role is `admin` — else `request.validation` (step 0) — and then validates in this
+order, and the first failure answers:
 
 1. `access.role_exclusive`;
 2. the [issuer ceiling](#issuer-ceiling) on the key role — `access.issuer_ceiling`, including an
    admin minting an operator key, with details `{role, admissible}`: `role` the requested key
-   role, `admissible` the key roles this issuer may issue;
+   role, `admissible` the key roles this issuer may issue; and, on an operator key's issuance of
+   an admin key, the tenant `tenant_id` names already holds a key of any role, revoked or expired
+   included — `access.issuer_ceiling`, `admissible` empty
+   ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d5);
 3. grant admissibility (the table above) — `access.issuer_ceiling`, with details `{role,
    admissible, grant_index}`: `role` the first refused grant's role, `admissible` the key role's
    admissible set, `grant_index` that grant's 0-based position in `grants`;
-4. for an operator, `tenant_id` names a tenant; every grant node and deny node exists in the
-   tenant; and the `crew`, when present, names a crew record of the tenant — else
+4. for an operator's admin key, `tenant_id` names a tenant; every grant node and deny node
+   exists in the tenant; and the `crew`, when present, names a crew record of the tenant — else
    `access.not_found`;
 5. each deny node lies inside its own grant's subtree — else `request.validation`;
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
    key has none, and a key never inherits its issuer's default;
-7. the key's `name` is not already held in its namespace, a revoked or expired key's included —
-   else `name.taken`, journalling nothing ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d5).
+7. the key's `name` is not taken — else [`name.taken`](../api/errors.md).
 
 Every workarea, crew and tenant reference in the body — a grant's node, a deny's subtree, the
 default workarea, `crew`, `tenant_id` — takes an id or a [name](../api/http-api.md#names-and-ids),
 and each name is replaced by its row's id, or by its unresolved value when no row holds it, before
-step 1, so an unknown name fails step 4 exactly as an unknown id does. An admin's names resolve
-in its tenant. An operator's `tenant_id` resolves first, in the deployment, and the new key's
-`name`, its grant and deny nodes, `default_workarea_id` and `crew` then resolve in that tenant;
-an unknown `tenant_id` fails step 4. `name` is checked against the
-[creation grammar](../api/http-api.md#names-and-ids) with the rest of the body, before step 0. The
+step 1, in the caller's namespace ([names](../api/http-api.md#names-and-ids)), so an unknown name
+fails step 4 exactly as an unknown id does, an unknown `tenant_id` included. Step 2 refuses an
+operator's admin key for a tenant that has held a key before any check answers from that
+tenant's names, so that issuance reaches step 4 and step 7 only in a tenant that has never held a
+key, whose key and crew namespaces are empty, apart from a concurrent issuance of its own. `name`
+is checked against the [creation grammar](../api/http-api.md#names-and-ids) with the rest of the
+body, before step 0. The
 server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is a
 [CLI default](../cli/reference.md#oml-keys-issuance-revocation-rotation) the body carries like
 any other grant.
@@ -439,10 +445,10 @@ unreviewed admin write, because none can exist.
 
 ## Operator and the bootstrap ceremony
 
-The operator is the provider-level role. Its verbs are creating tenants and issuing each tenant's
-first admin key. It holds no grant inside any tenant: it never writes, reads or reviews content,
-and the matrix above gives it no content verb to misuse. Tenant isolation mechanics are declared
-in [security.md](security.md).
+The operator is the provider-level role. Its verbs are creating tenants, issuing operator keys and
+issuing each tenant's first admin key. It holds no grant inside any tenant: it never writes, reads
+or reviews content, and the matrix above gives it no content verb to misuse. Tenant isolation
+mechanics are declared in [security.md](security.md).
 
 **Bootstrap.** On first start, a Helm job mints a **single-use, expiring enrollment secret**
 (stored as a Kubernetes Secret; the job's logs carry progress only, never key material). The
@@ -467,7 +473,9 @@ A key is issued with a role no higher than the issuer's. Concretely:
 - A tenant admin issues reader, writer, dreamer and admin keys within its tenant — admin is the
   top tenant role, so the ceiling binds where it matters: **no tenant key can ever mint an
   operator key.**
-- An operator key issues operator keys (its own rotation path) and each tenant's first admin key.
+- An operator key issues operator keys (its own rotation path), which carry no `tenant_id`, and
+  each tenant's first admin key: an admin key for a tenant that has never held a key (step 2 of
+  the [issuance order](#grant-admissibility-and-refusal-order)).
 
 The ceiling is checked at issuance and journalled with the issuance event, so the evidence export
 can show, for every key, that its role was within its issuer's at the moment of issue. The ceiling
@@ -482,7 +490,7 @@ declaration site.
 
 | Field | What it is | Unique | Changes |
 |---|---|---|---|
-| `name` | What admin verbs address the key by — show, revoke, rotate, grants, denials, effective access, a simulation audience — wherever its id is accepted ([names](../api/http-api.md#names-and-ids)) | in its tenant; operator keys in the provider's namespace | never, and never released: a revoked or expired key keeps it |
+| `name` | What admin verbs address the key by — show, revoke, rotate, grants, denials, effective access, a simulation audience — wherever its id is accepted ([names](../api/http-api.md#names-and-ids)) | in its [namespace](../api/http-api.md#names-and-ids) | never, and never [released](../api/http-api.md#names-and-ids) |
 | `principal` | Who acts: the attribution identity in every journal envelope, shared by design across the keys one identity holds, compared by R2 and matched by bans | no | never |
 | `label` | An optional free-text note for the people who administer the key | no | never |
 

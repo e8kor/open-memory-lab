@@ -71,7 +71,13 @@ Every upgrade, every profile, in this order:
    the migrated schema before anything on the serving path moves.
 4. **Followers.** Rolling; read capacity dips by one replica at a time and
    writes are untouched (followers forward writes,
-   [deployment — the lead lease](deployment.md)).
+   [deployment — the lead lease](deployment.md)). On the schema version that
+   adds names, an N+1 follower reports not ready on `/readyz` and serves no
+   request until it has folded `system.names_assigned` for every chain, which
+   only the N+1 lead journals, at step 5
+   ([rows created before names](../api/http-api.md#rows-created-before-names));
+   `oml doctor` names the wait (`names_assigned`,
+   [observability](observability.md#the-doctor-contract)).
 5. **The lead, last.** Restarting the lead is a lease takeover: a
    write-refusal window ending in the fork check and a journalled
    `system.lead_acquired` ([deployment](deployment.md)). Last, so the one
@@ -81,6 +87,15 @@ Every upgrade, every profile, in this order:
    size is unmeasured ([FR-24](../product/roadmap.md)); it counts against
    the write SLI ([observability — SLOs](observability.md#slos)), which is
    the honest accounting, not an exemption.
+
+**The upgrade that adds names is outside the expand-contract rule.** Its
+migration renames the PoC's `tenants.name` and `workareas.name` to
+`prior_name` ([PostgreSQL schema](../data/postgres-schema.md#names-and-tenants)),
+columns the N binaries read, so every N binary stops before step 2, and the
+deployment serves nothing from step 2 until the N+1 lead has journalled
+`system.names_assigned` at step 5 and the followers have folded it. The
+write-refusal window of that one upgrade is the whole upgrade, stated
+plainly.
 
 In standalone there is no rolling anything — the supervisor stops all four
 children and starts the new ones; the order above collapses to "bootstrap

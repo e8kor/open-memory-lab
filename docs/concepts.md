@@ -29,10 +29,10 @@ deployment.
 
 ## Names
 
-Workareas, crews, keys and tenants each carry a **name** beside their id: unique in its namespace
-(the tenant, or for a tenant the deployment), given at creation, never changed and never
-released. A name is accepted everywhere the row's id is — an agent can target `metals-crew`
-rather than a UUID — and the server resolves it to the id before any check, so a name the caller
+Workareas, crews, keys and tenants each carry a **name** beside their id: unique in its namespace,
+given at creation, never changed and never released. A name is accepted everywhere the row's id
+is — an agent can target `metals-crew` rather than a UUID — and the server resolves it to the id
+before any check that reads state, so a name the caller
 may not see answers exactly as its id would, and everything stored still binds to ids
 ([HTTP API](api/http-api.md#names-and-ids)).
 

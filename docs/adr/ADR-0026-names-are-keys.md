@@ -9,7 +9,7 @@ answers: which records carry a unique name, what a name may spell, how a name is
 
 **Status:** proposed · 2026-10-30
 
-**Amends:** ADR-0008 (d7), ADR-0010 (d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14), ADR-0028 (d1, d3)
+**Amends:** ADR-0008 (d3, d7), ADR-0010 (d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14), ADR-0028 (d1, d3)
 
 ## Context
 
@@ -66,14 +66,20 @@ Line citations refer to the tree at commit `d1d44f4`, the base this record was w
 External formats are cited from their sources, fetched 2026-10-30: the label grammar of
 [RFC 1035](https://www.rfc-editor.org/rfc/rfc1035.html) §2.3.1, the UUID text form of
 [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html) §4, and the `ltree` label rule of the
-[PostgreSQL 17 documentation](https://www.postgresql.org/docs/17/ltree.html). Everything this
-record decides is design; nothing below is built.
+[PostgreSQL 17 documentation](https://www.postgresql.org/docs/17/ltree.html). Fetched
+2026-10-31: RFC 9562's version field (§4.2), version 4 (§5.4), version 8 (§5.8) and its
+name-based version-8 example (Appendix B.2); PostgreSQL 17's `gen_random_uuid()`, which "returns
+a version 4 (random) UUID" ([UUID functions](https://www.postgresql.org/docs/17/functions-uuid.html));
+and the label-name rules of Kubernetes'
+[Object Names and IDs](https://kubernetes.io/docs/concepts/overview/working-with-objects/names/).
+Everything this record decides is design; nothing below is built.
 
 ## Decision
 
 - **d1 — Workareas, crews, keys and tenants each carry a name: a unique, immutable key beside the
   id.** Every row of the four kinds has exactly one name, given at creation and never changed;
-  no rename verb exists on any surface. The namespaces are flat, one per kind:
+  no rename verb exists on any surface. This amends ADR-0008 d3: a node is re-parented, never
+  renamed. The namespaces are flat, one per kind:
 
     | Kind | Unique within | Created by | The creation event records it in |
     |---|---|---|---|
@@ -81,6 +87,10 @@ record decides is design; nothing below is built.
     | crew | its tenant | admin (`POST /v2/crews`, d8) | `crew.created.name` |
     | key | its tenant; operator keys share the provider's namespace | admin, or operator for operator keys and a tenant's first admin key (`POST /v2/keys`); rotation (d9); the bootstrap claim | `key.issued.name`, `key.rotated.new_name` |
     | tenant | the deployment | operator (`POST /v2/tenants`) | `tenant.created.name`, `tenant.genesis.name` |
+
+    The reserved provider tenant, whose chain carries the provider-level acts
+    ([storage](../architecture/storage.md)), carries no name: it is not a row of the deployment's
+    tenant namespace, its `tenant.genesis` carries `name: null`, and no reference resolves to it.
 
     The id stays the binding everywhere state is kept: grants, denials, every journal payload
     field that names a row, the idempotency record's scope, the read log, cursors and the lake.
@@ -110,13 +120,13 @@ record decides is design; nothing below is built.
 
     That is RFC 1035's `<label>` (§2.3.1: a letter first, letters, digits and hyphens inside, a
     letter or digit last, "63 characters or less") restricted to lowercase. Two spellings the
-    grammar admits are never names, so that no name ever looks like an id to any tool: the RFC
-    9562 hex-and-dash form (d3), and 32 hexadecimal digits, the form many UUID parsers also
-    accept. A third is a name that no creation may choose: the derived form `tenant-`, `wa-`,
-    `crew-` or `key-` followed by 32 hexadecimal digits, which only d11 assigns, to rows that
-    predate names. A creation that sends it is `request.validation`; a reference that sends it
-    names the row d11 named, like any other name. The reference grammar is therefore the label
-    minus the first two spellings, and the creation grammar the label minus all three.
+    grammar admits are never names, so that no name ever looks like an id to any tool: the RFC 9562
+    hex-and-dash form (d3), whatever its version digit, and 32 hexadecimal digits, the RFC 9562 hex
+    digits without their hyphens. A third is a name that no creation may choose: the derived form
+    `tenant-`, `wa-`, `crew-` or `key-` followed by 32 hexadecimal digits, which only d11 assigns,
+    to rows that predate names. A creation that sends it is `request.validation`; a reference that
+    sends it names the row d11 named, like any other name. The reference grammar is therefore the
+    label minus the first two spellings, and the creation grammar the label minus all three.
 
     There is no normalization and no case mapping. Every allowed character is ASCII, so Unicode
     NFC is the identity on a name, and names compare byte for byte. A value with an uppercase
@@ -124,27 +134,38 @@ record decides is design; nothing below is built.
     name it resembles ("refused, not coerced", [errors](../api/errors.md)).
 
     The grammar is the intersection of every place a name must travel unescaped: a URL path
-    segment, an HTTP header value, a shell argument, a JSON string, a Kubernetes object name and a
-    PostgreSQL `ltree` label, which PostgreSQL 17 allows to hold "alphanumeric characters,
+    segment, an HTTP header value, a shell argument, a JSON string, a Kubernetes RFC 1035 label
+    name (63 characters at most, "only lowercase alphanumeric characters or '-'", a letter first;
+    DNS-subdomain names allow 253, [Object Names and IDs](https://kubernetes.io/docs/concepts/overview/working-with-objects/names/))
+    and a PostgreSQL `ltree` label, which PostgreSQL 17 allows to hold "alphanumeric characters,
     underscores, and hyphens" up to 1000 characters ([ltree](https://www.postgresql.org/docs/17/ltree.html)).
     Every existing example name fits it: `universe`, `procurement`, `metals-crew`, `q1-2027`,
     `research-crew`, `lit-review`, `run-grid`, `oml`. Principals keep their own free-text form
     (`crew-procure/agent-7`, d9). The cost: `Research Crew` and `2027-q1` are not names, and the
     caller spells them `research-crew` and `q1-2027`.
 
-- **d3 — The ids of the four kinds are UUIDs in RFC 9562 hex-and-dash text, and a value in that
-  form is always an id.** An id is 36 characters, 8-4-4-4-12 hexadecimal digits separated by
+- **d3 — The ids of the four kinds are version-4 UUIDs in RFC 9562 hex-and-dash text, and a value in
+  the id form is always an id.** An id is 36 characters, 8-4-4-4-12 hexadecimal digits separated by
   hyphens, the form RFC 9562 §4 gives; either case is accepted on input, as §4 allows ("all
-  uppercase, all lowercase, or mixed case"), and servers emit lowercase. Every value a request
-  carries for one of the four kinds is classified at parse, with the rest of the request's
-  syntax and before any check that consults state:
+  uppercase, all lowercase, or mixed case"), and servers emit lowercase. The server mints every id
+  of the four kinds as a version-4 UUID (§5.4), whose version digit, the first of the third group
+  (§4.2), is `4`. The PoC already does: its lead mints ids through the `uuid` crate's
+  `Builder::from_random_bytes` (crates/bins/oml-server-lead/src/lib.rs:266-271), which "Creates a
+  `Builder` for a version 4 UUID" (uuid 1.29.0, `src/builder.rs`, the version Cargo.lock pins), and
+  its first migration's column defaults are PostgreSQL's `gen_random_uuid()`
+  (migrations/0001_init.sql:23). No id of the four kinds is ever version 8 (§5.8), because version 8
+  is what an unresolved value carries (d4): the **id form** is the hex-and-dash text whose version
+  digit is not `8`, so a caller can never send an unresolved value as an id. Every value a request
+  carries for one of the four kinds is classified at parse, with the rest of the request's syntax
+  and before any check that consults state:
 
     1. in the id form → an id;
     2. otherwise, a name under d2's reference grammar, the derived form included → a name;
     3. otherwise → `request.validation`, `details.field` naming the field.
 
-    Because d2 refuses every name that is in the id form, the two classes never overlap, and a
-    value's class never depends on what exists. The [HTTP conventions](../api/http-api.md#conventions)
+    Because d2 refuses every name in the hex-and-dash form, the two classes never overlap, a
+    version-8 value in that form is neither and answers step 3, and a value's class never depends
+    on what exists. The [HTTP conventions](../api/http-api.md#conventions)
     still tell clients never to parse an id; the form is fixed so the server can tell an id from a
     name. Ids of the other kinds — artifacts, serves, edges, grants, simulations — have no names
     and are untouched by this record.
@@ -165,22 +186,34 @@ record decides is design; nothing below is built.
     the caller and the kind. A tenant's key, of any role, resolves every name in its tenant. An
     operator key resolves a tenant name in the deployment and a key name in the provider's
     namespace, which holds operator keys only, so a key name an operator sends never resolves to
-    a tenant's key. On an operator key's issuance, `tenant_id` resolves first, in the deployment;
-    the new key's `name`, which `name.taken` checks, and every grant node, deny node,
-    `default_workarea_id` and `crew` then resolve in that tenant. The bootstrap claim's `name` is
-    in the provider's namespace.
+    a tenant's key. An operator key's issuance of an operator key carries no `tenant_id`, and its
+    `name` is in the provider's namespace, where `name.taken` checks it. Only its issuance of a
+    tenant's first admin key resolves `tenant_id` first, in the deployment, and then the key's
+    `name`, its `crew` and every other reference of the body in that tenant. The bootstrap claim's
+    `name` is in the provider's namespace. This amends ADR-0025 d2's step 0: `tenant_id` is
+    present if and only if the issuer is an operator key and the requested role is `admin`.
 
     Resolution runs after the verb ceiling, which needs no row — step 1 of the
     [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), or
     the key-role check of an admin or operator verb — and before every check that reads one. A
-    resolved name is replaced by its row's id, and a name that names no row by an **unresolved
-    value**: unique to that kind and name in that namespace, matching no row, never the nil scope
-    value of a lab record, and never shared with another name or with any id. The request then
-    runs exactly as the same request by id runs, through the same refusal order, issuance order,
-    supersede rule and events-tail visibility. Names therefore add no refusal path: an unknown
-    name and a name outside the key's access both answer `access.not_found`, in the same step,
-    with the same body, as the id would; and no refusal names the id a name resolved to unless it
-    would name that id for a request that sent it. On the provider ring an unresolved
+    resolved name is replaced by its row's id, and a name that names no row by its **unresolved
+    value**: the version-8 UUID that RFC 9562 Appendix B.2 builds for a name-based value — the
+    first 128 bits of a SHA-256 digest, with the version and variant fields overwritten — taken
+    over the namespace, the kind and the name, encoded as the
+    [Names section](../api/http-api.md#names-and-ids) declares. It is deterministic, so every
+    retry of one unknown name has the same value; it differs for every kind, name and namespace,
+    barring a SHA-256 collision; and its version is 8, which no id carries and d3 refuses in every
+    request, so it never equals an id, a value a caller sent, or the nil scope value of a lab
+    record.
+    The request then runs exactly as the same request by id runs, through the same refusal order,
+    issuance order, supersede rule and events-tail visibility. Names therefore add no refusal
+    path: an unknown name and a name outside the key's access both answer `access.not_found`, in
+    the same step, with the same code, rule and details, the echoed value aside, as the id would.
+    A refusal echoes a reference only as the request spelled it. It names the id a name resolved
+    to only where the naming rule of ADR-0025 d3 already discloses that id to the key, which means
+    `access.grant_refused`'s `details.workarea_id` on a node where reader is effective.
+    `access.not_found` never carries, in its message or its details, an id or an unresolved value
+    that a name was replaced by. On the provider ring an unresolved
     `X-OML-Workarea` puts its unresolved value in the idempotency record's workarea component, so
     every unknown name has a scope of its own, as every unknown id does, and no replay,
     `idempotency.in_progress` or digest mismatch tells a writer whether a name it guessed exists.
@@ -222,13 +255,25 @@ record decides is design; nothing below is built.
   answers `name.taken` and journals nothing, which for a key means before `key.issued` commits.
 
     Only admin and operator keys hold a creating verb
-    ([permission matrix](../architecture/roles-and-keys.md#permission-matrix)), and an admin sees
-    every row of its tenant, an operator every tenant, so only a caller entitled to see the whole
-    namespace ever learns that a name is taken. No agent key can create a named row, so no agent
-    key can probe for names: every lookup it makes resolves through d4 to `access.not_found` or to
-    a row it may read. A value that is neither an id nor a name is `request.validation` on every
-    surface, at parse, before any check that consults state, so its answer reveals nothing about
-    what exists.
+    ([permission matrix](../architecture/roles-and-keys.md#permission-matrix)). An admin sees
+    every row of its tenant; an operator sees the deployment's tenants and the provider's
+    namespace, and its one creation in a tenant's namespace, the first admin key, is refused at
+    step 2 unless that namespace holds no key. So only a caller entitled to see the whole
+    namespace ever learns that a name is taken. Step 2 of the
+    [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)
+    gains that refusal: an operator key's issuance of an admin key for a tenant that already holds
+    a key of any role, revoked or expired included, is `access.issuer_ceiling`, before any check
+    answers from a name, crew or node of that tenant, so an operator's `name.taken` and crew
+    lookups only ever run against an empty key namespace, apart from a concurrent issuance of its
+    own. This amends ADR-0025 d2's step 2. "First" therefore means the tenant has never held a
+    key: an operator never issues a tenant a second admin key, even once every admin key of the
+    tenant is revoked, and the cost is that a tenant's admins, not the provider, keep its
+    administration alive, by issuing each other admin keys under the issuer ceiling.
+
+    No agent key can create a named row, so no agent key can probe for names: every lookup it makes
+    resolves through d4 to `access.not_found` or to a row it may read. A value that is neither an id
+    nor a name is `request.validation` on every surface, at parse, before any check that consults
+    state, so its answer reveals nothing about what exists.
 
     The bootstrap claim is the one creation no key makes. It checks the enrollment token first
     (`auth.invalid`), and only then `name`: its creation grammar (`request.validation`), then
@@ -351,7 +396,8 @@ record decides is design; nothing below is built.
 
 - **d11 — Rows that predate names are named once, by a deterministic rule the journal records;
   nothing is deleted or rewritten.** At its first start on the schema version that adds names,
-  and before it serves a request, the lead names every unnamed row and journals the assignments:
+  and before it serves a request, the lead names every unnamed row, lifts every denial rule 5
+  names, and journals both:
 
     1. **The root.** Each tenant's root workarea is named `universe` (d6), whatever its
        `workarea.create` says.
@@ -367,16 +413,37 @@ record decides is design; nothing below is built.
        `{name, charter_uri, external_manager}` becomes one crew record with a fresh id, named by
        rules 2 and 3 in order of first appearance, and every workarea with that object points at
        it. Keys that predate names have no crew.
+    5. **Denials on admin keys.** Every global denial on an admin key that is not yet lifted is
+       lifted by the lead in the same start, journalled as `key.denial_lifted` with
+       `reason_digest` over the fixed reason `adr-0026-d15`, in the commit that carries
+       `system.names_assigned`. The export then shows that the denial ended and why, and no
+       denial on an admin key outlives the upgrade (d15). The rule is needed: the PoC accepts a
+       global denial on any key of its tenant, an admin key's included
+       (crates/oml-app/src/app.rs:764-777 checks only the issuer's role and that the key and the
+       node exist).
 
     One `system.names_assigned` event per chain that has anything to assign — each tenant's chain,
-    and the provider chain for tenant and operator-key names — lists every row it names, kept
+    and the provider chain for tenant and operator-key names, the reserved provider tenant itself
+    unnamed and unlisted (d1) — lists every row it names, kept
     names included (rule 2, with `name` equal to `prior_name`), as `{kind, id, name, prior_name}`,
-    and every crew record it creates ([event catalog](../data/event-catalog.md)); the folds read
-    it like any event, and take the name of every row that predates names from it alone, never
-    from a creation event. Every earlier
-    event stays as it was signed, its original name or crew object included, so the journal shows
-    both what a row was called and what it is named now. The rule is declared with the names, in
-    [the HTTP API](../api/http-api.md#rows-created-before-names).
+    and every crew record it creates ([event catalog](../data/event-catalog.md)). The folds take
+    the name of every row that predates names from it alone, never from a creation event, and a
+    re-fold of a chain reads it before the creation events it names
+    ([folds](../data/postgres-schema.md#folds-of-the-journal-vs-operational-tables)). `prior_name`
+    is read from the journal, the name the row's creation event carried; the migration that adds
+    names carries no creation-time name into `name`, and keeps the PoC's `tenants.name` and
+    `workareas.name` columns as `prior_name`, history no reference reads
+    ([schema](../data/postgres-schema.md#names-and-tenants)). Every earlier event stays as it was
+    signed, its original name or crew object included, so the journal shows both what a row was
+    called and what it is named now.
+
+    A follower on the schema version that adds names reports not ready on `/readyz` until it has
+    folded `system.names_assigned` for every chain; until then it serves no request, so no follower
+    answers a name before the names exist. Renaming the PoC's columns breaks the earlier binaries,
+    which read them, so this one upgrade stops every earlier binary before it migrates, and the
+    deployment serves nothing until the lead has journalled the assignments
+    ([upgrades](../operations/upgrades.md#the-upgrade-order)). The rules are declared with the
+    names, in [the HTTP API](../api/http-api.md#rows-created-before-names).
 
     On the live deployment this names the tenant `oml` (it fits d2), names the root `universe`
     with `prior_name: root`, and names every key `key-<hex>`. An admin who wants a chosen name on
@@ -427,7 +494,8 @@ record decides is design; nothing below is built.
   role, like every admin verb, so no grant and no denial enters: denials attenuate grants, and an
   admin key can hold neither. A global denial on an admin key is refused, `request.validation`
   with `details.field: key_id`, so no denial is accepted, journalled and then ignored by every
-  structure read. On the workarea read an admin key sees every child and every workarea
+  structure read, and one journalled before this record is lifted under d11's rule 5. On the
+  workarea read an admin key sees every child and every workarea
   edge of the node, `my_effective_verbs` empty (the field lists grant-role verbs) and its own
   permission epoch. It never reads claim content: recall, get, the scoped listing, the events
   tail, the lineage read, claim-edge reads, vocabulary reads and attachment fetch all need reader,
@@ -474,9 +542,10 @@ record decides is design; nothing below is built.
   `crew.updated` and `system.names_assigned` event types; `name` on workarea, crew, key and tenant
   objects; `crew_id` on keys; `name` on the issuance, rotation and bootstrap-claim bodies; the
   `crews` table and the `name` columns with their unique indexes. `workarea.create` and
-  `workarea.crew_updated` carry `crew_id` in place of the crew object, and `key.rotated` gains
-  `new_name`. The OpenAPI document gives references `NameRef`, the reference grammar, and keeps
-  `Name`, the creation grammar, for the creating fields (d2).
+  `workarea.crew_updated` carry `crew_id` in place of the crew object, `key.rotated` gains
+  `new_name`, and `key.denial_lifted` gains `reason_digest` (d11's rule 5). The OpenAPI document
+  gives references `NameRef`, the reference grammar, and keeps `Name`, the creation grammar, for
+  the creating fields (d2), and its `Id` refuses version 8 (d3).
 - The lake's `gold.areas` snapshot carries each node's `name` and `crew_id` in place of the three
   crew columns it copied from workarea events; crew records stay in Postgres, and `crew.created`
   and `crew.updated` reach the lake only as `bronze.events` rows
@@ -485,13 +554,15 @@ record decides is design; nothing below is built.
   every field is optional but `name`, so a later record can add a crew kind and member profiles
   as new optional fields, columns and payload members — additive on `/v2` — without reshaping or
   renaming anything this record defines; this record decides neither.
-- `/v1` changes on the request side only, and only additively: `X-OML-Workarea` and the listing's
-  `workarea_id` accept names. Example ids of the four kinds in the OpenAPI document, the agent
-  plugin, the reviewer-crews pages and the CLI sessions are rewritten to UUID text, shortened with
-  `…` where a transcript displays them, so that no example contradicts
-  d3; the other example ids are untouched. `info.version` moves from `0.2.0-design` to
-  `0.3.0-design`: ADR-0025's revision was published and tagged `spec-v0.2` at its acceptance, so a
-  `/v1` change opens the next revision, tagged `spec-v0.3` when this record is accepted.
+- `/v1` changes on the request side only: `X-OML-Workarea` and the listing's `workarea_id` accept
+  names, and a value that is neither an id (d3) nor a name, which 0.2.0-design answered
+  `access.not_found`, now answers `request.validation`. That narrowing is permitted only because
+  `/v1` is not frozen ([FR-21](../product/roadmap.md)). Example ids of the four kinds in the OpenAPI
+  document, the agent plugin, the reviewer-crews pages and the CLI sessions are rewritten to UUID
+  text, shortened with `…` where a transcript displays them, so that no example contradicts d3; the
+  other example ids are untouched. `info.version` moves from `0.2.0-design` to `0.3.0-design`:
+  ADR-0025's revision was published and tagged `spec-v0.2` at its acceptance, so a `/v1` change
+  opens the next revision, tagged `spec-v0.3` when this record is accepted.
 - `mcp-tools.json` changes the descriptions of the unserved tools that take a workarea; the served
   `oml_remember`, `oml_learn`, `oml_recall`, `oml_my_work`, `oml_workarea_info` and
   `oml_events_tail` keep their entries until the code that serves names lands, and
@@ -501,6 +572,10 @@ record decides is design; nothing below is built.
 
 - The PoC names its root `root` and accepts duplicate and ungrammatical workarea and tenant names
   (migrations/0001_init.sql:22-44); every one of them is named under d11, and new ones are refused.
+  Its `tenants.name` and `workareas.name` columns become `prior_name`, and a new `name` column
+  takes their place, filled by `system.names_assigned`.
+- The PoC accepts a global denial on an admin key; d11's rule 5 lifts every such denial, and new
+  ones are refused (d15).
 - The PoC's transport parses every workarea and key reference as a UUID — the
   `X-OML-Workarea` header, the `{key_id}` path parameter and the body fields
   (crates/transports/oml-transport-http/src/lib.rs:585, 831-867, 962-971) — and its CLI accepts
@@ -537,24 +612,28 @@ the PoC's single tenant; the independence axis's crew and manager comparisons.
 | **d1 — Names unique among siblings only, paths as the key** | Two workareas in one tenant could share a name, so a bare name would need a path to mean anything, and a path changes on every re-parent. The maintainer fixed one flat namespace per kind. |
 | **d1 — A rename verb, journalled** | A name that can change means a cached or quoted name can silently name another row after a later rename and re-creation. The maintainer fixed names as immutable. |
 | **d1 — Names on every kind, artifacts and serves included** | An artifact is addressed by the claim it belongs to (`claim_key` plus `version`) and a serve is single-use; neither is typed by a person, and naming them would add namespaces nobody asked for. |
+| **d1 — A reserved name for the provider tenant** | Every creation would have to refuse one more name, for a tenant that no verb addresses and no reference needs. |
 | **d2 — Unicode names, NFC-normalized and case-insensitive** | Case-insensitive matching needs a locale-independent case map and a fixed Unicode version, two names can look alike and differ in bytes, and none of it survives a URL path, a header or an `ltree` label unescaped. |
 | **d2 — Lowercase the input** | A coercion: `Metals-Crew` would silently mean `metals-crew`, which errors.md forbids; refusing teaches the one spelling. |
-| **d2 — Allow `_`, `.` or `/`** | `.` is the path separator (d7), `/` is a URL path delimiter that proxies treat differently once escaped, and `_` is not in a DNS label or a Kubernetes name, so a name could not double as either. |
+| **d2 — Allow `_`, `.` or `/`** | `.` is the path separator (d7), `/` is a URL path delimiter that proxies treat differently once escaped, and `_` is not in a DNS label or a Kubernetes RFC 1035 label name, so a name could not double as either. |
 | **d2 — Allow a leading digit (RFC 1123)** | `2027` or `4182` would read as a version or a journal seq in CLI arguments such as `<artifact>@<version>`; a letter first costs `q1-2027` instead of `2027-q1`. |
-| **d2 — A longer limit, up to the 1000 characters `ltree` allows** | 63 is the limit of a DNS label and a Kubernetes name; a name longer than that is a description, which the label holds. |
+| **d2 — A longer limit, up to the 1000 characters `ltree` allows** | 63 is the limit of a DNS label and of a Kubernetes RFC 1035 label name; a name longer than that is a description, which the label holds. |
 | **d2 — Refuse the derived form everywhere, as the id forms are** | Every row d11 names in that form — every key on the live deployment among them — could then be addressed only by its id, and `oml keys show` would refuse the name d10 says still resolves. |
 | **d3 — Prefixed ids (`wa_01J…`), as the examples used** | A prefix would make an id self-describing, but the store's ids are UUIDs (postgres-schema.md, the PoC's transport), and a second id spelling is a second thing to parse. |
 | **d3 — Accept every UUID spelling a parser takes (simple, braced, URN)** | Four spellings of one id give one request four digests and four cache keys; one accepted form, served lowercase, is the smaller contract. |
 | **d3 — Classify by trying the name first, then the id** | A value's meaning would depend on whether a row with that name exists, which is an existence oracle; d2 makes the classes disjoint so no lookup decides the class. |
+| **d3 — Admit every UUID version as an id** | A version-8 value would be an id that names no row, with an idempotency scope of its own, and a caller that computed a guessed name's unresolved value could send it as that id: a replay or an `idempotency.in_progress` would then say whether the name exists. No id is version 8, so refusing the version costs nothing. |
 | **d4 — Resolve names in the MCP facade or the CLI** | A second resolver that can drift from the server's, and a facade that says more than the ring (ADR-0014 d1). |
 | **d4 — Rename every `*_id` input to the kind's word (`workarea`, `key`)** | Every `/v1` client and every page changes for no behavioural gain, and a request field would stop matching the response field that carries its id. |
 | **d4 — Digest the request with names replaced by ids** | The digest would depend on what a lookup finds at each attempt instead of on the bytes sent, and every digest would carry a lookup; a client never needs to switch spelling inside one retry. |
 | **d4 — One fixed value, the nil id, for every unknown name** | Every unknown `X-OML-Workarea` would share one idempotency scope, and the nil scope of supersede and the lab records, while an existing name had its own; a replay or a digest mismatch would then tell a writer which guessed names exist. |
+| **d4 — An unresolved value drawn at random per request** | Retries of one unknown name would land in different scopes, so a retry would replay for an existing name and never for an unknown one: the existence oracle the nil value has. |
 | **d4 — Add a name field to claim items and events** | The derived path's last segment already is the name, and a `/v1` response field would grow to carry what is served. |
 | **d5 — `request.validation` for a taken name** | It hides a state conflict that can never succeed on retry behind the code for a malformed request, and it would be a 400 where every other permanent-identifier collision is a 409. |
 | **d5 — `access.not_found` for a taken name, so no one learns it exists** | Only admins and operators create, and they see the whole namespace anyway; telling them "not found" when they create would be false. |
 | **d5 — A per-kind code (`workarea.name_taken`, `key.name_taken`, …)** | Four codes for one rule; `details.kind` names the kind. |
 | **d5 — Check the bootstrap claim's name before its token** | A caller with no valid token would learn which operator-key names are taken. |
+| **d5 — Let an operator issue an admin key to a tenant with no live admin key** | Once a tenant's admins were revoked, the operator's issuance would resolve the new key's name and crew in a namespace that is not empty, a probe of names the provider may not see (D6). |
 | **d6 — Name the root after its tenant** | Tenant names live in the deployment's namespace and workarea names in the tenant's, so a workarea named like the tenant would collide with the root; every path would start differently in every tenant. |
 | **d6 — Keep the PoC's `root`** | `universe` is the design's word for the root (ADR-0018 d4) and the first segment of every path in the doc set. |
 | **d7 — Accept a path as a third form** | Redundant once the leaf is unique, stale after every re-parent, and a path is never an authority (ADR-0008 d3); keeping paths out of every reference keeps that literal. |
@@ -575,6 +654,9 @@ the PoC's single tenant; the independence axis's crew and manager comparisons.
 | **d11 — Refuse to start until an operator supplies every name** | The upgrade would block on a manual step; a chosen name for a live key is one reissue away. |
 | **d11 — Derive legacy key names from principals or labels** | They collide (one principal, several keys) or fail d2 (`crew-procure/agent-7`). |
 | **d11 — One crew record per workarea with crew metadata** | Two workareas that recorded the same crew would get two records, which is the failure d8 exists to remove. |
+| **d11 — Constrain the PoC's name columns in place** | Their duplicate and ungrammatical values fail the domain and the unique index, and a column that is already filled cannot show which rows d11 has not named yet. |
+| **d11 — Fold a pre-names row with a NULL name, and keep the columns nullable** | The database would never again refuse an unnamed row; a re-fold that reads the chain's `system.names_assigned` first keeps `name` and `path` `NOT NULL`. |
+| **d11 — Honour a denial on an admin key journalled before names** | Structure reads take no grant and no denial (d15); an admin key's reach would depend on when its denial was journalled. |
 | **d12 — Leave `--crew` off `issue-agent`, issuing a key with a crew through `oml keys issue`** | `oml keys issue` prints the value, so an operator who needs a crew on a plugin key would give up the `--out` key file, or issue a key with no crew whose rows a crew-independence policy never promotes. |
 | **d12 — `oml bootstrap claim --name <key-name>`** | The one creating verb whose name is a flag, for no reason the ceremony gives. |
 | **d15 — A reader grant on the root for admin keys** | A reader grant confers recall, get and the events tail over the whole tenant: content, which the two-key rule keeps from admin keys, and the admissibility table admits no grant on an admin key at all. |

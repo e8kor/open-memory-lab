@@ -32,50 +32,59 @@ implementation milestone where it changes what the repository holds.
 ### 2026-10-30 — names as keys (ADR-0026)
 
 [ADR-0026](adr/ADR-0026-names-are-keys.md) (proposed) gives workareas, crews, keys and tenants a
-name that is a unique, immutable key beside the id. It proposes amending ADR-0008 (d7), ADR-0010
+name that is a unique, immutable key beside the id. It proposes amending ADR-0008 (d3, d7), ADR-0010
 (d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14) and ADR-0028 (d1, d3);
 each of those records' Status lines gains the back-pointer when ADR-0026 is accepted.
 
-- **Decided:** one flat namespace per kind — the tenant for workareas, crews and keys (operator
-  keys share the provider's), the deployment for tenants — with names never changed and never
-  released; a lowercase RFC 1035 label as the grammar, refusing every spelling that could read as
-  an id, with no case mapping, and the derived form of rows that predate names refused at creation
-  and accepted in a reference; the ids of the four kinds fixed as RFC 9562 hex-and-dash UUID text,
-  so a value in that form is always an id; names accepted wherever an id is — `/v1` and `/v2`
-  path parameters, query parameters and body fields, `X-OML-Workarea`, MCP tool arguments and CLI
-  arguments — and resolved on the server by substituting the id after the verb ceiling, in a
-  namespace fixed by the caller and the kind, so an unknown or unreadable name answers exactly
-  what its id would, and an unknown name takes an unresolved value of its own that shares no
-  idempotency scope; the request digest over paths and bodies as sent, with `X-OML-Workarea`
-  outside it and resolved into the provider ring's record scope; `name.taken` (409) for a taken
-  name at creation, which only admin and operator keys, and the holder of a valid enrollment
-  token at the bootstrap claim, can receive; the root named `universe` in every tenant; paths derived from names, served
-  and looked up but never accepted as a reference; crews as named records that workareas and keys
-  reference, created and updated by admins only, with the independence axis reading a key's crew
-  and failing closed where none is named; a key's name distinct from its principal and label, and
-  a rotation's successor named afresh; the naming of rows that predate names by a deterministic
-  rule journalled as `system.names_assigned`, which lists kept names too; the key's name as the
-  positional argument of `oml keys issue-agent` and its crew as `--crew`, and every creating CLI
-  verb's name positional, `oml bootstrap claim` included (d12), while the verb, its `--out` key
-  file, reader grant default and `oml-admin` plugin moved to
+- **Decided:** one flat namespace per kind — the tenant for workareas, crews and keys (operator keys
+  share the provider's), the deployment for tenants — with names never changed and never released,
+  and the reserved provider tenant carrying none; a lowercase RFC 1035 label as the grammar,
+  refusing every spelling that could read as an id, with no case mapping, and the derived form of
+  rows that predate names refused at creation and accepted in a reference; the ids of the four kinds
+  fixed as RFC 9562 hex-and-dash UUID text, minted as version 4 and never version 8, so a value in
+  that form is always an id; names accepted wherever an id is — `/v1` and `/v2` path parameters,
+  query parameters and body fields, `X-OML-Workarea`, MCP tool arguments and CLI arguments — and
+  resolved on the server by substituting the id after the verb ceiling, in a namespace fixed by the
+  caller and the kind, so an unknown or unreadable name answers exactly what its id would, with no
+  refusal naming an id a name resolved to beyond what the naming rule already discloses, and an
+  unknown name takes a deterministic version-8 unresolved value of its own that shares no
+  idempotency scope; the request digest over paths and bodies as sent, with `X-OML-Workarea` outside
+  it and resolved into the provider ring's record scope; `name.taken` (409) for a taken name at
+  creation, which only admin and operator keys, and the holder of a valid enrollment token at the
+  bootstrap claim, can receive; an operator key's operator keys issued without `tenant_id` and named
+  in the provider's namespace, and its first admin key for a tenant refused once that tenant has
+  held any key; the root named `universe` in every tenant; paths derived from names, served and
+  looked up but never accepted as a reference; crews as named records that workareas and keys
+  reference, created and updated by admins only, with the independence axis reading a key's crew and
+  failing closed where none is named; a key's name distinct from its principal and label, and a
+  rotation's successor named afresh; the naming of rows that predate names by a deterministic rule
+  journalled as `system.names_assigned`, which lists kept names too, read before the creation events
+  it names by a re-fold, with the PoC's name columns kept as `prior_name`, every pre-names denial on
+  an admin key lifted in the same commit, and followers not ready until the event is folded; the
+  key's name as the positional argument of `oml keys issue-agent` and its crew as `--crew`, and
+  every creating CLI verb's name positional, `oml bootstrap claim` included (d12), while the verb,
+  its `--out` key file, reader grant default and `oml-admin` plugin moved to
   [ADR-0028](adr/ADR-0028-agent-key-issuance.md) so they ship before names (d13 and d14 point
   there); and admin keys reading the structure of every workarea in their tenant without grants —
-  the workarea read, the lookup by path, the tree, edges and status — and never claim content,
-  with no global denial on an admin key, declared in the roles-and-keys permission matrix (d15).
-- **Surface:** the `name` error family with `name.taken` (errors.md, the OpenAPI `ErrorCode`
-  enum and http-api.md's tables together); `GET /v2/crews`, `POST /v2/crews`, `GET
-  /v2/crews/{crew_id}` and `POST /v2/crews/{crew_id}/update`; the `crew.created`, `crew.updated`
-  and `system.names_assigned` events; `crew_id` in place of the crew object on `workarea.create`
-  and `workarea.crew_updated`; `name` and `crew_id` on `key.issued`, `new_name` on `key.rotated`;
-  the `oml_name` domain, the `tenants` and `crews` tables and the `name` columns with their unique
-  indexes; the OpenAPI `NameRef` schema for references beside `Name` for creations; `name` and
-  `crew_id` on the lake's `gold.areas` in place of its three crew columns. Example ids of the four
-  kinds are rewritten to UUID text on the OpenAPI document, the agent plugin, the reviewer-crews
-  pages and the CLI sessions; the other example ids are untouched.
-- **`info.version` 0.2.0-design → 0.3.0-design**, because `/v1` changes on the request side,
-  additively: `X-OML-Workarea` and the listing's `workarea_id` accept names. The 0.2.0-design
-  revision was tagged `spec-v0.2` when ADR-0025 was accepted, so this record cannot share its
-  bump; `spec-v0.3` is cut when ADR-0026 is accepted.
+  the workarea read, the lookup by path, the tree, edges and status — and never claim content, with
+  no global denial on an admin key, declared in the roles-and-keys permission matrix (d15).
+- **Surface:** the `name` error family with `name.taken` (errors.md, the OpenAPI `ErrorCode` enum
+  and http-api.md's tables together); `GET /v2/crews`, `POST /v2/crews`, `GET /v2/crews/{crew_id}`
+  and `POST /v2/crews/{crew_id}/update`; the `crew.created`, `crew.updated` and
+  `system.names_assigned` events; `crew_id` in place of the crew object on `workarea.create` and
+  `workarea.crew_updated`; `name` and `crew_id` on `key.issued`, `new_name` on `key.rotated`,
+  `reason_digest` on `key.denial_lifted`; the `oml_name` domain, the `tenants` and `crews` tables
+  and the `name` columns with their unique indexes, and the PoC's name columns kept as `prior_name`;
+  the OpenAPI `Id` refusing version 8; the OpenAPI `NameRef` schema for references beside `Name` for
+  creations; `name` and `crew_id` on the lake's `gold.areas` in place of its three crew columns.
+  Example ids of the four kinds are rewritten to UUID text on the OpenAPI document, the agent
+  plugin, the reviewer-crews pages and the CLI sessions; the other example ids are untouched.
+- **`info.version` 0.2.0-design → 0.3.0-design**, because `/v1` changes on the request side:
+  `X-OML-Workarea` and the listing's `workarea_id` accept names, and a value that is neither an id
+  nor a name, which 0.2.0-design answered `access.not_found`, now answers `request.validation`. That
+  narrowing is permitted only because `/v1` is not frozen (FR-21). The 0.2.0-design revision was
+  tagged `spec-v0.2` when ADR-0025 was accepted, so this record cannot share its bump; `spec-v0.3`
+  is cut when ADR-0026 is accepted.
 - **Pages touched:** [ADR-0026](adr/ADR-0026-names-are-keys.md), the
   [decision register](adr/index.md) (row and the D7, D9, D13 and D14 cells),
   [workareas](architecture/workareas.md), [roles and keys](architecture/roles-and-keys.md),
@@ -87,9 +96,11 @@ each of those records' Status lines gains the back-pointer when ADR-0026 is acce
   [CLI reference](cli/reference.md),
   [CLI sessions](cli/sessions.md), [deployment](operations/deployment.md) and
   [runbooks](operations/runbooks.md) (the CLI invocations whose arguments changed),
+  [observability](operations/observability.md) (the `names_assigned` doctor line),
   [llms.txt](llms.txt), this changelog, `mkdocs.yml` and `CONTRIBUTING.md` (the vocabulary row);
   the spec version also on the [home page](index.md),
-  [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md).
+  [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md),
+  which also states that the upgrade adding names stops every earlier binary before it migrates.
 - **Roadmap:** no row opens or closes. Name resolution's request-path cost is unmeasured and is
   tracked against FR-25.
 

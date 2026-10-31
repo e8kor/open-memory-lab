@@ -63,7 +63,8 @@ fractional digits; displays like the one above may trim.
 
 Every creation event of a named record — `workarea.create`, `crew.created`, `key.issued`,
 `key.rotated` (for the successor), `tenant.created` and `tenant.genesis` — records the record's
-[name](../api/http-api.md#names-and-ids); every other payload field names a row by its id, never
+[name](../api/http-api.md#names-and-ids), and the reserved provider tenant's `tenant.genesis`,
+whose tenant has none, records `name: null`; every other payload field names a row by its id, never
 its name, so the journal binds ids exactly as before
 ([ADR-0026](../adr/ADR-0026-names-are-keys.md)).
 
@@ -528,9 +529,11 @@ tenant's first admin key and nothing else. Journalled in the **reserved provider
 The first event of every non-provider tenant chain: a predecessor-less anchor that roots the
 tenant's chain by **reference** to the provider-chain `tenant.created` event that created it — a
 reference, not a second numbering. Chain verification of a tenant starts here and checks the
-reference against the provider chain. The reserved provider tenant's own chain opens the same way
-— `tenant.genesis` at seq 1 — with `created_event_id` and `provider_seq` null: the deployment root
-anchors to nothing because nothing precedes it ([chain-format.md](chain-format.md) owns the
+reference against the provider chain. `name` is the tenant's name, as its `tenant.created`
+records it. The reserved provider tenant's own chain opens the same way — `tenant.genesis` at
+seq 1 — with `name`, `created_event_id` and `provider_seq` null: the provider tenant carries no
+name ([names](../api/http-api.md#names-and-ids)), and the deployment root anchors to nothing
+because nothing precedes it ([chain-format.md](chain-format.md) owns the
 genesis byte rule).
 
 ### key.issued
@@ -628,11 +631,14 @@ key's grants; `epoch` is this event's own journal seq.
 ### key.denial_lifted
 
 ```json
-{"denial_id": "…", "key_id": "…", "lifted_by_key_id": "…", "epoch": 20}
+{"denial_id": "…", "key_id": "…", "lifted_by_key_id": "…", "reason_digest": null, "epoch": 20}
 ```
 
 Lifts a global per-key deny — a journalled act with its own epoch bump; the denial row stays as
-history.
+history. `reason_digest` is null on an admin's lift. The lead's lift of a denial on an admin key
+at the upgrade that adds names carries `lifted_by_key_id: null` and `reason_digest` over the
+fixed reason `adr-0026-d15`
+([rows created before names](../api/http-api.md#rows-created-before-names), rule 5).
 
 ### ban.imposed
 
@@ -915,17 +921,14 @@ keyring entry ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) 
 }
 ```
 
-Names the rows that predate names, once: signed by the lead at its first start on the schema
-version that adds names, before it serves a request, in each chain that has anything to assign —
-each tenant's chain for its workareas, crews and keys, and the provider chain for tenant and
-operator-key names. `names` lists every row of the chain that predates names, those whose
-creation name is kept included (with `name` equal to `prior_name`), so the fold takes every such
-row's name from this event alone and never from a creation event. `prior_name` is the name the
-row's creation event carried, or null. `crews`
-lists the crew records made from the crew objects that workarea events carried, and the
-workareas that name each. The rule it applies is declared on the
-[HTTP API](../api/http-api.md#rows-created-before-names); every earlier event stays as it was
-signed.
+Names the rows that predate names, once per chain; when and by whom it is signed, and the rule
+it applies, are declared on the [HTTP API](../api/http-api.md#rows-created-before-names). A
+tenant's chain carries its workareas, crews and keys, the provider chain its tenants and operator
+keys. `names` lists every row of the chain that predates names, those whose creation name is
+kept included (with `name` equal to `prior_name`); `kind` is one of `workarea`, `key` and
+`tenant`, and `prior_name` is the name the row's creation event carried, or null. `crews` lists
+the crew records made from the crew objects that workarea events carried, each with its name and
+the workareas that name it; a crew record appears only under `crews`, never in `names`.
 
 ## Reserved: the `import` family
 

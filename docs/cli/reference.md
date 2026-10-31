@@ -79,7 +79,7 @@ context or key exists, so there is nothing for a context to resolve.
 
 | Verb | Does |
 |---|---|
-| `oml bootstrap claim <key-name> --url <https://…> [--token-stdin]` | Exchange the enrollment secret for the root operator key, named `<key-name>` in the provider's namespace (fronts `POST /v2/bootstrap/claim` — bootstrap is a lab ceremony, [ADR-0022](../adr/ADR-0022-two-ring-api.md)). With `--token-stdin` the secret is read once from stdin, never from argv. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). A re-run claims a `<key-name>` no earlier operator key held, since no name is released; a taken one answers `name.taken`, checked after the secret, and leaves the secret unconsumed. |
+| `oml bootstrap claim <key-name> --url <https://…> [--token-stdin]` | Exchange the enrollment secret for the root operator key, named `<key-name>` in the provider's namespace (fronts `POST /v2/bootstrap/claim` — bootstrap is a lab ceremony, [ADR-0022](../adr/ADR-0022-two-ring-api.md)). With `--token-stdin` the secret is read once from stdin, never from argv. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). A re-run claims a `<key-name>` no earlier operator key held, since no name is released; a taken one answers [`name.taken`](../api/errors.md) and leaves the secret unconsumed. |
 
 ## `oml tenants` — the operator's verbs
 
@@ -93,8 +93,8 @@ shows the whole ceremony.
 | Verb | Does |
 |---|---|
 | `oml tenants create <name>` | Create a tenant named `<name>`, unique in the deployment (`name.taken`), and its permanent root workarea, named `universe`. |
-| `oml tenants list` | Tenants and their chain-head seqs. No content crosses this surface. |
-| `oml tenants issue-admin <tenant> <key-name> [--label <text>]` | Issue the tenant's **first** admin key, named `<key-name>`, show-once; `<tenant>` is the tenant's id or name. Refused once the tenant has an admin: further keys come from that admin under the issuer ceiling. |
+| `oml tenants list` | Tenants and their chain-head seqs; the reserved provider tenant, which carries no [name](../api/http-api.md#names-and-ids), is not one of them. No content crosses this surface. |
+| `oml tenants issue-admin <tenant> <key-name> [--label <text>]` | Issue the tenant's **first** admin key, named `<key-name>`, show-once; `<tenant>` is the tenant's id or name. Refused (`access.issuer_ceiling`) once the tenant holds a key of any role, revoked or expired included ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 2): further keys come from the tenant's admins under the issuer ceiling. |
 
 ## `oml keys` — issuance, revocation, rotation
 
