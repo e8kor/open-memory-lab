@@ -133,6 +133,25 @@ impl Client {
     }
 }
 
+/// One path segment carrying a reference exactly as the operator typed it:
+/// every byte outside RFC 3986's unreserved set is percent-encoded, so a `/`
+/// or a `?` stays inside the segment and reaches the server, which alone
+/// classifies the value as an id, a name or neither (`request.validation`).
+/// The CLI classifies and resolves nothing (cli/reference.md conventions;
+/// ADR-0026 d3, d4).
+#[must_use]
+pub fn segment(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
 /// One idempotency key per invocation: a re-run is a new act, a transport
 /// retry inside the call is not (ureq does not retry POSTs).
 fn new_idempotency_key() -> String {
