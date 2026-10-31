@@ -232,6 +232,24 @@ impl ChainRig {
         .await
     }
 
+    /// Commit one `key.denial_lifted` folding the lift of `denial_id` on
+    /// `key_id`.
+    pub async fn lift_denial<S: JournalStore>(
+        &mut self,
+        store: &S,
+        key_id: Uuid,
+        denial_id: Uuid,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.commit(
+            store,
+            event_types::KEY_DENIAL_LIFTED,
+            json!({ "denial_id": denial_id.to_string(), "key_id": key_id.to_string() }),
+            MetadataFold::KeyDenialLifted { key_id, denial_id },
+            None,
+        )
+        .await
+    }
+
     /// Commit one `key.revoked` folding the revocation of `key_id`.
     pub async fn revoke_key<S: JournalStore>(
         &mut self,
@@ -1678,6 +1696,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
                 created_by: admin.key_id,
                 epoch: denied.seq,
             }],
+            lift_epochs: Vec::new(),
         }),
     );
     assert_eq!(
@@ -1686,6 +1705,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
             issued_seq: admin_issued.seq,
             grants: Vec::new(),
             denials: Vec::new(),
+            lift_epochs: Vec::new(),
         }),
         "a key with no grant reads back empty lists, never nothing"
     );
@@ -1882,6 +1902,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
         issued_seq: 3,
         grants: Vec::new(),
         denials: Vec::new(),
+        lift_epochs: Vec::new(),
     });
     assert_eq!(
         store.key_access(t, key.key_id).await.expect("read"),
@@ -1895,6 +1916,108 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
             .expect("read"),
         untouched,
         "nor any row on the other tenant's key"
+    );
+}
+
+/// A lift folds with its `key.denial_lifted`: from that commit on the
+/// denial is in force no more, so `key_access` lists it among the key's
+/// denials no longer and lists the lift's seq among its lift epochs, which
+/// the permission epoch counts, while the key's other denials stay in force.
+/// A lift of a denial the tenant does not hold, of one held on another key,
+/// or of one already lifted is refused and commits nothing
+/// (postgres-schema.md `key_denials`; workareas.md permission epoch;
+/// event-catalog.md `key.denial_lifted`; ADR-0026 d11, rule 5).
+pub async fn a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epoch<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(46);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let (universe, team) = (Uuid::from_u128(0xB460), Uuid::from_u128(0xB461));
+    rig.create_workarea(store, workarea_record(t, universe, None, "universe"))
+        .await;
+    rig.create_workarea(store, workarea_record(t, team, Some(universe), "team"))
+        .await;
+    let key = key_record(t, Uuid::from_u128(0xD460), Role::Writer, None);
+    let other_key = key_record(t, Uuid::from_u128(0xD461), Role::Writer, None);
+    let issued = rig.issue_key(store, key.clone()).await;
+    rig.issue_key(store, other_key.clone()).await;
+    let denial = |id: u128, node| KeyDenial {
+        denial_id: Uuid::from_u128(id),
+        node,
+    };
+    let (lifted, kept) = (denial(0xF460, team), denial(0xF461, universe));
+    rig.deny_key(store, key.key_id, lifted.clone(), other_key.key_id)
+        .await
+        .expect("the denial to lift");
+    let kept_at = rig
+        .deny_key(store, key.key_id, kept.clone(), other_key.key_id)
+        .await
+        .expect("the denial that stays");
+    let lift = rig
+        .lift_denial(store, key.key_id, lifted.denial_id)
+        .await
+        .expect("the lift folds");
+
+    let access = store
+        .key_access(t, key.key_id)
+        .await
+        .expect("read")
+        .expect("the key is held");
+    assert_eq!(
+        access,
+        KeyAccess {
+            issued_seq: issued.seq,
+            grants: Vec::new(),
+            denials: vec![DenialRecord {
+                denial: kept,
+                created_by: other_key.key_id,
+                epoch: kept_at.seq,
+            }],
+            lift_epochs: vec![lift.seq],
+        },
+        "the lifted denial masks nothing; the other stays in force"
+    );
+    assert_eq!(
+        access.permission_epoch(),
+        lift.seq,
+        "the lift is the latest"
+    );
+
+    let head = store.chain_head(t).await.expect("head");
+    let refusals = [
+        (
+            "a lift of a denial already lifted",
+            rig.lift_denial(store, key.key_id, lifted.denial_id).await,
+        ),
+        (
+            "a lift of a denial no row holds",
+            rig.lift_denial(store, key.key_id, Uuid::from_u128(0xF46F))
+                .await,
+        ),
+        (
+            "a lift of a denial held on another key",
+            rig.lift_denial(store, other_key.key_id, Uuid::from_u128(0xF461))
+                .await,
+        ),
+    ];
+    for (case, result) in refusals {
+        assert!(
+            matches!(result, Err(StoreError::Backend(_))),
+            "{case} is refused, got {result:?}"
+        );
+    }
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "a refused lift journals nothing"
+    );
+    assert_eq!(
+        store.key_access(t, key.key_id).await.expect("read"),
+        Some(access),
+        "a refused lift changes no row"
     );
 }
 
@@ -3776,6 +3899,7 @@ where
     grants_and_denials_round_trip_through_their_folds_and_key_access(&new_store().await).await;
     a_grant_epoch_is_its_event_seq(&new_store().await).await;
     a_grant_or_denial_the_schema_refuses_commits_nothing(&new_store().await).await;
+    a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epoch(&new_store().await).await;
     workarea_ancestry_walks_parent_ids_to_the_root(&new_store().await).await;
     an_ancestry_that_leaves_the_tenant_is_refused(&new_store().await).await;
     workarea_subtree_lists_every_descendant_once(&new_store().await).await;

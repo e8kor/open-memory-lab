@@ -54,6 +54,11 @@ const ISSUANCE_INCOMPLETE: &str = "issuance_incomplete";
 /// (event-catalog.md `system.names_assigned`).
 const NAMES_RULE: &str = "ADR-0026 d11";
 
+/// The fixed reason the lead's lift of a denial on an admin key digests, in
+/// the commit that names the chain (event-catalog.md `key.denial_lifted`;
+/// ADR-0026 d11, rule 5).
+const ADMIN_DENIAL_LIFT_REASON: &str = "adr-0026-d15";
+
 /// The application, generic over its driven ports.
 pub struct App<J, S, C, I, Sc> {
     journal: J,
@@ -368,11 +373,15 @@ struct PredatingChain {
     rows: Vec<UnnamedRow>,
     /// Each workarea's current crew object, in journal order.
     crews: Vec<(Uuid, CrewObject)>,
+    /// Every global denial on an admin key not yet lifted, as `(denial_id,
+    /// key_id)` in journal order: rule 5 lifts each in the commit that names
+    /// the chain.
+    lifts: Vec<(Uuid, Uuid)>,
 }
 
-/// The rows of `unnamed` as the chain's creation events carry them, or the
-/// refusal that keeps the chain unnamed: a `system.names_assigned` already
-/// journalled, a denial on an admin key rule 5 would lift, or a row with no
+/// The rows of `unnamed` as the chain's creation events carry them, and the
+/// denials on admin keys rule 5 lifts, or the refusal that keeps the chain
+/// unnamed: a `system.names_assigned` already journalled, or a row with no
 /// creation event (ADR-0026 d11).
 fn predating_chain(
     tenant_id: Uuid,
@@ -445,18 +454,18 @@ fn predating_chain(
                     denials.push((denial, key));
                 }
             }
-            "key.denial_lifted" => {
+            event_types::KEY_DENIAL_LIFTED => {
                 let lifted = payload_id(payload, "denial_id");
                 denials.retain(|(denial, _)| Some(*denial) != lifted);
             }
             _ => {}
         }
     }
-    // Rule 5 lifts every denial on an admin key in the commit that names
-    // the chain; lifting a denial is not built, so the chain is not named.
-    if let Some(&(denial_id, key_id)) = denials.iter().find(|(_, key)| admin_keys.contains(key)) {
-        return Err(refuse(NamingRefusal::AdminKeyDenial { denial_id, key_id }));
-    }
+    // Rule 5: every denial on an admin key still in force is lifted.
+    let lifts = denials
+        .into_iter()
+        .filter(|(_, key)| admin_keys.contains(key))
+        .collect();
     let created = |kind: NamedKind, id: Uuid| rows.iter().any(|r| r.kind == kind && r.id == id);
     let missing = (unnamed.tenant && tenant.is_none())
         .then_some((NamedKind::Tenant, tenant_id))
@@ -486,6 +495,7 @@ fn predating_chain(
             .into_iter()
             .filter_map(|(w, object)| object.map(|o| (w, o)))
             .collect(),
+        lifts,
     })
 }
 
@@ -1095,6 +1105,7 @@ where
                     issued_seq: receipt.seq,
                     grants: Vec::new(),
                     denials: Vec::new(),
+                    lift_epochs: Vec::new(),
                 },
             },
         })
@@ -1254,6 +1265,7 @@ where
                 issued_seq: receipt.seq,
                 grants: stored,
                 denials: Vec::new(),
+                lift_epochs: Vec::new(),
             },
         })
     }
@@ -1688,9 +1700,13 @@ where
     /// `tenants` that holds rows with no name gets one `system.names_assigned`
     /// naming them under rules 1–4 of http-api.md "Rows created before
     /// names", signed by the server, no key acting; its fold alone gives the
-    /// rows their names, and every earlier event stays as it was signed. A
-    /// chain with no row to name journals nothing, so a second start
-    /// journals nothing (ADR-0026 d11). Tenant names are the deployment's,
+    /// rows their names, and every earlier event stays as it was signed. In
+    /// the same commit, after it and in journal order, rule 5 lifts every
+    /// global denial on an admin key still in force, each as one
+    /// `key.denial_lifted` over the fixed reason `adr-0026-d15`, its epoch
+    /// its own seq, so the names and the lifts commit together or not at
+    /// all. A chain with no row to name journals nothing, so a second start
+    /// journals nothing (ADR-0026 d11, d15). Tenant names are the deployment's,
     /// so rule 2 holds them across the chains, in the order `tenants` lists
     /// them; the PoC has no provider chain, so each tenant's name is
     /// journalled in its own chain's event, as the PoC journals the tenant's
@@ -1732,7 +1748,7 @@ where
                 crews: rows.crews,
             };
             let prev = self.head_event(tenant_id).await?;
-            let event = self.seal(
+            let names = self.seal(
                 prev.as_ref(),
                 tenant_id,
                 event_types::SYSTEM_NAMES_ASSIGNED,
@@ -1740,13 +1756,33 @@ where
                 None,
                 names_assigned_payload(&naming),
             )?;
-            let receipt = self
-                .commit(event, MetadataFold::NamesAssigned(naming.clone()), None)
-                .await?;
+            let journal_seq = names.envelope.seq;
+            let mut last = names.clone();
+            let mut links = vec![(names, MetadataFold::NamesAssigned(naming.clone()))];
+            for &(denial_id, key_id) in &chain.lifts {
+                let lift = self.seal(
+                    Some(&last),
+                    tenant_id,
+                    event_types::KEY_DENIAL_LIFTED,
+                    "oml-server",
+                    None,
+                    json!({
+                        "denial_id": denial_id.to_string(),
+                        "key_id": key_id.to_string(),
+                        "lifted_by_key_id": Value::Null,
+                        "reason_digest": sha256_digest_string(ADMIN_DENIAL_LIFT_REASON.as_bytes()),
+                        "epoch": last.envelope.seq + 1,
+                    }),
+                )?;
+                last = lift.clone();
+                links.push((lift, MetadataFold::KeyDenialLifted { key_id, denial_id }));
+            }
+            self.commit_chain(links).await?;
             assigned.push(AssignedNames {
                 tenant_id,
-                journal_seq: receipt.seq,
+                journal_seq,
                 naming,
+                lifted_denials: chain.lifts.iter().map(|(denial, _)| *denial).collect(),
             });
         }
         Ok(assigned)

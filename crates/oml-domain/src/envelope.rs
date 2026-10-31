@@ -31,6 +31,10 @@ pub mod event_types {
     /// A global per-key denial, deny-wins; its seq is the denial's epoch
     /// (ADR-0025 d2).
     pub const KEY_DENIED: &str = "key.denied";
+    /// A global per-key denial lifted; its seq is the lift's epoch, and the
+    /// denial row stays as history. The lead lifts every denial on an admin
+    /// key in the commit that names its chain (ADR-0026 d11, rule 5).
+    pub const KEY_DENIAL_LIFTED: &str = "key.denial_lifted";
     /// A key's revocation; journalled for a key whose issuance failed after
     /// its `key.issued` (ADR-0025 d2, reason `issuance_incomplete`).
     pub const KEY_REVOKED: &str = "key.revoked";

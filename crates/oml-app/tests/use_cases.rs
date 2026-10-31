@@ -5134,49 +5134,124 @@ async fn the_lead_names_legacy_rows_once_one_system_names_assigned_per_chain_and
     assert_eq!(hashes(&journal(&store, tenant).await), hashes(&events));
 }
 
-/// Lifting a denial is not built, so a chain holding a global denial on an
-/// admin key, which rule 5 lifts in the commit that names the chain, is not
-/// named: the start refuses by name and journals nothing, rather than name
-/// the chain and leave the denial standing (http-api.md rows created before
-/// names, rule 5; ADR-0026 d11, d15).
+/// Rule 5: every global denial on an admin key that is not yet lifted is
+/// lifted in the commit that names the chain, after its
+/// `system.names_assigned` and in the journal order of the denials, each as
+/// one `key.denial_lifted` the server signs with no lifting key, its
+/// `reason_digest` over the fixed reason `adr-0026-d15` and its epoch its own
+/// seq. The denial then masks nothing and its lift is the key's permission
+/// epoch, a denial on a writer key stays in force, and a commit refused on a
+/// lift journals neither the lifts nor the names (http-api.md rows created
+/// before names, rule 5; event-catalog.md `key.denial_lifted`; ADR-0026 d11,
+/// d15).
 #[tokio::test]
-async fn a_chain_holding_a_denial_on_an_admin_key_is_not_named_and_journals_nothing() {
+async fn the_naming_lifts_every_denial_on_an_admin_key_in_the_commit_that_names_the_chain() {
     let tenant = Uuid::from_u128(0xA700);
     let (root, team) = (Uuid::from_u128(0xB700), Uuid::from_u128(0xB701));
-    let (admin, denial) = (Uuid::from_u128(0xD700), Uuid::from_u128(0xD701));
+    let (admin, steward, writer) = (
+        Uuid::from_u128(0xD700),
+        Uuid::from_u128(0xD701),
+        Uuid::from_u128(0xD702),
+    );
+    let (on_admin, on_writer, on_steward) = (
+        Uuid::from_u128(0xF700),
+        Uuid::from_u128(0xF701),
+        Uuid::from_u128(0xF702),
+    );
+    let denied = |denial: Uuid, key: Uuid, node: Uuid| {
+        json!({
+            "denial_id": denial.to_string(), "key_id": key.to_string(),
+            "workarea_node_id": node.to_string(),
+        })
+    };
     let mut poc = PocChain::new(tenant);
     poc.push(event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" }))
         .workarea(root, None, "root", Value::Null)
         .workarea(team, Some(root), "team", Value::Null)
         .key(admin, "admin", "oml/admin")
-        .push(
-            event_types::KEY_DENIED,
-            json!({
-                "denial_id": denial.to_string(), "key_id": admin.to_string(),
-                "workarea_node_id": team.to_string(), "epoch": 5,
-            }),
-        );
+        .key(steward, "admin", "oml/steward")
+        .key(writer, "writer", "crew/agent-7")
+        .push(event_types::KEY_DENIED, denied(on_admin, admin, team))
+        .push(event_types::KEY_DENIED, denied(on_writer, writer, team))
+        .push(event_types::KEY_DENIED, denied(on_steward, steward, root));
+    let refused = MemStore::new().refusing_next_commit_of(event_types::KEY_DENIAL_LIFTED);
+    refused
+        .migrated_poc_chain(poc.events.clone())
+        .expect("the PoC chain");
+    let err = app_over(refused.clone())
+        .name_rows_that_predate_names(&[tenant])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Store(_)), "{err:?}");
+    assert_eq!(
+        hashes(&journal(&refused, tenant).await),
+        hashes(&poc.events),
+        "a refused lift journals neither the lifts nor the names"
+    );
+    assert!(!refused.unnamed_rows(tenant).await.expect("read").is_empty());
+
     let store = MemStore::new();
     store
         .migrated_poc_chain(poc.events.clone())
         .expect("the PoC chain");
-    let app = app_over(store.clone());
-    let err = app
+    let assigned = app_over(store.clone())
         .name_rows_that_predate_names(&[tenant])
         .await
-        .unwrap_err();
-    assert!(
-        matches!(
-            &err,
-            AppError::NamingRefused {
-                tenant_id,
-                refusal: NamingRefusal::AdminKeyDenial { denial_id, key_id },
-            } if *tenant_id == tenant && *denial_id == denial && *key_id == admin
-        ),
-        "{err:?}"
+        .expect("the start names the chain and lifts its admin-key denials");
+    let events = journal(&store, tenant).await;
+    let n = poc.events.len();
+    assert_eq!(events.len(), n + 3, "the names, then one lift per denial");
+    assert_eq!(
+        events[n].envelope.event_type,
+        event_types::SYSTEM_NAMES_ASSIGNED
     );
-    assert_eq!(hashes(&journal(&store, tenant).await), hashes(&poc.events));
-    assert!(!store.unnamed_rows(tenant).await.expect("read").is_empty());
+    assert_eq!(assigned.len(), 1);
+    assert_eq!(assigned[0].journal_seq, events[n].envelope.seq);
+    assert_eq!(assigned[0].lifted_denials, vec![on_admin, on_steward]);
+    let reason = sha256_digest_string(b"adr-0026-d15");
+    for (lift, (denial, key)) in events[n + 1..]
+        .iter()
+        .zip([(on_admin, admin), (on_steward, steward)])
+    {
+        let env = &lift.envelope;
+        assert_eq!(env.event_type, event_types::KEY_DENIAL_LIFTED);
+        assert_eq!(env.principal, "oml-server");
+        assert_eq!(env.api_key_id, None);
+        assert_eq!(
+            env.payload,
+            json!({
+                "denial_id": denial.to_string(),
+                "key_id": key.to_string(),
+                "lifted_by_key_id": Value::Null,
+                "reason_digest": reason,
+                "epoch": env.seq,
+            })
+        );
+        let access = store
+            .key_access(tenant, key)
+            .await
+            .expect("read")
+            .expect("the key is held");
+        assert!(access.denials.is_empty(), "{key}: the denial masks nothing");
+        assert_eq!(access.permission_epoch(), env.seq, "{key}");
+    }
+    let writer_access = store
+        .key_access(tenant, writer)
+        .await
+        .expect("read")
+        .expect("the key is held");
+    assert_eq!(
+        writer_access
+            .denials
+            .iter()
+            .map(|d| d.denial.denial_id)
+            .collect::<Vec<_>>(),
+        vec![on_writer],
+        "a denial on a writer key stays in force"
+    );
+    assert!(store.unnamed_rows(tenant).await.expect("read").is_empty());
+    let keys = KeySet::new(vec![SigningKey::from_bytes(&TEST_SEED).verifying_key()]);
+    verify_chain(&events, &keys, None).expect("the named chain verifies");
 }
 
 /// A chain whose `system.names_assigned` is journalled holds no row without

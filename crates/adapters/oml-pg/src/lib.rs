@@ -992,6 +992,29 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
+        MetadataFold::KeyDenialLifted { key_id, denial_id } => {
+            // The row stays as history, its lifted_epoch this commit's seq;
+            // the guard matches only a denial in force on this key of this
+            // tenant, so a lift of anything else aborts the commit rather
+            // than journalling a lift of nothing (0006_names.sql
+            // `key_denials.lifted_epoch`).
+            let lifted = sqlx::query(
+                "UPDATE key_denials SET lifted_epoch = $4 \
+                 WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND lifted_epoch IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(denial_id)
+            .bind(key_id)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if lifted.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "denial {denial_id} is not a denial in force on key {key_id} of this tenant"
+                )));
+            }
+        }
         MetadataFold::KeyRevoked { key_id } => {
             // The row stays as history; key_by_hash stops resolving it. A key
             // the tenant does not hold matches no row under tenant_isolation,
@@ -1767,9 +1790,21 @@ impl JournalStore for PgStore {
         .fetch_all(&mut *tx)
         .await
         .map_err(backend)?;
+        // A lifted denial masks nothing; its lift still moves the epoch.
         let denials = sqlx::query(
             "SELECT id, workarea_node_id, created_by, epoch FROM key_denials \
-             WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
+             WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NULL \
+             ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let lifts = sqlx::query(
+            "SELECT lifted_epoch FROM key_denials \
+             WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NOT NULL \
+             ORDER BY lifted_epoch ASC",
         )
         .bind(tenant_id)
         .bind(key_id)
@@ -1811,6 +1846,10 @@ impl JournalStore for PgStore {
             issued_seq: seq_from_column(&key, "issued_seq")?,
             grants,
             denials,
+            lift_epochs: lifts
+                .iter()
+                .map(|row| seq_from_column(row, "lifted_epoch"))
+                .collect::<Result<_, StoreError>>()?,
         }))
     }
 

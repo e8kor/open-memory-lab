@@ -303,6 +303,7 @@ fn fold_poc_event(
                     issued_seq: env.seq,
                     grants: Vec::new(),
                     denials: Vec::new(),
+                    lift_epochs: Vec::new(),
                 },
             );
             state.keys_by_hash.insert(
@@ -580,6 +581,7 @@ fn apply_fold(
                     issued_seq: seq,
                     grants: Vec::new(),
                     denials: Vec::new(),
+                    lift_epochs: Vec::new(),
                 },
             );
             state.keys_by_hash.insert(key.key_hash.clone(), key);
@@ -609,6 +611,25 @@ fn apply_fold(
                     epoch: seq,
                 });
             }
+        }
+        // The lifted denial leaves the denials in force; a denial the key
+        // does not hold in force, an already lifted one included, is
+        // refused, as the store's guarded update refuses it.
+        MetadataFold::KeyDenialLifted { key_id, denial_id } => {
+            let held = state.access.get_mut(&key_id).and_then(|access| {
+                let at = access
+                    .denials
+                    .iter()
+                    .position(|d| d.denial.denial_id == denial_id)?;
+                Some((access, at))
+            });
+            let Some((access, at)) = held else {
+                return Err(StoreError::Backend(format!(
+                    "denial {denial_id} is not a denial in force on key {key_id} of this tenant"
+                )));
+            };
+            access.denials.remove(at);
+            access.lift_epochs.push(seq);
         }
         MetadataFold::KeyRevoked { key_id } => {
             if !state.access.contains_key(&key_id) || state.revoked.contains(&key_id) {

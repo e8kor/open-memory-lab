@@ -1325,6 +1325,7 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  || jsonb_build_object('name', t.prior_name)"
             }
             (true, "api_keys") => "to_jsonb(t) - 'name' - 'crew_id'",
+            (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
         };
         let sql = format!("SELECT '{table} ' || ({row})::text FROM {table} t");
@@ -1647,13 +1648,17 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
              + (SELECT count(*) FROM workareas \
                 WHERE name IS NOT NULL OR crew_id IS NOT NULL OR path IS NOT NULL) \
              + (SELECT count(*) FROM api_keys WHERE name IS NOT NULL OR crew_id IS NOT NULL) \
-             + (SELECT count(*) FROM crews)",
+             + (SELECT count(*) FROM crews) \
+             + (SELECT count(*) FROM key_denials WHERE lifted_epoch IS NOT NULL)",
         )
         .fetch_one(&mut *tx)
         .await
         .expect("named rows");
         tx.rollback().await.expect("rollback");
-        assert_eq!(named, 0, "the migration names nothing and makes no crew");
+        assert_eq!(
+            named, 0,
+            "the migration names nothing, makes no crew and lifts no denial"
+        );
     }
 
     let keys = KeySet::new(vec![test_signing_key().verifying_key()]);

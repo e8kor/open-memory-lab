@@ -112,6 +112,16 @@ pub enum MetadataFold {
         denial: KeyDenial,
         created_by: Uuid,
     },
+    /// `key.denial_lifted`: the denial `denial_id` on `key_id` masks nothing
+    /// from this commit on, its row staying as history, and this commit's
+    /// seq is the lift's epoch. The store refuses a lift of a denial it does
+    /// not hold on that key, and of one already lifted (postgres-schema.md
+    /// `key_denials`; event-catalog.md `key.denial_lifted`; ADR-0026 d11,
+    /// rule 5).
+    KeyDenialLifted {
+        key_id: Uuid,
+        denial_id: Uuid,
+    },
     /// `key.revoked`: the key resolves by its hash no more; its row, grants
     /// and denials stay as history. The store refuses a revocation of a key
     /// it does not hold (roles-and-keys.md key lifecycle; ADR-0025 d2).

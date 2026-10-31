@@ -98,6 +98,14 @@ ALTER TABLE api_keys
     ADD CONSTRAINT api_keys_crew
         FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id);
 
+-- A lifted denial masks nothing and its row stays as history: lifted_epoch
+-- is the journal seq of the key.denial_lifted that lifted it, NULL while the
+-- denial is in force. The lead's naming lifts every denial on an admin key
+-- in the commit that names the chain (ADR-0026 d11, rule 5; event-catalog.md
+-- key.denial_lifted).
+ALTER TABLE key_denials
+    ADD COLUMN lifted_epoch bigint;
+
 ------------------------------------------------------------------------------
 -- Step 3: the unique constraints, on the new name columns only; each
 -- admits any number of NULLs. They are the authority name.taken reports

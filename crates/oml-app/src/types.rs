@@ -68,27 +68,34 @@ pub struct DenialRecord {
 }
 
 /// What effective access is computed from for one key, read in one
-/// snapshot: the floor of its permission epoch, its grants and its global
-/// denials, each list in epoch order (workareas.md effective access and
-/// permission epoch; ADR-0025 d1, d14).
+/// snapshot: the floor of its permission epoch, its grants, its global
+/// denials in force and the epochs of the lifts that ended the others, each
+/// list in epoch order (workareas.md effective access and permission epoch;
+/// ADR-0025 d1, d14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyAccess {
     /// The journal seq of the key's `key.issued`.
     pub issued_seq: u64,
     pub grants: Vec<GrantRecord>,
+    /// The denials no `key.denial_lifted` has lifted: only these mask.
     pub denials: Vec<DenialRecord>,
+    /// The journal seq of each `key.denial_lifted` on the key. A lifted
+    /// denial masks nothing and its row stays as history; its lift still
+    /// moves the permission epoch (event-catalog.md `key.denial_lifted`).
+    pub lift_epochs: Vec<u64>,
 }
 
 impl KeyAccess {
     /// The key's permission epoch over what is built: the latest of its
-    /// `key.issued`, `grant.issued` and `key.denied` seqs (workareas.md
-    /// permission epoch; ADR-0025 d14).
+    /// `key.issued`, `grant.issued`, `key.denied` and `key.denial_lifted`
+    /// seqs (workareas.md permission epoch; ADR-0025 d14).
     #[must_use]
     pub fn permission_epoch(&self) -> u64 {
         self.grants
             .iter()
             .map(|g| g.epoch)
             .chain(self.denials.iter().map(|d| d.epoch))
+            .chain(self.lift_epochs.iter().copied())
             .fold(self.issued_seq, u64::max)
     }
 }
@@ -219,12 +226,15 @@ impl UnnamedRows {
 }
 
 /// One chain the lead named at its start: the seq of its
-/// `system.names_assigned` and what that event assigns (ADR-0026 d11).
+/// `system.names_assigned`, what that event assigns, and the denials on
+/// admin keys rule 5 lifted in the same commit, in journal order (ADR-0026
+/// d11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssignedNames {
     pub tenant_id: Uuid,
     pub journal_seq: u64,
     pub naming: Naming,
+    pub lifted_denials: Vec<Uuid>,
 }
 
 /// Why the lead did not name a chain's rows that predate names; the chain
@@ -237,12 +247,6 @@ pub enum NamingRefusal {
         "the chain journals system.names_assigned at seq {seq}, yet a row has no name (postgres-schema.md names and tenants)"
     )]
     AlreadyAssigned { seq: u64 },
-    /// Rule 5 lifts this global denial on an admin key in the commit that
-    /// names the chain, and lifting a denial is not built.
-    #[error(
-        "rule 5 lifts denial {denial_id} on admin key {key_id} in the commit that names the chain, and lifting a denial is not built (http-api.md rows created before names)"
-    )]
-    AdminKeyDenial { denial_id: Uuid, key_id: Uuid },
     /// A row with no name has no creation event in the chain to name it by.
     #[error("the {} row {id} has no name and no creation event in the chain", .kind.as_str())]
     NoCreationEvent { kind: NamedKind, id: Uuid },

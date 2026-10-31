@@ -134,8 +134,11 @@ them. The migration that adds names therefore:
 1. renames `tenants.name` and `workareas.name` to `prior_name`, kept as unconstrained `text`
    history that no reference reads;
 2. creates `crews`, and adds a new `name oml_name NULL` to `tenants`, `workareas`, `crews` and
-   `api_keys`, `crew_id uuid NULL` to `workareas` and `api_keys`, and `path ltree NULL` to
-   `workareas`, which the PoC schema does not have;
+   `api_keys`, `crew_id uuid NULL` to `workareas` and `api_keys`, `path ltree NULL` to
+   `workareas`, which the PoC schema does not have, and `lifted_epoch bigint NULL` to
+   `key_denials`, which the lift of every denial on an admin key
+   ([rule 5](../api/http-api.md#rows-created-before-names)) sets in the commit that names the
+   chain;
 3. creates the unique constraints shown here on the new `name` columns only. Each admits any
    number of NULLs, `api_keys`' included: its `NULLS NOT DISTINCT` constraint, which makes the
    operator keys one namespace, would make two unnamed keys of a tenant collide, so it is created
@@ -423,6 +426,8 @@ CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all
     key_id           uuid        NOT NULL,
     workarea_node_id uuid        NOT NULL,
     epoch            bigint      NOT NULL,   -- journal seq of this denial's key.denied
+    lifted_epoch     bigint,                 -- journal seq of the key.denial_lifted that
+                                             -- lifted it; NULL while the denial is in force
     created_by       uuid        NOT NULL,
     created_at       timestamptz NOT NULL,
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
@@ -446,9 +451,11 @@ CREATE UNIQUE INDEX bans_active ON bans (tenant_id, subject_kind, subject)
 ```
 
 Effective access is computed, never stored, on every request: union of a key's grants, each
-attenuated by its own `deny` entries, then masked by any `key_denials` row. The `epoch` column is
-the journal seq of the event that wrote the row, which makes every historical computation
-reproducible from journalled grants ([workareas](../architecture/workareas.md) owns the
+attenuated by its own `deny` entries, then masked by any `key_denials` row whose `lifted_epoch` is
+NULL. A lifted denial masks nothing and its row stays as history
+([event catalog](event-catalog.md#keydenial_lifted)). The `epoch` column is
+the journal seq of the event that wrote the row, and `lifted_epoch` the seq of the lift, which
+makes every historical computation reproducible from journalled grants ([workareas](../architecture/workareas.md) owns the
 permission-epoch semantics).
 A grant's and a denial's key and node references carry the row's `tenant_id`. In PostgreSQL,
 "referential integrity checks, such as unique or primary key constraints and foreign key
