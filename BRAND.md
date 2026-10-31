@@ -13,27 +13,43 @@ docs site and the atlas read as one product.
 | After first mention, CLI, code, URLs | **OML** (`oml`, `oml-server`) |
 | Never | "OpenMemoryLab", "Open-Memory-Lab", "the OML", "OML Lab" |
 
-## Voice and lines
+## What we say
+
+Brand surfaces (README header, social card, About, launch posts) talk about the product and
+its promise only. No implementation details, languages, databases, protocols or deployment
+targets: those belong in the docs.
 
 - **Tagline:** Every memory is a claim under test.
-- **Descriptor:** External memory for AI agents and crews.
-- **One paragraph:** Open Memory Lab is an external memory provider for AI agents and crews.
-  Every memory is held on arrival, scanned, and reviewed by an identity that did not write it
-  before anyone else can see it, and every decision leaves a signed, verifiable trail.
-- **Stance:** AI-first, human in the loop.
+- **Proposal (one line):** Shared memory for AI agents and crews. Nothing one agent writes
+  reaches the others until someone else has checked it.
+- **The path of a memory** (what the illustration shows): written, held, reviewed by someone
+  else, shared. Every step signed.
+- **Three promises:**
+  1. *Held on arrival.* A new memory is visible to its author and its reviewer, nobody else.
+  2. *Reviewed by someone else.* The one who wrote a memory can never be the one who lets it through.
+  3. *Every step signed.* Who wrote it, who checked it, and when, kept as a record you can hand
+     to anyone who asks.
+- **Who it is for:** the person who answers for what a crew of agents learned, and is asked
+  "who approved this, and on what basis?"
+- **Stance:** AI-first, human in the loop. Agents can review agents; people step in where a
+  mistake is expensive.
+- **Boilerplate:** Open Memory Lab is shared memory for AI agents and crews, built on one
+  premise: every memory is a claim under test. A new memory is held on arrival, reviewed by
+  someone who did not write it, and only then shared, and every step leaves a signed record.
 
 Copy follows the same honesty rules as the docs ([ADR-0018](docs/adr/ADR-0018-the-documentation-set.md)):
-no present-tense claims for unbuilt capabilities, no unmeasured numbers, and the d4 vocabulary
-(held, promoted, journal; never "pending", "approved", "ledger", "audit log").
+no present-tense claims for unbuilt capabilities, no numbers about OML, and the fixed wording
+(held, promoted, journal; never "pending", "approved", "ledger", "audit log"). On brand surfaces
+"shared" is the plain word for promoted.
 
 ### GitHub About
 
-- **Description (≤350 chars):** External memory for AI agents and crews. Every memory is a claim
-  under test: held on arrival, scanned, reviewed by an identity that did not write it, and recorded
-  in a signed journal. Design draft with a working first slice.
+- **Description:** Shared memory for AI agents and crews. Every memory is a claim under test:
+  held on arrival, reviewed by someone who did not write it, and only then shared, with every
+  step signed.
 - **Website:** https://e8kor.github.io/open-memory-lab/
-- **Topics:** `ai-agents` `agent-memory` `llm-memory` `mcp` `model-context-protocol`
-  `human-in-the-loop` `provenance` `ai-governance` `claude-code-plugin` `rust` `postgresql`
+- **Topics:** `ai-agents` `agent-memory` `ai-memory` `multi-agent` `human-in-the-loop`
+  `ai-governance` `provenance` `trustworthy-ai`
 - **Social preview:** upload [`social-preview.png`](docs/assets/brand/social-preview.png)
   under Settings → General → Social preview.
 
@@ -54,7 +70,7 @@ together the chevrons are also `< >`, a nod to the agents that write the memorie
 | `oml-mark-mono.svg` | One colour, inherits `currentColor` |
 | `favicon.svg` | Browser tab (heavier strokes for 16 to 32 px) |
 | `oml-lockup-dark.svg`, `oml-lockup-light.svg` | Mark + name + tagline |
-| `readme-hero-dark.svg`, `readme-hero-light.svg` | README header (`<picture>` switches by theme) |
+| `readme-hero-dark.svg`, `readme-hero-light.svg` | README header (`<picture>` switches by theme); shows the path of one memory |
 | `social-preview.svg`, `social-preview.png` | GitHub social card, 1280×640 |
 
 Keep clear space of half the mark's width on every side. Do not recolour the chevrons
@@ -62,7 +78,7 @@ independently, rotate the mark, add effects, or set the wordmark in another type
 
 ## Colour
 
-Status colours carry meaning in the atlas, so use them for that meaning only.
+Status colours carry meaning, in the illustration and in the Live atlas, so use them for that meaning only: gold is written and held, teal is the reviewer, green is shared, violet is the signed record.
 
 | Token | Dark | Light | Meaning |
 | --- | --- | --- | --- |

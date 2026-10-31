@@ -114,113 +114,124 @@ def starfield(w, h, n, seed, col, x0=0):
 def diamond(x, y, s, fill, extra=""):
     return f'<rect x="{x-s/2:.1f}" y="{y-s/2:.1f}" width="{s}" height="{s}" transform="rotate(45 {x:.1f} {y:.1f})" fill="{fill}" {extra}/>'
 
-def atlas(cx, cy, R, dark, seed=7):
-    """Workarea orbits with claims on them; one held claim mid-review (dashed link to reviewer)."""
+def C(dark):
+    """Theme-resolved colours for the story art."""
+    if dark:
+        return dict(bg=P["void"], fg=P["star"], sub=P["dust"], faint=P["faint"], line=P["line"],
+                    gold=P["gold"], teal=P["teal"], green=P["green"], violet=P["violet"], node=P["panel"])
+    return dict(bg=P["paper"], fg=P["ink"], sub=P["ink2"], faint="#8C96B8", line=P["lline"],
+                gold=P["gold_d"], teal=P["teal_d"], green="#1F9D57", violet=P["violet_d"], node="#FFFFFF")
+
+def story(ox, oy, k, dark, uid, labels=True):
+    """The path of one memory across a workarea, drawn in a 560x330 box at (ox, oy), scale k.
+    Written by one agent -> held -> reviewed by someone who did not write it -> shared with the
+    crew. Each step drops into the signed journal along the bottom. Other memories sit quietly
+    in orbit so the one story reads first."""
     import math
-    r = random.Random(seed)
-    lc = P["line"] if dark else P["lline"]
-    cols = ([P["teal"], P["teal"], P["green"], P["blue"], P["gold"], P["violet"]] if dark else
-            [P["teal_d"], P["teal_d"], "#1F9D57", P["blue_d"], P["gold_d"], P["violet_d"]])
-    out = [f'<g opacity="{1 if dark else 0.95}">']
-    rings = [(R*0.38, 0.42), (R*0.68, 0.44), (R, 0.46)]
-    for i, (rr, flat) in enumerate(rings):
-        out.append(f'<ellipse cx="{cx}" cy="{cy}" rx="{rr:.1f}" ry="{rr*flat:.1f}" fill="none" stroke="{lc}" stroke-width="1.2" transform="rotate(-14 {cx} {cy})"/>')
-    pts = []
-    for i, (rr, flat) in enumerate(rings):
-        for j in range(4 + 2*i):
-            a = r.uniform(0, 2*math.pi)
-            x = rr*math.cos(a); y = rr*flat*math.sin(a)
-            th = math.radians(-14)
-            X = cx + x*math.cos(th) - y*math.sin(th); Y = cy + x*math.sin(th) + y*math.cos(th)
-            pts.append((X, Y, cols[(len(pts)*5) % len(cols)], r.choice([7, 8, 9, 10, 12])))
-    # grant lines from a few claims to core
-    for (X, Y, c, s) in pts[::4]:
-        out.append(f'<line x1="{cx}" y1="{cy}" x2="{X:.1f}" y2="{Y:.1f}" stroke="{c}" stroke-width="1" opacity="0.35"/>')
-    for (X, Y, c, s) in pts:
-        out.append(diamond(X, Y, s, c, 'opacity="0.95"'))
-    # universe core: the mark itself, small
-    core = P["star"] if dark else P["ink"]
-    out.append(f'<circle cx="{cx}" cy="{cy}" r="{R*0.16:.1f}" fill="{P["violet"] if dark else P["violet_d"]}" opacity="0.10"/>')
-    out.append(mark_group(cx, cy, R*0.22, P["gold"] if dark else P["gold_d"], P["teal"] if dark else P["teal_d"], core))
-    out.append('</g>')
-    return "".join(out)
-
-def chain(x, y, n, size, gap, dark):
-    """Signed journal: hash-linked blocks."""
-    lc = P["line"] if dark else P["lline"]; fill = P["panel"] if dark else "#FFFFFF"
-    acc = P["violet"] if dark else P["violet_d"]
-    out = []
-    for i in range(n):
-        bx = x + i*(size+gap)
-        if i: out.append(f'<line x1="{bx-gap}" y1="{y+size/2}" x2="{bx}" y2="{y+size/2}" stroke="{acc}" stroke-width="1.5" opacity="0.7"/>')
-        out.append(f'<rect x="{bx}" y="{y}" width="{size}" height="{size}" rx="4" fill="{fill}" stroke="{lc}" stroke-width="1.2"/>')
-        out.append(f'<rect x="{bx+size*0.25}" y="{y+size*0.3}" width="{size*0.5}" height="2" rx="1" fill="{acc}" opacity="0.8"/>')
-        out.append(f'<rect x="{bx+size*0.25}" y="{y+size*0.55}" width="{size*0.32}" height="2" rx="1" fill="{acc}" opacity="0.5"/>')
-    return "".join(out)
-
-def pipeline(x, y, size, dark):
-    """held -> scanned -> reviewed by another identity -> promoted, as coloured dots + mono labels."""
-    steps = [("held", P["gold"] if dark else P["gold_d"]),
-             ("scanned", P["blue"] if dark else P["blue_d"]),
-             ("reviewed by another identity", P["teal"] if dark else P["teal_d"]),
-             ("promoted", P["green"] if dark else "#1F9D57")]
-    lab = P["dust"] if dark else P["ink2"]; arrow = P["faint"] if dark else "#9AA3BD"
-    out = []; cx = x
-    for i, (s, c) in enumerate(steps):
-        out.append(diamond(cx + size*0.35, y - size*0.33, size*0.5, c))
-        p, w = tp("mono", s, size, cx + size*0.95, y, lab)
-        out.append(p); cx += size*0.95 + w
-        if i < len(steps)-1:
-            p, w = tp("mono", "→", size, cx + size*0.5, y, arrow); out.append(p); cx += size*0.5 + w + size*0.6
-    return "".join(out), cx - x
+    c = C(dark); r = random.Random(5)
+    T = lambda x, y: (ox + x*k, oy + y*k)
+    o = [f'<defs><marker id="ah{uid}" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="{7*k:.1f}" markerHeight="{7*k:.1f}" '
+         f'markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 L8 5 L1 9" fill="none" stroke="{c["sub"]}" stroke-width="1.6"/></marker></defs>']
+    # workarea orbits (tilted ellipses) and quiet, already-shared memories
+    cx, cy = T(320, 160)
+    for rr in (250, 170, 95):
+        o.append(f'<ellipse cx="{cx:.1f}" cy="{cy:.1f}" rx="{rr*k:.1f}" ry="{rr*0.42*k:.1f}" fill="none" stroke="{c["line"]}" '
+                 f'stroke-width="{1.2*k:.2f}" transform="rotate(-12 {cx:.1f} {cy:.1f})"/>')
+    for i, rr in enumerate((250, 170, 95)):
+        for j in range(5 - i):
+            a = r.uniform(0, 2*math.pi); x = rr*math.cos(a); y = rr*0.42*math.sin(a); th = math.radians(-12)
+            X = 320 + x*math.cos(th) - y*math.sin(th); Y = 160 + x*math.sin(th) + y*math.cos(th)
+            if 20 < X < 540 and 20 < Y < 275:
+                px, py = T(X, Y); o.append(diamond(px, py, 7*k, c["teal"], 'opacity="0.28"'))
+    # stations
+    W, H, R, S = (70, 225), (175, 92), (355, 62), (365, 200)
+    crew = [(470, 135), (505, 240), (255, 262)]
+    def P2(p): return T(*p)
+    # share lines to the crew
+    for q in crew:
+        a, b = P2(S), P2(q)
+        o.append(f'<line x1="{a[0]:.1f}" y1="{a[1]:.1f}" x2="{b[0]:.1f}" y2="{b[1]:.1f}" stroke="{c["green"]}" stroke-width="{1.4*k:.2f}" opacity="0.55"/>')
+        o.append(f'<circle cx="{b[0]:.1f}" cy="{b[1]:.1f}" r="{7*k:.1f}" fill="{c["node"]}" stroke="{c["sub"]}" stroke-width="{2*k:.2f}"/>')
+    # the path of the one memory
+    pts = [P2(W), P2(H), P2(R), P2(S)]
+    ctrl = [T(80, 120), T(255, 40), T(440, 110)]
+    d = f'M{pts[0][0]:.1f} {pts[0][1]:.1f}'
+    for cc, pp in zip(ctrl, pts[1:]):
+        d += f' Q{cc[0]:.1f} {cc[1]:.1f} {pp[0]:.1f} {pp[1]:.1f}'
+    o.append(f'<path d="{d}" fill="none" stroke="{c["sub"]}" stroke-width="{1.8*k:.2f}" stroke-dasharray="{5*k:.1f} {5*k:.1f}"/>')
+    # arrowheads mid-segment
+    for (a, cc, b) in zip(pts[:-1], ctrl, pts[1:]):
+        t = 0.55; x = (1-t)**2*a[0] + 2*(1-t)*t*cc[0] + t*t*b[0]; y = (1-t)**2*a[1] + 2*(1-t)*t*cc[1] + t*t*b[1]
+        dx = 2*(1-t)*(cc[0]-a[0]) + 2*t*(b[0]-cc[0]); dy = 2*(1-t)*(cc[1]-a[1]) + 2*t*(b[1]-cc[1])
+        ang = math.degrees(math.atan2(dy, dx))
+        o.append(f'<path d="M{-5*k:.1f} {-5*k:.1f} L{3*k:.1f} 0 L{-5*k:.1f} {5*k:.1f}" fill="none" stroke="{c["sub"]}" '
+                 f'stroke-width="{1.8*k:.2f}" transform="translate({x:.1f} {y:.1f}) rotate({ang:.1f})"/>')
+    # journal: one signed block per step, linked
+    jy = 300; xs = [70, 175, 355, 365+60]
+    blocks = [40 + i*58 for i in range(9)]
+    bx0, by = T(blocks[0], jy)
+    for i, bxv in enumerate(blocks):
+        bx, byy = T(bxv, jy)
+        if i:
+            px, _ = T(blocks[i-1] + 26, jy)
+            o.append(f'<line x1="{px:.1f}" y1="{byy+7*k:.1f}" x2="{bx:.1f}" y2="{byy+7*k:.1f}" stroke="{c["violet"]}" stroke-width="{1.4*k:.2f}" opacity="0.7"/>')
+        o.append(f'<rect x="{bx:.1f}" y="{byy:.1f}" width="{26*k:.1f}" height="{14*k:.1f}" rx="{3*k:.1f}" fill="{c["node"]}" stroke="{c["violet"]}" stroke-width="{1.2*k:.2f}" opacity="0.9"/>')
+    # drop lines from each step into the journal
+    for st, col, bi in ((W, c["gold"], 0), (H, c["gold"], 2), (R, c["teal"], 5), (S, c["green"], 6)):
+        a = P2(st); bxv = blocks[bi]; b = T(bxv + 13, jy)
+        o.append(f'<line x1="{a[0]:.1f}" y1="{a[1]+14*k:.1f}" x2="{b[0]:.1f}" y2="{b[1]:.1f}" stroke="{col}" stroke-width="{1.2*k:.2f}" stroke-dasharray="{2*k:.1f} {4*k:.1f}" opacity="0.6"/>')
+        o.append(f'<rect x="{T(bxv, jy)[0]:.1f}" y="{b[1]:.1f}" width="{26*k:.1f}" height="{14*k:.1f}" rx="{3*k:.1f}" fill="{col}" opacity="0.9"/>')
+    # station glyphs
+    w = P2(W); o.append(f'<circle cx="{w[0]:.1f}" cy="{w[1]:.1f}" r="{11*k:.1f}" fill="{c["node"]}" stroke="{c["gold"]}" stroke-width="{3*k:.2f}"/>')
+    h = P2(H); o.append(f'<circle cx="{h[0]:.1f}" cy="{h[1]:.1f}" r="{24*k:.1f}" fill="none" stroke="{c["gold"]}" stroke-width="{1.5*k:.2f}" stroke-dasharray="{4*k:.1f} {4*k:.1f}"/>')
+    o.append(diamond(h[0], h[1], 17*k, c["gold"]))
+    rv = P2(R); o.append(f'<circle cx="{rv[0]:.1f}" cy="{rv[1]:.1f}" r="{13*k:.1f}" fill="{c["node"]}" stroke="{c["teal"]}" stroke-width="{3*k:.2f}"/>')
+    o.append(f'<path d="M{rv[0]-5.5*k:.1f} {rv[1]+0.5*k:.1f} L{rv[0]-1.5*k:.1f} {rv[1]+4.5*k:.1f} L{rv[0]+6*k:.1f} {rv[1]-4*k:.1f}" fill="none" stroke="{c["teal"]}" stroke-width="{2.6*k:.2f}" stroke-linecap="round" stroke-linejoin="round"/>')
+    s = P2(S); o.append(f'<circle cx="{s[0]:.1f}" cy="{s[1]:.1f}" r="{28*k:.1f}" fill="{c["green"]}" opacity="0.14"/>')
+    o.append(diamond(s[0], s[1], 21*k, c["green"]))
+    if labels:
+        L = lambda txt, x, y, col, anc="middle": tp("mono", txt, 14*k, *T(x, y), col, anchor=anc)[0]
+        o.append(L("written", 70, 258, c["sub"]))
+        o.append(L("held", 175, 56, c["gold"]))
+        o.append(L("reviewed by someone else", 355, 30, c["teal"]))
+        o.append(L("shared", 365, 247, c["green"]))
+        o.append(L("every step signed", 560, 330, c["faint"], "end"))
+    return "".join(o)
 
 # ---------- README hero ----------
 def hero(dark):
-    W, H = 1280, 380
-    bg = P["void"] if dark else P["paper"]; fg = P["star"] if dark else P["ink"]; sub = P["dust"] if dark else P["ink2"]
-    defs = (f'<defs><radialGradient id="glow" cx="0.80" cy="0.45" r="0.55">'
-            f'<stop offset="0" stop-color="{P["violet"] if dark else P["violet_d"]}" stop-opacity="{0.22 if dark else 0.10}"/>'
-            f'<stop offset="1" stop-color="{bg}" stop-opacity="0"/></radialGradient>'
-            f'<linearGradient id="fade" x1="0" x2="1"><stop offset="0" stop-color="{bg}"/><stop offset="0.55" stop-color="{bg}" stop-opacity="0"/></linearGradient></defs>')
-    b = [defs, f'<rect width="{W}" height="{H}" rx="18" fill="{bg}"/>',
-         f'<rect width="{W}" height="{H}" rx="18" fill="url(#glow)"/>']
-    if not dark: b.append(f'<rect x="0.5" y="0.5" width="{W-1}" height="{H-1}" rx="17.5" fill="none" stroke="{P["lline"]}"/>')
-    b.append(starfield(W, H, 110, 3, P["star"] if dark else "#8C96B8", x0=560))
-    b.append(atlas(1010, 185, 230, dark))
-    b.append(f'<rect width="{W*0.62}" height="{H}" rx="18" fill="url(#fade)"/>')
-    b.append(mark_group(118, 150, 120, P["gold"] if dark else P["gold_d"], P["teal"] if dark else P["teal_d"], fg))
-    t, _ = tp("disp-bold", "Open Memory Lab", 64, 206, 152, fg, track=-0.015); b.append(t)
-    t, _ = tp("medium", "Every memory is a claim under test.", 27, 208, 196, sub); b.append(t)
-    p, _ = pipeline(64, 286, 18, dark); b.append(p)
-    t, _ = tp("mono", "external memory for AI agents and crews", 15, 64, 330, P["faint"] if dark else "#8C96B8", track=0.04); b.append(t)
-    return svg(W, H, "".join(b), "Open Memory Lab — every memory is a claim under test",
-               "External memory for AI agents and crews: held, scanned, reviewed by another identity, promoted.")
+    W, Hh = 1280, 380; c = C(dark)
+    defs = (f'<defs><radialGradient id="glow" cx="0.78" cy="0.45" r="0.55">'
+            f'<stop offset="0" stop-color="{c["violet"]}" stop-opacity="{0.18 if dark else 0.08}"/>'
+            f'<stop offset="1" stop-color="{c["bg"]}" stop-opacity="0"/></radialGradient></defs>')
+    b = [defs, f'<rect width="{W}" height="{Hh}" rx="18" fill="{c["bg"]}"/>', f'<rect width="{W}" height="{Hh}" rx="18" fill="url(#glow)"/>']
+    if not dark: b.append(f'<rect x="0.5" y="0.5" width="{W-1}" height="{Hh-1}" rx="17.5" fill="none" stroke="{P["lline"]}"/>')
+    b.append(starfield(W, Hh, 70, 3, P["star"] if dark else "#8C96B8", x0=640))
+    b.append(story(690, 22, 1.0, dark, "h"))
+    b.append(mark_group(110, 118, 104, c["gold"], c["teal"], c["fg"]))
+    t, _ = tp("disp-bold", "Open Memory Lab", 60, 186, 138, c["fg"], track=-0.015); b.append(t)
+    t, _ = tp("medium", "Every memory is a claim under test.", 26, 64, 222, c["fg"]); b.append(t)
+    for i, line in enumerate(["Shared memory for AI agents and crews. Nothing one agent",
+                              "writes reaches the others until someone else has checked it."]):
+        t, _ = tp("regular", line, 19, 64, 268 + i*28, c["sub"]); b.append(t)
+    return svg(W, Hh, "".join(b), "Open Memory Lab: every memory is a claim under test",
+               "Shared memory for AI agents and crews. A memory is written, held, reviewed by someone who did not write it, and only then shared; every step is signed.")
 write("readme-hero-dark.svg", hero(True))
 write("readme-hero-light.svg", hero(False))
 
 # ---------- social preview 1280x640 ----------
 def social():
-    W, H = 1280, 640; dark = True
-    bg = P["void"]; fg = P["star"]; sub = P["dust"]
-    defs = (f'<defs><radialGradient id="glow" cx="0.78" cy="0.48" r="0.6">'
-            f'<stop offset="0" stop-color="{P["violet"]}" stop-opacity="0.24"/><stop offset="1" stop-color="{bg}" stop-opacity="0"/></radialGradient>'
-            f'<linearGradient id="fade" x1="0" x2="1"><stop offset="0" stop-color="{bg}"/><stop offset="0.6" stop-color="{bg}" stop-opacity="0"/></linearGradient></defs>')
-    b = [defs, f'<rect width="{W}" height="{H}" fill="{bg}"/>', f'<rect width="{W}" height="{H}" fill="url(#glow)"/>',
-         starfield(W, H, 170, 11, P["star"], x0=520), atlas(985, 300, 300, True, seed=21),
-         f'<rect width="{W*0.66}" height="{H}" fill="url(#fade)"/>']
-    b.append(mark_group(150, 170, 128, P["gold"], P["teal"], fg))
-    t, _ = tp("disp-bold", "Open Memory Lab", 82, 88, 335, fg, track=-0.02); b.append(t)
-    t, _ = tp("medium", "Every memory is a claim under test.", 34, 90, 392, sub); b.append(t)
-    # three pills
-    x = 90
-    for label, c in [("held on arrival", P["gold"]), ("non-author review", P["teal"]), ("signed journal", P["violet"])]:
-        d, w = text_path("mono", label, 19, 0, 0)
-        pw = w + 62
-        b.append(f'<rect x="{x}" y="440" width="{pw:.0f}" height="46" rx="23" fill="{P["deep"]}" stroke="{P["line"]}" stroke-width="1.5"/>')
-        b.append(diamond(x + 26, 463, 10, c))
-        p, _ = tp("mono", label, 19, x + 44, 470, P["star"]); b.append(p)
-        x += pw + 14
-    b.append(chain(90, 540, 7, 30, 16, True))
-    t, _ = tp("mono", "github.com/e8kor/open-memory-lab", 18, 420, 561, P["faint"], track=0.02); b.append(t)
-    return svg(W, H, "".join(b), "Open Memory Lab", "Social preview")
+    W, Hh = 1280, 640; dark = True; c = C(True)
+    defs = (f'<defs><radialGradient id="glow" cx="0.76" cy="0.46" r="0.6">'
+            f'<stop offset="0" stop-color="{c["violet"]}" stop-opacity="0.2"/><stop offset="1" stop-color="{c["bg"]}" stop-opacity="0"/></radialGradient></defs>')
+    b = [defs, f'<rect width="{W}" height="{Hh}" fill="{c["bg"]}"/>', f'<rect width="{W}" height="{Hh}" fill="url(#glow)"/>',
+         starfield(W, Hh, 110, 11, P["star"], x0=620), story(660, 140, 1.0, True, "s")]
+    b.append(mark_group(124, 168, 96, c["gold"], c["teal"], c["fg"]))
+    t, _ = tp("disp-bold", "Open Memory Lab", 68, 80, 302, c["fg"], track=-0.02); b.append(t)
+    t, _ = tp("medium", "Every memory is a claim under test.", 31, 82, 356, c["fg"]); b.append(t)
+    for i, line in enumerate(["Shared memory for AI agents and crews.", "Nothing one agent writes reaches the others",
+                              "until someone else has checked it."]):
+        t, _ = tp("regular", line, 23, 82, 410 + i*32, c["sub"]); b.append(t)
+    t, _ = tp("mono", "github.com/e8kor/open-memory-lab", 17, 82, 560, c["faint"], track=0.02); b.append(t)
+    return svg(W, Hh, "".join(b), "Open Memory Lab", "Every memory is a claim under test. Shared memory for AI agents and crews.")
 write("social-preview.svg", social())
