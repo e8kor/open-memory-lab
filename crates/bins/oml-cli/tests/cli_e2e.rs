@@ -1609,6 +1609,40 @@ fn the_hook_gives_up_after_8_seconds_whatever_blocks_it() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_writes_at_most_one_short_line_to_stderr_whatever_the_server_answers() {
+    // A 4xx and a 5xx without the typed envelope, each with a body of 1 MiB.
+    for status in [
+        axum::http::StatusCode::NOT_FOUND,
+        axum::http::StatusCode::BAD_GATEWAY,
+    ] {
+        let flood = axum::Router::new().route(
+            "/v1/memories",
+            axum::routing::get(move || async move { (status, "x".repeat(1 << 20)) }),
+        );
+        let (url, task) = serve_stub(flood).await;
+        let (code, stdout, stderr) = hook(
+            &[
+                ("OML_URL", &url),
+                (
+                    "OML_API_KEY",
+                    "oml_floodedhook0123456789abcdefghijklmnopqrs",
+                ),
+            ],
+            &session("startup", "/home/op/src/metals"),
+        );
+        task.abort();
+        assert_eq!(code, 0, "{status}");
+        assert!(stdout.is_empty(), "{status}: {stdout}");
+        assert_eq!(stderr.lines().count(), 1, "{status}: one line");
+        assert!(
+            stderr.chars().count() <= 240 && stderr.contains(status.as_str()),
+            "{status}: a short line that names the status: {} characters",
+            stderr.chars().count()
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_prints_nothing_and_exits_0_when_the_server_refuses() {
     let crew = Crew::start().await;
     let stdin = session("startup", "/home/op/src/metals");
