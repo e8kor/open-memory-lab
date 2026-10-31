@@ -124,8 +124,9 @@ take. Proposed, not built.
   (its node D or an ancestor, its deny list masking neither) carries `unreviewed: block` (d6); one
   block wins over any inherited allow. `oml-domain` holds this as a pure function beside
   `effective_roles`, computed on every request. Held means state `held`, dead-lettered versions
-  included, of any kind. The maintainer's reading of decision 2's "any state" is held or
-  promoted: other states inside are served as everywhere else.
+  included, of any kind. Decision 2's "any state" means held or promoted, confirmed on
+  2026-10-31: rejected and demoted versions inside are served as everywhere else, so what review
+  turned down never returns to an agent's context.
 
     Every served claim version carries `reviewed`, true exactly when it is `promoted` and not
     `self_signed` (ADR-0001 d5). Every read applies d4 and then this rule, pointers included:
