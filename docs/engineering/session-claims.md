@@ -83,7 +83,7 @@ deterministic test in a hook, harness-enforced where installed and bypassable by
 ## Ranking by value against cost
 
 1. **Guardrail, its rule and the freeze** (FR-50): the user's scenario. Cost: a kind, a read, two
-   hooks and a human verdict per rule.
+   hooks and a scope attribute an admin sets on each key.
 2. **Session handoff** (FR-55): high value at low cost, no new read; its one open question is
    review ([below](#session-handoff)).
 3. **Definition of done** (FR-56): high value at low cost through one Stop hook; the risk is a
@@ -126,9 +126,10 @@ under the data frame of the memory hook and never under the guardrail frame.
 
 ## The export bridge
 
-Proposed in ADR-0037 d11: `oml guardrails export --format agents-md | claude-md` writes
-promoted guardrails, with a header naming the server, scope, reach and set digest, and
-`--check` reports drift. It reaches every harness that reads AGENTS.md or a `.claude/rules/`
+Proposed in ADR-0037 d11: `oml guardrails export --format agents-md | claude-md` writes the
+promoted guardrails its key loads under the guardrail scope an admin set on that key, with a
+header naming the server, scope node, guardrail scope and set digest, and `--check` reports
+drift. It reaches every harness that reads AGENTS.md or a `.claude/rules/`
 file, which is all of those above but Gemini CLI. Its costs, stated there: a copy no erasure
 or demotion reaches (FR-54), readers widened from OML's grants to the repository's, and
 staleness until the next export. Conventions with an
