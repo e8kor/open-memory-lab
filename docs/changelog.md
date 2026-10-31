@@ -75,11 +75,18 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
   workarea and key responses carry `name`; and `GET /v2/keys/{key_id}` answers a key by its id or
   its name. The served entries of [mcp-tools.json](api/mcp-tools.json) take a workarea's name, and
   their `_meta.pending_design` notes for names are gone.
-- **CLI** (d4, d12, d15). `oml keys issue <key-name>` takes `--grant <workarea>:<role>` by id or
-  name; `oml keys issue-agent <key-name>` keeps [ADR-0028](adr/ADR-0028-agent-key-issuance.md)
-  d1's `--out`, d2's reader grant and `--write-only`; `oml crews create`, `update`, `list` and
-  `show` administer crew records; `oml workareas create <parent> <name>` takes `--crew`; and
-  `oml workareas show` and `tree` run under an admin context.
+- **CLI** (d2, d3, d4, d8, d12, d15). Every argument that names a workarea, crew, key or tenant
+  takes its id or its name, sent as typed for the server to resolve, as one percent-encoded segment
+  where the route takes it in its path; one a path carries that is empty, `.` or `..` is refused
+  before anything is sent, exit `2`, since no path carries it as one segment. Among them are the
+  `--grant <workarea>:<role>`, `--default-workarea`, `--workarea` and `--crew` of
+  `oml keys issue <key-name>` and `oml keys issue-agent <key-name>`, `oml keys show <key>`,
+  `oml deny set <key> <subtree>`, `oml submit --workarea`, `oml recall --workarea` and
+  `oml audit verify-chain --tenant`. `oml keys issue-agent` keeps
+  [ADR-0028](adr/ADR-0028-agent-key-issuance.md) d1's `--out`, d2's reader grant and `--write-only`;
+  `oml crews create`, `update`, `list` and `show` administer crew records;
+  `oml workareas create <parent> <name>` takes `--crew`; and `oml workareas show` and `tree` run
+  under an admin context, `tree` as one workarea read per node, since the tree read is unserved.
 - **Plugins** (d14). The `oml-admin` skill asks for the key's name and the workarea's name and
   passes them to `issue-agent`, with `--crew` when the operator names a crew, still only with
   `--out` and never with `--json`. The `oml` plugin's README and skill say that a workarea
@@ -93,25 +100,22 @@ serve. The record stays proposed: no Status line moves, `info.version` stays `0.
   `crates/oml-app/tests/use_cases.rs`, `crates/bins/oml-server-lead/tests/http_api.rs` and
   `mcp_facade.rs`, and `crates/bins/oml-cli/tests/cli_e2e.rs` run in `cargo test --workspace`.
 - **Still unbuilt.** The verbs ADR-0026 reaches that this build does not serve, so no name reaches
-  them either: key revocation (`POST /v2/keys/{key_id}/revoke`, `oml keys revoke`) and rotation,
-  and so `new_name` on `key.rotated` and `oml keys rotate <key> <new-key-name>`; the key listing
-  (`GET /v2/keys`), `oml keys list` and `oml keys show`, so d10's revoked key is read as history
-  only through `GET /v2/keys/{key_id}`; of the other verbs d9 addresses by the key's name, adding
-  or revoking a grant after issuance, lifting a denial and the effective-access read; d15's lookup
-  by path (`GET /v2/workareas?path=`) and its `tree`, `edges` and `status` reads under
+  them either: key revocation (`POST /v2/keys/{key_id}/revoke`, `oml keys revoke`) and rotation, and
+  so `new_name` on `key.rotated` and `oml keys rotate <key> <new-key-name>`; the key listing
+  (`GET /v2/keys`) and `oml keys list`, so d10's revoked key is read as history only through
+  `GET /v2/keys/{key_id}` and `oml keys show`; of the other verbs d9 addresses by the key's name,
+  adding or revoking a grant after issuance, lifting a denial and the effective-access read; d15's
+  lookup by path (`GET /v2/workareas?path=`) and its `tree`, `edges` and `status` reads under
   `GET /v2/workareas/{workarea_id}`; the re-parent's `new_parent_id`, a workarea edge's
   `to_workarea_id` and the reassign's `workarea_id`; `oml workareas crew set`, though
-  `POST /v2/workareas/{workarea_id}/crew` is served; and a simulation audience's `key_id`. On the
-  verbs the CLI bullet does not name, the CLI still takes an id only, against d4:
-  `oml deny set <key-id> <subtree>`, `oml submit --workarea`, `oml recall --workarea` and
-  `oml audit verify-chain --tenant`. The operator tier is unbuilt, and so are tenant names beyond
-  the one tenant the bootstrap claim creates, operator keys and the provider's key namespace,
-  `tenant_id` on issuance and `POST /v2/tenants`. So are the independence axis's crew and manager
-  comparisons at promotion, whose domain functions exist and which no promotion calls yet. Two
-  pieces differ from the design because the operator tier is unbuilt: the PoC has no provider
-  chain, so each tenant's name is journalled in its own chain's `system.names_assigned`; and the
-  bootstrap claim mints the tenant's first admin key, so its `name` is checked in that tenant's
-  namespace, not the provider's.
+  `POST /v2/workareas/{workarea_id}/crew` is served; and a simulation audience's `key_id`. The
+  operator tier is unbuilt, and so are tenant names beyond the one tenant the bootstrap claim
+  creates, operator keys and the provider's key namespace, `tenant_id` on issuance and
+  `POST /v2/tenants`. So are the independence axis's crew and manager comparisons at promotion,
+  whose domain functions exist and which no promotion calls yet. Two pieces differ from the design
+  because the operator tier is unbuilt: the PoC has no provider chain, so each tenant's name is
+  journalled in its own chain's `system.names_assigned`; and the bootstrap claim mints the tenant's
+  first admin key, so its `name` is checked in that tenant's namespace, not the provider's.
 - **Pages touched:** this page and the [agent plugin](api/mcp-plugin.md) (the `issue-agent`
   synopsis); [mcp-tools.json](api/mcp-tools.json) and the [CLI reference](cli/reference.md)
   change with the code that serves them; outside `docs/`, `README.md` (the honest status),

@@ -157,8 +157,9 @@ review, searches within a budget with standing instructions served first, replac
 a new version and proposes retiring one; a new version replaces the old one for other readers
 only once someone other than its author approves it, and the event feed shows each key only the
 events it may see. Workareas, crews, keys and tenants carry names: one each, given at creation,
-unique among its kind and never changed or reused, and the server and the plugin's tools accept a
-name wherever they accept an id, so an agent is pointed at `metals-crew` rather than at a long id.
+unique among its kind and never changed or reused, and the server, the command-line tool and the
+plugin's tools accept a name wherever they accept an id, so an agent is pointed at `metals-crew`
+rather than at a long id.
 A name a key may not see is answered exactly as its id would be. Crews are records of their own
 that workareas and keys point to, and an administrator's key reads the shape of its tenant's
 workarea tree but never a memory in it. On its first start on data an earlier version wrote, the
