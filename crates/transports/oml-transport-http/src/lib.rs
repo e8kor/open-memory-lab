@@ -215,6 +215,7 @@ where
             .route("/v2/crews/{crew_id}/update", post(Self::update_crew))
             .route("/v2/workareas", post(Self::create_workarea))
             .route("/v2/workareas/{workarea_id}", get(Self::get_workarea))
+            .route("/v2/workareas/{workarea_id}/tree", get(Self::workarea_tree))
             .route(
                 "/v2/workareas/{workarea_id}/crew",
                 post(Self::set_workarea_crew),
@@ -624,10 +625,18 @@ where
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
         if !body.is_empty() {
-            // The optional subtree filter is classified like every reference
-            // (ADR-0026 d3), but the PoC serves the whole tenant queue.
+            // The subtree filter is not built: the PoC serves the whole
+            // tenant queue, so a `workarea` is refused by name, never
+            // ignored, however it is spelled (errors.md `request.validation`;
+            // ADR-0026 d4).
             let filter: ReviewNextBody = parse_json(headers, body)?;
-            optional_reference("/workarea", filter.workarea.as_deref())?;
+            if filter.workarea.is_some() {
+                return Err(ApiError::validation(
+                    "workarea on POST /v2/review/next is not built: the queue is served whole, \
+                     so the filter is refused, never ignored",
+                )
+                .with_details(json!({ "field": "/workarea" })));
+            }
         }
         let served = st
             .app
@@ -948,6 +957,57 @@ where
         Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
     }
 
+    async fn workarea_tree(
+        State(st): State<Self>,
+        Path(workarea_id): Path<String>,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        let result = match query {
+            Ok(Query(params)) => {
+                Self::workarea_tree_inner(&st, &workarea_id, &params, &headers).await
+            }
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/workareas/{workarea_id}/tree`: one page of the subtree at a
+    /// workarea, by id or name, in path order, each node with the `Workarea`
+    /// fields the workarea read serves, under a cursor bound to the key: at
+    /// reader effective access with every node outside it omitted, or for an
+    /// admin key by its key role, structure only, and otherwise
+    /// `access.not_found` (http-api.md workareas and pagination; ADR-0026
+    /// d4, d15). Each query parameter at most once, and an unknown one
+    /// refused rather than ignored.
+    async fn workarea_tree_inner(
+        st: &Self,
+        workarea_id: &str,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let node = reference("workarea_id", workarea_id)?;
+        let (limit, cursor) = page_params(params)?;
+        let page = st
+            .app
+            .workarea_tree(&token, node, cursor, limit)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let items: Vec<Value> = page
+            .items
+            .iter()
+            .map(|n| workarea_json(&n.workarea, &n.path, n.crew.as_ref()))
+            .collect();
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({ "items": items, "next_cursor": page.next_cursor }),
+        ))
+    }
+
     async fn events_tail(
         State(st): State<Self>,
         Query(params): Query<HashMap<String, String>>,
@@ -1152,24 +1212,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
-        let (mut limit, mut cursor) = (PAGE_LIMIT_DEFAULT, None);
-        let mut seen = HashSet::new();
-        for (name, value) in params {
-            if !seen.insert(name.as_str()) {
-                return Err(ApiError::validation(format!(
-                    "the query parameter {name} is given more than once"
-                )));
-            }
-            match name.as_str() {
-                "limit" => limit = page_limit(value)?,
-                "cursor" => cursor = Some(value.as_str()),
-                other => {
-                    return Err(ApiError::validation(format!(
-                        "unknown query parameter {other:?}"
-                    )));
-                }
-            }
-        }
+        let (limit, cursor) = page_params(params)?;
         let page = st
             .app
             .crews(&token, cursor, limit)
@@ -1373,10 +1416,10 @@ struct SupersedeBody {
 
 #[derive(Deserialize)]
 struct ReviewNextBody {
-    /// A workarea by id or name, classified and then unused: the PoC serves
-    /// the whole tenant queue.
+    /// The subtree filter, by id or name; parsed only to be refused while
+    /// the filter is unbuilt. Any JSON value is the field's presence.
     #[serde(default)]
-    workarea: Option<String>,
+    workarea: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -1507,6 +1550,32 @@ fn reference(field: &str, value: &str) -> Result<Reference, ApiError> {
         ))
         .with_details(json!({ "field": field }))
     })
+}
+
+/// The `limit` and `cursor` of a listing that takes no other query
+/// parameter (http-api.md pagination): each at most once, and an unknown
+/// one refused rather than ignored, so a mistyped filter never widens a
+/// listing.
+fn page_params(params: &[(String, String)]) -> Result<(usize, Option<&str>), ApiError> {
+    let (mut limit, mut cursor) = (PAGE_LIMIT_DEFAULT, None);
+    let mut seen = HashSet::new();
+    for (name, value) in params {
+        if !seen.insert(name.as_str()) {
+            return Err(ApiError::validation(format!(
+                "the query parameter {name} is given more than once"
+            )));
+        }
+        match name.as_str() {
+            "limit" => limit = page_limit(value)?,
+            "cursor" => cursor = Some(value.as_str()),
+            other => {
+                return Err(ApiError::validation(format!(
+                    "unknown query parameter {other:?}"
+                )));
+            }
+        }
+    }
+    Ok((limit, cursor))
 }
 
 /// [`reference`] over an optional value.
@@ -1998,20 +2067,17 @@ fn crew_json(crew: &CrewRecord) -> Value {
 }
 
 /// openapi.yaml `Workarea`: the node, its name, its derived path, its
-/// status and the crew record it names, absent when it names none
+/// status and the crew record it names, or null when it names none
 /// (ADR-0025 d14; ADR-0026 d1, d8).
 fn workarea_json(workarea: &WorkareaRecord, path: &str, crew: Option<&CrewRecord>) -> Value {
-    let mut value = json!({
+    json!({
         "id": workarea.workarea_id,
         "name": workarea.name.as_str(),
         "parent_id": workarea.parent_id,
         "path": path,
         "status": workarea.status(),
-    });
-    if let (Some(crew), Some(obj)) = (crew, value.as_object_mut()) {
-        obj.insert("crew".to_owned(), crew_json(crew));
-    }
-    value
+        "crew": crew.map(crew_json),
+    })
 }
 
 /// openapi.yaml `WorkareaView`: the `Workarea` fields and the calling key's

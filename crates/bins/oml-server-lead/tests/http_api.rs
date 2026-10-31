@@ -2584,6 +2584,7 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "parent_id": null,
                 "path": "universe",
                 "status": "committed",
+                "crew": null,
                 "children": [
                     { "id": metals, "path_leaf": "metals-crew", "status": "development" },
                     { "id": redline, "path_leaf": "redline", "status": "development" },
@@ -4975,7 +4976,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     );
     assert!(view["permission_epoch"].is_u64(), "{view}");
 
-    // A node created without a crew has none, stored and served absent.
+    // A node created without a crew names none, and the read serves null.
     let (status, _, leaf) = send(
         router,
         "GET",
@@ -4985,21 +4986,22 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     .await;
     assert_eq!(status, StatusCode::OK, "{leaf}");
     assert_eq!(leaf["path"], "universe.metals-crew.q1-2027");
-    assert!(leaf.get("crew").is_none(), "{leaf}");
+    assert_eq!(leaf.get("crew"), Some(&Value::Null), "{leaf}");
     assert_eq!(leaf["children"], json!([]));
 
     drop_db(&rig.db_name).await;
 }
 
+/// `Workarea.crew` is the crew record the workarea names, or null: a
+/// workarea created without a crew answers `"crew": null` on its create and
+/// on its read, never an absent member (openapi.yaml `Workarea`; http-api.md
+/// workareas; ADR-0026 d8).
 #[tokio::test]
-async fn a_workarea_created_without_crew_omits_crew() {
+async fn a_workarea_created_without_crew_answers_crew_null() {
     let rig = fresh_rig().await;
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
 
-    // `Workarea.crew` is a crew record, never null: the create answers it
-    // absent, as the read does, when none was sent (openapi.yaml Workarea;
-    // ADR-0025 d14).
     let (status, _, created) = send(
         router,
         "POST",
@@ -5010,8 +5012,318 @@ async fn a_workarea_created_without_crew_omits_crew() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    assert!(created.get("crew").is_none(), "{created}");
+    assert_eq!(created.get("crew"), Some(&Value::Null), "{created}");
     assert_eq!(created["path"], "universe.metals-crew");
+
+    let (status, _, read) = send(
+        router,
+        "GET",
+        "/v2/workareas/metals-crew",
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read.get("crew"), Some(&Value::Null), "{read}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Creates a workarea named `name` under `parent`, each by id or name, with
+/// the crew `crew` names when one is given, over HTTP; answers the `201`.
+async fn create_named_workarea(
+    router: &Router,
+    admin: &str,
+    parent: &str,
+    name: &str,
+    crew: Option<&str>,
+) -> Value {
+    let mut body = json!({ "parent_id": parent, "name": name });
+    if let Some(crew) = crew {
+        body["crew"] = json!(crew);
+    }
+    let (status, _, created) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(admin).idem(&format!("wa-{name}")).body(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    created
+}
+
+/// The paths of a tree page's items, in its order.
+fn tree_paths(page: &Value) -> Vec<&str> {
+    page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|node| node["path"].as_str().expect("path"))
+        .collect()
+}
+
+/// `GET /v2/workareas/{workarea_id}/tree` answers an admin key, by its key
+/// role and with no grant, the whole subtree at a workarea it names by name:
+/// a node before its children and siblings by name, each node with its id,
+/// name, parent, derived path, status and crew record or null, one page at a
+/// time under a cursor bound to the key; the same subtree by id; and an
+/// unknown name what an unknown id answers (http-api.md workareas and
+/// pagination; ADR-0026 d4, d8, d15).
+#[tokio::test]
+async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_page_by_page() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let (status, _, crew) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(&admin)
+            .idem("crew-metals")
+            .body(json!({ "name": "metals-crew" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{crew}");
+    let procurement = create_named_workarea(router, &admin, "universe", "procurement", None).await;
+    let metals =
+        create_named_workarea(router, &admin, "procurement", "metals", Some("metals-crew")).await;
+    // Created out of name order, served in it.
+    let q2 = create_named_workarea(router, &admin, "metals", "q2-2027", None).await;
+    let q1 = create_named_workarea(router, &admin, "metals", "q1-2027", None).await;
+    let review = create_named_workarea(router, &admin, "q2-2027", "lit-review", None).await;
+    create_named_workarea(router, &admin, "universe", "research", None).await;
+
+    let tree = |query: String, token: String| async move {
+        send(
+            router,
+            "GET",
+            &format!("/v2/workareas/{query}"),
+            Call::auth(&token),
+        )
+        .await
+    };
+    let (status, _, page) = tree("procurement/tree".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        page,
+        json!({
+            "items": [
+                {
+                    "id": procurement["id"],
+                    "name": "procurement",
+                    "parent_id": root,
+                    "path": "universe.procurement",
+                    "status": "development",
+                    "crew": null,
+                },
+                {
+                    "id": metals["id"],
+                    "name": "metals",
+                    "parent_id": procurement["id"],
+                    "path": "universe.procurement.metals",
+                    "status": "development",
+                    "crew": crew,
+                },
+                {
+                    "id": q1["id"],
+                    "name": "q1-2027",
+                    "parent_id": metals["id"],
+                    "path": "universe.procurement.metals.q1-2027",
+                    "status": "development",
+                    "crew": null,
+                },
+                {
+                    "id": q2["id"],
+                    "name": "q2-2027",
+                    "parent_id": metals["id"],
+                    "path": "universe.procurement.metals.q2-2027",
+                    "status": "development",
+                    "crew": null,
+                },
+                {
+                    "id": review["id"],
+                    "name": "lit-review",
+                    "parent_id": q2["id"],
+                    "path": "universe.procurement.metals.q2-2027.lit-review",
+                    "status": "development",
+                    "crew": null,
+                },
+            ],
+            "next_cursor": null,
+        })
+    );
+    let procurement_id = procurement["id"].as_str().expect("id");
+    let (status, _, by_id) = tree(format!("{procurement_id}/tree"), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_id, page, "one subtree by either spelling");
+
+    // Two at a time: the cursor resumes after the last node served.
+    let (status, _, first) = tree("universe/tree?limit=2".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(tree_paths(&first), ["universe", "universe.procurement"]);
+    let mut paths: Vec<String> = tree_paths(&first).into_iter().map(str::to_owned).collect();
+    let mut cursor = first["next_cursor"]
+        .as_str()
+        .expect("a next page")
+        .to_owned();
+    loop {
+        let (status, _, next) = tree(
+            format!("universe/tree?limit=2&cursor={cursor}"),
+            admin.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{next}");
+        paths.extend(tree_paths(&next).into_iter().map(str::to_owned));
+        match next["next_cursor"].as_str() {
+            Some(more) => cursor = more.to_owned(),
+            None => break,
+        }
+    }
+    assert_eq!(
+        paths,
+        [
+            "universe",
+            "universe.procurement",
+            "universe.procurement.metals",
+            "universe.procurement.metals.q1-2027",
+            "universe.procurement.metals.q2-2027",
+            "universe.procurement.metals.q2-2027.lit-review",
+            "universe.research",
+        ]
+    );
+
+    // An unknown name answers what an unknown id answers; a cursor answers
+    // only the key it was issued to, and an unknown parameter is refused,
+    // never ignored.
+    let (status, _, unknown_name) = tree("nowhere/tree".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{unknown_name}");
+    let (_, _, unknown_id) = tree(format!("{}/tree", OsIds.new_id()), admin.clone()).await;
+    assert_eq!(unknown_name["error"], unknown_id["error"]);
+    let reader = issue_key(router, &admin, "reader", "crew/recall-1", root).await;
+    let first_cursor = first["next_cursor"].as_str().expect("cursor");
+    let (status, _, foreign) = tree(
+        format!("universe/tree?cursor={first_cursor}"),
+        reader.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{foreign}");
+    assert_envelope(&foreign, "request.validation");
+    let (status, _, unknown) = tree("universe/tree?depth=2".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{unknown}");
+    assert_envelope(&unknown, "request.validation");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Under a reader key the tree omits every node outside its read access,
+/// a node below one it cannot read included when a grant reaches it, and a
+/// workarea it cannot read answers what an unknown one does (http-api.md
+/// workareas; roles-and-keys.md refusal order; ADR-0026 d15).
+#[tokio::test]
+async fn get_v2_workareas_tree_under_a_reader_key_omits_the_nodes_outside_its_read_access() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, _root) = bootstrap(router).await;
+    let metals = create_named_workarea(router, &admin, "universe", "metals", None).await;
+    let q1 = create_named_workarea(router, &admin, "metals", "q1-2027", None).await;
+    create_named_workarea(router, &admin, "metals", "q2-2027", None).await;
+    let review = create_named_workarea(router, &admin, "q1-2027", "lit-review", None).await;
+    let reader = issue_key_with(
+        router,
+        &admin,
+        "reader",
+        "crew/recall-1",
+        json!([
+            {
+                "workarea_node_id": metals["id"],
+                "role": "reader",
+                "deny": [{ "subtree_node_id": q1["id"] }],
+            },
+            { "workarea_node_id": review["id"], "role": "reader" },
+        ]),
+    )
+    .await;
+    let reader = reader["value"].as_str().expect("value");
+
+    let (status, _, page) = send(
+        router,
+        "GET",
+        "/v2/workareas/metals/tree",
+        Call::auth(reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        tree_paths(&page),
+        [
+            "universe.metals",
+            "universe.metals.q1-2027.lit-review",
+            "universe.metals.q2-2027",
+        ],
+        "q1-2027 is denied, and lit-review below it is granted"
+    );
+    assert_eq!(page["next_cursor"], Value::Null);
+
+    for unreadable in ["q1-2027", "universe"] {
+        let (status, _, refused) = send(
+            router,
+            "GET",
+            &format!("/v2/workareas/{unreadable}/tree"),
+            Call::auth(reader),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{unreadable}: {refused}");
+        assert_envelope(&refused, "access.not_found");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The queue filter on `POST /v2/review/next` is not built, so a `workarea`
+/// in its body, by id, by name or neither, is refused as
+/// `request.validation` with `details.field` `/workarea`, never ignored, and
+/// claims nothing: the next unfiltered call serves the held item
+/// (http-api.md names and ids; errors.md `request.validation`; ADR-0026
+/// d4).
+#[tokio::test]
+async fn a_workarea_on_review_next_is_refused_by_name_until_the_filter_is_built() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let dreamer = issue_key(router, &admin, "dreamer", "crew/reviewer-1", crew).await;
+    let artifact = remember(router, &writer, "filter-1", "copper closes at 4182", None).await;
+
+    for (n, workarea) in [json!("metals-crew"), json!(crew), json!("Metals Crew")]
+        .into_iter()
+        .enumerate()
+    {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/review/next",
+            Call::auth(&dreamer)
+                .idem(&format!("r-filter-{n}"))
+                .body(json!({ "workarea": workarea })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{workarea}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(
+            refused["error"]["details"],
+            json!({ "field": "/workarea" }),
+            "{workarea}: {refused}"
+        );
+    }
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer).idem("r-unfiltered").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    assert_eq!(serve["item"]["artifact_id"], artifact.as_str());
 
     drop_db(&rig.db_name).await;
 }

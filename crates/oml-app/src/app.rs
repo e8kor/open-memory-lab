@@ -28,7 +28,7 @@ use oml_domain::{
     sha256_digest_string, transition,
 };
 
-use crate::cursor::{ListingCursor, NameCursor};
+use crate::cursor::{ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, OutboxRow, ScanOutcome,
@@ -41,7 +41,7 @@ use crate::types::{
     ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
     RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
     SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode,
-    UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -1477,24 +1477,35 @@ where
         })
     }
 
-    /// The subtree at `node`, by id or name, each node with its derived
-    /// path, the node first and then each depth in id order, so a parent
-    /// precedes its children (http-api.md workareas, the tree). A key past
+    /// One page of the subtree at `node`, by id or name, in path order: a
+    /// node before its children, and siblings by name in byte order, so the
+    /// derived paths' names, compared one by one, order the walk. Each node
+    /// carries its derived path and the crew record it names. A key past
     /// step 1 needs reader effective access on `node` by the refusal order,
-    /// and the nodes outside its read access are omitted; an admin key reads
+    /// and the nodes outside its read access are omitted, a node below one
+    /// it cannot read included when a grant reaches it; an admin key reads
     /// every node by its key role (roles-and-keys.md permission matrix,
-    /// footnote 6; ADR-0026 d15). The read is one store walk; the HTTP page
-    /// cut is the transport's.
+    /// footnote 6; ADR-0026 d15). A page holds at most `limit` nodes, after
+    /// the path `cursor` resumes at, and the cursor of the next page, bound
+    /// to the key and to `api.cursor_ttl` like every listing cursor; a stale
+    /// or foreign one is refused (http-api.md workareas and pagination). The
+    /// read is one store walk and one crew read per crew the page names.
     pub async fn workarea_tree(
         &self,
         api_key: &str,
         node: Reference,
-    ) -> Result<Vec<TreeNode>, AppError> {
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<TreePage, AppError> {
         let caller = self.authenticate(api_key).await?;
         let structure = caller.key.role == Role::Admin;
         if !structure {
             require_admissible(&caller.key, Role::Reader, "workarea_tree")?;
         }
+        let now = self.clock.now();
+        let after = cursor
+            .map(|cursor| PathCursor::resume(cursor, caller.key.key_id, &now))
+            .transpose()?;
         let tenant_id = caller.key.tenant_id;
         let node = self
             .resolve(&caller.key, NamedKind::Workarea, &node)
@@ -1514,32 +1525,72 @@ where
         let Some(ancestry) = self.journal.workarea_ancestry(tenant_id, node).await? else {
             return Err(AppError::NotFound);
         };
-        // The subtree lists a parent before its children, so each path is
-        // its parent's with the node's name appended.
-        let mut paths: BTreeMap<Uuid, String> = BTreeMap::from([(node, derived_path(&ancestry))]);
-        let mut tree = Vec::new();
+        // The subtree lists a parent before its children, so each node's
+        // names, from `universe` down, are its parent's and its own.
+        let mut names: BTreeMap<Uuid, Vec<Name>> = BTreeMap::from([(
+            node,
+            ancestry.iter().rev().map(|w| w.name.clone()).collect(),
+        )]);
+        let mut tree: Vec<(Vec<Name>, WorkareaRecord)> = Vec::new();
         for workarea in self.journal.workarea_subtree(tenant_id, node).await? {
             let id = workarea.workarea_id;
             if id != node {
-                let parent = workarea
+                let mut own = workarea
                     .parent_id
-                    .and_then(|p| paths.get(&p))
+                    .and_then(|p| names.get(&p))
+                    .cloned()
                     .ok_or_else(|| {
                         StoreError::Backend(format!(
                             "the subtree of {node} lists {id} before its parent"
                         ))
                     })?;
-                let path = format!("{parent}.{}", workarea.name.as_str());
-                paths.insert(id, path);
+                own.push(workarea.name.clone());
+                names.insert(id, own);
             }
             if readable.as_ref().is_none_or(|nodes| nodes.contains(&id)) {
-                tree.push(TreeNode {
-                    path: paths[&id].clone(),
-                    workarea,
-                });
+                tree.push((names[&id].clone(), workarea));
             }
         }
-        Ok(tree)
+        // A node's names are a prefix of its children's, and names are
+        // unique in the tenant, so no two nodes tie.
+        tree.sort_by(|(a, _), (b, _)| a.cmp(b));
+        // One node past the page says whether another page exists.
+        let mut page: Vec<(Vec<Name>, WorkareaRecord)> = tree
+            .into_iter()
+            .filter(|(names, _)| after.as_ref().is_none_or(|after| names > after))
+            .take(limit.saturating_add(1))
+            .collect();
+        let more = page.len() > limit;
+        page.truncate(limit);
+        let next_cursor = page.last().filter(|_| more).map(|(names, _)| {
+            PathCursor {
+                key_id: caller.key.key_id,
+                after: names.clone(),
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        // Many nodes may name one crew, which is read once.
+        let mut crews: BTreeMap<Uuid, Option<CrewRecord>> = BTreeMap::new();
+        let mut items = Vec::with_capacity(page.len());
+        for (names, workarea) in page {
+            let path = names.iter().map(Name::as_str).collect::<Vec<_>>().join(".");
+            let crew = match workarea.crew_id {
+                None => None,
+                Some(crew_id) => match crews.entry(crew_id) {
+                    Entry::Occupied(read) => read.get().clone(),
+                    Entry::Vacant(unread) => unread
+                        .insert(self.journal.crew(tenant_id, crew_id).await?)
+                        .clone(),
+                },
+            };
+            items.push(TreeNode {
+                workarea,
+                path,
+                crew,
+            });
+        }
+        Ok(TreePage { items, next_cursor })
     }
 
     /// Create a crew record, admin by key role (http-api.md crews;

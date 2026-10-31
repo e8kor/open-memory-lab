@@ -22,8 +22,12 @@ use serde_json::{Value, json};
 use sqlx::postgres::PgConnection;
 use sqlx::{Connection, Executor};
 
+use oml_app::domain::{
+    EventDraft, EventTime, event_types, next_envelope, sha256_digest_string, sign as sign_envelope,
+};
+use oml_app::ports::{CommitRequest, IdGen as _, JournalStore as _, MetadataFold, OutboxRow};
 use oml_pg::PgStore;
-use oml_server_lead::{lead_state, pg_ping};
+use oml_server_lead::{OsIds, lead_state, pg_ping};
 
 const ENROLLMENT: &str = "enr_cli_e2e_fixture_token";
 
@@ -368,6 +372,12 @@ struct Lab {
     seen: Recorder,
     db_name: String,
     task: tokio::task::JoinHandle<()>,
+    /// The lead's store and signing key, for the one act no route serves:
+    /// the `key.revoked` of an issuance that failed part way.
+    store: PgStore,
+    signing: SigningKey,
+    /// The claim's `201`: the tenant and the first admin key.
+    claim: Value,
 }
 
 impl Lab {
@@ -386,10 +396,11 @@ impl Lab {
 
         let mut seed = [0_u8; 32];
         getrandom::getrandom(&mut seed).expect("OS randomness");
+        let signing = SigningKey::from_bytes(&seed);
         let seen: Recorder = Arc::new(Mutex::new(Vec::new()));
         let router = lead_state(
             &store,
-            SigningKey::from_bytes(&seed),
+            signing.clone(),
             pg_ping(store.pool().clone()),
             true,
             Some(ENROLLMENT.to_owned()),
@@ -436,7 +447,72 @@ impl Lab {
             seen,
             db_name,
             task,
+            store,
+            signing,
+            claim,
         }
+    }
+
+    /// Commits, signed by the lead's key and folded by its store, the
+    /// `key.revoked` that an issuance failing after its `key.issued`
+    /// journals, revoked by the first admin key (roles-and-keys.md issuance
+    /// order); no route revokes a key in this build. Answers the event's
+    /// `at`.
+    async fn revoke_in_the_store(&self, key_id: &str) -> String {
+        let tenant =
+            uuid::Uuid::parse_str(self.claim["tenant_id"].as_str().expect("tenant")).expect("uuid");
+        let admin =
+            uuid::Uuid::parse_str(self.claim["key_id"].as_str().expect("admin key")).expect("uuid");
+        let key_id = uuid::Uuid::parse_str(key_id).expect("uuid");
+        let head = self
+            .store
+            .chain_head(tenant)
+            .await
+            .expect("head")
+            .expect("chain");
+        let prev = self
+            .store
+            .events_range(tenant, head.seq, 1)
+            .await
+            .expect("the head event")
+            .remove(0);
+        let draft = EventDraft {
+            tenant_id: tenant,
+            event_id: OsIds.new_id(),
+            event_type: event_types::KEY_REVOKED.to_owned(),
+            principal: "platform/admin".to_owned(),
+            api_key_id: Some(admin),
+            at: EventTime::parse("2026-11-02T10:30:00.123456Z").expect("time"),
+            payload: json!({
+                "key_id": key_id.to_string(),
+                "revoked_by_key_id": admin.to_string(),
+                "reason_digest": sha256_digest_string(b"issuance_incomplete"),
+            }),
+        };
+        let event = sign_envelope(
+            next_envelope(Some(&prev), draft).expect("lawful"),
+            &self.signing,
+        )
+        .expect("signs");
+        let at = event.envelope.at.as_str().to_owned();
+        self.store
+            .commit(CommitRequest {
+                outbox: OutboxRow {
+                    event_id: event.envelope.event_id,
+                    topic: event.envelope.event_type.clone(),
+                    payload: json!({
+                        "tenant_id": tenant.to_string(),
+                        "seq": event.envelope.seq,
+                        "event_type": event.envelope.event_type,
+                    }),
+                },
+                event,
+                fold: MetadataFold::KeyRevoked { key_id },
+                idempotency: None,
+            })
+            .await
+            .expect("the revocation commits");
+        at
     }
 
     /// `oml --json <args>` under the stored admin credentials, or `key`.
@@ -1169,6 +1245,104 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
     lab.stop().await;
 }
 
+/// A revoked key's name still resolves, so `oml keys show` reads it as
+/// history, and its human layout says so: a `revoked` line carries the
+/// revocation time, where a live key's says `no (live)`, so a key revoked
+/// after a part-failed issuance never reads as live without `--json`
+/// (cli/reference.md `oml keys show`; http-api.md keys; ADR-0026 d10).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
+    let lab = Lab::start().await;
+    let wa = lab.workarea("metals");
+    let issued = lab.issue(
+        "agent-7-laptop",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-7",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    );
+    let revoked_line = |stdout: &str| -> Vec<String> {
+        stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("revoked"))
+            .map(ToOwned::to_owned)
+            .collect()
+    };
+
+    let (code, live, stderr) = lab.text(&["keys", "show", "agent-7-laptop"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(revoked_line(&live), ["revoked  : no (live)"], "{live}");
+
+    let at = lab
+        .revoke_in_the_store(issued["key_id"].as_str().expect("key id"))
+        .await;
+    let (code, revoked, stderr) = lab.text(&["keys", "show", "agent-7-laptop"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        revoked_line(&revoked),
+        [format!("revoked  : {at}")],
+        "{revoked}"
+    );
+    assert!(!revoked.contains("live"), "{revoked}");
+    let (code, json, log) = lab.json(None, &["keys", "show", "agent-7-laptop"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(json["revoked_at"], at.as_str(), "{log}");
+    lab.stop().await;
+}
+
+/// `oml workareas crew set <workarea> --crew <crew>` points a workarea at a
+/// crew record, each by id or name sent as typed, in one `POST
+/// /v2/workareas/{workarea_id}/crew {crew}`, and the workarea read then
+/// serves that record (cli/reference.md `oml workareas`; http-api.md
+/// workareas; ADR-0026 d4, d8).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
+    let lab = Lab::start().await;
+    let wa = lab.workarea("metals");
+    let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
+    assert_eq!(code, 0, "crews create: {log}");
+    lab.take_requests();
+
+    let (code, updated, log) = lab.json(
+        None,
+        &[
+            "workareas",
+            "crew",
+            "set",
+            "metals",
+            "--crew",
+            "metals-crew",
+        ],
+    );
+    assert_eq!(code, 0, "workareas crew set: {log}");
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/workareas/metals/crew"]);
+    assert_eq!(seen[0].body, json!({ "crew": "metals-crew" }));
+    assert_eq!(updated["id"].as_str(), Some(wa.as_str()), "{log}");
+    assert_eq!(updated["crew"], crew, "{log}");
+
+    let (code, shown, log) = lab.json(None, &["workareas", "show", &wa]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(
+        shown["crew"], crew,
+        "the read serves the record set by name"
+    );
+
+    let crew_id = crew["crew_id"].as_str().expect("crew id");
+    let (code, stdout, stderr) = lab.text(&["workareas", "crew", "set", &wa, "--crew", crew_id]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("metals-crew") && stdout.contains(crew_id),
+        "the human layout names the crew: {stdout}"
+    );
+    lab.stop().await;
+}
+
 /// A `--grant <workarea>:<role>` takes the workarea's id or its name, the
 /// CLI sends it as spelled, and the server issues the one grant either way
 /// (cli/reference.md `oml keys issue`; ADR-0026 d4).
@@ -1312,8 +1486,9 @@ async fn crews_create_and_show_by_name() {
 
 /// Under the admin context `oml bootstrap claim` stores, `oml workareas
 /// tree` lists the tenant tree from `universe` down, or from a `--root`
-/// given by name, with each node's name, path, status and crew, and `oml
-/// workareas show` reads one node by name, while recall under the same key
+/// given by name, in one tree read, with each node's name, path, status and
+/// crew record or null, and `oml workareas show` reads one node by name,
+/// while recall under the same key
 /// still answers `access.verb_ceiling` (cli/reference.md `oml workareas`;
 /// ADR-0026 d4, d8, d15).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1372,26 +1547,24 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
         ]
     );
     assert_eq!(nodes[2]["crew"], crew, "each node carries its crew record");
-    assert!(
-        nodes[1].get("crew").is_none(),
-        "a node with no crew carries none"
-    );
-    let seen = lab.take_requests();
     assert_eq!(
-        routes(&seen)[0],
-        "GET /v2/workareas/universe",
-        "the root goes by its name"
+        nodes[1].get("crew"),
+        Some(&Value::Null),
+        "a node with no crew carries null"
     );
-    assert!(
-        routes(&seen)
-            .iter()
-            .all(|r| r.starts_with("GET /v2/workareas/")),
-        "the tree is workarea reads and nothing else: {:?}",
-        routes(&seen)
+    assert_eq!(tree["next_cursor"], Value::Null, "{log}");
+    assert_eq!(
+        routes(&lab.take_requests()),
+        ["GET /v2/workareas/universe/tree"],
+        "one tree read, the root by its name"
     );
 
     let (code, subtree, log) = lab.json(None, &["workareas", "tree", "--root", "metals"]);
     assert_eq!(code, 0, "workareas tree --root by name: {log}");
+    assert_eq!(
+        routes(&lab.take_requests()),
+        ["GET /v2/workareas/metals/tree"]
+    );
     let paths: Vec<&str> = subtree["items"]
         .as_array()
         .expect("items")
@@ -1481,6 +1654,7 @@ async fn a_reference_spelled_empty_dot_or_dot_dot_is_refused_before_anything_is_
             vec!["deny", "set", bad, "universe"],
             vec!["workareas", "show", bad],
             vec!["workareas", "tree", "--root", bad],
+            vec!["workareas", "crew", "set", bad, "--crew", "metals-crew"],
             vec!["crews", "show", bad],
             vec![
                 "crews",
