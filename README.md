@@ -25,8 +25,9 @@ every unmeasured or unbuilt property as exactly that.
 
 This repository contains a design under review, plus a first working slice of it. **The design
 is the authority; the code implements its M1 slice** (the signed journal chain, the one-transaction
-commit point, submit → review → promote → recall over the standalone profile) and the first four
-tools of the agent plugin. You can run it today: see the [quickstart](#quickstart). Every
+commit point, submit → review → promote → recall over the standalone profile) and the part of M2
+that lets an agent keep its whole memory in OML on one key, through eight of the agent plugin's
+twelve tools. You can run it today: see the [quickstart](#quickstart). Every
 capability beyond that slice is a design commitment with a tracked exit criterion, not a property
 of running software. If you are here to evaluate the design, start at the
 [review guide](docs/review-guide.md).
@@ -116,8 +117,8 @@ under [`docs/`](docs/) is additionally licensed under [CC-BY-4.0](LICENSE-docs).
 
 ## Running the PoC
 
-The repository now carries a proof-of-concept implementation of the design's M1 slice: the
-standalone lead server (`oml-server-lead`) and the thin administration CLI (`oml`), composed
+The repository now carries a proof-of-concept implementation of the design's M1 slice and of the
+part of M2 that makes OML an agent's only memory: the standalone lead server (`oml-server-lead`) and the thin administration CLI (`oml`), composed
 per [docs/engineering/workspace-plan.md](docs/engineering/workspace-plan.md).
 
 **Prerequisites**
@@ -145,19 +146,24 @@ bash scripts/poc-demo.sh
 CLI verbs, exit codes and transcripts are specified in [docs/cli/reference.md](docs/cli/reference.md).
 
 **Honest status.** The PoC is the M1 slice of the
-[critical path](docs/product/critical-path.md): one standalone lead, one tenant
-(bootstrap-claimed), held-by-default admission with a deterministic marker scanner, the
-dreamer review ceremony with R2 enforced against the lineage closure, supersede, substring
-recall, the signed per-tenant hash chain, and four of the
-agent plugin's twelve tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_events_tail`). **Not
-implemented yet:** the other eight plugin tools, one key that both writes and recalls (grants of
-several roles on one key), attachments and the object lake, erasure ceremonies, checking the
-signed chain against a live server (the command-line verifier reads an export of the whole
-chain that the server does not serve yet, so `oml audit verify-chain` stops with an error that
-says so), follower servers and read scaling, simulations,
-embedding-based retrieval, and the operator tier; and two working pieces still differ from the
-design: the slice's supersede replaces the version readers see as soon as the replacement is
-proposed, before anyone reviews it, and its event feed shows every reader the held writes of
-other writers. The design corrects both, and the supersede correction lands before the agent
-plugin's supersede tool ships — see the [critical path](docs/product/critical-path.md) for the
-order in which they land.
+[critical path](docs/product/critical-path.md) and the part of M2 that makes OML an agent's
+only memory: one standalone lead, one tenant (bootstrap-claimed), held-by-default admission with
+a deterministic marker scanner, the dreamer review ceremony with R2 enforced against the lineage
+closure, full-text recall, the signed per-tenant hash chain, and eight of the agent plugin's
+twelve tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_get`, `oml_supersede`,
+`oml_my_work`, `oml_workarea_info`, `oml_events_tail`). One key both stores and searches through
+the workareas it is granted. With it an agent reads back its own writes while they wait for
+review, searches within a budget with standing instructions served first, replaces a memory with
+a new version and proposes retiring one; a new version replaces the old one for other readers
+only once someone other than its author approves it, and the event feed shows each key only the
+events it may see. **Not implemented yet:** the other four plugin tools, attachments and the
+object lake, erasure ceremonies, checking the signed chain against a live server (the
+command-line verifier reads an export of the whole chain that the server does not serve yet, so
+`oml audit verify-chain` stops with an error that says so), follower servers and read scaling,
+simulations, embedding-based retrieval, and the operator tier; on keys, adding or revoking a
+grant after issuance, lifting a denial, retrying an issuance safely, rotation, and expiry (a key
+issued with an expiry is refused); held writes that expire when nobody reviews them; the record
+of what each search served; and links between workareas. One working piece differs from the
+design: an agent's search of its own waiting writes reads them through a store query restricted
+to their author, not through the separate author-only search index the design specifies. The
+[critical path](docs/product/critical-path.md) orders what lands next.

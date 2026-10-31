@@ -29,6 +29,51 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-31 — The agent-only memory surface (implementation)
+
+An implementation milestone; no decision changes, and
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) stays proposed. The code now serves what
+that record decides for FR-10 and FR-11:
+
+- **Eight of the twelve tools.** The [agent plugin](api/mcp-plugin.md)'s catalog holds twelve
+  tools, and `tools/list` serves eight: `oml_remember`, `oml_learn`, `oml_recall`, `oml_get`,
+  `oml_supersede`, `oml_my_work`, `oml_workarea_info` and `oml_events_tail`. `oml_attach`,
+  `oml_relate_propose`, `oml_graph` and `oml_vocab` are named and answer not built (d12).
+- **One key.** Grant admissibility per key role, the four-step refusal order and effective access
+  computed on every verb, so a writer-role key with `wa:writer` and `wa:reader` grants remembers
+  and recalls (d1); issuance that carries grants and denies and discloses the value only after
+  the last `grant.issued` commits, and `POST /v2/keys/{key_id}/denials` (d2); "own" as the
+  authoring key (d3).
+- **Reading back, budgets and order.** `include_own_held` on recall (d4); the budget token under
+  counter `oml-tc/1` and the `max_tokens` cut with its `budget` object (d6, d7); applicable
+  steering ahead of the hits and a total hit order (d8); the ids served and the whole-request
+  digest that the read log will record, computed on every recall (d9).
+- **Versions.** Each claim version stores its ordinal, kind, NFC `body_bytes` and the version it
+  replaces, and a never-promoted rejection releases its `claim_key` (d6, d18); the tip moves only
+  at ratification, as one `lifecycle.supersede`, the author's retire-proposal is a supersession
+  carrying `retirement: true`, a supersede replays from its stored receipt, and a dreamer's edit
+  is a proposal (d10, d11). Migration `0005_claim_versions.sql` removes the PoC's `superseded`
+  status.
+- **Listings.** The own-work listing on `GET /v1/memories` (d13), the workarea read on
+  `GET /v2/workareas/{workarea_id}` (d14), and the events tail's per-family visibility with a
+  bounded scan answering `next_after_seq` (d15).
+- **The one-key plugin.** `plugins/oml/.mcp.json` declares the `oml` server alone, and
+  `scripts/check_plugin.py` fails if a second server appears; `OML_RECALL_KEY` is gone.
+  `scripts/quickstart.sh` issues one agent key and a dreamer key; it remembers, lists its own work
+  and recalls its own held row on the agent key, records an approving verdict with the dreamer
+  key, and recalls the promoted row on the agent key.
+- **The scenario.** `crates/bins/oml-server-lead/tests/agent_only_memory.rs` runs in
+  `cargo test --workspace`. No CI run has carried it yet, so FR-10 and FR-11 stay open on the
+  [roadmap](product/roadmap.md) until one passes; their rows then cite that run (ADR-0018 d3).
+- **The multi-arch image** is recorded in the release-image entry below.
+- **Still unbuilt**, each stated in the README or a code comment: the designed `held_fts` (own
+  held recall reads through the author-predicated `recall_own_held` port method instead, d5); the
+  read log (d9); held-item expiry (`held_expires_at` is null); workarea edges (`edges` is `[]`);
+  grant add and revoke, and denial lift (d2); issuance idempotency; key rotation (`rotated_from`
+  is null) and expiry enforcement (an expiry on issuance is refused with `request.validation`,
+  d16); `api.cursor_ttl`, held as the code constant `CURSOR_TTL_SECS`, 3600 s, until settings
+  are built; and the operator tier.
+
 ### 2026-10-30 — The release image for linux/amd64 and linux/arm64 (implementation)
 
 An implementation milestone; no decision changes. `.github/workflows/release.yml` now builds the
