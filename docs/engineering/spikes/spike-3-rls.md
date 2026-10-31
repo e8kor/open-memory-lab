@@ -1,13 +1,13 @@
 <!--
 id: engineering/spikes/spike-3-rls
 tier: engineering
-status: recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail for the table owner on planner statistics (ADR amendment needed, awaiting the maintainer's decision), S3.3 passes, S3.2 did not run; the pinned pg17 has not run
-answers: what M0 spike 3 found for S3.1–S3.4 (FORCE and the owner, the owner/service split, SET LOCAL across pooled transactions, the hostile cross-tenant probe), on which versions, what failed and why, and what each finding asks of the design
+status: recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (ADR amendment needed, or an implementation fix, awaiting the maintainer's decision), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run
+answers: what M0 spike 3 found for S3.1–S3.4 (FORCE and the owner, the owner/service split as a PostgreSQL mechanism and as a claim about OML's roles, SET LOCAL across pooled transactions, the hostile cross-tenant probe), on which versions, what failed and why, which channel the role split closes and which it does not, and what each finding asks of the design
 -->
 
 # Findings: spike 3, RLS hardening
 
-**Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail for the table owner on planner statistics (ADR amendment needed, awaiting the maintainer's decision), S3.3 passes, S3.2 did not run; the pinned pg17 has not run
+**Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (ADR amendment needed, or an implementation fix, awaiting the maintainer's decision), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run
 
 These are the findings for the four scenarios of the critical path's
 [spike 3](../../product/critical-path.md#spike-3-rls-hardening), one per scenario, in its
@@ -16,23 +16,37 @@ controls, recorded failures) are on the [M0 spikes](index.md) page.
 
 **Where they ran.** On the host PostgreSQL 18.6, as a role that can create databases but not
 roles. The connecting role therefore owned the database and every table, ran S3.1, S3.3 and
-S3.4 as that owner, and could not run S3.2. The pin is `pgvector/pgvector:pg17`. CI job
-`rls-spike` runs all four scenarios there as an owner role and a separate service role, and
+S3.4 as that owner, and could not run S3.2's mechanism. The pin is `pgvector/pgvector:pg17`. CI
+job `rls-spike` runs every scenario there as an owner role and a separate service role, and
 that job has not run yet. None of the verdicts below is a pg17 result, and none of them is a
 result for a non-owner role.
 
 | Scenario | Verdict on 18.6 (owner role) | Pinned pg17, owner and service roles |
 |---|---|---|
 | [S3.1](#s31) FORCE binds the owner | **fail**: table reads are filtered, planner statistics are not | not yet run (CI `rls-spike`) |
-| [S3.2](#s32) owner/service split, no BYPASSRLS | **inconclusive**: not run here, the role cannot create roles | not yet run (CI `rls-spike`) |
+| [S3.2 (mechanism)](#s32-mechanism) a non-owner without BYPASSRLS stays inside the policy | **inconclusive**: not run here, the role cannot create roles | not yet run (CI `rls-spike`) |
+| [S3.2 (OML's roles)](#s32-oml-roles) OML's roles are split, none holds BYPASSRLS | **inconclusive**: not testable, no deployment's roles are specified | the same: not testable in CI either |
 | [S3.3](#s33) SET LOCAL across pooled transactions | **pass**: a read with no tenant returns 0 rows | not yet run (CI `rls-spike`) |
-| [S3.4](#s34) hostile cross-tenant probe | **fail**: every read shape of the fold tables returns 0 rows; planner statistics do not | not yet run (CI `rls-spike`) |
+| [S3.4](#s34) hostile cross-tenant probe | **fail**: every read shape of the fold tables returns 0 rows; `pg_stats` and EXPLAIN's row estimate do not | not yet run (CI `rls-spike`) |
 
-The two failures are one fact, seen from two scenarios. Both are entries in the harness's
-`RECORDED_FAILURES`, so CI stays green while they reproduce and fails when they stop. Recording
-them does not settle them: each finding says ADR amendment needed until the maintainer decides,
-and the harness prints the same action. The run seeded every table of migrations 0001–0005, so
-no table was left unprobed.
+The two failures are one fact, seen from two scenarios: the statistics of
+`memories_claim_fts`, one expression index over every tenant's claims. They reach a session set
+to tenant A along two channels:
+
+- **`pg_stats`** shows the index's lexemes to the owner. Whether it shows them to a role that
+  does not own the index is CI's `S3.4/service/pg_stats`. This is the channel the role split can
+  close.
+- **EXPLAIN's row estimate** follows the same lexemes for the owner, while `FORCE` binds it
+  ([S3.4](#s34)). PostgreSQL's documentation and source give the same estimate to every role
+  whose query the policy binds, the service role included. CI's `S3.4/service/estimate` will
+  measure that, and has not run. The role split does not close this channel.
+
+The three owner checks behind the two failures (`S3.1/owner/pg_stats`, `S3.4/owner/pg_stats`,
+`S3.4/owner/estimate`) are entries in the harness's `RECORDED_FAILURES`. CI stays green while they
+reproduce, and fails when they stop. The two service-role checks are not on the list, so CI fails
+if either leaks. Recording a failure does not settle it: each finding says ADR amendment needed
+until the maintainer decides, and the harness prints the same action. The run seeded every table
+of migrations 0001–0005, so no table was left unprobed.
 
 ## S3.1 — FORCE binds the table owner {#s31}
 
@@ -50,10 +64,14 @@ environment:   Linux 7.0.0-38-generic x86_64, 8 vCPU AMD EPYC-Genoa, 15.2 GiB RA
                owns the throwaway database and all 11 tables
 verdict:       fail: the owner's table reads are filtered, and its view of the planner
                statistics of the expression index memories_claim_fts is not
-adr-clause:    ADR-0007 d2, through the FORCE commitment of security.md (commitments C6)
-action:        ADR amendment needed (ADR-0007 d2 / security.md FORCE commitment), unless
-               the maintainer reads FORCE as fencing table reads only; awaiting maintainer
-               decision; recorded in the harness as S3.1/owner/pg_stats
+adr-clause:    ADR-0007 d2, through the FORCE commitment of security.md (commitments C6);
+               ADR-0007 d4 and security.md's STRIDE information-disclosure mitigation,
+               for the statistics of the cross-tenant index memories_claim_fts
+action:        ADR amendment needed (ADR-0007 d2 and d4; security.md's FORCE commitment
+               and its STRIDE information-disclosure mitigation), or an implementation
+               fix that makes the FTS index per tenant, which this run does not test;
+               awaiting maintainer decision; recorded in the harness as
+               S3.1/owner/pg_stats
 ```
 
 **What held.** All 11 tables have `ENABLE` and `FORCE ROW LEVEL SECURITY` and a policy. Set to
@@ -84,26 +102,46 @@ view "allows access only to rows of pg_statistic that correspond to tables the u
 permission to read". The owner holds that privilege, so the row is shown, and the documentation
 says nothing about row-level security there. This finding does not test whether a role that does
 not own the index sees the row. CI's service-role run checks that (`S3.4/service/pg_stats`, not
-on the recorded list, so a leak there fails CI).
+on the recorded list, so a leak there fails CI). The planner does not read statistics through
+this view, and the estimate it derives from the same lexemes reaches roles that do not own the
+index ([S3.4](#s34)).
 
 **Observed.** The owner can also lift `FORCE` with `ALTER TABLE … NO FORCE ROW LEVEL SECURITY`, as
 the control shows. `FORCE` binds what the owner reads from the table. It does not bind the
 owner's DDL, and it does not bind the owner's view of the catalog. Both are reasons the querying
 role must not be the owner, and that is S3.2's split.
 
-**Reading for the action.** There are two readings, and the maintainer has not yet chosen
-between them. The finding therefore says **ADR amendment needed**.
+**Reading for the action.** The maintainer has not decided, so the finding says **ADR
+amendment needed**. It touches two sets of clauses, and the second limits what the first can
+settle.
 
-- **This page's reading.** ADR-0007 d2 binds the roles OML workloads use, and security.md's
-  split keeps those roles off ownership: "migrations run under a separate owner role no workload
-  uses". If the split holds, the leak above reaches only the role that runs migrations, and that
-  role can lift `FORCE` anyway. On this reading `FORCE` fences table reads only, the decision
-  stands, and security.md takes the page edit below.
-- **The other reading.** security.md's `FORCE` sentence promises that `FORCE` fences the owner,
-  and the owner's view of `pg_stats` breaks that promise. On this reading the amendment goes
-  ahead.
+- **`FORCE` and the owner (ADR-0007 d2, security.md's `FORCE` sentence).** There are two readings.
+  In one, d2 binds the roles OML workloads use, and security.md's split keeps those roles off
+  ownership: "migrations run under a separate owner role no workload uses". Then `FORCE` need only
+  fence the owner's table reads, and security.md takes the page edit below. In the other,
+  security.md's `FORCE` sentence promises that `FORCE` fences the owner, and the owner's view of
+  `pg_stats` breaks that promise. Under either reading the split confines at most the `pg_stats`
+  channel, and only if CI's `S3.4/service/pg_stats` shows the service role does not see the row.
+  It does not confine EXPLAIN's estimate, which follows the same statistics for the owner under
+  `FORCE` and, by PostgreSQL's documentation and source, for every role the policy binds
+  ([S3.4](#s34)). So "the split keeps the leak from every workload" is not available, under either
+  reading.
+- **The cross-tenant FTS index (ADR-0007 d4, security.md's STRIDE row).** d4 decides "Tenant
+  isolation extends through every storage layer". security.md's information-disclosure
+  mitigation says: "Embeddings and FTS are physically partitioned per tenant — there is no
+  cross-tenant index to leak through". `memories_claim_fts` is one index over every tenant's
+  claims, and its statistics leak through `pg_stats` (the owner, measured) and through EXPLAIN's
+  estimate (the owner, measured; the service role, not yet measured, CI's `S3.4/service/estimate`).
+  The designed `memories_fts`
+  and `held_fts` ([postgres-schema](../../data/postgres-schema.md#full-text-search-and-embeddings))
+  are each one table with one GIN index across tenants. Only `memory_embeddings` is
+  list-partitioned per tenant. So the schema sketch already disagrees with the STRIDE row before
+  any code, and a wording edit to security.md does not settle this half. Either d4 and the STRIDE
+  row are amended to say that FTS statistics are shared across tenants, or the implementation,
+  and the schema sketch, make the FTS index per tenant. This run does not test whether a
+  per-tenant index closes either channel.
 
-The finding asks for three more things whichever reading the maintainer takes:
+The finding asks for three more things whichever way the maintainer decides:
 
 - **The split is not built.** The evidence is a run outside the harness, recorded under
   "Evidence: the lead migrates as its serving role" below. `oml-server-lead` 0.2.0 (commit
@@ -117,8 +155,10 @@ The finding asks for three more things whichever reading the maintainer takes:
   it. Using either still needs SQL that the server does not issue. This is an implementation
   gap against C6: the split is decided and not built.
 - **A page edit for security.md**, proposed and not made here: say that `FORCE` binds an owner's
-  table reads but not its view of planner statistics or its DDL, and that the split, not `FORCE`,
-  is what keeps those from a workload.
+  table reads but not its view of planner statistics or its DDL, that the split, not `FORCE`, is
+  what keeps the DDL and the `pg_stats` view from a workload, and that no role split keeps the
+  planner's estimates from one. That edit covers the `FORCE` half only. The STRIDE row is the
+  amendment-or-fix question above.
 - **`_sqlx_migrations`: ADR amendment needed (ADR-0007 d2), or an implementation fix.**
   ADR-0007 d2 decides "Row-level security keyed by `tenant_id` on every Postgres table. No table
   is exempted for convenience", and security.md says the same. The lead's sqlx migrator creates
@@ -184,8 +224,16 @@ no script for it, because the harness, not the lead, is what CI runs.
 
 ## S3.2 — owner/migration-role split, no BYPASSRLS {#s32}
 
+S3.2 asserts that migrations succeed and that "no application role can read across the policy".
+The harness reports that as two findings
+([M0 spikes](index.md#s32-is-two-findings-and-the-one-about-omls-roles-stays-open)).
+The first is PostgreSQL's mechanism, which a run can test. The second is the claim about OML's
+own roles, which no run can test yet.
+
+### S3.2 (mechanism) {#s32-mechanism}
+
 ```text
-spike-finding: S3.2
+spike-finding: S3.2 (mechanism)
 date:          2026-10-31
 versions:      PostgreSQL 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1), the host's; the pinned
                pgvector/pgvector:pg17 not yet run; psycopg 3.3.6 (libpq 18.6),
@@ -195,29 +243,59 @@ environment:   as S3.1; the connecting role has CREATEDB and neither CREATEROLE 
                superuser, so the harness cannot mint the owner and service roles
 verdict:       inconclusive: not run on this host
 adr-clause:    ADR-0007 d2 (no BYPASSRLS role), through the role split of security.md
-               (commitments C6; C3 for the journal re-grant)
+               (commitments C6; C3 for the journal re-grant): the PostgreSQL mechanism
+               the split relies on
 action:        run in CI job rls-spike on the pinned pg17 with --require-all, and record
                that result here
 ```
 
-**What did run.** The half of S3.2 that needs no second role ran. Migrations 0001–0005 succeed
-under the owner role while `FORCE` binds it, over two tenants' rows seeded between 0003 and 0004.
-The backfills of 0004 and 0005 reach both tenants: every key's `issued_seq` and `issued_by` match
-its `key.issued`, and every memory's `version`, `kind`, `body_bytes`, `is_tip` and `promoted_at`
-match what 0005 derives. Each migration enumerates tenants through 0003's startup policy and runs
-under the ordinary tenant context, as its comments say, and `FORCE` does not stop it.
+**What did run.** The half of the mechanism that needs no second role ran. Migrations 0001–0005
+succeed under the owner role while `FORCE` binds it, over two tenants' rows seeded between 0003
+and 0004. The backfills of 0004 and 0005 reach both tenants: every key's `issued_seq` and
+`issued_by` match its `key.issued`, and every memory's `version`, `kind`, `body_bytes`, `is_tip`
+and `promoted_at` match what 0005 derives. Each migration enumerates tenants through 0003's
+startup policy and runs under the ordinary tenant context, as its comments say, and `FORCE` does
+not stop it.
 
-**What CI asserts** once it runs: neither role is a superuser or holds `BYPASSRLS`, `CREATEROLE` or
-`CREATEDB`; the service role owns no relation and is not a member of the owner role. As the
-service role, tenant A sees only A's rows and no tenant sees 0 rows. Every one of these is refused
-with `42501`: `NO FORCE`, `DISABLE ROW LEVEL SECURITY`, `DROP POLICY`, `CREATE POLICY`, `OWNER
-TO`, `UPDATE`, `DELETE` and `TRUNCATE` on `journal`, and `SET ROLE` to the owner. `SET row_security =
-off` raises instead of unfiltering, and a self-`GRANT UPDATE ON journal` leaves the privilege
-absent. The control is a `NOLOGIN BYPASSRLS` role, which must read tenant B's rows while set to
-tenant A.
+**What CI asserts** once it runs, as the service role: set to tenant A, it sees only A's rows,
+and with no tenant set it sees 0 rows. Each of these is refused with `42501`: `NO FORCE`, `DISABLE ROW LEVEL SECURITY`,
+`DROP POLICY`, `CREATE POLICY`, `OWNER TO`, `SET ROLE` to the owner, and, with the `journal`
+grants the harness wrote, `UPDATE`, `DELETE` and `TRUNCATE` on `journal` with the tenant set.
+`SET row_security = off` raises instead of unfiltering, and a self-`GRANT UPDATE ON journal`
+leaves the privilege absent. Two controls must leak: the owner runs each of the four DDL
+statements in a transaction that rolls back, and each takes effect, so each refusal comes from
+the role and not from the statement; and the service role's count with tenant B set shows B's
+rows. The role attributes, no superuser, `BYPASSRLS`, `CREATEROLE` or `CREATEDB`, no relation
+owned and no membership in the owner role, are the harness's own setup. They are preconditions,
+not checks: if they are not as minted, the finding is inconclusive.
 
-**Observed elsewhere.** The design's split exists only in this harness. The shipped lead migrates
-on boot as its serving role (S3.1, above), so for the PoC as built S3.2's premise does not hold.
+### S3.2 (OML's roles) {#s32-oml-roles}
+
+```text
+spike-finding: S3.2 (OML's roles)
+date:          2026-10-31
+versions:      none apply: no run of the harness can test this claim
+settings:      none
+environment:   every host, CI included
+verdict:       inconclusive: not testable; OML specifies no deployment's database roles
+               and grants
+adr-clause:    ADR-0007 d2 (no role used by any OML workload holds BYPASSRLS), through
+               the role split of security.md (commitments C6)
+action:        keep open; when a deployment's bootstrap specifies its roles and grants,
+               take them from there and test those roles, not the harness's
+```
+
+**Why it is not testable.** "No application role can read across the policy" is a claim about
+the roles an OML deployment uses. OML has none to test. [Deployment](../../operations/deployment.md)
+names the bootstrap workload's owner role and a service role created at init, and
+[configuration](../../operations/configuration.md) designs `postgres.owner_url`. No page states
+those roles' attributes and grants statement by statement. The lead as built migrates on boot as
+its serving role ([S3.1](#s31), the lead run), so for the PoC as built S3.2's premise does not
+hold. The harness's owner and service roles are its own. It mints them `NOBYPASSRLS` and writes
+their grants itself, so asserting their attributes would show only that it ran its own
+`CREATE ROLE` statements. A CI run therefore prints this finding as inconclusive, and never as
+`pass` with action `none`. The finding does not fail the run, and the run's last line names it as
+open.
 
 ## S3.3 — SET LOCAL across pooled transactions {#s33}
 
@@ -288,13 +366,17 @@ settings:      as S3.1; every probe runs in a transaction set to tenant A the wa
                bug), and rolls back
 environment:   as S3.1; run as the owner role, which FORCE binds
 verdict:       fail: every read shape of the fold tables returns 0 rows of tenant B;
-               pg_stats does not (S3.1's failure, seen from a tenant session)
+               pg_stats and EXPLAIN's row estimate do not (S3.1's failure, seen from a
+               tenant session)
 adr-clause:    ADR-0007 d2 and d6 (RLS as the second fence, judged against the hostile
-               co-tenant)
-action:        ADR amendment needed (ADR-0007 d2 / security.md FORCE commitment), unless
-               the maintainer reads FORCE as fencing table reads only; awaiting maintainer
-               decision; recorded in the harness as S3.4/owner/pg_stats; the observations
-               below go to M6's security pass, and one goes to FR-4 and FR-7
+               co-tenant); ADR-0007 d4 and security.md's STRIDE information-disclosure
+               mitigation, for the statistics of the cross-tenant index memories_claim_fts
+action:        ADR amendment needed (ADR-0007 d2 and d4; security.md's FORCE commitment
+               and its STRIDE information-disclosure mitigation), or an implementation
+               fix that makes the FTS index per tenant, which this run does not test;
+               awaiting maintainer decision; recorded in the harness as
+               S3.4/owner/pg_stats and S3.4/owner/estimate; the observations below go to
+               M6's security pass, and one goes to FR-4 and FR-7
 ```
 
 **What held.** Every probe below returned 0 rows of tenant B and raised no error under tenant A.
@@ -321,9 +403,39 @@ have found what it hunted.
 - A non-leakproof plpgsql function of cost 0.0001, in the `WHERE` clause over 6 tables. Under
   tenant A it was handed 23 values, none of them B's. Under tenant B it was handed B's 23.
 
-**What failed.** `pg_stats`, as in [S3.1](#s31): the session set to tenant A reads tenant B's
-lexemes in the statistics of `memories_claim_fts`. No read shape of the fold tables touches
-`pg_stats`, so the leak needs SQL the server does not issue.
+**What failed.** Two checks, both on the statistics of `memories_claim_fts`. No read shape of
+the fold tables touches either channel, so each leak needs SQL that the server does not issue.
+
+- **`pg_stats`**, as in [S3.1](#s31): the session set to tenant A reads tenant B's lexemes in the
+  statistics of `memories_claim_fts`.
+- **EXPLAIN's row estimate.** Under tenant A, EXPLAIN estimates 2 rows for an FTS query on
+  `secret`, a word only tenant B's memories hold, and 1 row for `zzzunusedword`, which no memory
+  holds. Both queries return 0 rows. For `visible`, a word only tenant A's memories hold, it
+  estimates 2 rows, and the query returns 4. The estimate follows a word's frequency over every
+  tenant's rows, not over the rows the policy shows. So a session set to tenant A can learn that
+  another tenant's memories hold a word: it runs EXPLAIN and compares the estimate with what its
+  own rows hold. This page's first version recorded the estimate as an observation. It is now
+  the check `S3.4/<role>/estimate`, and the owner's failure is recorded.
+
+**Why the estimate is not an owner channel.** The owner measured it while `FORCE` bound the
+owner, and under the policy every role reaches the estimator along the same path. The
+PostgreSQL documentation for
+[planner statistics and security](https://www.postgresql.org/docs/17/planner-stats-security.html)
+(fetched 2026-10-31) limits the planner's use of statistics to a user with `SELECT` on the table
+or a leakproof operator, and then says: "This restriction applies only to cases where the planner
+would need to execute a user-defined operator on one or more values from `pg_statistic`". The
+source at `REL_17_STABLE` commit `ce2797d` (fetched 2026-10-31) shows that the FTS estimator is
+not such a case. In `src/backend/utils/adt/selfuncs.c`, an expression index's statistics may be
+handed to a non-leakproof operator only when `all_rows_selectable` holds, and that returns false
+whenever an RLS policy applies ("For all rows to be accessible, there must be no securityQuals
+from security barrier views or RLS policies"). `statistic_proc_security_check` is where that
+result is enforced. In `src/backend/tsearch/ts_selfuncs.c`, `tsquerysel` reads the
+most-common-elements slot of the statistics tuple, compares lexemes with its own comparator, and
+never calls `statistic_proc_security_check`. The service role holds `SELECT` on `memories` and
+runs under the same policy, so on this reading it gets the same estimates. That is a reading of
+the source, not a measurement. CI's `S3.4/service/estimate` will measure it, and has not run. It
+is not on the recorded list, so if the reading holds, CI fails on its first run, and this
+finding records the result then. No role split closes this channel.
 
 **Observed: none of these reads a tenant B row, and the security pass should weigh each.**
 
@@ -342,11 +454,10 @@ lexemes in the statistics of `memories_claim_fts`. No read shape of the fold tab
   It belongs with [FR-4](../../product/roadmap.md) and [FR-7](../../product/roadmap.md), and it may
   re-open the FTS index strategy before M2's retrieval work. The maintainer decides whether that
   needs a record.
-- **The planner's estimate is an oracle.** Under tenant A, `EXPLAIN` estimates 2 rows for a word
-  only tenant B's memories hold and 1 row for a word no tenant holds, and both queries return 0
-  rows. `pg_class.reltuples` for `memories` reads 8, both tenants' rows, while tenant A sees 4.
-  Catalog statistics span tenants. security.md lists timing and contention as the side channels
-  v1 does not address, and it does not list these.
+- **Catalog row counts span tenants.** `pg_class.reltuples` for `memories` reads 8, both tenants'
+  rows, while tenant A sees 4, and EXPLAIN's estimate for a full scan under tenant A is 4.
+  security.md lists timing and contention as the side channels v1 does not address, and it lists
+  neither these counts nor the estimate above. Unlike the estimate, this one is not a check.
 - **Foreign keys check without RLS.** A tenant A workarea naming tenant B's universe as its parent
   is accepted, and naming a random id is refused with `23503`. So tenant A can test whether an id
   exists in another tenant, and can store a reference across tenants. The same holds for
@@ -364,21 +475,30 @@ lexemes in the statistics of `memories_claim_fts`. No read shape of the fold tab
 
 ## For the maintainer
 
-- **ADR amendment needed (ADR-0007 d2 / security.md `FORCE` commitment), awaiting the
-  maintainer's decision.** S3.1 and S3.4 fail for the table owner. On this page's reading,
-  `FORCE` fences table reads only, the decided split keeps every workload off ownership, and the
-  decision stands with a page edit to security.md (S3.1, "Reading for the action"). If the
-  maintainer reads ADR-0007 d2, or security.md's `FORCE` sentence, as promising that `FORCE` alone
-  fences the owner, the failure breaks that promise and the amendment goes ahead. Neither reading
-  has been chosen.
+- **ADR amendment needed (ADR-0007 d2 and d4; security.md's `FORCE` commitment and its STRIDE
+  information-disclosure mitigation), or an implementation fix, awaiting the maintainer's
+  decision.** S3.1 and S3.4 fail on the statistics of one FTS index over every tenant's claims.
+  The `FORCE` half has two readings, and neither has been chosen (S3.1, "Reading for the action").
+  The d4 and STRIDE half is not settled by a wording edit. Either they are amended to say that FTS
+  statistics are shared across tenants, or the implementation, and the schema sketch, whose
+  `memories_fts` and `held_fts` are not partitioned per tenant either, make the FTS index per
+  tenant. Whether a per-tenant index closes both channels is untested.
+- **A cross-tenant disclosure the role split does not close:** EXPLAIN's row estimate tells a
+  session set to tenant A whether another tenant's memories hold a word (S3.4). It is measured for
+  the owner. For the service role, PostgreSQL's documentation and source say it holds, and CI's
+  `S3.4/service/estimate` will measure it once CI runs. The split keeps the owner's DDL from a
+  workload, and its `pg_stats` view too if CI's `S3.4/service/pg_stats` passes. It does not keep
+  this estimate from one.
 - **ADR amendment needed (ADR-0007 d2), or an implementation fix, awaiting the maintainer's
   decision:** `_sqlx_migrations` has no RLS, no `FORCE` and no policy, and d2 exempts no table
   (S3.1, the lead run).
 - **Implementation:** the lead's migrate-on-boot makes the serving role the owner (S3.1, the lead
-  run). The split is what C6 decides, and it is not built.
+  run). The split is what C6 decides, and it is not built. S3.2 (OML's roles) stays open until a
+  deployment's bootstrap specifies its roles and grants.
 - **Page edits, proposed and not made:** security.md, on what `FORCE` binds; postgres-schema.md,
   on the policy predicate form and the zero-row behaviour.
 - **A decision to weigh:** whether a GIN index under RLS is still the FTS strategy, given that RLS
   keeps it out of every plan.
-- **The pinned run:** CI job `rls-spike` on `pgvector/pgvector:pg17` decides S3.2 and the
-  service-role half of S3.3 and S3.4, and these findings are updated with its result.
+- **The pinned run:** CI job `rls-spike` on `pgvector/pgvector:pg17` decides S3.2's mechanism and
+  the service-role half of S3.3 and S3.4, `S3.4/service/estimate` among them, and these findings
+  are updated with its result.

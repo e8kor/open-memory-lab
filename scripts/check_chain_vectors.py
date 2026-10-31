@@ -18,10 +18,11 @@ This is the critical path's M0 exit item: the vectors that docs/data/chain-forma
 ("Test vectors") states, cross-checked against independent, non-Rust implementations.
 The libraries and the reasons for using two of each are on
 docs/engineering/spikes/index.md, and the recorded finding is
-docs/engineering/spikes/chain-vectors.md. The page is the only copy of the vectors. This
-script reads the key, the stated bytes, byte counts, hashes and signatures from the page,
-and it holds only the inputs: the nine signed fields per event, the body plaintext and the
-stand-in rule, which it also reads from the page. It fails with every disagreement found:
+docs/engineering/spikes/chain-vectors.md. The page declares the vectors. This script
+reads the key, the stated bytes, byte counts, hashes and signatures from the page, and it
+holds only the inputs: the nine signed fields per event, the body plaintext and the stand-in
+rule, which it also reads from the page. The Rust tests keep their own copies as literals,
+and this script compares them with the page. It fails with every disagreement found:
 
 - each vector's signed_bytes, rebuilt from its inputs by rfc8785 and by jcs (two RFC 8785
   implementations), equals the stated bytes and the stated byte count;
@@ -35,9 +36,13 @@ stand-in rule, which it also reads from the page. It fails with every disagreeme
 - the page's verification procedure, steps 1-7 and 9, passes over the three events;
 - one flipped byte in each event fails steps 3 and 4; every reordering, and the omission
   of any event but the last, fails step 1 or step 5; omitting the last event fails step 9,
-  against the stated head, as the page states.
+  against the stated head, as the page states;
+- every Rust file under --rust-root that copies the vectors agrees with the page: each raw
+  string literal carrying a vector's event_id is that vector's signed_bytes byte for byte,
+  and each 64- or 128-digit hex run is a value the page states or this script derives.
 
-Usage: check_chain_vectors.py [--page PATH]  (default: docs/data/chain-format.md)
+Usage: check_chain_vectors.py [--page PATH] [--rust-root DIR]
+       (defaults: docs/data/chain-format.md, the repository root)
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ import base64
 import hashlib
 import itertools
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -249,6 +255,75 @@ def pem_der(pem: str) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# The Rust tests' copies of the vectors
+# ---------------------------------------------------------------------------
+
+# A Rust raw string literal, r"..." / r#"..."# / br#"..."#.
+RAW_STRING = re.compile(r'(?<![A-Za-z0-9_])b?r(#*)"(.*?)"\1', re.S)
+# A 128- or 64-character lowercase hex run, not part of a longer hex run.
+HEX_RUN = re.compile(r"(?<![0-9a-fA-F])([0-9a-f]{128}|[0-9a-f]{64})(?![0-9a-fA-F])")
+SKIP_DIRS = {"target", "node_modules"}
+
+
+def rust_files(root: Path) -> list[Path]:
+    """Every *.rs file under root, outside build output and hidden directories."""
+    found = []
+    for directory, subdirs, files in os.walk(root):
+        subdirs[:] = sorted(d for d in subdirs if d not in SKIP_DIRS and not d.startswith("."))
+        found += [Path(directory) / f for f in sorted(files) if f.endswith(".rs")]
+    return found
+
+
+def check_rust_copies(root: Path, signed: dict[str, tuple[int, bytes]], known_hex: set[str],
+                      markers: set[str], errors: list[str]) -> tuple[int, int, int]:
+    """The Rust tests keep their own copies of the vectors; each copy must equal the page.
+
+    A Rust file is a copy when it names a vector's event id, the vector tenant, the test
+    key or a stated hash or signature. In a copy, every raw string literal that carries a
+    vector's "event_id" must be that vector's signed_bytes byte for byte, no such JSON may
+    sit outside a raw string literal, and every 64- or 128-character hex run must be a value
+    the page states or this script derives from it. Returns (files, literals, hex runs).
+    """
+    files = literals = hex_runs = 0
+    for path in rust_files(root):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if not any(m in text for m in markers):
+            continue
+        files += 1
+        shown = path.relative_to(root)
+
+        def line(at: int) -> int:
+            return text.count("\n", 0, at) + 1
+
+        for m in RAW_STRING.finditer(text):
+            for event_id, (n, stated) in signed.items():
+                if f'"event_id":"{event_id}"' in m.group(2):
+                    literals += 1
+                    if m.group(2).encode("utf-8") != stated:
+                        errors.append(
+                            f"{shown}:{line(m.start())}: the copy of vector {n}'s signed_bytes differs from "
+                            f"the page's; {first_difference(m.group(2).encode('utf-8'), stated)}"
+                        )
+        outside = RAW_STRING.sub(lambda m: " " * len(m.group(0)), text)
+        for event_id, (n, _) in signed.items():
+            for spelling in (f'"event_id":"{event_id}"', f'\\"event_id\\":\\"{event_id}\\"'):
+                at = outside.find(spelling)
+                if at >= 0:
+                    errors.append(
+                        f"{shown}:{line(at)}: vector {n}'s signed_bytes appear outside a raw string "
+                        "literal, where this check does not compare them"
+                    )
+        for m in HEX_RUN.finditer(text):
+            hex_runs += 1
+            if m.group(1) not in known_hex:
+                errors.append(
+                    f"{shown}:{line(m.start())}: {m.group(1)[:16]}… ({len(m.group(1))} hex digits) is no "
+                    "value the page states or this script derives from it"
+                )
+    return files, literals, hex_runs
+
+
+# ---------------------------------------------------------------------------
 # The verification procedure (chain-format.md "Verification", steps 1-7 and 9)
 # ---------------------------------------------------------------------------
 
@@ -332,12 +407,13 @@ def first_difference(a: bytes, b: bytes) -> str:
 
 
 def main(argv: list[str]) -> int:
-    page_path = DEFAULT_PAGE
-    if argv[:1] == ["--page"] and len(argv) == 2:
-        page_path = Path(argv[1])
-    elif argv:
-        print(__doc__.strip().splitlines()[-1], file=sys.stderr)
+    page_path, rust_root = DEFAULT_PAGE, ROOT
+    options = dict(zip(argv[::2], argv[1::2]))
+    if len(argv) % 2 or set(options) - {"--page", "--rust-root"}:
+        print(__doc__[__doc__.index("Usage:"):].strip(), file=sys.stderr)
         return 2
+    page_path = Path(options.get("--page", page_path))
+    rust_root = Path(options.get("--rust-root", rust_root))
 
     errors: list[str] = []
     try:
@@ -461,6 +537,17 @@ def main(argv: list[str]) -> int:
                 f"omitting vector {i + 1} fails steps {sorted(steps)}, not {' or '.join(map(str, sorted(expected)))}"
             )
 
+    # --- the Rust tests' own copies of the vectors ---------------------------
+    payload_2 = inputs[1]["payload"]
+    stated_hex = {v["hash"].hex() for v in page["vectors"]} | {v["sig"].hex() for v in page["vectors"]}
+    known_hex = stated_hex | {
+        page["raw_public"].hex(), page["fingerprint"], seed.hex(), ZERO_HASH.split(":")[1],
+        payload_2["plaintext_digest"].split(":")[1], payload_2["ciphertext_digest"].split(":")[1],
+    }
+    signed = {e["envelope"]["event_id"]: (n, e["signed_bytes"]) for n, e in enumerate(events, 1)}
+    markers = set(signed) | stated_hex | {TENANT, page["raw_public"].hex(), page["fingerprint"]}
+    copy_files, copy_literals, copy_hex = check_rust_copies(rust_root, signed, known_hex, markers, errors)
+
     if errors:
         print_errors(errors)
         return 1
@@ -468,7 +555,9 @@ def main(argv: list[str]) -> int:
     print(
         f"check_chain_vectors: OK: {page_path.relative_to(ROOT) if page_path.is_relative_to(ROOT) else page_path}: "
         f"3 vectors reproduce byte for byte ({', '.join(str(e['signed_bytes'].__len__()) for e in events)} bytes); "
-        f"steps 1-7 and 9 pass; {controls} mutation controls fail as the page states"
+        f"steps 1-7 and 9 pass; {controls} mutation controls fail as the page states; "
+        + (f"the Rust tests' copies in {copy_files} files ({copy_literals} signed_bytes literals, {copy_hex} hex "
+           "values) equal the page" if copy_files else "no Rust file holds a copy of the vectors")
     )
     print(
         "check_chain_vectors: versions: "

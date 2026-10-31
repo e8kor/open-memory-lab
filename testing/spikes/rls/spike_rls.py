@@ -18,7 +18,9 @@ What it does, in order:
 1. Connects with --dsn (or OML_SPIKE_PG_DSN, or the local dev role) and creates a throwaway
    database with a unique name. If the connecting role is a superuser, it also mints an owner
    role and a service role (both NOSUPERUSER NOBYPASSRLS), and the owner role owns the
-   database. Otherwise the connecting role owns the database and S3.2 is not run.
+   database. Otherwise the connecting role owns the database and S3.2's mechanism finding is
+   not run. S3.2's claim about OML's own roles is reported open on every host: the harness's
+   roles are its own, and OML specifies no deployment's roles to test.
 2. Applies migrations/*.sql in filename order under the owner role. Two tenants are seeded
    after 0003, so the backfills of 0004 and 0005 run over both tenants' rows while FORCE ROW
    LEVEL SECURITY binds the role running them. A table that a later migration adds and no
@@ -28,8 +30,9 @@ What it does, in order:
    thing and must then observe the leak. A scenario whose control does not leak is
    inconclusive.
 4. Prints one finding per scenario in the critical path's template, drops the database and
-   the roles whatever the result, and exits 0 only if every scenario that ran passed (and,
-   with --require-all, every scenario ran).
+   the roles whatever the result, and exits 0 only if every scenario that ran passed or
+   reproduced its recorded failure (and, with --require-all, every scenario ran). A finding
+   open because no run can test it does not fail the run; the last line names it.
 
 It never reads OML_API_KEY, never escalates, and writes nothing outside its database.
 """
@@ -90,6 +93,7 @@ WORKAREA_COLUMNS = "id, tenant_id, parent_id, name, crew"
 RECORDED_FAILURES = {
     "S3.1/owner/pg_stats": "spike-3-rls.md#s31",
     "S3.4/owner/pg_stats": "spike-3-rls.md#s34",
+    "S3.4/owner/estimate": "spike-3-rls.md#s34",
 }
 
 # The tables the seeders below wrote rows into, filled by seed_insert as they run. A table a
@@ -116,6 +120,15 @@ class Scenario:
     observations: list[str] = field(default_factory=list)
     settings: list[str] = field(default_factory=list)
     unprobed: list[str] = field(default_factory=list)  # tables with no seeded row (SEEDED_TABLES)
+    preconditions: list[tuple[bool, str]] = field(default_factory=list)  # the harness's own setup
+    # A claim no run of this harness can test, with the reason and what keeps it open. Its
+    # verdict is inconclusive on every host, and it does not fail the run.
+    untestable: str = ""
+    open_action: str = ""
+    or_fix: str = ""  # an implementation fix the maintainer may choose instead of an amendment
+
+    def precondition(self, ok: bool, text: str) -> None:
+        self.preconditions.append((bool(ok), text))
 
     def check(self, ok: bool, text: str, key: str | None = None) -> bool:
         """key names a check RECORDED_FAILURES may list; it is "<scenario>/<role kind>/<what>"."""
@@ -129,6 +142,8 @@ class Scenario:
     def verdict(self) -> str:
         if not self.ran:
             return "not run"
+        if self.untestable or not all(ok for ok, _ in self.preconditions):
+            return "inconclusive"
         if not all(ok for ok, _, _ in self.checks):
             return "fail"
         if not self.controls or not all(ok for ok, _ in self.controls):
@@ -379,6 +394,21 @@ def sqlstate_of(conn: psycopg.Connection, statement: str | sql.Composable, param
         return e.sqlstate
 
 
+def sqlstate_rolled_back(conn: psycopg.Connection, statement: str | sql.Composable,
+                         tenant: uuid.UUID | None = None) -> str | None:
+    """Run statement, with the tenant set, in a transaction that always rolls back; its SQLSTATE,
+    or None when it succeeds."""
+    try:
+        with conn.transaction():
+            set_tenant(conn, tenant)
+            conn.execute(statement)
+            raise _Rollback
+    except _Rollback:
+        return None
+    except psycopg.Error as e:
+        return e.sqlstate
+
+
 def counts(conn: psycopg.Connection, tables: dict[str, str], tenant: uuid.UUID | None,
            other: uuid.UUID) -> dict[str, tuple[int, int]]:
     """Per table: (rows visible, rows visible that belong to `other`)."""
@@ -416,9 +446,18 @@ def connect(conninfo: str, notices: list[str] | None = None) -> psycopg.Connecti
 # ---------------------------------------------------------------------------
 
 
+# The clauses a cross-tenant FTS index's statistics break, besides the RLS fence itself.
+FTS_INDEX_CLAUSES = ("ADR-0007 d4 (tenant isolation extends through every storage layer) and security.md's STRIDE "
+                     "information-disclosure mitigation (FTS physically partitioned per tenant, no cross-tenant "
+                     "index to leak through), for the statistics of the cross-tenant index memories_claim_fts")
+FTS_INDEX_FIX = ("an implementation fix that makes the FTS index per tenant, which this run does not test; the "
+                 "designed memories_fts and held_fts are not partitioned per tenant either (postgres-schema.md)")
+
+
 def s3_1(owner_ci: str, a: Tenant, b: Tenant, owner_name: str) -> Scenario:
     s = Scenario("S3.1", "FORCE ROW LEVEL SECURITY binds the table owner",
-                 "ADR-0007 d2, through the FORCE commitment of security.md (commitments C6)")
+                 "ADR-0007 d2, through the FORCE commitment of security.md (commitments C6); " + FTS_INDEX_CLAUSES,
+                 or_fix=FTS_INDEX_FIX)
     with connect(owner_ci) as conn:
         tables = tenant_tables(conn)
         rls = conn.execute(
@@ -493,46 +532,80 @@ class _Rollback(Exception):
 
 # ---------------------------------------------------------------------------
 # S3.2 — owner/migration split; no application role holds BYPASSRLS
+#
+# Two findings (docs/engineering/spikes/index.md). The mechanism: PostgreSQL keeps a non-owner
+# role with DML grants and no BYPASSRLS inside the policy, and migrations succeed under the
+# owner while FORCE binds it. OML's roles: the roles a deployment uses are split from the
+# owner and none holds BYPASSRLS. The harness mints its own roles and writes their grants, so
+# asserting their attributes would show only that it ran its own CREATE ROLE statements; the
+# second finding stays open until a deployment's bootstrap specifies roles and grants.
 # ---------------------------------------------------------------------------
+
+S3_2_MECHANISM = ("S3.2 (mechanism)", "a non-owner role with DML grants and no BYPASSRLS cannot read across "
+                  "the policy or lift it, and migrations succeed under the owner")
+S3_2_MECHANISM_CLAUSE = ("ADR-0007 d2 (no BYPASSRLS role), through the role split of security.md "
+                         "(commitments C6; C3 for the journal re-grant): the PostgreSQL mechanism the split relies on")
+
+
+def s3_2_roles() -> Scenario:
+    return Scenario(
+        "S3.2 (OML's roles)", "the roles an OML deployment uses are split from the owner, and none holds BYPASSRLS",
+        "ADR-0007 d2 (no role used by any OML workload holds BYPASSRLS), through the role split of security.md "
+        "(commitments C6)",
+        untestable="OML specifies no deployment's database roles: deployment.md names the bootstrap workload's "
+        "owner role and a service role, configuration.md designs postgres.owner_url, and no page states their "
+        "attributes and grants statement by statement; the lead as built migrates and serves as one role (S3.1). "
+        "The harness's owner and service roles are its own, so their attributes would show only that it ran its "
+        "own CREATE ROLE statements",
+        open_action="keep open; when a deployment's bootstrap specifies its roles and grants, take them from there "
+        "and test those roles, not the harness's")
 
 
 def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: str,
          a: Tenant, b: Tenant, migration_log: list[tuple[str, bool, str]],
-         backfill: list[tuple[bool, str]], control_role: str) -> Scenario:
-    s = Scenario("S3.2", "Owner/migration-role split; application roles carry no BYPASSRLS",
-                 "ADR-0007 d2 (no BYPASSRLS role), through the role split of security.md "
-                 "(commitments C6; C3 for the journal re-grant)")
+         backfill: list[tuple[bool, str]]) -> Scenario:
+    s = Scenario(*S3_2_MECHANISM, S3_2_MECHANISM_CLAUSE)
     s.settings.append(
-        f"roles: owner {owner} and service {service}, both LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOBYPASSRLS; the database is owned by the owner role; after migrating, the owner grants the "
-        "service role SELECT, INSERT, UPDATE, DELETE on every table but journal (SELECT, INSERT) and "
-        "USAGE, SELECT on every sequence")
+        f"roles minted by the harness: owner {owner} and service {service}, both LOGIN NOSUPERUSER NOCREATEDB "
+        "NOCREATEROLE NOBYPASSRLS; the database is owned by the owner role; after migrating, the owner grants the "
+        "service role SELECT, INSERT, UPDATE, DELETE on every table but journal (SELECT, INSERT) and USAGE, SELECT "
+        "on every sequence")
     s.check(all(ok for _, ok, _ in migration_log),
             "migrations succeed under the owner role: "
             + ", ".join(f"{name} {'ok' if ok else 'FAILED: ' + err}" for name, ok, err in migration_log))
     for ok, text in backfill:
         s.check(ok, text)
 
+    # Preconditions: the roles are what the harness minted. They are not checks: a check would
+    # only confirm the harness's own CREATE ROLE (the claim about OML's roles is S3.2 (OML's roles)).
     with connect(admin_db_ci) as admin:
         attrs = admin.execute(
             "SELECT rolname, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb FROM pg_roles "
             "WHERE rolname = ANY(%s::name[]) ORDER BY rolname", [[owner, service]]).fetchall()
-        s.check(len(attrs) == 2 and not any(r[1] or r[2] or r[3] or r[4] for r in attrs),
-                "neither the owner nor the service role is a superuser or holds BYPASSRLS, "
-                f"CREATEROLE or CREATEDB: {attrs}")
+        s.precondition(len(attrs) == 2 and not any(r[1] or r[2] or r[3] or r[4] for r in attrs),
+                       f"the harness's roles are as minted, with no SUPERUSER, BYPASSRLS, CREATEROLE or CREATEDB: {attrs}")
         owned = admin.execute(
             "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' AND c.relowner = %s::regrole", [service]).fetchone()[0]
-        s.check(owned == 0, f"the service role owns {owned} relations in the schema")
         member = admin.execute("SELECT pg_has_role(%s::name, %s::name, 'MEMBER')", [service, owner]).fetchone()[0]
-        s.check(not member, f"the service role is {'a' if member else 'not a'} member of the owner role")
+        s.precondition(owned == 0 and not member,
+                       f"the service role owns {owned} relations in the schema and is "
+                       f"{'a' if member else 'not a'} member of the owner role")
         bypassers = admin.execute(
             "SELECT rolname FROM pg_roles WHERE (rolbypassrls OR rolsuper) AND rolname NOT LIKE 'pg\\_%' "
             "ORDER BY 1").fetchall()
+        bypassing = sorted({r[0] for r in bypassers} & {owner, service})
         s.observations.append(
             "roles in the cluster that bypass RLS (superuser or BYPASSRLS): "
-            f"{[r[0] for r in bypassers]}; none of them is a role an OML workload uses here")
+            f"{[r[0] for r in bypassers]}; of the harness's owner and service roles, "
+            + (f"{bypassing} {'is' if len(bypassing) == 1 else 'are'} among them" if bypassing else "neither is among them"))
 
+    ddl = [
+        "ALTER TABLE memories NO FORCE ROW LEVEL SECURITY",
+        "ALTER TABLE memories DISABLE ROW LEVEL SECURITY",
+        "DROP POLICY tenant_isolation ON memories",
+        "CREATE POLICY spike_open ON memories USING (true)",
+    ]
     with connect(service_ci) as conn:
         tables = tenant_tables(conn)
         s.unprobed = unseeded(tables)
@@ -543,23 +616,21 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
                 f"as the service role with tenant A set, every seeded table shows tenant A rows only "
                 f"({sum(v[0] for v in c.values())} rows, 0 of tenant B)" + (f"; foreign: {foreign}" if foreign else "")
                 + (f"; empty: {empty}" if empty else ""))
+        c_b = counts(conn, tables, b.id, a.id)
+        s.control(sum(v[0] for v in c_b.values()) > 0,
+                  f"control: the same count as the service role with tenant B set shows "
+                  f"{sum(v[0] for v in c_b.values())} rows of tenant B, so the count can see rows")
         c = counts(conn, tables, None, b.id)
         s.check(all(v[0] == 0 for v in c.values()),
                 "as the service role with no tenant set, every table shows 0 rows")
-        refusals = {
-            "ALTER TABLE memories NO FORCE ROW LEVEL SECURITY": "42501",
-            "ALTER TABLE memories DISABLE ROW LEVEL SECURITY": "42501",
-            "DROP POLICY tenant_isolation ON memories": "42501",
-            "CREATE POLICY spike_open ON memories USING (true)": "42501",
-            "ALTER TABLE memories OWNER TO CURRENT_USER": "42501",
-            "UPDATE journal SET principal = principal": "42501",
-            "DELETE FROM journal": "42501",
-            "TRUNCATE journal": "42501",
-        }
-        for statement, expected in refusals.items():
-            got = sqlstate_of(conn, statement)
-            s.check(got == expected, f"as the service role, {statement} is refused with {got} (expected {expected})")
-        got = sqlstate_of(conn, sql.SQL("SET ROLE {}").format(sql.Identifier(owner)))
+        for statement in ddl + ["ALTER TABLE memories OWNER TO CURRENT_USER"]:
+            got = sqlstate_rolled_back(conn, statement)
+            s.check(got == "42501", f"as the service role, {statement} is refused with {got} (expected 42501)")
+        for statement in ("UPDATE journal SET principal = principal", "DELETE FROM journal", "TRUNCATE journal"):
+            got = sqlstate_rolled_back(conn, statement, a.id)
+            s.check(got == "42501", f"as the service role set to tenant A, with the journal grants the harness wrote, "
+                                    f"{statement} is refused with {got} (expected 42501)")
+        got = sqlstate_rolled_back(conn, sql.SQL("SET ROLE {}").format(sql.Identifier(owner)))
         s.check(got == "42501", f"as the service role, SET ROLE to the owner is refused with {got}")
         state = None
         try:
@@ -577,20 +648,23 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
         s.check(not can, f"the service role cannot grant itself UPDATE on journal (GRANT gave "
                          f"{grant or 'no error'}, server said {notices or 'nothing'}; UPDATE privilege now {can})")
 
-    # Control: a role with BYPASSRLS reads across the policy.
-    with connect(admin_db_ci) as admin:
-        with contextlib.suppress(_Rollback):
-            with admin.transaction():
-                admin.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(control_role)))
-                set_tenant(admin, a.id)
-                leaked = admin.execute("SELECT count(*) FROM memories WHERE tenant_id = %s", [b.id]).fetchone()[0]
-                raise _Rollback
-        s.control(leaked > 0, f"control: a NOLOGIN BYPASSRLS role with SELECT on memories, set to tenant A, "
-                              f"reads {leaked} tenant B rows")
+    # Control: each DDL statement the service role was refused takes effect for the owner, in a
+    # transaction that rolls back, so each refusal comes from the role and not from the statement.
     with connect(owner_ci) as conn:
-        upd = sqlstate_of(conn, "UPDATE journal SET principal = principal")
+        took = {statement: sqlstate_rolled_back(conn, statement) for statement in ddl}
+        intact = conn.execute(
+            "SELECT c.relforcerowsecurity AND c.relrowsecurity, "
+            "       (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid AND p.polname = 'spike_open'), "
+            "       (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid AND p.polname = 'tenant_isolation') "
+            "  FROM pg_class c WHERE c.oid = 'memories'::regclass").fetchone()
+        s.control(all(v is None for v in took.values()) and intact == (True, 0, 1),
+                  f"control: as the owner, each of the {len(ddl)} statements succeeds ({took}) and rolls back; "
+                  f"afterwards FORCE and ENABLE are {'set' if intact[0] else 'NOT set'}, spike_open "
+                  f"{'is absent' if not intact[1] else 'EXISTS'} and tenant_isolation "
+                  f"{'is present' if intact[2] == 1 else 'IS GONE'}")
+        upd = sqlstate_rolled_back(conn, "UPDATE journal SET principal = principal", a.id)
         s.observations.append(
-            f"as the owner, UPDATE journal raises {upd}: the guard trigger is the fence that binds the owner "
+            f"as the owner set to tenant A, UPDATE journal raises {upd}: the guard trigger is the fence that binds the owner "
             "(ADR-0002 d4); the owner could drop that trigger, which is the C3 reason the owner role is "
             "used by nothing but migrations")
     return s
@@ -1014,7 +1088,8 @@ def run_rows(conn, statement, params) -> tuple[list[tuple], str | None]:
 
 def s3_4(roles: dict[str, str], a: Tenant, b: Tenant) -> Scenario:
     s = Scenario("S3.4", "Hostile cross-tenant probe over every read shape",
-                 "ADR-0007 d2 and d6 (RLS as the second fence, judged against the hostile co-tenant)")
+                 "ADR-0007 d2 and d6 (RLS as the second fence, judged against the hostile co-tenant); "
+                 + FTS_INDEX_CLAUSES, or_fix=FTS_INDEX_FIX)
     s.settings.append("each probe runs in a transaction with oml.tenant_id = tenant A, set as the adapter "
                       "sets it, and rolls back; tenant B's values are in the parameters (the WHERE-clause-bug case)")
     needles = b.identifiers() | {str(b.id)}
@@ -1150,6 +1225,27 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
                 + (f"; {[f'{r[0]}.{r[1]}' for r in leaking]} does: {[excerpt(r[2], MARKER['B']) for r in leaking]}"
                    if leaking else ""))
 
+        # The planner's estimate: the same statistics, read through EXPLAIN, which any role that can
+        # query the table can run. Not owner-specific: under the policy the owner and the service
+        # role reach the estimator along the same path (docs/engineering/spikes/spike-3-rls.md#s34).
+        estimates = {}
+        for word in ("secret", "zzzunusedword", "visible"):
+            with conn.transaction():
+                set_tenant(conn, a.id)
+                plan = conn.execute("EXPLAIN (FORMAT JSON) SELECT id FROM memories WHERE to_tsvector('simple', "
+                                    "claim) @@ plainto_tsquery('simple', %s)", [word]).fetchone()[0]
+                actual = len(conn.execute("SELECT id FROM memories WHERE to_tsvector('simple', claim) @@ "
+                                          "plainto_tsquery('simple', %s)", [word]).fetchall())
+            estimates[word] = (plan[0]["Plan"]["Plan Rows"], actual)
+        same = estimates["secret"][0] == estimates["zzzunusedword"][0]
+        s.check(same,
+                key=f"S3.4/{role.split()[0]}/estimate",
+                text=f"[{role}] under tenant A, EXPLAIN estimates as many rows for an FTS query on a word only tenant "
+                f"B's memories hold, 'secret', as for a word no tenant holds (estimated, returned: "
+                f"{estimates['secret']} and {estimates['zzzunusedword']})"
+                + ("" if same else "; the estimates differ, so EXPLAIN tells a session set to tenant A that some "
+                   "other tenant's memories hold the word"))
+
         # Observations: channels that are not row reads.
         obs = []
         reltuples = conn.execute("SELECT reltuples::bigint FROM pg_class WHERE oid = 'memories'::regclass").fetchone()[0]
@@ -1159,20 +1255,9 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
             est = conn.execute("EXPLAIN (FORMAT JSON) SELECT * FROM memories").fetchone()[0][0]["Plan"]["Plan Rows"]
         obs.append(f"pg_class.reltuples for memories reads {reltuples} (both tenants, after ANALYZE) while tenant A "
                    f"sees {visible}; EXPLAIN estimates {est} rows. Catalog row counts span tenants")
-        estimates = {}
-        for word in ("secret", "zzzunusedword"):
-            with conn.transaction():
-                set_tenant(conn, a.id)
-                plan = conn.execute("EXPLAIN (FORMAT JSON) SELECT id FROM memories WHERE to_tsvector('simple', "
-                                    "claim) @@ plainto_tsquery('simple', %s)", [word]).fetchone()[0]
-                actual = len(conn.execute("SELECT id FROM memories WHERE to_tsvector('simple', claim) @@ "
-                                          "plainto_tsquery('simple', %s)", [word]).fetchall())
-            estimates[word] = (plan[0]["Plan"]["Plan Rows"], actual)
-        obs.append("planner estimate under tenant A (estimated, returned) for a word only tenant B's memories hold, "
-                   f"'secret': {estimates['secret']}; for a word no tenant holds: {estimates['zzzunusedword']}"
-                   + (". The estimates differ, so EXPLAIN tells tenant A whether some other tenant's memories use "
-                      "a word" if estimates['secret'][0] != estimates['zzzunusedword'][0] else
-                      ". The estimates are equal: EXPLAIN does not separate the two words here"))
+        obs.append(f"for a word tenant A's own memories hold, 'visible', EXPLAIN under tenant A estimates "
+                   f"{estimates['visible'][0]} rows and the query returns {estimates['visible'][1]}: the estimate "
+                   "follows the word's frequency over every tenant's rows, not over the rows the policy shows")
 
         def oracle(statement, params) -> str:
             return under(a.id, statement, params)[1] or "accepted"
@@ -1257,11 +1342,13 @@ def print_finding(s: Scenario, versions: str, settings: str, environment: str) -
     recorded = failing and all(key in RECORDED_FAILURES for key in failing)
     # A failure is "ADR amendment needed" until the maintainer decides otherwise; the harness
     # never reads a failure as needing none (docs/engineering/spikes/index.md).
-    action = {"pass": "none",
-              "fail": f"ADR amendment needed, against {s.adr_clause}; awaiting maintainer decision"
-                      + (f"; recorded at {', '.join(RECORDED_FAILURES[k] for k in failing)}" if recorded
+    action = s.open_action or {"pass": "none",
+              "fail": f"ADR amendment needed, against {s.adr_clause}"
+                      + (f", or {s.or_fix}" if s.or_fix else "") + "; awaiting maintainer decision"
+                      + (f"; recorded at {', '.join(dict.fromkeys(RECORDED_FAILURES[k] for k in failing))}" if recorded
                          else "; no finding records this failure yet"),
-              "inconclusive": "re-run: a control did not leak, so a check could not have failed",
+              "inconclusive": "re-run: a control did not leak or the setup was not as minted, so a check "
+                              "could not have failed",
               "not run": "run where the harness can mint roles (CI job rls-spike)"}[s.verdict]
     print(f"\nspike-finding: {s.id} — {s.title}")
     print(f"date:          {date.today().isoformat()}")
@@ -1269,9 +1356,12 @@ def print_finding(s: Scenario, versions: str, settings: str, environment: str) -
     print(f"settings:      {'; '.join([settings, *s.settings])}")
     print(f"environment:   {environment}")
     print(f"verdict:       {s.verdict}" + (f" — {s.not_run_reason}" if not s.ran else "")
+          + (f" — not testable: {s.untestable}" if s.untestable else "")
           + (f"; unprobed for row visibility, no seeded row: {', '.join(s.unprobed)}" if s.unprobed else ""))
     print(f"adr-clause:    {s.adr_clause}")
     print(f"action:        {action}")
+    for ok, text in s.preconditions:
+        print(f"  setup   [{'ok' if ok else 'NOT AS MINTED'}] {text}")
     for ok, text, key in s.checks:
         mark = "ok" if ok else (f"FAIL, recorded: {RECORDED_FAILURES[key]}" if key in RECORDED_FAILURES else "FAIL")
         print(f"  check   [{mark}] {text}")
@@ -1340,7 +1430,7 @@ def main() -> int:
     a, b = make_tenant("A"), make_tenant("B")
     suffix = secrets.token_hex(4)
     dbname = f"oml_spike_rls_{suffix}"
-    owner = service = control_role = None
+    owner = service = None
     admin = connect(args.dsn)
     me, superuser = admin.execute(
         "SELECT rolname, rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()
@@ -1351,12 +1441,11 @@ def main() -> int:
     scenarios: list[Scenario] = []
     try:
         if split:
-            owner, service, control_role = (f"oml_spike_{suffix}_{r}" for r in ("owner", "service", "bypass"))
+            owner, service = (f"oml_spike_{suffix}_{r}" for r in ("owner", "service"))
             pw = {r: secrets.token_hex(16) for r in (owner, service)}
             for r in (owner, service):
                 admin.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
                                       "NOBYPASSRLS").format(sql.Identifier(r), sql.Literal(pw[r])))
-            admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN BYPASSRLS").format(sql.Identifier(control_role)))
             admin.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(dbname), sql.Identifier(owner)))
             owner_ci = make_conninfo(args.dsn, dbname=dbname, user=owner, password=pw[owner])
             service_ci = make_conninfo(args.dsn, dbname=dbname, user=service, password=pw[service])
@@ -1378,7 +1467,6 @@ def main() -> int:
                 conn.execute(sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}").format(s_id))
                 conn.execute(sql.SQL("REVOKE UPDATE, DELETE ON journal FROM {}").format(s_id))
                 conn.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(s_id))
-                conn.execute(sql.SQL("GRANT SELECT ON memories TO {}").format(sql.Identifier(control_role)))
 
         roles = {f"owner {owner_name}": owner_ci}
         if split:
@@ -1386,21 +1474,21 @@ def main() -> int:
         scenarios.append(s3_1(owner_ci, a, b, owner_name))
         if split:
             scenarios.append(s3_2(admin_db_ci, owner_ci, service_ci, owner, service, a, b,
-                                  migration_log, backfill, control_role))
+                                  migration_log, backfill))
         else:
-            s = Scenario("S3.2", "Owner/migration-role split; application roles carry no BYPASSRLS",
-                         "ADR-0007 d2 (no BYPASSRLS role), through the role split of security.md (commitments C6)",
+            s = Scenario(*S3_2_MECHANISM, S3_2_MECHANISM_CLAUSE,
                          ran=False, not_run_reason=f"the connecting role {me} is not a superuser, so the harness "
                          "cannot mint the owner and service roles; what did run: migrations "
                          + ", ".join(n for n, ok, _ in migration_log if ok) + " succeeded under the owner role "
                          "with FORCE binding it, and " + "; ".join(t for _, t in backfill))
             scenarios.append(s)
+        scenarios.append(s3_2_roles())
         scenarios.append(s3_3(roles, a, b))
         scenarios.append(s3_4(roles, a, b))
     finally:
         with contextlib.suppress(psycopg.Error):
             admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(dbname)))
-        for r in (owner, service, control_role):
+        for r in (owner, service):
             if r:
                 with contextlib.suppress(psycopg.Error):
                     admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(r)))
@@ -1427,7 +1515,8 @@ def main() -> int:
     unexpected = [text for sc in scenarios for ok, text, key in sc.checks
                   if not ok and key not in RECORDED_FAILURES]
     stale = [key for key in RECORDED_FAILURES if results.get(key) is not False]
-    inconclusive = [i for i, v in verdicts.items() if v == "inconclusive"]
+    inconclusive = [sc.id for sc in scenarios if sc.verdict == "inconclusive" and not sc.untestable]
+    still_open = [sc.id for sc in scenarios if sc.untestable]
     skipped = [i for i, v in verdicts.items() if v == "not run"]
     recorded = [key for key in RECORDED_FAILURES if results.get(key) is False]
     if recorded:
@@ -1450,6 +1539,7 @@ def main() -> int:
     unprobed = sorted({t for sc in scenarios for t in sc.unprobed})
     print("spike_rls: OK: every check passed or reproduced its recorded finding"
           + (f"; not run: {skipped}" if skipped else "")
+          + (f"; open, not testable by this harness: {still_open}" if still_open else "")
           + (f"; unprobed for row visibility (no seeded row): {unprobed}" if unprobed else ""))
     return 0
 

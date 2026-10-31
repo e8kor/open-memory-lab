@@ -29,6 +29,50 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-31 — M0 spikes: the Rust tests' copies of the vectors are compared with the page, S3.2 is two findings, and EXPLAIN's estimate is a recorded cross-tenant disclosure
+
+A second review fix to the M0 spike findings and harnesses. No decision changes, and no record is
+amended or proposed.
+
+- **Chain vectors:** the M0 spikes page said the repository held no second copy of the vectors.
+  It holds three: the Rust tests in `crates/oml-domain` and `crates/bins/oml-cli` keep the
+  vectors as literals, and each Rust test checks the code against its own copy, so until now the
+  copies agreed with the page only because they had been copied by hand.
+  `scripts/check_chain_vectors.py` now finds every Rust file that copies the vectors and compares
+  each copy with the page. It reads `crates/` and changes nothing there. Run from a scratch tree,
+  the check as first committed passed with a drifted copy. As it stands, it fails on six drifted
+  copies and passes on the repository's three files (6 `signed_bytes` literals, 34 hex values).
+  Having the Rust tests read the page is a follow-up for `feat/iteration-3`
+  ([finding](engineering/spikes/chain-vectors.md#the-rust-tests-copies)).
+- **S3.2:** S3.2 is now two findings. The first is PostgreSQL's mechanism: a non-owner role
+  without `BYPASSRLS` stays inside the policy, and migrations succeed under the owner. It can
+  pass in CI. Its controls are the refused DDL taking effect for the owner, rolled back, and the
+  service role's rows under tenant B. The `BYPASSRLS` control role is gone. The second is the
+  claim about OML's own roles. It is **inconclusive, not testable** on every host, because the
+  harness's roles are its own and no page specifies a deployment's roles and grants, so a CI run
+  never prints `pass` and `none` for it. The harness's role attributes are now preconditions,
+  not checks ([findings](engineering/spikes/spike-3-rls.md#s32)).
+- **S3.1 and S3.4:** the page claimed that the role split confines the statistics leak to the
+  owner. Its own S3.4 observation contradicted that. EXPLAIN's row estimate under tenant A follows
+  tenant B's words, and by PostgreSQL's documentation and the `REL_17_STABLE` source it does so for
+  every role the policy binds. The estimate is now the check `S3.4/<role>/estimate`. The owner's
+  failure is recorded. The service role's is not, so CI fails if it leaks. Both findings now also
+  cite ADR-0007 d4 and security.md's STRIDE information-disclosure mitigation ("no cross-tenant
+  index to leak through"), which the shared index `memories_claim_fts` breaks. Their action is
+  ADR amendment needed, or an implementation fix that makes the FTS index per tenant, awaiting
+  the maintainer. The designed `memories_fts` and `held_fts` are not partitioned per tenant
+  either.
+- **Harness fix found on the way:** the owner's `UPDATE journal` observation ran with no tenant
+  set, matched no row, and could not show the guard trigger. It now runs under tenant A.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md),
+  [chain vectors](engineering/spikes/chain-vectors.md), [spike 3](engineering/spikes/spike-3-rls.md),
+  [critical path](product/critical-path.md) (M0 progress),
+  [CI and toolchain](engineering/ci-and-toolchain.md) (the gate row), `docs/llms.txt` and this
+  page. Outside `docs/`, the two harnesses.
+- **Not verified here:** any pg17 or service-role result, S3.2's mechanism among them. CI jobs
+  `chain-vectors` and `rls-spike` have not run. The S3.2 code path was run only with the owner
+  standing in for the service role, which the preconditions reported as not as minted.
+
 ### 2026-10-31 — M0 spike 3: a failed scenario says ADR amendment needed, the lead run is recorded, and the harness follows new migrations
 
 A review fix to the spike 3 findings and harness of the entry below. No decision changes, and no

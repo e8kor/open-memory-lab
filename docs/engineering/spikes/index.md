@@ -22,7 +22,7 @@ and data, where a finding is written, and what CI runs. It also lists which expe
 | Chain-format test vectors, cross-checked outside Rust (M0 exit) | `scripts/check_chain_vectors.py` | [chain vectors](chain-vectors.md) | run 2026-10-31; CI job `chain-vectors` defined |
 | Spike 1: delta-rs transaction-identifier conformance (S1.1–S1.6) | none | none | **not run**: it needs a pinned MinIO container and a delta-rs harness, and the host that recorded these findings has no Docker |
 | Spike 2: conditional put under degraded quorum (S2.1–S2.4) | none | none | **not run**: it needs a four-node MinIO and an S3 account, and none is available here |
-| Spike 3: RLS hardening (S3.1–S3.4) | `testing/spikes/rls/spike_rls.py` | [spike 3](spike-3-rls.md) | run 2026-10-31 on PostgreSQL 18.6 as the table owner: S3.3 passes; S3.1 and S3.4 fail on planner statistics, which FORCE does not filter; S3.2 needs a role that can create roles, so it runs only in CI job `rls-spike` on `pgvector/pgvector:pg17`, which has not run yet |
+| Spike 3: RLS hardening (S3.1–S3.4) | `testing/spikes/rls/spike_rls.py` | [spike 3](spike-3-rls.md) | run 2026-10-31 on PostgreSQL 18.6 as the table owner: S3.3 passes; S3.1 and S3.4 fail on planner statistics, which FORCE does not filter; S3.2's mechanism needs a role that can create roles, so it runs only in CI job `rls-spike` on `pgvector/pgvector:pg17`, which has not run yet; S3.2's claim about OML's own roles is open on every host, because no deployment's roles are specified |
 | Spike 4: pgvector ceiling probe (S4.1–S4.4) | none | none | **not run**: it needs the pinned `pgvector/pgvector:pg17` image with a sync standby, and the local cluster has no pgvector |
 
 A scenario without a recorded finding is open. M0's exit stays open until every row of the
@@ -34,9 +34,8 @@ critical path's matrices has a finding on the pinned versions.
 
 `scripts/check_chain_vectors.py` reads the test key's PEM blocks, each vector's stated
 `signed_bytes`, its byte count, `hash` and `sig`, and the stated raw public key and fingerprint
-from [chain format](../../data/chain-format.md) itself. The repository holds no second copy of the
-vectors, and the page stays the fixture every tier verifies
-([test strategy](../test-strategy.md#test-data-and-fixtures)). The script holds the vectors'
+from [chain format](../../data/chain-format.md) itself, and the page stays the fixture every tier
+verifies ([test strategy](../test-strategy.md#test-data-and-fixtures)). The script holds the vectors'
 **inputs**: the nine signed fields of each event, in a member order that is deliberately not
 canonical, so that the canonicalizer does the sorting. It also holds the body plaintext and the
 stand-in rule of vector 2. It does not copy derived values. It computes `plaintext_digest` and
@@ -44,6 +43,33 @@ stand-in rule of vector 2. It does not copy derived values. It computes `plainte
 `prev_hash` from the hash it computed for the previous vector. If one of its inputs no longer
 matches the value the page's bytes carry, the script names that field and fails, so the inputs
 cannot drift silently from the page.
+
+### The Rust tests' copies are compared with the page
+
+The Rust tests keep their own copies of the vectors as literals.
+`crates/oml-domain/tests/vectors.rs` and `crates/bins/oml-cli/tests/vectors.rs` each hold the three
+`signed_bytes` and the hashes and signatures, and `crates/oml-domain/tests/keys_and_format.rs`
+repeats vector 1's hash. Each Rust test checks the Rust code against its own copy, so until
+2026-10-31 the copies agreed with the page only because they had been copied by hand: had one
+drifted, the Rust tests and this check would both have stayed green. The script therefore also
+reads every `*.rs` file in the repository, outside `target/` and hidden directories, and does not
+change any. A file that names a vector's event id, the vector tenant, the test key, or a stated
+hash or signature is a copy. In a copy:
+
+- every raw string literal that carries a vector's `"event_id"` must be that vector's
+  `signed_bytes`, byte for byte;
+- a vector's JSON outside a raw string literal fails the check, because the check does not
+  compare it there;
+- every hex run of 64 or 128 digits must be a value the page states or the script derives from
+  it: a hash, a signature, the public key, the fingerprint, the PKCS#8 seed, the zero hash, or one
+  of vector 2's digests.
+
+With `cargo test` in `ci.yml`, that links the two implementations: the Rust code reproduces the
+Rust literals, the literals equal the page, and the page equals what the Python libraries compute.
+The better end state is Rust tests that read the page, so that no copy exists. That change is in
+`crates/`, which `feat/iteration-3` is rewriting, so it is a follow-up for that branch, not part
+of this one. When the copies are gone, the check reports that no Rust file holds a copy, and it
+passes.
 
 ### Two independent implementations of each primitive, none of them Rust
 
@@ -99,22 +125,48 @@ roles only when the connecting role is a superuser:
   the database owned by the owner role. It runs the migrations as the owner, then grants the
   service role DML on every table except `journal`, where it gets `SELECT, INSERT` only (the
   append-only rule of [ADR-0002](../../adr/ADR-0002-postgresql-system-of-record.md) d4). It runs
-  S3.1 as the owner and S3.3 and S3.4 as both roles. A third role, `NOLOGIN BYPASSRLS`, is S3.2's
-  control, and all three are dropped at the end. These
-  grants stand in for the bootstrap workload's, which [deployment](../../operations/deployment.md)
-  names but no page spells out statement by statement.
+  S3.1 as the owner, S3.2's mechanism as both, and S3.3 and S3.4 as both roles. Both roles are
+  dropped at the end.
 - **Elsewhere** (a role that is not a superuser and can create databases, as on the host that
   recorded the first findings):
   the connecting role owns the database and runs S3.1, S3.3 and S3.4 as the owner, which
-  `FORCE` binds. S3.2 is reported **not run** with its reason. The script never escalates.
+  `FORCE` binds. S3.2's mechanism is reported **not run** with its reason. The script never
+  escalates.
 - `--require-all` turns a scenario that did not run into a failure. CI passes it, so a CI run
   cannot pass with a scenario skipped.
+
+### S3.2 is two findings, and the one about OML's roles stays open
+
+The critical path's S3.2 asserts that migrations succeed and that "no application role can read
+across the policy". The harness can test PostgreSQL's part of that and cannot test OML's part,
+so it reports them as two findings:
+
+- **S3.2 (mechanism):** a role that does not own the tables, holds DML grants and has no
+  `BYPASSRLS` reads only its tenant's rows. It cannot lift `FORCE`, disable RLS, drop or create a
+  policy, take ownership, `SET ROLE` to the owner, grant itself `UPDATE` on `journal`, or turn
+  `row_security` off. With the `journal` grants above, it cannot update, delete or truncate the
+  journal. Migrations succeed under the owner while `FORCE` binds it. This finding can pass.
+- **S3.2 (OML's roles):** the roles an OML deployment uses are split from the owner, and none
+  holds `BYPASSRLS`. The harness mints its own roles and writes their grants. Checking their
+  attributes would only show that it ran its own `CREATE ROLE` statements, so it does not do
+  that. It treats them as preconditions of the mechanism finding: if they are not as minted, that
+  finding is inconclusive. OML has no roles of its own to test.
+  [Deployment](../../operations/deployment.md) names the bootstrap workload's owner role and a
+  service role, and [configuration](../../operations/configuration.md) designs `postgres.owner_url`.
+  No page states those roles' attributes and grants, and the lead as built migrates and serves as
+  one role ([spike 3](spike-3-rls.md#s31)). This finding is **inconclusive, not testable** on
+  every host, CI included. It does not fail the run, and the run's last line names it. It stays
+  open until a deployment's bootstrap specifies roles and grants. The harness then takes them
+  from there, in place of its own.
 
 ### Every scenario carries a control that must fail
 
 Each scenario runs the same assertion once against a weakened setup, and that run must
-observe the leak. S3.1 lifts `FORCE` on one table inside a transaction it rolls back. S3.2 reads
-as a `BYPASSRLS` role. S3.3 sets the tenant with session-level `SET`. S3.4 runs every probe again
+observe the leak. S3.1 lifts `FORCE` on one table inside a transaction it rolls back. S3.2's
+mechanism runs, as the owner and rolled back, each DDL statement the service role was refused,
+and each must take effect, so that each refusal comes from the role and not from the statement.
+It also counts the service role's rows with the tenant set to B. S3.3 sets the tenant with
+session-level `SET`. S3.4 runs every probe again
 with `oml.tenant_id` set to B, and hands its probe function B's rows. If a control does
 not leak, the assertion could not have caught the failure it exists for, and the script reports
 the scenario as inconclusive.
@@ -128,7 +180,10 @@ its finding's anchor). A listed check that fails prints `FAIL, recorded` and doe
 run. A listed check that passes, or does not run, does fail the run, so a fixed failure gets its
 finding re-recorded instead of going stale. A failure not on the list fails the run as usual.
 This is a strict expected failure: the scenario's verdict stays `fail`, and only the exit code
-treats a known result as known. Recording a failure does not decide it. A failed scenario's
+treats a known result as known. A recorded failure belongs to the role that showed it.
+`S3.4/owner/estimate` is recorded, and `S3.4/service/estimate` is not, because no run has shown
+it, so CI fails if the service role sees the same estimates (as the
+[spike 3 findings](spike-3-rls.md#s34) expect). Recording a failure does not decide it. A failed scenario's
 `action` line, on its finding and in the script's output, says **ADR amendment needed** with its
 clause and "awaiting maintainer decision" until the maintainer decides. The harness never prints
 `none` for a failure.
@@ -176,12 +231,24 @@ unprobed. Three changes made that happen. The non-empty checks apply to seeded t
 no-tenant write uses a row that every constraint of either schema accepts. The non-leakproof
 probe function is handed whole rows, where before it was handed named columns that 0006 leaves
 NULL. That run does not cover the pinned pg17 or the service role. When `feat/iteration-3`
-merges, `crews` stays unprobed until a seeder writes it.
+merges, `crews` stays unprobed until a seeder writes it. The same run, repeated on 2026-10-31 after
+S3.2 became two findings and the estimate became a check, gave the verdicts of the 0001–0005 run
+again, with the estimate's recorded failure among them, and reported `crews` as unprobed.
 
 ## Rejected alternatives
 
 - **A JSON fixture file holding the vectors.** It would be a second declaration site for bytes
   that chain format already states, and the two would drift (ADR-0018 d5).
+- **Leaving the Rust copies to the Rust tests.** Each Rust test compares the Rust code with its
+  own copy, so a copy that drifted from the page would keep both suites green, and the
+  cross-check would corroborate the page but not the code.
+- **A list of the files that hold copies.** A list misses a copy added in a new file. Finding the
+  copies by the values they hold catches one wherever it is added.
+- **Reporting S3.2 as one finding with the harness's role attributes as its checks.** A CI run
+  would then print S3.2 `pass` with action `none` for a property that OML's roles do not yet
+  have.
+- **A `BYPASSRLS` role as S3.2's control.** It shows only that `BYPASSRLS` bypasses RLS, and no
+  check of S3.2 could have failed for want of it.
 - **Re-checking with the OpenSSL CLI alone.** OpenSSL produced the page's signatures, so this
   would confirm the page against itself. It also has no JCS.
 - **A JCS written for the script.** It would confirm only that the script agrees with its

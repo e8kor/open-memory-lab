@@ -2,7 +2,7 @@
 id: engineering/spikes/chain-vectors
 tier: engineering
 status: recorded finding · 2026-10-31 — the chain-format test vectors reproduce outside Rust
-answers: whether the chain-format test vectors (RFC 8785 canonical bytes, SHA-256 hashes, RFC 8032 Ed25519 signatures, the genesis event) reproduce byte for byte in independent non-Rust implementations, with which libraries and versions, and what the cross-check found on the page itself
+answers: whether the chain-format test vectors (RFC 8785 canonical bytes, SHA-256 hashes, RFC 8032 Ed25519 signatures, the genesis event) reproduce byte for byte in independent non-Rust implementations, with which libraries and versions, whether the Rust tests' own copies of the vectors agree with the page, and what the cross-check found on the page itself
 -->
 
 # Finding: the chain-format test vectors, cross-checked
@@ -32,8 +32,9 @@ environment:   Linux 7.0.0-38-generic x86_64, 8 vCPU AMD EPYC-Genoa, 15.2 GiB RA
 verdict:       pass
 adr-clause:    ADR-0002 d3 (per-tenant chain: seq, prev_hash, Ed25519 signature), through
                chain format, its byte-level annex
-action:        none for the vectors; one sentence of chain format corrected (below), and
-               one wording question left for the maintainer (below)
+action:        none for the vectors; one sentence of chain format corrected (below), one
+               wording question left for the maintainer (below), and the Rust tests'
+               copies of the vectors compared with the page (below)
 ```
 
 ## Evidence
@@ -41,7 +42,7 @@ action:        none for the vectors; one sentence of chain format corrected (bel
 `uv run --locked --script scripts/check_chain_vectors.py` printed:
 
 ```text
-check_chain_vectors: OK: docs/data/chain-format.md: 3 vectors reproduce byte for byte (508, 870, 550 bytes); steps 1-7 and 9 pass; 11 mutation controls fail as the page states
+check_chain_vectors: OK: docs/data/chain-format.md: 3 vectors reproduce byte for byte (508, 870, 550 bytes); steps 1-7 and 9 pass; 11 mutation controls fail as the page states; the Rust tests' copies in 3 files (6 signed_bytes literals, 34 hex values) equal the page
 ```
 
 What that line covers:
@@ -72,6 +73,36 @@ What that line covers:
 - **Tampered copies.** The check failed, naming the disagreement, on eight copies of the page,
   each with one change: a principal, a hash, a signature, a byte count, the public PEM, the
   private PEM, the body sentence, and the member order of vector 1's payload.
+- **The Rust tests' copies.** `crates/oml-domain/tests/vectors.rs`,
+  `crates/bins/oml-cli/tests/vectors.rs` and `crates/oml-domain/tests/keys_and_format.rs` hold 6
+  `signed_bytes` literals and 34 hex values between them, and every one equals the page. The
+  harness decision is on the [M0 spikes](index.md#the-rust-tests-copies-are-compared-with-the-page)
+  page.
+
+## The Rust tests' copies
+
+The Rust tests keep their own copies of the vectors, and each Rust test checks the Rust code
+against its own copy. Until 2026-10-31 nothing compared those copies with the page. They agreed,
+checked by hand against the page on that date, but a copy that drifted would have left the Rust
+tests and this check both green. The first version of this finding did not say so. Run from a
+scratch tree holding the page, the script and the three files, the check as first committed
+passed with vector 3's `principal` changed in the CLI test's copy. The check as it stands
+compares the copies. With `--rust-root` pointed at a scratch copy of the three files, it failed,
+naming the file, the line and the disagreement, on six copies, each with one change:
+
+| Change in the scratch copy | What the check printed |
+|---|---|
+| vector 3's `principal` in the CLI test's `signed_bytes` | `crates/bins/oml-cli/tests/vectors.rs:31: the copy of vector 3's signed_bytes differs from the page's; first difference at byte 488` |
+| one digit of `V2_HASH` in the domain test | `crates/oml-domain/tests/vectors.rs:27: 72f71452f67a618a… (64 hex digits) is no value the page states or this script derives from it` |
+| one digit of vector 1's `sig` in the CLI test | `crates/bins/oml-cli/tests/vectors.rs:22: 3d22e7ce20b6db79… (128 hex digits) is no value …` |
+| one digit of vector 1's hash in `keys_and_format.rs` | `crates/oml-domain/tests/keys_and_format.rs:53: c3f4bfb7ef9e00df… (64 hex digits) is no value …` |
+| one digit of the domain test's `TEST_SEED_HEX` | `crates/oml-domain/tests/vectors.rs:16: 09884594afc93c44… (64 hex digits) is no value …` |
+| vector 2's `signed_bytes` as an escaped string in a new file, `crates/x/src/lib.rs` | `crates/x/src/lib.rs:1: vector 2's signed_bytes appear outside a raw string literal, where this check does not compare them` |
+
+On a scratch tree with no copy, the check passed and printed `no Rust file holds a copy of the
+vectors`. The scratch trees were removed afterwards. The check reads `crates/` and changes nothing
+there. Having the Rust tests read the page, so that no copy remains, is a follow-up for
+`feat/iteration-3`, which is rewriting `crates/`.
 
 ## What the cross-check found on the page
 
@@ -102,5 +133,8 @@ What that line covers:
   SHA-256 is the independent hash here.
 - `rfc8785` (Trail of Bits) and `jcs` (Anders Rundgren's reference code, Rundgren being an author of
   RFC 8785) are written independently of each other and of the Rust canonicalizer.
+- The comparison of the Rust tests' copies shows only that the copies equal the page. That the
+  Rust code reproduces its copies is what `cargo test` in `ci.yml` checks, and this finding does
+  not run it.
 - CI job `chain-vectors` in `.github/workflows/m0-spikes.yml` re-runs the check on every pull
   request. That job has not run yet: this finding comes from the local run above.
