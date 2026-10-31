@@ -115,10 +115,22 @@ ALTER TABLE workareas
 CREATE UNIQUE INDEX api_keys_tenant_id_name ON api_keys (tenant_id, name) NULLS NOT DISTINCT
     WHERE name IS NOT NULL;
 
--- The NOT NULL on name and path, and the CHECK that the root and only the
--- root is named universe, are a later migration's: it cannot run before the
--- lead's first start has named every row, and it fails, holding that
--- upgrade, if a NULL remains (postgres-schema.md "names and tenants").
+------------------------------------------------------------------------------
+-- Step 4: the CHECK that the root, and only the root, is named universe.
+-- A check constraint "is satisfied if the check expression evaluates to
+-- true or the null value" (PostgreSQL 17 documentation, 5.5.1 "Check
+-- Constraints"), and the comparison is NULL on a row whose name is NULL,
+-- so the CHECK passes every row this migration finds and refuses a
+-- non-root universe under a root that has no name yet as under one that
+-- holds universe. The store answers that refusal as name.taken (errors.md).
+------------------------------------------------------------------------------
+ALTER TABLE workareas
+    ADD CONSTRAINT workareas_universe_is_root
+        CHECK ((parent_id IS NULL) = (name = 'universe'));
+
+-- The NOT NULL on name and path is a later migration's: it cannot run
+-- before the lead's first start has named every row, and it fails, holding
+-- that upgrade, if a NULL remains (postgres-schema.md "names and tenants").
 
 ------------------------------------------------------------------------------
 -- Row-level security — as 0001: FORCE, so the owner is bound too, keyed by

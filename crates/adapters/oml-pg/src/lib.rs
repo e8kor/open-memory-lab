@@ -11,7 +11,7 @@
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
 use oml_app::domain::access::{Grant, KeyDenial};
-use oml_app::domain::name::{Name, NamedKind};
+use oml_app::domain::name::{Name, NamedKind, UNIVERSE};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, VerifyError, verify_chain,
@@ -689,7 +689,17 @@ async fn apply_fold(
             .execute(&mut **tx)
             .await
             .map_err(|e| {
-                name_taken_or_backend(e, "workareas_tenant_id_name", NamedKind::Workarea, &w.name)
+                // A non-root `universe` meets the CHECK that ties the name
+                // to the root before the unique index, and errors.md
+                // answers it as `name.taken`; a root of another name lost
+                // no name, so its refusal stays the backend's
+                // (postgres-schema.md `workareas`; ADR-0026 d5, d6).
+                let constraint = if w.parent_id.is_some() && w.name.as_str() == UNIVERSE {
+                    "workareas_universe_is_root"
+                } else {
+                    "workareas_tenant_id_name"
+                };
+                name_taken_or_backend(e, constraint, NamedKind::Workarea, &w.name)
             })?;
         }
         MetadataFold::CrewCreated(c) => {

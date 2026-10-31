@@ -597,7 +597,7 @@ pub async fn a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_
 
     rig.seed_chain(store, 0).await; // seq 1
     let workarea = Uuid::from_u128(0x7001);
-    rig.create_workarea(store, workarea_record(tenant, workarea, None, "crew"))
+    rig.create_workarea(store, workarea_record(tenant, workarea, None, "universe"))
         .await; // seq 2
     let author = Uuid::from_u128(0x7002);
     let first = held_memory(
@@ -3114,6 +3114,70 @@ pub async fn two_workareas_in_one_tenant_cannot_share_a_name<S: JournalStore>(st
     );
 }
 
+/// The root, and only the root, is named `universe`, as the CHECK on
+/// `workareas` holds: a root of another name is refused, and a non-root
+/// `universe` is refused with `NameTaken`, as errors.md answers it; neither
+/// commits anything, its event included (postgres-schema.md `workareas`;
+/// ADR-0026 d5, d6).
+pub async fn the_root_and_only_the_root_workarea_is_named_universe<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(39);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let head = store.chain_head(t).await.expect("head");
+    let stray = Uuid::from_u128(0xB390);
+    let refused = rig
+        .commit(
+            store,
+            event_types::WORKAREA_CREATE,
+            json!({ "workarea_id": stray.to_string(), "name": "procurement" }),
+            MetadataFold::WorkareaCreated(workarea_record(t, stray, None, "procurement")),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "a root of another name commits nothing"
+    );
+    assert_eq!(store.workarea(t, stray).await.expect("read"), None);
+
+    let universe = workarea_record(t, Uuid::from_u128(0xB391), None, "universe");
+    rig.create_workarea(store, universe.clone()).await;
+    let head = store.chain_head(t).await.expect("head");
+    let impostor = Uuid::from_u128(0xB392);
+    let refused = rig
+        .commit(
+            store,
+            event_types::WORKAREA_CREATE,
+            json!({ "workarea_id": impostor.to_string(), "name": "universe" }),
+            MetadataFold::WorkareaCreated(workarea_record(
+                t,
+                impostor,
+                Some(universe.workarea_id),
+                "universe",
+            )),
+            None,
+        )
+        .await;
+    assert_eq!(
+        refused,
+        Err(StoreError::NameTaken {
+            kind: NamedKind::Workarea,
+            name: name("universe"),
+        })
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "a non-root universe commits nothing"
+    );
+    assert_eq!(store.workarea(t, impostor).await.expect("read"), None);
+}
+
 /// A tenant's name is unique in the deployment: a second tenant's genesis
 /// under it is refused with `NameTaken` and commits nothing, and the genesis
 /// fold of a tenant that has its row changes nothing (postgres-schema.md
@@ -3475,6 +3539,7 @@ where
     a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(&new_store().await).await;
     a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await).await;
     two_workareas_in_one_tenant_cannot_share_a_name(&new_store().await).await;
+    the_root_and_only_the_root_workarea_is_named_universe(&new_store().await).await;
     a_second_tenant_cannot_take_a_tenants_name(&new_store().await).await;
     a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing_in_another_tenant(
         &new_store().await,

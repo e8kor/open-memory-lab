@@ -13,7 +13,7 @@ use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use uuid::Uuid;
 
 use oml_domain::budget::{hit_order, steering_order};
-use oml_domain::name::{Name, NamedKind};
+use oml_domain::name::{Name, NamedKind, UNIVERSE};
 use oml_domain::{ChainHead, EventTime, MemoryKind, MemoryStatus, Role};
 
 use crate::ports::{
@@ -220,6 +220,25 @@ fn require_free_name<'a>(
     Ok(())
 }
 
+/// The root, and only the root, is named `universe`, as
+/// `workareas_universe_is_root` refuses otherwise: a non-root `universe` is
+/// refused with `NameTaken`, as errors.md answers it, and a root of another
+/// name as the backend's (postgres-schema.md `workareas`; ADR-0026 d6).
+fn require_universe_root(workarea: &WorkareaRecord) -> Result<(), StoreError> {
+    match (workarea.parent_id, workarea.name.as_str() == UNIVERSE) {
+        (Some(_), true) => Err(StoreError::NameTaken {
+            kind: NamedKind::Workarea,
+            name: workarea.name.clone(),
+        }),
+        (None, false) => Err(StoreError::Backend(format!(
+            "the root workarea {} is named universe, not {:?}",
+            workarea.workarea_id,
+            workarea.name.as_str()
+        ))),
+        _ => Ok(()),
+    }
+}
+
 /// A crew a row names must be its own tenant's, as the tenant-scoped
 /// foreign keys onto `crews` require (postgres-schema.md `crews`).
 fn require_crew(state: &TenantState, crew_id: Option<Uuid>) -> Result<(), StoreError> {
@@ -278,6 +297,7 @@ fn apply_fold(
         // The tenant's name is the deployment's, applied by the commit.
         MetadataFold::TenantGenesis { .. } | MetadataFold::VerdictRecorded { .. } => {}
         MetadataFold::WorkareaCreated(workarea) => {
+            require_universe_root(&workarea)?;
             require_free_name(
                 state.workareas.values().map(|w| &w.name),
                 NamedKind::Workarea,

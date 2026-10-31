@@ -1161,17 +1161,34 @@ async fn two_operator_keys_cannot_share_a_name_though_their_tenant_is_null() {
     drop_dbs(&created).await;
 }
 
-/// Every tenant's root holds `universe`, and a workarea's name is unique in
-/// its tenant, so the schema itself refuses a non-root workarea named
-/// `universe`, whatever wrote it, and the store answers the creation with
-/// `NameTaken`: the index is the authority, with no special case
-/// (postgres-schema.md `workareas`; ADR-0026 d5, d6). The CHECK that ties
-/// `universe` to the root lands with the migration that sets names NOT NULL,
-/// as postgres-schema.md says.
+/// The schema itself refuses a non-root workarea named `universe`, whatever
+/// wrote it: 0006's CHECK ties `universe` to the root, so the refusal holds
+/// under a root that predates names and has no name yet, as every tenant
+/// 0006 migrates has, and not only under a root that already holds
+/// `universe`. The CHECK passes every unnamed row, so it is laid beside the
+/// nullable names. The store answers the creation with `NameTaken`, as
+/// errors.md answers a non-root `universe` (postgres-schema.md `workareas`
+/// and "The migration that adds names"; ADR-0026 d5, d6).
 #[tokio::test]
 async fn the_schema_refuses_a_non_root_workarea_named_universe() {
     let created = Mutex::new(Vec::new());
-    let store = fresh_store(&created).await;
+    let (db, mut conn) = schema_through(&created, 5).await;
+    let (poc, poc_root) = (Uuid::from_u128(0xA960), Uuid::from_u128(0xB960));
+    let mut tx = conn.begin().await.expect("begin");
+    poc_tenant(&mut tx, poc).await;
+    sqlx::query(
+        "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+         VALUES ($1, $2, NULL, 'root', 'committed')",
+    )
+    .bind(poc_root)
+    .bind(poc)
+    .execute(&mut *tx)
+    .await
+    .expect("PoC root");
+    tx.commit().await.expect("commit the PoC rows");
+    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
+    store.migrate().await.expect("0006 applies over PoC rows");
+
     let mut rig = ChainRig::new(97);
     rig.seed_chain(&store, 0).await;
     let t = rig.tenant_id;
@@ -1197,27 +1214,32 @@ async fn the_schema_refuses_a_non_root_workarea_named_universe() {
         })
     );
 
-    let mut tx = store.pool().begin().await.expect("begin");
-    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
-        .bind(t.to_string())
+    for (tenant, parent, under) in [
+        (poc, poc_root, "a root that has no name yet"),
+        (t, root, "the root named universe"),
+    ] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        let err = sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+             VALUES ($1, $2, $3, 'universe', 'development')",
+        )
+        .bind(impostor)
+        .bind(tenant)
+        .bind(parent)
         .execute(&mut *tx)
         .await
-        .expect("set tenant");
-    let err = sqlx::query(
-        "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
-         VALUES ($1, $2, $3, 'universe', 'development')",
-    )
-    .bind(impostor)
-    .bind(t)
-    .bind(root)
-    .execute(&mut *tx)
-    .await
-    .expect_err("the schema refuses a second universe");
-    assert!(
-        err.to_string().contains("workareas_tenant_id_name"),
-        "got: {err}"
-    );
-    drop(tx);
+        .expect_err("the schema refuses a non-root universe");
+        assert!(
+            err.to_string().contains("workareas_universe_is_root"),
+            "under {under}, got: {err}"
+        );
+    }
+    drop(conn);
     drop_dbs(&created).await;
 }
 

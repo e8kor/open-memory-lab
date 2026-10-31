@@ -141,13 +141,19 @@ them. The migration that adds names therefore:
    operator keys one namespace, would make two unnamed keys of a tenant collide, so it is created
    as a unique index on `(tenant_id, name) NULLS NOT DISTINCT WHERE name IS NOT NULL`, the same
    rule once every name is set. `name.taken` has its authority from the first request served.
+4. adds the `universe` `CHECK` shown on `workareas`, which ties the name to the root. A check
+   constraint "is satisfied if the check expression evaluates to true or the null value"
+   ([Check Constraints](https://www.postgresql.org/docs/17/ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS),
+   fetched 2026-10-31), and the comparison is NULL on a row whose `name` is NULL, so the `CHECK`
+   passes every row the migration finds and refuses a non-root `universe` under a root that has
+   no name yet, as under one that holds `universe`.
 
 The migration carries no creation-time name into `name`: `system.names_assigned` fills every `name`,
 and its `prior_name` entries are read from the journal, never from the renamed columns. The lead,
 before it serves, journals that event and folds it into the new columns, deriving each `path`. A
 migration of a later schema version, which cannot run before that first start, then sets `name` and
-`path` `NOT NULL` and adds the `universe` `CHECK`, the shape this page shows, and fails, holding
-that upgrade, if any NULL remains. A lead that finds a NULL `name` in a chain whose
+`path` `NOT NULL`, the shape this page shows, and fails, holding that upgrade, if any NULL
+remains. A lead that finds a NULL `name` in a chain whose
 `system.names_assigned` is already journalled refuses to start, with the `names_assigned`
 [doctor](../operations/observability.md#the-doctor-contract) line naming the table. Renaming columns
 the earlier binaries read is outside the expand-contract rule, which is why this upgrade stops every
