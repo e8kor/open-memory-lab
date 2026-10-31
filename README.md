@@ -170,18 +170,18 @@ request. **Not implemented yet:** the other four plugin tools, attachments and t
 object lake, erasure ceremonies, checking the signed chain against a live server (the
 command-line verifier reads an export of the whole chain that the server does not serve yet, so
 `oml audit verify-chain` stops with an error that says so), follower servers and read scaling,
-simulations, embedding-based retrieval, and the operator tier; on keys, adding or revoking a
-grant after issuance, an administrator lifting a denial, retrying an issuance safely, rotation,
-and expiry (a key issued with an expiry is refused); using crews to decide whether a reviewer is
-independent of a memory's author; held writes that expire when nobody reviews them; the record of
-what each search served; and links between workareas. Three working pieces differ from the
-design. An agent's search of its own waiting writes reads them through a store query restricted
-to their author, not through the separate author-only search index the design specifies. A
-write retried while its first attempt is still running never gets the design's "still in
-progress" answer: it gets the first attempt's receipt as a replay, or, for a new memory whose
+simulations, embedding-based retrieval, and the operator tier; on keys, revoking a key, adding or
+revoking a grant after issuance, an administrator lifting a denial, retrying an issuance safely,
+rotation, and expiry (a key issued with an expiry is refused); using crews to decide whether a
+reviewer is independent of a memory's author; held writes that expire when nobody reviews them;
+the record of what each search served; and links between workareas. Three working pieces differ
+from the design. An agent's search of its own waiting writes reads them through a store query
+restricted to their author, not through the separate author-only search index the design
+specifies. A write retried while its first attempt is still running never gets the design's "still
+in progress" answer: it gets the first attempt's receipt as a replay, or, for a new memory whose
 claim the first attempt has just recorded, the refusal that the claim already exists. And the
 design records each tenant's name in a history kept for the whole deployment, where the one-time
-enrollment also names the deployment's first operator key; this build has neither that history
-nor operator keys, so it records the tenant's name in the tenant's own signed history, and the
-enrollment names the tenant's first administrator key within that tenant. The
-[critical path](docs/product/critical-path.md) orders what lands next.
+enrollment also names the deployment's first operator key; this build has neither that history nor
+operator keys, so it records the tenant's name in the tenant's own signed history, and the
+enrollment names the tenant's first administrator key within that tenant. The [critical
+path](docs/product/critical-path.md) orders what lands next.

@@ -32,9 +32,10 @@ implementation milestone where it changes what the repository holds.
 ### 2026-10-31 — Names as keys (implementation)
 
 An implementation milestone; no decision changes. The code now serves what the proposed
-[ADR-0026](adr/ADR-0026-names-are-keys.md) decides, except what is listed as unbuilt below. The
-record stays proposed: no Status line moves, `info.version` stays `0.3.0-design`, no `spec-v0.3`
-tag is cut, and no package version moves until the release.
+[ADR-0026](adr/ADR-0026-names-are-keys.md) decides on every verb this build serves, except what is
+listed as unbuilt below, which also names the verbs ADR-0026 reaches that this build does not
+serve. The record stays proposed: no Status line moves, `info.version` stays `0.3.0-design`, no
+`spec-v0.3` tag is cut, and no package version moves until the release.
 
 - **Classification at parse** (d2, d3). Every workarea, crew, key and tenant reference is an id in
   the RFC 9562 hex-and-dash form whose version digit is not `8`, or a name under the reference
@@ -45,19 +46,19 @@ tag is cut, and no package version moves until the release.
 - **Storage** (d1, d5, d6, d10). Migration `0006_names.sql` adds the `crews` table and the `name`
   columns with their unique indexes, keeps the PoC's `tenants.name` and `workareas.name` as
   `prior_name`, ties `universe` to the root with a CHECK, and names nothing. The unique index is
-  `name.taken`'s authority, so a creation that loses a race journals nothing, and a revoked key's
-  name still resolves.
+  `name.taken`'s authority, so a creation that loses a race journals nothing, and a revoked key
+  keeps its name, which still resolves; the one revocation this build journals is the server's
+  own, of an issuance that failed after its `key.issued`.
 - **Resolution and crews** (d4, d5, d8, d9, d15). Every use case resolves the workareas, crews and
   keys it is given after the verb ceiling and before any read, so an unknown or unreadable name
   answers `access.not_found` in the same step, with the same code and details, as its id would.
-  Admin keys create, read and update crew records, journalled as `crew.created` and
-  `crew.updated`; `workarea.create` and `workarea.crew_updated` journal `crew_id`, and
-  `key.issued` journals the key's `name` and `crew_id`. The bootstrap claim and `POST /v2/keys`
-  refuse a body with no name, or one the creation grammar refuses, as `request.validation` naming
-  `name`, the claim only after its enrollment token. An admin key reads workarea structure across
-  its tenant by key role, the workarea read listing every child with `my_effective_verbs` empty,
-  and still answers `access.verb_ceiling` on every claim read; a global denial on an admin key is
-  refused.
+  Admin keys create, read and update crew records, journalled as `crew.created` and `crew.updated`;
+  `workarea.create` and `workarea.crew_updated` journal `crew_id`, and `key.issued` journals the
+  key's `name` and `crew_id`. The bootstrap claim and `POST /v2/keys` refuse a body with no name,
+  or one the creation grammar refuses, as `request.validation` with `details.field` `/name`, the
+  claim only after its enrollment token. An admin key reads workarea structure across its tenant by
+  key role, the workarea read listing every child with `my_effective_verbs` empty, and still
+  answers `access.verb_ceiling` on every claim read; a global denial on an admin key is refused.
 - **The lead's start** (d11, d15). Before it serves, the lead names every row that predates names,
   in one `system.names_assigned` per chain: the root `universe`, a usable creation-time name kept,
   every other row in the derived form, and each distinct crew object one crew record. In the same
@@ -91,15 +92,26 @@ tag is cut, and no package version moves until the release.
   `testing/oml-port-contracts`, which both stores run, `crates/adapters/oml-pg/tests/pg_store.rs`,
   `crates/oml-app/tests/use_cases.rs`, `crates/bins/oml-server-lead/tests/http_api.rs` and
   `mcp_facade.rs`, and `crates/bins/oml-cli/tests/cli_e2e.rs` run in `cargo test --workspace`.
-- **Still unbuilt**, each stated in the README or a code comment: key rotation, and so `new_name`
-  on `key.rotated` and `oml keys rotate <key> <new-key-name>`; the operator tier, and so tenant
-  names beyond the one tenant the bootstrap claim creates, operator keys and the provider's key
-  namespace, `tenant_id` on issuance and `POST /v2/tenants`; and the independence axis's crew and
-  manager comparisons at promotion, whose domain functions exist and which no promotion calls
-  yet. Two pieces differ from the design because the operator tier is unbuilt: the PoC has no
-  provider chain, so each tenant's name is journalled in its own chain's
-  `system.names_assigned`; and the bootstrap claim mints the tenant's first admin key, so its
-  `name` is checked in that tenant's namespace, not the provider's.
+- **Still unbuilt.** The verbs ADR-0026 reaches that this build does not serve, so no name reaches
+  them either: key revocation (`POST /v2/keys/{key_id}/revoke`, `oml keys revoke`) and rotation,
+  and so `new_name` on `key.rotated` and `oml keys rotate <key> <new-key-name>`; the key listing
+  (`GET /v2/keys`), `oml keys list` and `oml keys show`, so d10's revoked key is read as history
+  only through `GET /v2/keys/{key_id}`; of the other verbs d9 addresses by the key's name, adding
+  or revoking a grant after issuance, lifting a denial and the effective-access read; d15's lookup
+  by path (`GET /v2/workareas?path=`) and its `tree`, `edges` and `status` reads under
+  `GET /v2/workareas/{workarea_id}`; the re-parent's `new_parent_id`, a workarea edge's
+  `to_workarea_id` and the reassign's `workarea_id`; `oml workareas crew set`, though
+  `POST /v2/workareas/{workarea_id}/crew` is served; and a simulation audience's `key_id`. On the
+  verbs the CLI bullet does not name, the CLI still takes an id only, against d4:
+  `oml deny set <key-id> <subtree>`, `oml submit --workarea`, `oml recall --workarea` and
+  `oml audit verify-chain --tenant`. The operator tier is unbuilt, and so are tenant names beyond
+  the one tenant the bootstrap claim creates, operator keys and the provider's key namespace,
+  `tenant_id` on issuance and `POST /v2/tenants`. So are the independence axis's crew and manager
+  comparisons at promotion, whose domain functions exist and which no promotion calls yet. Two
+  pieces differ from the design because the operator tier is unbuilt: the PoC has no provider
+  chain, so each tenant's name is journalled in its own chain's `system.names_assigned`; and the
+  bootstrap claim mints the tenant's first admin key, so its `name` is checked in that tenant's
+  namespace, not the provider's.
 - **Pages touched:** this page and the [agent plugin](api/mcp-plugin.md) (the `issue-agent`
   synopsis); [mcp-tools.json](api/mcp-tools.json) and the [CLI reference](cli/reference.md)
   change with the code that serves them; outside `docs/`, `README.md` (the honest status),
