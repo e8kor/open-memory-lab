@@ -29,6 +29,83 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-10-31 — Names as keys (implementation)
+
+An implementation milestone; no decision changes. The code now serves what the proposed
+[ADR-0026](adr/ADR-0026-names-are-keys.md) decides, except what is listed as unbuilt below. The
+record stays proposed: no Status line moves, `info.version` stays `0.3.0-design`, no `spec-v0.3`
+tag is cut, and no package version moves until the release.
+
+- **Classification at parse** (d2, d3). Every workarea, crew, key and tenant reference is an id in
+  the RFC 9562 hex-and-dash form whose version digit is not `8`, or a name under the reference
+  grammar, the derived form included; anything else is `request.validation` with `details.field`
+  naming the field, so a path and an uppercase name are refused, never lowercased. A creation
+  refuses the derived form, and a name that names no row is replaced by its version-8 unresolved
+  value.
+- **Storage** (d1, d5, d6, d10). Migration `0006_names.sql` adds the `crews` table and the `name`
+  columns with their unique indexes, keeps the PoC's `tenants.name` and `workareas.name` as
+  `prior_name`, ties `universe` to the root with a CHECK, and names nothing. The unique index is
+  `name.taken`'s authority, so a creation that loses a race journals nothing, and a revoked key's
+  name still resolves.
+- **Resolution and crews** (d4, d5, d8, d9, d15). Every use case resolves the workareas, crews and
+  keys it is given after the verb ceiling and before any read, so an unknown or unreadable name
+  answers `access.not_found` in the same step, with the same code and details, as its id would.
+  Admin keys create, read and update crew records, journalled as `crew.created` and
+  `crew.updated`; `workarea.create` and `workarea.crew_updated` journal `crew_id`, and
+  `key.issued` journals the key's `name` and `crew_id`. The bootstrap claim and `POST /v2/keys`
+  refuse a body with no name, or one the creation grammar refuses, as `request.validation` naming
+  `name`, the claim only after its enrollment token. An admin key reads workarea structure across
+  its tenant by key role, the workarea read listing every child with `my_effective_verbs` empty,
+  and still answers `access.verb_ceiling` on every claim read; a global denial on an admin key is
+  refused.
+- **The lead's start** (d11, d15). Before it serves, the lead names every row that predates names,
+  in one `system.names_assigned` per chain: the root `universe`, a usable creation-time name kept,
+  every other row in the derived form, and each distinct crew object one crew record. In the same
+  commit it lifts each global denial on an admin key, one `key.denial_lifted` apiece with
+  `reason_digest` over `adr-0026-d15`, folded into `key_denials.lifted_epoch`. A second start
+  journals nothing; a lead that leaves a row unnamed reports `names_assigned` not ready on
+  `/readyz` and answers every other route `system.unavailable`.
+- **HTTP and MCP** (d4, d5, d8, d9, d15). Every header, path parameter, query parameter and body
+  field the transport takes for a workarea, crew or key takes its id or its name, among them
+  `X-OML-Workarea`, `{workarea_id}`, `{key_id}`, the listing's `workarea_id`, `parent_id`, a
+  grant's `workarea_node_id`, a denial's `subtree_node_id`, `default_workarea_id` and `crew`.
+  `name.taken` answers 409; `GET` and `POST /v2/crews`, `GET /v2/crews/{crew_id}`,
+  `POST /v2/crews/{crew_id}/update` and `POST /v2/workareas/{workarea_id}/crew` are served;
+  workarea and key responses carry `name`; and `GET /v2/keys/{key_id}` answers a key by its id or
+  its name. The served entries of [mcp-tools.json](api/mcp-tools.json) take a workarea's name, and
+  their `_meta.pending_design` notes for names are gone.
+- **CLI** (d4, d12, d15). `oml keys issue <key-name>` takes `--grant <workarea>:<role>` by id or
+  name; `oml keys issue-agent <key-name>` keeps [ADR-0028](adr/ADR-0028-agent-key-issuance.md)
+  d1's `--out`, d2's reader grant and `--write-only`; `oml crews create`, `update`, `list` and
+  `show` administer crew records; `oml workareas create <parent> <name>` takes `--crew`; and
+  `oml workareas show` and `tree` run under an admin context.
+- **Plugins** (d14). The `oml-admin` skill asks for the key's name and the workarea's name and
+  passes them to `issue-agent`, with `--crew` when the operator names a crew, still only with
+  `--out` and never with `--json`. The `oml` plugin's README and skill say that a workarea
+  argument takes the workarea's name or its id, and the [agent plugin](api/mcp-plugin.md) page's
+  `issue-agent` synopsis carries the key name. `scripts/check_plugin.py` now also fails if the
+  skill's `issue-agent` run does not name its key right after the verb with a name the creation
+  grammar admits, or if a command on a plugin page passes `--workarea` anything but a workarea
+  name or `<workarea>`.
+- **Checks:** `crates/oml-domain/tests/names.rs`, the port contracts of
+  `testing/oml-port-contracts`, which both stores run, `crates/adapters/oml-pg/tests/pg_store.rs`,
+  `crates/oml-app/tests/use_cases.rs`, `crates/bins/oml-server-lead/tests/http_api.rs` and
+  `mcp_facade.rs`, and `crates/bins/oml-cli/tests/cli_e2e.rs` run in `cargo test --workspace`.
+- **Still unbuilt**, each stated in the README or a code comment: key rotation, and so `new_name`
+  on `key.rotated` and `oml keys rotate <key> <new-key-name>`; the operator tier, and so tenant
+  names beyond the one tenant the bootstrap claim creates, operator keys and the provider's key
+  namespace, `tenant_id` on issuance and `POST /v2/tenants`; and the independence axis's crew and
+  manager comparisons at promotion, whose domain functions exist and which no promotion calls
+  yet. Two pieces differ from the design because the operator tier is unbuilt: the PoC has no
+  provider chain, so each tenant's name is journalled in its own chain's
+  `system.names_assigned`; and the bootstrap claim mints the tenant's first admin key, so its
+  `name` is checked in that tenant's namespace, not the provider's.
+- **Pages touched:** this page and the [agent plugin](api/mcp-plugin.md) (the `issue-agent`
+  synopsis); [mcp-tools.json](api/mcp-tools.json) and the [CLI reference](cli/reference.md)
+  change with the code that serves them; outside `docs/`, `README.md` (the honest status),
+  `plugins/oml/README.md`, `plugins/oml/skills/oml-memory/SKILL.md`,
+  `plugins/oml-admin/skills/issue-agent-key/SKILL.md` and `scripts/check_plugin.py`.
+
 ### 2026-10-30 — names as keys (ADR-0026)
 
 [ADR-0026](adr/ADR-0026-names-are-keys.md) (proposed) gives workareas, crews, keys and tenants a

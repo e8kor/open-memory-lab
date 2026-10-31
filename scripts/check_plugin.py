@@ -18,11 +18,17 @@ class of disagreement found:
 - oml-admin has no .mcp.json, so it adds no tool to any tool list;
 - every command in the oml-admin skill that runs `issue-agent` carries `--out`
   and never `--json`, so the key value never reaches the model's context
-  (docs/cli/reference.md, "The oml-admin plugin").
+  (docs/cli/reference.md, "The oml-admin plugin"), and names its key right
+  after `issue-agent` with a name the creation grammar admits (ADR-0026 d2,
+  d12, d14);
+- every `--workarea` a command on a plugin page passes is a workarea name or
+  the placeholder `<workarea>`, never an id, so the pages show the name an
+  operator types (ADR-0026 d4, d14).
 """
 
 import json
 import re
+import shlex
 import sys
 import tomllib
 from pathlib import Path
@@ -32,6 +38,13 @@ ADMIN_SKILL = "skills/issue-agent-key/SKILL.md"
 # A fenced block, indented or not, and an inline code span outside one.
 FENCE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
 SPAN = re.compile(r"`([^`\n]+)`")
+# A name, as docs/api/http-api.md "Names and ids" declares it (ADR-0026 d2):
+# a lowercase RFC 1035 label that is neither the hex-and-dash id form nor 32
+# hexadecimal digits; the creation grammar also refuses the derived form.
+LABEL = re.compile(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?")
+ID_FORM = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+HEX32 = re.compile(r"[0-9a-f]{32}")
+DERIVED = re.compile(r"(?:tenant|wa|crew|key)-[0-9a-f]{32}")
 
 
 def main() -> int:
@@ -78,6 +91,7 @@ def main() -> int:
 
     for doc in [plugin_dir / "skills/oml-memory/SKILL.md", plugin_dir / "README.md"]:
         text = doc.read_text()
+        check_workarea_flags(doc, text, errors)
         named = set(re.findall(r"`(oml_[a-z_]+)`", text))
         for tool in sorted(served - named):
             errors.append(f"{doc.relative_to(ROOT)} does not name the served tool {tool}")
@@ -112,7 +126,9 @@ def check_admin(entries: dict, workspace_version: str, errors: list[str]) -> Non
     if not skill_path.is_file():
         errors.append(f"{skill_path} is missing")
         return
-    runs = [c for c in commands(skill_path.read_text()) if re.search(r"\boml\b", c) and "issue-agent" in c]
+    skill = skill_path.read_text()
+    check_workarea_flags(skill_path, skill, errors)
+    runs = [c for c in commands(skill) if re.search(r"\boml\b", c) and "issue-agent" in c]
     if not runs:
         errors.append(f"{ADMIN_SKILL} runs no `oml keys issue-agent` command")
     for run in runs:
@@ -121,6 +137,43 @@ def check_admin(entries: dict, workspace_version: str, errors: list[str]) -> Non
             errors.append(f"{ADMIN_SKILL} runs issue-agent without --out: {run.strip()}")
         if "--json" in flags:
             errors.append(f"{ADMIN_SKILL} runs issue-agent with --json: {run.strip()}")
+        words = tokens(run)
+        after = words[words.index("issue-agent") + 1 :] if "issue-agent" in words else []
+        if not after or not is_name(after[0], creation=True):
+            errors.append(
+                f"{ADMIN_SKILL} runs issue-agent without a key name the creation grammar admits "
+                f"right after it (ADR-0026 d2, d12): {run.strip()}"
+            )
+
+
+def check_workarea_flags(page: Path, text: str, errors: list[str]) -> None:
+    for command in commands(text):
+        words = tokens(command)
+        values = [b for a, b in zip(words, words[1:]) if a == "--workarea"]
+        values += [w.split("=", 1)[1] for w in words if w.startswith("--workarea=")]
+        for value in values:
+            if value != "<workarea>" and not is_name(value):
+                errors.append(
+                    f"{page.relative_to(ROOT)} passes --workarea {value}, not a workarea name or "
+                    f"<workarea> (ADR-0026 d4): {command.strip()}"
+                )
+
+
+def is_name(value: str, creation: bool = False) -> bool:
+    """Whether `value` is a name under ADR-0026 d2's reference grammar, or,
+    with `creation`, under its creation grammar."""
+    if not LABEL.fullmatch(value) or ID_FORM.fullmatch(value) or HEX32.fullmatch(value):
+        return False
+    return not (creation and DERIVED.fullmatch(value))
+
+
+def tokens(command: str) -> list[str]:
+    """A command's words as a POSIX shell splits them; on a quote the shell
+    could not close, split on whitespace instead."""
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
 
 
 def commands(text: str) -> list[str]:
