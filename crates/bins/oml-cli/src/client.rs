@@ -61,9 +61,14 @@ pub struct Client {
 impl Client {
     #[must_use]
     pub fn new(server: String, key: Option<String>) -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build();
+        Self::with_timeout(server, key, Duration::from_secs(30))
+    }
+
+    /// A client whose every request, connection included, ends after
+    /// `timeout`.
+    #[must_use]
+    pub fn with_timeout(server: String, key: Option<String>, timeout: Duration) -> Self {
+        let agent = ureq::AgentBuilder::new().timeout(timeout).build();
         Self {
             agent,
             server: server.trim_end_matches('/').to_owned(),

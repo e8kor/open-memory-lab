@@ -2,7 +2,9 @@
 //! HTTP API (ADR-0015, cli/reference.md). Exit codes per the reference's
 //! conventions: 0 success, 1 a typed server refusal (or a failed
 //! verification/doctor verdict), 2 local failure. `--json` emits exactly one
-//! JSON document on stdout — the server's typed response, unreshaped.
+//! JSON document on stdout — the server's typed response, unreshaped. The one
+//! exception is `oml hook session-start`, which always exits 0 and prints the
+//! hook document Claude Code reads, or nothing (ADR-0029).
 
 // The argument doc comments are clap's --help text, where a placeholder such
 // as <role> must print as written rather than as markdown code.
@@ -18,6 +20,7 @@ use uuid::Uuid;
 
 use oml_cli::client::{CallOpts, CliError, Client};
 use oml_cli::creds::{self, Credentials};
+use oml_cli::hook;
 use oml_cli::issue::{KeyFile, sh_quote, with_reader_beside_writers};
 use oml_cli::verify::parse_verifying_key;
 
@@ -86,6 +89,19 @@ enum Command {
     },
     /// Each health signal with a verdict; exit 1 on any fail.
     Doctor,
+    /// Claude Code hooks of the agent plugin, run under the agent's own key.
+    Hook {
+        #[command(subcommand)]
+        command: HookCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCommand {
+    /// Print the SessionStart context from OML_URL and OML_API_KEY alone —
+    /// steering, this key's recent submissions, the matching memories — or
+    /// nothing; always exits 0 (ADR-0029).
+    SessionStart,
 }
 
 #[derive(Subcommand)]
@@ -342,6 +358,15 @@ fn main() -> ExitCode {
     reason = "one flat dispatch arm per CLI verb; splitting it would only scatter the verb table"
 )]
 fn run(cli: &Cli) -> Result<ExitCode, CliError> {
+    // The hook reads OML_URL and OML_API_KEY alone, so it runs before the
+    // stored admin credentials are loaded, and ignores --server and --key
+    // (ADR-0029 d4).
+    if let Command::Hook {
+        command: HookCommand::SessionStart,
+    } = &cli.command
+    {
+        return Ok(run_session_start());
+    }
     let stored = creds::load();
     match &cli.command {
         Command::Bootstrap {
@@ -689,7 +714,28 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         } => run_verify_chain(cli, &stored, args),
 
         Command::Doctor => run_doctor(cli, &stored),
+        Command::Hook { .. } => unreachable!("the hook ran before the credentials were loaded"),
     }
+}
+
+/// `oml hook session-start`: the hook document on stdout, or nothing, and at
+/// most one line on stderr; exit 0 whatever happened, so a session always
+/// starts (ADR-0029 d5).
+fn run_session_start() -> ExitCode {
+    use std::io::Write as _;
+    let var = |name: &str| std::env::var(name).ok();
+    // A closed stream is not a reason to exit non-zero: writes are not
+    // unwrapped, as println! would.
+    match hook::session_start(&var, &mut std::io::stdin().lock()) {
+        Ok(document) => {
+            let _ = writeln!(std::io::stdout(), "{document}");
+        }
+        Err(Some(reason)) => {
+            let _ = writeln!(std::io::stderr(), "oml hook session-start: {reason}");
+        }
+        Err(None) => {}
+    }
+    ExitCode::SUCCESS
 }
 
 fn write_opts() -> CallOpts {
