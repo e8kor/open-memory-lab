@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design cover, and what each revision changed
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design and 0.3.0-design cover, and what each revision changed
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design co
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.2.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.3.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,197 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.3.0-design
+
+### 2026-10-31 — Names as keys (implementation)
+
+An implementation milestone; no decision changes. The code now serves what the proposed
+[ADR-0026](adr/ADR-0026-names-are-keys.md) decides on every verb this build serves, except what is
+listed as unbuilt below, which also names the verbs ADR-0026 reaches that this build does not
+serve. The record stays proposed: no Status line moves, `info.version` stays `0.3.0-design`, no
+`spec-v0.3` tag is cut, and no package version moves until the release.
+
+- **Classification at parse** (d2, d3). Every workarea, crew, key and tenant reference is an id in
+  the RFC 9562 hex-and-dash form whose version digit is not `8`, or a name under the reference
+  grammar, the derived form included; anything else is `request.validation` with `details.field`
+  naming the field, so a path and an uppercase name are refused, never lowercased. A creation
+  refuses the derived form, and a name that names no row is replaced by its version-8 unresolved
+  value.
+- **Storage** (d1, d5, d6, d10). Migration `0006_names.sql` adds the `crews` table and the `name`
+  columns with their unique indexes, keeps the PoC's `tenants.name` and `workareas.name` as
+  `prior_name`, ties `universe` to the root with a CHECK, and names nothing. The unique index is
+  `name.taken`'s authority, so a creation that loses a race journals nothing, and a revoked key
+  keeps its name, which still resolves; the one revocation this build journals is the server's
+  own, of an issuance that failed after its `key.issued`.
+- **Resolution and crews** (d4, d5, d8, d9, d15). Every use case resolves the workareas, crews and
+  keys it is given after the verb ceiling and before any read, so an unknown or unreadable name
+  answers `access.not_found` in the same step, with the same code and details, as its id would.
+  Admin keys create, read and update crew records, journalled as `crew.created` and `crew.updated`;
+  `workarea.create` and `workarea.crew_updated` journal `crew_id`, and `key.issued` journals the
+  key's `name` and `crew_id`. The bootstrap claim and `POST /v2/keys` refuse a body with no name,
+  or one the creation grammar refuses, as `request.validation` with `details.field` `/name`, the
+  claim only after its enrollment token. An admin key reads workarea structure across its tenant by
+  key role, the workarea read listing every child with `my_effective_verbs` empty, and still
+  answers `access.verb_ceiling` on every claim read; a global denial on an admin key is refused.
+- **The lead's start** (d11, d15). Before it serves, the lead names every row that predates names,
+  in one `system.names_assigned` per chain: the root `universe`, a usable creation-time name kept,
+  every other row in the derived form, and each distinct crew object one crew record. In the same
+  commit it lifts each global denial on an admin key, one `key.denial_lifted` apiece with
+  `reason_digest` over `adr-0026-d15`, folded into `key_denials.lifted_epoch`. A second start
+  journals nothing; a lead that leaves a row unnamed reports `names_assigned` not ready on
+  `/readyz` and answers every other route `system.unavailable`.
+- **HTTP and MCP** (d4, d5, d8, d9, d15). Every header, path parameter, query parameter and body
+  field the transport takes for a workarea, crew or key takes its id or its name, among them
+  `X-OML-Workarea`, `{workarea_id}`, `{key_id}`, the listing's `workarea_id`, `parent_id`, a
+  grant's `workarea_node_id`, a denial's `subtree_node_id`, `default_workarea_id` and `crew`.
+  `name.taken` answers 409; `GET` and `POST /v2/crews`, `GET /v2/crews/{crew_id}`,
+  `POST /v2/crews/{crew_id}/update`, `POST /v2/workareas/{workarea_id}/crew` and
+  `GET /v2/workareas/{workarea_id}/tree` are served, the tree a page at a time under a cursor
+  bound to the key, an admin key reading every node by its key role and a reader key every node
+  within its read access; workarea responses carry `name` and `crew`, the crew record or null, and
+  key responses `name`; and `GET /v2/keys/{key_id}` answers a key by its id or its name. A
+  `workarea` on `POST /v2/review/next`, by id or by name, is refused as `request.validation` with
+  `details.field` `/workarea`, never ignored, because the queue filter is not built and the queue
+  is served whole. The served entries of [mcp-tools.json](api/mcp-tools.json) take a workarea's
+  name and their `_meta.pending_design` notes for names are gone, and `oml_workarea_info` answers
+  `crew` null for a workarea that names none.
+- **CLI** (d2, d3, d4, d8, d12, d15). Every argument that names a workarea, crew, key or tenant
+  takes its id or its name, sent as typed for the server to resolve, as one percent-encoded segment
+  where the route takes it in its path; one a path carries that is empty, `.` or `..` is refused
+  before anything is sent, exit `2`, since no path carries it as one segment. Among them are the
+  `--grant <workarea>:<role>`, `--default-workarea`, `--workarea` and `--crew` of
+  `oml keys issue <key-name>` and `oml keys issue-agent <key-name>`, `oml keys show <key>`,
+  `oml deny set <key> <subtree>`, `oml submit --workarea`, `oml recall --workarea` and
+  `oml audit verify-chain --tenant`. `oml keys issue-agent` keeps
+  [ADR-0028](adr/ADR-0028-agent-key-issuance.md) d1's `--out`, d2's reader grant and `--write-only`;
+  `oml crews create`, `update`, `list` and `show` administer crew records;
+  `oml workareas create <parent> <name>` takes `--crew`, and `oml workareas crew set <workarea>
+  --crew <crew>` points a workarea at another crew record; `oml workareas show` and `tree` run
+  under an admin context, `tree` reading every page of the tree read; and the human layout of
+  `oml keys show` prints a `revoked` line, the key's revocation time or `no (live)`.
+- **Plugins** (d14). The `oml-admin` skill asks for the key's name and the workarea's name and
+  passes them to `issue-agent`, with `--crew` when the operator names a crew, still only with
+  `--out` and never with `--json`. The `oml` plugin's README and skill say that a workarea
+  argument takes the workarea's name or its id, and the [agent plugin](api/mcp-plugin.md) page's
+  `issue-agent` synopsis carries the key name. `scripts/check_plugin.py` now also fails if the
+  skill's `issue-agent` run does not name its key right after the verb with a name the creation
+  grammar admits, or if a command on a plugin page passes `--workarea` anything but a workarea
+  name or `<workarea>`.
+- **SDKs and the chart** (d1, d10, d12). Both generated layers of the [SDKs](engineering/sdks.md)
+  are regenerated from this `openapi.yaml`, as their regeneration rule asks; both wrappers raise
+  `NamingError` for the `name` family, named so beside Python's `NameError`; and both test harnesses
+  name the keys they claim and issue. The Helm chart's install notes and the
+  [deployment](operations/deployment.md) page's claim through a port-forward run
+  `oml bootstrap claim <key-name>`.
+- **Checks:** `crates/oml-domain/tests/names.rs`, the port contracts of
+  `testing/oml-port-contracts`, which both stores run, `crates/adapters/oml-pg/tests/pg_store.rs`,
+  `crates/oml-app/tests/use_cases.rs`, `crates/bins/oml-server-lead/tests/http_api.rs` and
+  `mcp_facade.rs`, and `crates/bins/oml-cli/tests/cli_e2e.rs` run in `cargo test --workspace`.
+- **Still unbuilt.** The verbs ADR-0026 reaches that this build does not serve, so no name reaches
+  them either: key revocation (`POST /v2/keys/{key_id}/revoke`, `oml keys revoke`) and rotation, and
+  so `new_name` on `key.rotated` and `oml keys rotate <key> <new-key-name>`; the key listing
+  (`GET /v2/keys`) and `oml keys list`, so d10's revoked key is read as history only through
+  `GET /v2/keys/{key_id}` and `oml keys show`; of the other verbs d9 addresses by the key's name,
+  adding or revoking a grant after issuance, lifting a denial and the effective-access read; d15's
+  lookup by path (`GET /v2/workareas?path=`) and its `edges` and `status` reads under
+  `GET /v2/workareas/{workarea_id}`; the re-parent's `new_parent_id`, a workarea edge's
+  `to_workarea_id` and the reassign's `workarea_id`; the queue filter, `workarea` on
+  `POST /v2/review/next`, refused by name above; and a simulation audience's `key_id`. The
+  operator tier is unbuilt, and so are tenant names beyond the one tenant the bootstrap claim
+  creates, operator keys and the provider's key namespace, `tenant_id` on issuance and
+  `POST /v2/tenants`. So are the independence axis's crew and manager comparisons at promotion,
+  whose domain functions exist and which no promotion calls yet. Two pieces differ from the design
+  because the operator tier is unbuilt: the PoC has no provider chain, so each tenant's name is
+  journalled in its own chain's `system.names_assigned`; and the bootstrap claim mints the tenant's
+  first admin key, so its `name` is checked in that tenant's namespace, not the provider's. Two
+  listings are ordered otherwise than the [pagination](api/http-api.md#pagination) convention's
+  `created_at` descending: the tree is served in path order, a node before its children and
+  siblings by name in byte order, its cursor carrying the last path served, where newest first
+  would list a node's children before it; and the crew listing is served in name order.
+- **Pages touched:** this page and the [agent plugin](api/mcp-plugin.md) (the `issue-agent`
+  synopsis); [mcp-tools.json](api/mcp-tools.json) and the [CLI reference](cli/reference.md)
+  change with the code that serves them; the [runbooks](operations/runbooks.md) spell every key
+  argument `<key>`, as the CLI reference does; outside `docs/`, `README.md` (the honest status),
+  `plugins/oml/README.md`, `plugins/oml/skills/oml-memory/SKILL.md`,
+  `plugins/oml-admin/skills/issue-agent-key/SKILL.md` and `scripts/check_plugin.py`; and, with
+  the SDKs and the chart, [SDKs](engineering/sdks.md), [deployment](operations/deployment.md),
+  `sdks/` and `deploy/helm/oml/templates/NOTES.txt`.
+
+### 2026-10-30 — names as keys (ADR-0026)
+
+[ADR-0026](adr/ADR-0026-names-are-keys.md), accepted by the maintainer on 2026-10-31 with release v0.3.0, gives workareas, crews, keys and tenants a
+name that is a unique, immutable key beside the id. It proposes amending ADR-0008 (d3, d7), ADR-0010
+(d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14) and ADR-0028 (d1, d3);
+each of those records' Status lines gains the back-pointer when ADR-0026 is accepted.
+
+- **Decided:** one flat namespace per kind — the tenant for workareas, crews and keys (operator keys
+  share the provider's), the deployment for tenants — with names never changed and never released,
+  and the reserved provider tenant carrying none; a lowercase RFC 1035 label as the grammar,
+  refusing every spelling that could read as an id, with no case mapping, and the derived form of
+  rows that predate names refused at creation and accepted in a reference; the ids of the four kinds
+  fixed as RFC 9562 hex-and-dash UUID text, minted as version 4 and never version 8, so a value in
+  that form is always an id; names accepted wherever an id is — `/v1` and `/v2` path parameters,
+  query parameters and body fields, `X-OML-Workarea`, MCP tool arguments and CLI arguments — and
+  resolved on the server by substituting the id after the verb ceiling, in a namespace fixed by the
+  caller and the kind, so an unknown or unreadable name answers exactly what its id would, with no
+  refusal naming an id a name resolved to beyond what the naming rule already discloses, and an
+  unknown name takes a deterministic version-8 unresolved value of its own that shares no
+  idempotency scope; the request digest over paths and bodies as sent, with `X-OML-Workarea` outside
+  it and resolved into the provider ring's record scope; `name.taken` (409) for a taken name at
+  creation, which only admin and operator keys, and the holder of a valid enrollment token at the
+  bootstrap claim, can receive; an operator key's operator keys issued without `tenant_id` and named
+  in the provider's namespace, and its first admin key for a tenant refused once that tenant has
+  held any key; the root named `universe` in every tenant; paths derived from names, served and
+  looked up but never accepted as a reference; crews as named records that workareas and keys
+  reference, created and updated by admins only, with the independence axis reading a key's crew and
+  failing closed where none is named; a key's name distinct from its principal and label, and a
+  rotation's successor named afresh; the naming of rows that predate names by a deterministic rule
+  journalled as `system.names_assigned`, which lists kept names too, read before the creation events
+  it names by a re-fold, with the PoC's name columns kept as `prior_name`, every pre-names denial on
+  an admin key lifted in the same commit, and followers not ready until the event is folded; the
+  key's name as the positional argument of `oml keys issue-agent` and its crew as `--crew`, and
+  every creating CLI verb's name positional, `oml bootstrap claim` included (d12), while the verb,
+  its `--out` key file, reader grant default and `oml-admin` plugin moved to
+  [ADR-0028](adr/ADR-0028-agent-key-issuance.md) so they ship before names (d13 and d14 point
+  there); and admin keys reading the structure of every workarea in their tenant without grants —
+  the workarea read, the lookup by path, the tree, edges and status — and never claim content, with
+  no global denial on an admin key, declared in the roles-and-keys permission matrix (d15).
+- **Surface:** the `name` error family with `name.taken` (errors.md, the OpenAPI `ErrorCode` enum
+  and http-api.md's tables together); `GET /v2/crews`, `POST /v2/crews`, `GET /v2/crews/{crew_id}`
+  and `POST /v2/crews/{crew_id}/update`; the `crew.created`, `crew.updated` and
+  `system.names_assigned` events; `crew_id` in place of the crew object on `workarea.create` and
+  `workarea.crew_updated`; `name` and `crew_id` on `key.issued`, `new_name` on `key.rotated`,
+  `reason_digest` on `key.denial_lifted`; the `oml_name` domain, the `tenants` and `crews` tables
+  and the `name` columns with their unique indexes, and the PoC's name columns kept as `prior_name`;
+  the OpenAPI `Id` refusing version 8; the OpenAPI `NameRef` schema for references beside `Name` for
+  creations; `name` and `crew_id` on the lake's `gold.areas` in place of its three crew columns.
+  Example ids of the four kinds are rewritten to UUID text on the OpenAPI document, the agent
+  plugin, the reviewer-crews pages and the CLI sessions; the other example ids are untouched.
+- **`info.version` 0.2.0-design → 0.3.0-design**, because `/v1` changes on the request side:
+  `X-OML-Workarea` and the listing's `workarea_id` accept names, and a value that is neither an id
+  nor a name, which 0.2.0-design answered `access.not_found`, now answers `request.validation`. That
+  narrowing is permitted only because `/v1` is not frozen (FR-21). The 0.2.0-design revision was
+  tagged `spec-v0.2` when ADR-0025 was accepted, so this record cannot share its bump; `spec-v0.3`
+  is cut when ADR-0026 is accepted.
+- **Pages touched:** [ADR-0026](adr/ADR-0026-names-are-keys.md), the
+  [decision register](adr/index.md) (row and the D7, D9, D13 and D14 cells),
+  [workareas](architecture/workareas.md), [roles and keys](architecture/roles-and-keys.md),
+  [concepts](concepts.md), [HTTP API](api/http-api.md), [OpenAPI](api/openapi.yaml),
+  [errors](api/errors.md), [mcp-tools.json](api/mcp-tools.json) (unserved tools' descriptions and
+  `_meta.pending_design`; the tool count is unchanged), [agent plugin](api/mcp-plugin.md),
+  [reviewer crews](api/reviewer-crews.md) (example ids), [PostgreSQL schema](data/postgres-schema.md),
+  [event catalog](data/event-catalog.md), [Delta tables](data/delta-tables.md) (`gold.areas`),
+  [CLI reference](cli/reference.md),
+  [CLI sessions](cli/sessions.md), [deployment](operations/deployment.md) and
+  [runbooks](operations/runbooks.md) (the CLI invocations whose arguments changed),
+  [observability](operations/observability.md) (the `names_assigned` doctor line),
+  [llms.txt](llms.txt), this changelog, `mkdocs.yml` and `CONTRIBUTING.md` (the vocabulary row);
+  the spec version also on the [home page](index.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md),
+  which also states that the upgrade adding names stops every earlier binary before it migrates.
+- **Roadmap:** no row opens or closes. Name resolution's request-path cost is unmeasured and is
+  tracked against FR-25.
 
 ## 0.2.0-design
 

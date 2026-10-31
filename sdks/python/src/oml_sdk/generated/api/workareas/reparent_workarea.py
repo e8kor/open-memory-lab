@@ -81,7 +81,9 @@ def sync_detailed(
      Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (ReparentRequest):
 
@@ -118,7 +120,9 @@ def sync(
      Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (ReparentRequest):
 
@@ -150,7 +154,9 @@ async def asyncio_detailed(
      Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (ReparentRequest):
 
@@ -185,7 +191,9 @@ async def asyncio(
      Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (ReparentRequest):
 

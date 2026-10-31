@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -15,7 +15,9 @@ T = TypeVar("T", bound="DenialRequest")
 class DenialRequest:
     """
     Attributes:
-        workarea_node_id (str):
+        workarea_node_id (str): A workarea, by its node id or its name. Resolved server-side before any check that reads
+            state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+            (request.validation).
         reason (str | Unset):
     """
 
@@ -24,6 +26,7 @@ class DenialRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        workarea_node_id: str
         workarea_node_id = self.workarea_node_id
 
         reason = self.reason
@@ -43,7 +46,11 @@ class DenialRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        workarea_node_id = d.pop("workarea_node_id")
+
+        def _parse_workarea_node_id(data: object) -> str:
+            return cast(str, data)
+
+        workarea_node_id = _parse_workarea_node_id(d.pop("workarea_node_id"))
 
         reason = d.pop("reason", UNSET)
 

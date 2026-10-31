@@ -69,10 +69,14 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | WorkareaEdgePage]:
     """Labelled related edges touching the node, pending and ratified; edges confer zero access.
 
-     Requires: reader effective access.
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
 
@@ -106,10 +110,14 @@ def sync(
 ) -> ErrorEnvelope | WorkareaEdgePage | None:
     """Labelled related edges touching the node, pending and ratified; edges confer zero access.
 
-     Requires: reader effective access.
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
 
@@ -138,10 +146,14 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | WorkareaEdgePage]:
     """Labelled related edges touching the node, pending and ratified; edges confer zero access.
 
-     Requires: reader effective access.
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
 
@@ -173,10 +185,14 @@ async def asyncio(
 ) -> ErrorEnvelope | WorkareaEdgePage | None:
     """Labelled related edges touching the node, pending and ratified; edges confer zero access.
 
-     Requires: reader effective access.
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
 

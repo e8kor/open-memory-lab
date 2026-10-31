@@ -18,7 +18,12 @@ def _get_kwargs(
 
     params: dict[str, Any] = {}
 
-    params["workarea"] = workarea
+    json_workarea: str | Unset
+    if isinstance(workarea, Unset):
+        json_workarea = UNSET
+    else:
+        json_workarea = workarea
+    params["workarea"] = json_workarea
 
     params["limit"] = limit
 
@@ -77,7 +82,9 @@ def sync_detailed(
     access.verb_ceiling before any lookup (ADR-0025 d1).
 
     Args:
-        workarea (str | Unset):
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
 
@@ -115,7 +122,9 @@ def sync(
     access.verb_ceiling before any lookup (ADR-0025 d1).
 
     Args:
-        workarea (str | Unset):
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
 
@@ -148,7 +157,9 @@ async def asyncio_detailed(
     access.verb_ceiling before any lookup (ADR-0025 d1).
 
     Args:
-        workarea (str | Unset):
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
 
@@ -184,7 +195,9 @@ async def asyncio(
     access.verb_ceiling before any lookup (ADR-0025 d1).
 
     Args:
-        workarea (str | Unset):
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
 

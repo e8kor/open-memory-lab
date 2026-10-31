@@ -79,7 +79,7 @@ Authorization: Bearer <dreamer key>
 {
   "items": [
     {
-      "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
       "workarea_path": "universe.procurement.metals-crew",
       "held": 2,
       "oldest_age_seconds": 5460
@@ -102,7 +102,7 @@ Authorization: Bearer <dreamer key>
 Idempotency-Key: crew-review/run-818/next-1
 Content-Type: application/json
 
-{ "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
+{ "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286" }
 ```
 
 The server serves **exactly one** held item — body, every attachment as a fetch descriptor,
@@ -120,7 +120,7 @@ it (`review.author_in_lineage` per item): the server never serves what this key 
     "version": 1,
     "kind": "memory",
     "state": "held",
-    "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+    "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
     "workarea_path": "universe.procurement.metals-crew",
     "principal": "crew-procure/agent-4",
     "provenance": "agent",
@@ -208,7 +208,7 @@ The second held item in the queue is the derived fact from
     "version": 1,
     "kind": "derived_fact",
     "state": "held",
-    "workarea_id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+    "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
     "derives_from": [
       "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
       "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",

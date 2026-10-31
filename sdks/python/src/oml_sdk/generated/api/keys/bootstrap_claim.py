@@ -73,7 +73,10 @@ def sync_detailed(
 
      Authenticated by the enrollment token itself (no API key exists yet). The token is minted by the
     Helm bootstrap job, consumed on first use; a consumed, expired or unknown token answers auth.invalid
-    with details.reason naming which. Journalled as issued-without-value in the provider chain.
+    with details.reason naming which. The token is checked first; only then is name checked against the
+    creation grammar (request.validation) and the provider's namespace (409 name.taken), and a refusal
+    after the token check consumes no token and journals nothing (ADR-0026 d5). Journalled as issued-
+    without-value in the provider chain.
 
     Args:
         body (BootstrapClaimBody):
@@ -107,7 +110,10 @@ def sync(
 
      Authenticated by the enrollment token itself (no API key exists yet). The token is minted by the
     Helm bootstrap job, consumed on first use; a consumed, expired or unknown token answers auth.invalid
-    with details.reason naming which. Journalled as issued-without-value in the provider chain.
+    with details.reason naming which. The token is checked first; only then is name checked against the
+    creation grammar (request.validation) and the provider's namespace (409 name.taken), and a refusal
+    after the token check consumes no token and journals nothing (ADR-0026 d5). Journalled as issued-
+    without-value in the provider chain.
 
     Args:
         body (BootstrapClaimBody):
@@ -136,7 +142,10 @@ async def asyncio_detailed(
 
      Authenticated by the enrollment token itself (no API key exists yet). The token is minted by the
     Helm bootstrap job, consumed on first use; a consumed, expired or unknown token answers auth.invalid
-    with details.reason naming which. Journalled as issued-without-value in the provider chain.
+    with details.reason naming which. The token is checked first; only then is name checked against the
+    creation grammar (request.validation) and the provider's namespace (409 name.taken), and a refusal
+    after the token check consumes no token and journals nothing (ADR-0026 d5). Journalled as issued-
+    without-value in the provider chain.
 
     Args:
         body (BootstrapClaimBody):
@@ -168,7 +177,10 @@ async def asyncio(
 
      Authenticated by the enrollment token itself (no API key exists yet). The token is minted by the
     Helm bootstrap job, consumed on first use; a consumed, expired or unknown token answers auth.invalid
-    with details.reason naming which. Journalled as issued-without-value in the provider chain.
+    with details.reason naming which. The token is checked first; only then is name checked against the
+    creation grammar (request.validation) and the provider's namespace (409 name.taken), and a refusal
+    after the token check consumes no token and journals nothing (ADR-0026 d5). Journalled as issued-
+    without-value in the provider chain.
 
     Args:
         body (BootstrapClaimBody):

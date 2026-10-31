@@ -85,6 +85,10 @@ export class IdempotencyError extends ApiError {
 export class SubmissionError extends ApiError {
   override name = "SubmissionError";
 }
+/** `name`: workarea, crew, key and tenant names (named as the Python client names it). */
+export class NamingError extends ApiError {
+  override name = "NamingError";
+}
 /** `workarea`: structure and status refusals. */
 export class WorkareaError extends ApiError {
   override name = "WorkareaError";
@@ -132,6 +136,7 @@ export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze
   request: RequestError,
   idempotency: IdempotencyError,
   submission: SubmissionError,
+  name: NamingError,
   workarea: WorkareaError,
   review: ReviewError,
   simulation: SimulationError,

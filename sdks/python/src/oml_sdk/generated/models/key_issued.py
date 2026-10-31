@@ -26,6 +26,7 @@ class KeyIssued:
     """
     Attributes:
         key_id (str):
+        name (str): Unique in the key's namespace, never changed, never released (ADR-0026 d1, d10).
         role (Role):
         default_workarea_id (None | str): The key's default workarea; for an issued key, as key.issued journals it — the
             one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance
@@ -34,6 +35,8 @@ class KeyIssued:
             for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2).
         value (str): The secret — returned exactly once, journalled as issued-without-value.
         principal (str | Unset):
+        crew_id (None | str | Unset): The key's crew record, as key.issued journals it; null when none was named
+            (ADR-0026 d8).
         label (str | Unset):
         expiry (datetime.datetime | None | Unset):
         revoked_at (datetime.datetime | None | Unset):
@@ -44,11 +47,13 @@ class KeyIssued:
     """
 
     key_id: str
+    name: str
     role: Role
     default_workarea_id: None | str
     held_by: KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None
     value: str
     principal: str | Unset = UNSET
+    crew_id: None | str | Unset = UNSET
     label: str | Unset = UNSET
     expiry: datetime.datetime | None | Unset = UNSET
     revoked_at: datetime.datetime | None | Unset = UNSET
@@ -60,6 +65,8 @@ class KeyIssued:
 
     def to_dict(self) -> dict[str, Any]:
         key_id = self.key_id
+
+        name = self.name
 
         role = self.role.value
 
@@ -79,6 +86,12 @@ class KeyIssued:
         value = self.value
 
         principal = self.principal
+
+        crew_id: None | str | Unset
+        if isinstance(self.crew_id, Unset):
+            crew_id = UNSET
+        else:
+            crew_id = self.crew_id
 
         label = self.label
 
@@ -125,6 +138,7 @@ class KeyIssued:
         field_dict.update(
             {
                 "key_id": key_id,
+                "name": name,
                 "role": role,
                 "default_workarea_id": default_workarea_id,
                 "held_by": held_by,
@@ -133,6 +147,8 @@ class KeyIssued:
         )
         if principal is not UNSET:
             field_dict["principal"] = principal
+        if crew_id is not UNSET:
+            field_dict["crew_id"] = crew_id
         if label is not UNSET:
             field_dict["label"] = label
         if expiry is not UNSET:
@@ -157,6 +173,8 @@ class KeyIssued:
 
         d = dict(src_dict)
         key_id = d.pop("key_id")
+
+        name = d.pop("name")
 
         role = Role(d.pop("role"))
 
@@ -205,6 +223,15 @@ class KeyIssued:
         value = d.pop("value")
 
         principal = d.pop("principal", UNSET)
+
+        def _parse_crew_id(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        crew_id = _parse_crew_id(d.pop("crew_id", UNSET))
 
         label = d.pop("label", UNSET)
 
@@ -273,11 +300,13 @@ class KeyIssued:
 
         key_issued = cls(
             key_id=key_id,
+            name=name,
             role=role,
             default_workarea_id=default_workarea_id,
             held_by=held_by,
             value=value,
             principal=principal,
+            crew_id=crew_id,
             label=label,
             expiry=expiry,
             revoked_at=revoked_at,

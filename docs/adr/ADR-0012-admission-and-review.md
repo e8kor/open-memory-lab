@@ -7,7 +7,7 @@ answers: why review capacity is external crews rather than provider model calls;
 
 # ADR-0012 — Admission and review: external crews, serve binding, policy objects
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
 
 ## Context
 

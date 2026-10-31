@@ -1,6 +1,7 @@
 //! The M1 domain model slice: roles, key holders, the claim kinds, the claim
-//! state set and its transition function, capture's NFC normalization, and the
-//! constitution's R2 reviewer check (ADR-0001 d2, admission.md).
+//! state set and its transition function, capture's NFC normalization, the
+//! constitution's R2 reviewer check (ADR-0001 d2, admission.md), and the
+//! crew comparisons of the independence axis (ADR-0026 d8).
 
 use std::collections::BTreeSet;
 
@@ -220,4 +221,44 @@ pub fn check_reviewer(
         return Err(VerdictError::KeyInLineage(reviewer_key_id));
     }
     Ok(())
+}
+
+/// A key's crew as the journal holds it at a promotion: the crew record the
+/// key was issued into, fixed for the key's life, and that record's
+/// external manager (ADR-0026 d8; roles-and-keys.md, review independence).
+/// A key with no crew is `None` where one is asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyCrew {
+    pub crew_id: Uuid,
+    pub external_manager: Option<String>,
+}
+
+/// Whether a verdict establishes a crew-inequality requirement of the
+/// independence axis: the authoring key and the reviewing key both have a
+/// crew, and the crews differ (roles-and-keys.md, review independence;
+/// ADR-0026 d8, amending ADR-0012 d4). A key with no crew satisfies none:
+/// the verdict does not count toward the requirement, and the row waits for
+/// one that does — failing closed by holding.
+#[must_use]
+pub fn satisfies_crew_inequality(author: Option<&KeyCrew>, reviewer: Option<&KeyCrew>) -> bool {
+    match (author, reviewer) {
+        (Some(author), Some(reviewer)) => author.crew_id != reviewer.crew_id,
+        _ => false,
+    }
+}
+
+/// Whether a verdict establishes a manager-inequality requirement: both
+/// keys have a crew, both crews have an external manager, and the managers
+/// differ (ADR-0026 d8, amending ADR-0012 d4). A key with no crew, or a crew
+/// with no external manager, satisfies none, and the row waits as for
+/// [`satisfies_crew_inequality`].
+#[must_use]
+pub fn satisfies_manager_inequality(author: Option<&KeyCrew>, reviewer: Option<&KeyCrew>) -> bool {
+    match (
+        author.and_then(|c| c.external_manager.as_deref()),
+        reviewer.and_then(|c| c.external_manager.as_deref()),
+    ) {
+        (Some(author), Some(reviewer)) => author != reviewer,
+        _ => false,
+    }
 }

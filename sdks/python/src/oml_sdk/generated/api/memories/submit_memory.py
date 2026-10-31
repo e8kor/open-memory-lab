@@ -98,7 +98,9 @@ def sync_detailed(
 
     Args:
         idempotency_key (str):
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (SubmitRequest): Names no workarea: the target resolves from the key's
             default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
             with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
@@ -144,7 +146,9 @@ def sync(
 
     Args:
         idempotency_key (str):
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (SubmitRequest): Names no workarea: the target resolves from the key's
             default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
             with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
@@ -185,7 +189,9 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str):
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (SubmitRequest): Names no workarea: the target resolves from the key's
             default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
             with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
@@ -229,7 +235,9 @@ async def asyncio(
 
     Args:
         idempotency_key (str):
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (SubmitRequest): Names no workarea: the target resolves from the key's
             default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
             with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
