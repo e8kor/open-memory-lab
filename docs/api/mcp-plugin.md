@@ -1321,8 +1321,7 @@ must set `oauth.issuer` ([configuration](../operations/configuration.md)).
 `oml keys disconnect <key-id> <connection-id>` ends the connection, and revoking
 the key ends it too. A code that lapsed before use is replaced with
 `oml keys connect-code <key-id>`. Claude Code keeps the header configuration
-above; whether it can also connect this way, over a loopback redirect, is
-unverified ([FR-34](../product/roadmap.md)).
+above.
 
 ### Operational notes
 

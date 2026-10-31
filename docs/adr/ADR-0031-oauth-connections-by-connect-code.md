@@ -51,10 +51,9 @@ Metadata Documents and **MAY** support Dynamic Client Registration (RFC 7591), "
 backwards compatibility with earlier versions of the MCP authorization spec". Clients send the
 RFC 8707 `resource` parameter and S256 PKCE; servers validate exact redirect URIs, validate that a
 token was issued for them, never pass a token through, refuse tokens in the query string, and, for
-public clients, **MUST** rotate refresh tokens. Where a client ID metadata document names a
-`localhost` redirect, the authorization server **MUST** display the redirect URI's host. The
-client ID metadata document draft (draft-ietf-oauth-client-id-metadata-document-02 §3, fetched
-2026-10-31) requires a client_id URL with the `https` scheme and a path, and with no userinfo, no
+public clients, **MUST** rotate refresh tokens. The client ID metadata document draft
+(draft-ietf-oauth-client-id-metadata-document-02 §3, fetched 2026-10-31) requires a client_id URL
+with the `https` scheme and a path, and with no userinfo, no
 fragment and no single-dot or double-dot path segment, and says it SHOULD NOT carry a query. The
 OAuth security best current practice (RFC 9700 §4.4.2, fetched 2026-10-31) answers mix-up attacks,
 in which a client that talks to several authorization servers sends one server's authorization
@@ -80,8 +79,7 @@ use only the first, and only if the authorization server sends `iss`.
   egress range, `160.79.104.0/21`.
 - Claude waits up to 10 seconds for discovery, registration and token calls, and 30 seconds for a
   refresh.
-- The hosted apps redirect to exactly `https://claude.ai/api/mcp/auth_callback`; Claude Code uses a
-  loopback redirect on any port.
+- The hosted apps redirect to exactly `https://claude.ai/api/mcp/auth_callback`.
 - No secret travels in a URL.
 
 **The maintainer's three decisions, which this record designs around and does not reopen.**
@@ -266,9 +264,11 @@ constant, a policy choice; nothing about OML is measured, and what would need me
       the refresh token's whole life. A `client_id` that differs from the connection's is
       `invalid_grant` (`oauth.authorization_code_invalid` or `oauth.refresh_invalid`); an unknown
       code or refresh token is `invalid_grant` too, whatever its `client_id`. `invalid_client`
-      (`oauth.client_invalid`) answers only a request that sends client authentication — a
-      `client_secret` or an `Authorization` header — since every client is public and none holds a
-      secret. The token endpoint never fetches: its time budget (10 seconds for Claude) is spent on
+      (`oauth.client_invalid`) answers only a request that sends client authentication, since every
+      client is public and none holds a secret: a request that sends an `Authorization` header
+      gets `401` with `WWW-Authenticate` naming the scheme it used, for example `Basic
+      realm="oml"` (RFC 6749 §5.2), and one that sends a `client_secret` in the body gets `400`.
+      The token endpoint never fetches: its time budget (10 seconds for Claude) is spent on
       OML's own lookups only.
     - **Neither path journals anything** (d12).
 
@@ -292,32 +292,23 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     with no outbound HTTPS cannot verify a metadata-document client. What Claude does after a
     failed document fetch is not in the cited sources (FR-34).
 
-- **d6 — A redirect URI is admitted only by exact match against a fixed allowlist:
-  `https://claude.ai/api/mcp/auth_callback`, and loopback for Claude Code.** Matching is on the
-  strings as written in the raw registration, document or request, never after URL parsing. A
-  loopback URI is exactly `http://`, then a host that is byte-exactly `127.0.0.1`, `[::1]` or
-  `localhost`, then optionally `:` and a port of one to five ASCII digits with no leading zero and a
-  value from 1 to 65535, then a path that begins with `/`, then optionally `?` and a query; it
-  contains no `@`, `\`, `#`, `%2F`, `%2f`, `%5C` or `%5c`, no ASCII control character and no
-  whitespace. It matches a registered URI when the two are byte-equal once the `:port` part is
-  removed from each (RFC 8252 §7.3). Refused, among others: `http://localhost:1@evil.example/cb`,
-  `http://localhost:/cb`, `http://localhost:08080/cb`, `http://localhost:65536/cb`,
-  `http://127.1/cb`, `http://0x7f000001/cb`, `http://localhost./cb` and `http://LOCALHOST/cb`.
-  Every other URI matches byte for byte, port included. No
-  other `https` URI, no custom scheme, no wildcard and no fragment is admitted, at registration, in
-  a fetched document or in an authorize request. An authorize request's `redirect_uri` must be
-  exactly one of the client's registered URIs; a client with exactly one may omit it, and the token
+- **d6 — A redirect URI is admitted only when it is exactly
+  `https://claude.ai/api/mcp/auth_callback`.** Matching is byte for byte, on the parameter's value
+  after exactly one `application/x-www-form-urlencoded` decoding (in an authorize query or a token
+  body), or on the JSON string value (in a registration or a document), and never after URL
+  parsing or any further decoding. No other URI, no custom scheme, no wildcard and no fragment is
+  admitted, at registration, in a fetched document or in an authorize request. An authorize
+  request's `redirect_uri` must be exactly one of the client's registered URIs; a client with
+  exactly one may omit it, and the token
   request then follows the rule the [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)
   declares for `redirect_uri`. When the client or the
   redirect URI is refused, the page shows the refusal and never redirects (RFC 6749 §4.1.2.1).
 
     The list is fixed, not a setting, because each entry decides where an authorization code may
-    be delivered: admitting another assistant's connector is a recorded decision, not a
-    configuration change. `localhost` is admitted although RFC 8252 §8.3 calls it NOT RECOMMENDED,
-    because which loopback form Claude Code sends is not in the cited sources. The cost is that a
-    loopback redirect cannot prove which program listens, so a document naming a real client can
-    front any local program; the page names the redirect host and warns (d9), as the specification
-    requires.
+    be delivered: admitting another assistant's connector, or a loopback redirect, is a recorded
+    decision, not a configuration change. The cost is that a client returning to any other
+    address cannot connect; Claude Code keeps its key in the header
+    ([agent plugin](../api/mcp-plugin.md)).
 
 - **d7 — A connector key is an agent key issued with a connect code instead of a value; it has no
   bearer value and holds at most one open connection.** `POST /v2/keys` with `connect_code: true`
@@ -340,24 +331,19 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     minutes. `--json` prints the `201`, as every verb does. The key's name, as a positional
     argument, arrives with names (ADR-0026 d12, proposed).
 
-    **A show-once response is stored without its secret.** The idempotency record of
-    `POST /v2/keys`, `POST /v2/keys/{key_id}/connect-codes` and `POST /v2/keys/{key_id}/rotate`
-    stores its response without `value` and without `connect_code.code`, for bearer keys and
-    connector keys alike, and a replay returns that body with `Idempotency-Replay: true`. Before
-    this record a replay returned the response as first sent, so the record kept a key value in
-    the clear beside a table that keeps only its hash; after it, no idempotency record holds a key
-    value or a connect code, and the first answer is the only one that carries the secret. This
-    amends ADR-0014 d3 (the record that owns D13's idempotency: "returns the stored response" now
-    returns it without its secret) and ADR-0028 d1 (`issue-agent`'s output). A replayed answer
-    that carries no secret prints no export line and no code and writes no file: `oml keys issue`,
-    `oml keys issue-agent` with or without `--out`, `oml keys rotate` and `oml keys connect-code`
-    each remove any empty `--out` file they created, name the key id (and the successor's id after
-    a rotation) on stderr, say that the secret went only to the first answer and what replaces it —
-    revoke the key and issue another, rotate the successor, or mint a new code — and exit `2`
-    ([CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation)). The cost: an
-    issuance whose first answer is lost after the server committed it leaves a key whose value no
-    one holds, which the operator revokes; that was already the case when the CLI saw no usable
-    answer (ADR-0028 d1).
+    **A replay carries no connect code.** The idempotency record of `POST /v2/keys`
+    with `connect_code: true` and of `POST /v2/keys/{key_id}/connect-codes` stores its response
+    without `connect_code.code`, and a replay returns that body with `Idempotency-Replay: true`,
+    so no idempotency record holds a connect code and the first answer is the only one that
+    carries it. A bearer key's replay stays as ADR-0014 d3 has it; that its stored response holds
+    the value is [FR-36](../product/roadmap.md), opened by this record. This amends ADR-0014 d3
+    for the two connect-code responses ("returns the stored response" returns it without the
+    code) and ADR-0028 d1 (`issue-agent`'s output). On a replayed answer,
+    `oml keys issue-agent --connect-code` and `oml keys connect-code` print no code, name the key
+    id on stderr, say that the code went only to the first answer and that
+    `oml keys connect-code <key-id>` mints a new one, and exit `2`
+    ([CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation)). The cost: a
+    code whose first answer is lost is minted again.
 
     A key is a bearer key or a connector key, never both: a connect code for a key that has a
     value answers `oauth.connect_refused` (`bearer_key`), and a connector key is not rotated —
@@ -454,18 +440,16 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        "verified by" is the document URL's whole host, in lower-case ASCII (the punycode A-label
        form for an internationalized name), never shortened, and rendered apart from
        `client_name`, so neither a lookalike Unicode name nor a crafted `client_name` can pass for
-       another host. Above the code field, for every redirect, it says: "Enter the code only if
+       another host. Above the code field it says: "Enter the code only if
        you opened this page yourself, by adding the connector in Claude, in the last few minutes.
-       If someone sent you this link, close it." For a loopback redirect it adds: "The result goes
-       to a program on this computer. Continue only if you started this from Claude Code here."
-       Then it asks for the code.
+       If someone sent you this link, close it." Then it asks for the code.
     2. **The code.** `POST /oauth/authorize` with exactly `handle` and `connect_code` and a correct
        code of a key that is neither revoked nor expired (d8) spends the code, writes the
-       authorization request's row with the code's id and the sealed fields, under a fresh 256-bit
-       handle the confirmation's form carries, and shows what the connection will act as: the
-       tenant the key belongs to, by the name the operator gave it at `POST /v2/tenants`, which no
-       tenant admin
-       can set; the key's principal and role; every workarea it holds a grant on, with the grant's
+       authorization request's row with the code's id, key and tenant and the sealed fields,
+       under a fresh 256-bit handle the confirmation's form carries, and shows what the
+       connection will act as: the tenant the key belongs to, by the name the operator gave it
+       at `POST /v2/tenants`, which no tenant admin can set; the key's principal and role; every
+       workarea it holds a grant on, with the grant's
        role; and sentences built from the key's role and effective access, one per kind of verb
        it holds — "Claude can remember and learn as this agent in `<workareas>`." where it holds
        writer, "Claude can recall and read as this agent in `<workareas>`." where it holds reader,
@@ -486,10 +470,13 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        row's code is not voided (d8). Connect creates the connection, `authorized`, and issues an
        authorization code — 256 bits, alive 60 seconds, single use —
        on the redirect, with the `state` echoed verbatim, percent-encoded as a query parameter, and
-       `iss` (RFC 9207 §2); Cancel redirects with `access_denied`, the `state` and `iss`. The
-       connect code stays spent either way. Any other combination of fields — a code and an action
-       together, an action before a verified code, a second code after one verified — is
-       `request.validation` on the page.
+       `iss` (RFC 9207 §2); Cancel redirects with `access_denied`, the `state` and `iss`. Connect
+       and Cancel each delete the authorization request's row in their own commit, so a later
+       step-3 `POST` with that handle — a double click, the back button, Connect after Cancel —
+       names no row and answers `oauth.authorization_expired`, and one connect code yields at most
+       one connection. The connect code stays spent either way. Any other combination of
+       fields — a code and an action together, an action before a verified code, a second code
+       after one verified — is `request.validation` on the page.
 
     **Cross-site forgery.** The page sets no cookie, so a cross-site form has no ambient credential
     to ride. Each `POST` must carry the handle and either `Sec-Fetch-Site: same-origin` or, when
@@ -660,7 +647,8 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   their RFCs' error shapes, and the JSON surfaces carry them in the envelope.** Eleven codes:
   `oauth.client_invalid`, `oauth.redirect_refused`, `oauth.pkce_required`,
   `oauth.resource_mismatch`, `oauth.authorization_expired`, `oauth.connect_code_invalid`,
-  `oauth.authorization_code_invalid`, `oauth.refresh_invalid` (each `400`),
+  `oauth.authorization_code_invalid`, `oauth.refresh_invalid` (each `400`; `oauth.client_invalid`
+  is `401` at the token endpoint for a request that sent an `Authorization` header, d5),
   `oauth.origin_refused` (`403`, on the page, d9), `oauth.attach_refused` (`403`, an `/mcp` tool
   result, d11) and `oauth.connect_refused` (`422`, on `/v2`). At `/oauth/token` and
   `/oauth/register` the body is `{error, error_description}`: `error` is the RFC code a client
@@ -747,8 +735,8 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   OpenAPI document bumps the version (`CONTRIBUTING.md`, "Spec versioning and tags").
   No `/v1` operation changes: no path, request or response shape, idempotency or pagination rule,
   and no `/v1` operation answers an `oauth` code; `oauth.attach_refused` is the facade's, before
-  any `/v1` call. On `/v2` one idempotency rule changes: the record of the three show-once
-  operations stores its response without its secret (d7). The proposed ADR-0026, on another branch,
+  any `/v1` call. On `/v2` one idempotency rule changes: the record of the two connect-code
+  responses stores its response without the code (d7). The proposed ADR-0026, on another branch,
   moves
   to `0.3.0-design` as well: if its revision is still untagged when this record lands, the two
   share `0.3.0-design`; if `spec-v0.3` has been cut, this record takes `0.4.0-design` when it is
@@ -773,7 +761,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   `POST /v2/keys/{key_id}/connect-codes` and
   `POST /v2/keys/{key_id}/connections/{connection_id}/revoke` in the keys table, and the refusal
   of a connector key on the rotate row; the `connection.*` family on the events-tail table; the
-  idempotency section's rule that a show-once response is stored without its secret; the
+  idempotency section's rule that a connect-code response is stored without the code; the
   content-type convention's exceptions. [openapi.yaml](../api/openapi.yaml) mirrors all of it,
   with the `WWW-Authenticate` header on the `/mcp` `401`.
 - [Errors](../api/errors.md): the `oauth` family with its RFC mapping, the `auth` rows' challenge
@@ -794,30 +782,34 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   (five tables, `api_keys.credential`, `api_keys.hash` nullable, `lead_lease.oauth_issuer`, the
   rotation and redemption statements); [CLI reference](../cli/reference.md)
   (`--connect-code`, `oml keys connect-code`, `oml keys disconnect`, connections in
-  `oml keys show`, the refusal of `oml keys rotate` on a connector key, and what the issuing
-  verbs do with a replayed answer that carries no secret).
+  `oml keys show`, the refusal of `oml keys rotate` on a connector key, and what the connect-code
+  verbs do with a replayed answer that carries no code).
 - The [roadmap](../product/roadmap.md): RS-2 restated in ADR-0018 d3's form, its exit criterion met
-  by this record on acceptance and the row leaving the register then; FR-34 and FR-35 opened.
+  by this record on acceptance and the row leaving the register then; FR-34, FR-35 and FR-36
+  opened.
 - `README.md`: how to add OML on claude.ai and use it from a phone, marked decided, not built.
 
 **Opened.** [FR-34](../product/roadmap.md): the connection flow is designed, not built, and no live
 connection has run. It closes on the end-to-end test of the in-process lead passing in CI and a
 dated live connection from a claude.ai custom connector used from a Claude mobile app, with the
 token endpoint's latency measured against Claude's 10-second and 30-second limits; it also holds
-what the sources do not say — Claude Code's registration method and loopback form, Claude's
-behavior after a failed document fetch, `form-action` on redirects across browsers, whether Claude
-checks the `iss` of an authorization response, and how often strict rotation ends a connection.
+what the sources do not say — Claude's behavior after a failed document fetch, `form-action` on
+redirects across browsers, whether Claude checks the `iss` of an authorization response, and how
+often strict rotation ends a connection.
 [FR-35](../product/roadmap.md): the `/v1` and `/v2` `401` answers carry no `WWW-Authenticate`
 challenge, which RFC 9110 §15.5.2 requires (d2); it closes on a recorded decision and the header
-on every `401`.
+on every `401`. [FR-36](../product/roadmap.md): the idempotency record of a bearer key's issuance
+or rotation stores the response as sent, key value included (d7); it closes on a recorded decision
+and no stored response holding a key value.
 
 **Costs carried here.** An OAuth implementation, an HTML page and an outbound fetch inside the
 lead; a second error shape on one listener; one more lookup per `/mcp` call for a connection; a
 lost refresh answer ends a connection; a person who cancels or lets a code lapse needs a new one
 from the admin; a bearer client refused at `/mcp` now sees a sign-in pointer; a person who enters a
 code on a link someone else started connects the sender's client, and only the page's warning
-stands in the way; a connection opens no upload session (d11); a replayed issuance or rotation returns
-no value (d7); a restart or takeover of the lead ends every page in progress (d9); a flood of slow
+stands in the way; a connection opens no upload session (d11); a replayed connect-code issuance
+returns no code (d7); a restart or takeover of the lead ends every page in progress (d9); a flood
+of slow
 document hosts can stall document clients the cache holds no copy of (d5). The page also ends
 ADR-0015's claim that the threat model never answers for a
 browser origin, a CSP or a frame (d9): it is not the declined web console, but the threat model now
@@ -827,8 +819,8 @@ answers for all three. None is measured.
 `accepted design` with the date, and its register row follows; the Status lines of ADR-0010,
 ADR-0014, ADR-0015, ADR-0018, ADR-0025 and ADR-0028 gain "· amended by ADR-0031"; RS-2 leaves the
 register;
-[commitments](../product/commitments.md) drops RS-2 from its open questions and lists FR-34 and
-FR-35; the
+[commitments](../product/commitments.md) drops RS-2 from its open questions and lists FR-34,
+FR-35 and FR-36; the
 `spec-vX.Y` tag of d15 is cut. With the proposal, the record registers at its three points, the
 D9, D13 and D14 cells of the D-register name it, `llms.txt` names it, and one
 [changelog](../changelog.md) entry records it.
@@ -855,9 +847,10 @@ D9, D13 and D14 cells of the D-register name it, `llms.txt` names it, and one
 | **d5 — A refusal list of special-purpose addresses** | A closed list misses blocks the registries mark not globally reachable, and every new registry entry would be a hole until the list caught up; an allow-list of global unicast refuses what it does not name. |
 | **d5 — An allowlist of document hosts** | The host serving Claude's document is not in the cited sources, so the shipped list would be a guess; the redirect allowlist bounds where codes go. |
 | **d6 — A configurable redirect allowlist** | Each entry decides where an authorization code may go; that is a decision to record, not a value to set. |
-| **d6 — Refuse `localhost`** | Claude Code's loopback form is not in the sources; refusing it could leave Claude Code with no connection. |
+| **d6 — Loopback redirects for Claude Code** | Deferred: how Claude Code signs in is not in the cited sources, and it keeps its key in the header. A loopback entry would bring its own grammar, a second page warning and the residual that any local program can listen, for a client this record cannot source; admitting one is a later recorded decision. |
 | **d7 — The maintainer's rejected reading: paste the key value on OML's page** | The value would pass through the person's clipboard and browser. |
 | **d7 — Print the key value beside the code** | A second, unneeded credential for the same key, resting on a terminal. |
+| **d7 — Store every show-once response without its secret, bearer keys included** | It would change bearer-key issuance and rotation, which connections do not need and which stay unchanged; the stored value is FR-36. |
 | **d7 — Codes for bearer keys too** | One key would act through two credential paths, and the key id on a journal event could no longer say which acted without changing the signed envelope. |
 | **d7 — Rotate a connector key into a successor** | Rotation prints a successor's value, which would make it a bearer key with the connector key's grants; a successor without a value would need a new code anyway, which `oml keys connect-code` already mints. |
 | **d7 — Several open connections per key** | Several clients would share one identity, against one key per agent. |

@@ -475,15 +475,15 @@ logs or referrer headers.
 rule below); after that moment no component holds or reproduces it. The journal records
 `key.issued` as issued-without-value; log lines name keys by `key_id` only, never by value or
 hash ([observability](../operations/observability.md) owns the logging rules); journal payloads
-carry key ids, never key material; the idempotency record of an issuance or rotation stores its
-response without the value ([HTTP API — idempotency](../api/http-api.md#idempotency)). A key value
-found anywhere but the issuance terminal and the caller's `Authorization` header is a defect. A
-connector key has no value anywhere: the server mints none, and `api_keys.hash` is null
-([connections](#connections)). The one exception is the file `oml keys issue-agent
+carry key ids, never key material. A key value found anywhere but the issuance terminal and the
+caller's `Authorization` header is a defect. The one exception is the file `oml keys issue-agent
 --out` creates for it, the one place a key value may rest outside the show-once response: new,
 owner-only (mode 0600), written once, never overwritten, and the operator's to delete once the key
 is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),
-[ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1).
+[ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). The stored response in the idempotency
+record of an issuance or a rotation is a copy this rule does not yet exclude
+([FR-36](../product/roadmap.md)). A connector key has no value anywhere: the server mints none,
+and `api_keys.hash` is null ([connections](#connections)).
 
 ## Key lifecycle
 
@@ -579,7 +579,7 @@ tenant's live codes, since a code is looked up before its tenant is known.
 ```mermaid
 stateDiagram-v2
     [*] --> code_live : connector key issued, or code minted\n(connection.code_issued)
-    code_live --> code_voided : newer code minted,\nor key revoked
+    code_live --> code_voided : newer code minted,\na connection of the key revoked,\nor key revoked
     code_live --> code_lapsed : expiry reached
     code_live --> code_spent : correct entry on the page
     code_spent --> authorized : Connect\n(authorization code, 60 s)
@@ -598,7 +598,8 @@ valid, and its authorization code or refresh token answers `invalid_grant`
 (`oauth.authorization_code_invalid`, `oauth.refresh_invalid`). The token exchange reads it in the
 transaction that commits `connection.opened`, so no connection opens after its key's
 `key.revoked`. The connection row is created at Connect, `authorized`; until then the
-authorization request's row, written when the code verified, holds the code's id. An
+authorization request's row, written when the code verified, holds the code's id, and Connect and
+Cancel each delete that row, so one code yields at most one connection. An
 `authorized` connection is not journalled and not listed: `oml keys disconnect` names an open
 connection, and naming an `authorized` one answers `access.not_found`, as an unknown id does; a
 newer code or the revocation of the key's open connection ends it.

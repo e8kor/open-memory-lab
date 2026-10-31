@@ -626,12 +626,10 @@ code's id and expiry and nothing derived from the code, not even its digest: the
 forever and exported, and a digest of a 60-bit secret is a brute-force target that a code alive for
 minutes never needs to outlast; the digest lives only in `connect_codes`
 ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8). `voids_code_id` names the
-unredeemed code of the same key that this one replaces, else null. The same commit voids every
-other code of the key from which no connection has opened — a code spent on a page that has not
-yet produced a connection, or whose authorization is still `authorized` — so neither can open one
-after this code exists; which codes those are follows from the journal, since every
-`connection.opened` names its `code_id`. A `key.revoked` voids the key's unredeemed code in its own
-commit, with no event of this family.
+unredeemed code of the same key that this one replaces, else null. The same commit voids the
+key's other codes as [roles and keys](../architecture/roles-and-keys.md#connections) declares;
+which codes those are follows from the journal, since every `connection.opened` names its
+`code_id`. A `key.revoked` voids codes with no event of this family.
 
 ### connection.opened
 
@@ -668,15 +666,14 @@ Like the rest of the `connection.*` family, the event is on no key's events tail
 
 A connection ends: `cause` is `admin` (`oml keys disconnect`; `reason_digest` over the reason
 given, else null), `refresh_reuse` (a rotated refresh token was presented again) or `code_reuse`
-(an authorization code was presented again after its redemption, by the connection's client with
-the matching verifier). An `admin` revocation names an open connection, never an `authorized` one.
-Whatever the cause, the commit also voids every code of the key from which no connection has
-opened, as `connection.code_issued` does. For the two reuse causes `revoked_by_key_id` is null
+(a redeemed authorization code was presented again, under the reuse rule of
+[roles and keys](../architecture/roles-and-keys.md#connections)). An `admin` revocation names an
+open connection, never an `authorized` one. Whatever the cause, the commit also voids the key's
+codes, as `connection.code_issued` does. For the two reuse causes `revoked_by_key_id` is null
 and the envelope names the connector key, whose past token triggered it; a connection is revoked
-once, so a holder of past tokens can cause at most one such event. Every token of the connection
-is refused from then on: on the lead at its next request, on a follower after replication lag. A
-revoked or expired key ends its connections with no event of this type, because every token lookup
-reads the key's state and `key.revoked` records when.
+once, so a holder of past tokens can cause at most one such event. A revoked or expired key ends
+its connections with no event of this type
+([roles and keys](../architecture/roles-and-keys.md#connections)).
 
 ## Simulation family
 

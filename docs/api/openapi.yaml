@@ -1625,7 +1625,7 @@ paths:
       tags: [keys]
       operationId: rotateKey
       summary: Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled records); the old key enters a bounded grace window, then is revoked.
-      description: 'Requires: admin key role. One journalled act (key.rotated) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). A connector key is not rotated: 422 oauth.connect_refused with details.reason connector_key, because a successor''s value would make it a bearer key; a fresh connection is a new connect code, a fresh identity a new connector key (ADR-0031 d7). The stored idempotency response omits value, so a replay carries none. Per key in v1; bulk crew rotation is open — FR-6.'
+      description: 'Requires: admin key role. One journalled act (key.rotated) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). A connector key is not rotated: 422 oauth.connect_refused with details.reason connector_key, because a successor''s value would make it a bearer key; a fresh connection is a new connect code, a fresh identity a new connector key (ADR-0031 d7). Per key in v1; bulk crew rotation is open — FR-6.'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1818,8 +1818,8 @@ paths:
     post:
       tags: [keys]
       operationId: mintConnectCode
-      summary: Mint a fresh one-time connect code for a connector key; voids every code of that key from which no connection has opened.
-      description: 'Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, the stored idempotency response omits it, so a replay carries no code, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids every code of the key from which no connection has opened, unredeemed or spent, so a page holding a spent code and an authorized connection made from one can no longer open a connection. Lifetime: the oauth.connect_code_ttl setting; key.revoked voids the key''s unredeemed code.'
+      summary: Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
+      description: 'Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, the stored idempotency response omits it, so a replay carries no code, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key''s earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. Lifetime: the oauth.connect_code_ttl setting.'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1844,8 +1844,8 @@ paths:
     post:
       tags: [keys]
       operationId: revokeConnection
-      summary: Journalled revocation of one connection; every token of it is refused at its next request served by the lead, and after replication lag on a follower.
-      description: 'Requires: admin key role. Journals connection.revoked with cause admin (ADR-0031 d11). The same commit voids every code of the key from which no connection has opened, as minting does (ADR-0031 d8). The connection named must be open or revoked: an authorized connection is not journalled or listed, and naming one answers 404 access.not_found, as an unknown id does. A revoked connection never reopens; the key needs a new connect code. Revoking a key ends its connections too, with no event of their own: every token lookup reads the key state. Served whether or not oauth.issuer is set.'
+      summary: Journalled revocation of one connection.
+      description: 'Requires: admin key role. Journals connection.revoked with cause admin, which ends the connection and voids the key''s codes as docs/architecture/roles-and-keys.md (Connections) declares (ADR-0031 d8, d11). An authorized connection is not journalled or listed, and naming one answers 404 access.not_found, as an unknown id does. Served whether or not oauth.issuer is set.'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/ConnectionId' }
@@ -2529,7 +2529,7 @@ paths:
       parameters:
         - { name: response_type, in: query, required: true, schema: { type: string, enum: [code] } }
         - { name: client_id, in: query, required: true, schema: { type: string, maxLength: 2048 }, description: 'An https metadata-document URL in the admitted form (no userinfo, fragment, query, dot segment, percent-encoded / or ., or non-default port; its own WHATWG serialization), or a client_id that POST /oauth/register minted.' }
-        - { name: redirect_uri, in: query, required: false, schema: { type: string, maxLength: 2048 }, description: 'Exactly one of the client''s registered URIs, matched on the raw string, inside the allowlist; optional for a client with exactly one.' }
+        - { name: redirect_uri, in: query, required: false, schema: { type: string, maxLength: 2048 }, description: 'Exactly one of the client''s registered URIs, inside the allowlist (exactly https://claude.ai/api/mcp/auth_callback), matched byte for byte on the value after exactly one application/x-www-form-urlencoded decoding, never after URL parsing or any further decoding; optional for a client with exactly one.' }
         - { name: code_challenge, in: query, required: false, schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }, description: 'Required by the flow: absent, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted. Present but not matching the pattern, it is request.validation on the page.' }
         - { name: code_challenge_method, in: query, required: false, schema: { type: string, enum: [S256] }, description: 'Required by the flow: absent (which RFC 7636 §4.3 reads as plain) or anything but S256, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted.' }
         - { name: state, in: query, required: false, schema: { type: string, maxLength: 512 }, description: 'At most 512 bytes; echoed verbatim on the redirect, percent-encoded as a query parameter.' }
@@ -2552,7 +2552,7 @@ paths:
       tags: [oauth]
       operationId: authorizeSubmit
       summary: The page's own form — the connect code, then the confirmation.
-      description: 'Two submissions and no others. Every submission first needs either Sec-Fetch-Site: same-origin or, when that header is absent, an Origin equal to the issuer origin; Origin: null and anything else answer 403 oauth.origin_refused on the page, never redirected, consuming no attempt. Step 2 carries exactly handle (the sealed handle of the first page) and connect_code; step 3 carries exactly handle and action, where the handle names the request row a verified code wrote and whose code is not voided; any other combination is request.validation on the page. With a correct connect_code of a key that is neither revoked nor expired, the code is spent, the authorization request''s row is written under a fresh handle, and the page shows the tenant by its operator-set name, the key''s principal, role and grants and what the connection may do, with Connect and Cancel; a wrong code answers the form again (400 oauth.connect_code_invalid) with the attempts left and a new sealed handle, and the fifth wrong entry redirects with access_denied. action=connect creates the connection (authorized) and redirects with a 60-second, single-use authorization code, state and iss; action=cancel redirects with access_denied, state and iss (ADR-0031 d9).'
+      description: 'Two submissions and no others. Every submission first needs either Sec-Fetch-Site: same-origin or, when that header is absent, an Origin equal to the issuer origin; Origin: null and anything else answer 403 oauth.origin_refused on the page, never redirected, consuming no attempt. Step 2 carries exactly handle (the sealed handle of the first page) and connect_code; step 3 carries exactly handle and action, where the handle names the request row a verified code wrote and whose code is not voided (docs/architecture/roles-and-keys.md, Connections); any other combination is request.validation on the page. With a correct connect_code of a key that is neither revoked nor expired, the code is spent, the authorization request''s row is written under a fresh handle, and the page shows the tenant by its operator-set name, the key''s principal, role and grants and what the connection may do, with Connect and Cancel; a wrong code answers the form again (400 oauth.connect_code_invalid) with the attempts left and a new sealed handle, and the fifth wrong entry redirects with access_denied. action=connect creates the connection (authorized) and redirects with a 60-second, single-use authorization code, state and iss; action=cancel redirects with access_denied, state and iss. Connect and Cancel each delete the authorization request''s row in their own commit, so a later step-3 POST with that handle names no row and answers oauth.authorization_expired on the page (ADR-0031 d9).'
       security: []
       requestBody:
         required: true
@@ -2598,7 +2598,7 @@ paths:
       tags: [oauth]
       operationId: token
       summary: Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh token.
-      description: 'Public clients only (token_endpoint_auth_method none). authorization_code requires the PKCE code_verifier and the same client_id, and opens the connection (connection.opened); redirect_uri is required exactly when the authorize request carried it and must then equal it, and when that request omitted it, redirect_uri may be omitted or must equal the client''s one registered URI. refresh_token answers a new pair and marks the presented token rotated; only a token of kind refresh is a refresh_token. Presenting a rotated refresh token revokes the connection (connection.revoked) and answers invalid_grant; a code presented after its redemption revokes it only when client_id is the connection''s and the verifier matches, and otherwise answers invalid_grant and revokes nothing. A failed exchange does not consume the code. The client is the one stored on the code''s or refresh token''s connection; the client tables are never read here, a client_id that differs from the connection''s is invalid_grant, and invalid_client answers only a request that sends client authentication. The exchange and every refresh read the key state, the code''s voiding and the connection''s resource: a revoked or expired key, a voided code, or a resource that is not the current <issuer>/mcp, answers invalid_grant. A code or refresh token issued to another client is invalid_grant too (RFC 6749 §5.2). Refusals are RFC 6749 §5.2 bodies whose error_description begins with the OML code (ADR-0031 d4, d10, d13). The token path makes no outbound call.'
+      description: 'Public clients only (token_endpoint_auth_method none). authorization_code requires the PKCE code_verifier and the same client_id, and opens the connection (connection.opened); redirect_uri is required exactly when the authorize request carried it and must then equal it, and when that request omitted it, redirect_uri may be omitted or must equal the client''s one registered URI. refresh_token answers a new pair and marks the presented token rotated; which tokens a refresh accepts, and when reuse of a refresh token or an authorization code revokes the connection (connection.revoked), are declared on docs/architecture/roles-and-keys.md (Connections). The client is the one stored on the code''s or refresh token''s connection; the client tables are never read here, a client_id that differs from the connection''s is invalid_grant, and invalid_client answers only a request that sends client authentication: 401 with WWW-Authenticate for an Authorization header, 400 for a client_secret in the body. A revoked or expired key, a voided code, or a resource that is not the current <issuer>/mcp answers invalid_grant. A code or refresh token issued to another client is invalid_grant too (RFC 6749 §5.2). Refusals are RFC 6749 §5.2 bodies whose error_description begins with the OML code (ADR-0031 d4, d10, d13). The token path makes no outbound call.'
       security: []
       requestBody:
         required: true
@@ -2618,12 +2618,24 @@ paths:
                 scope: mcp
               schema: { $ref: '#/components/schemas/TokenResponse' }
         '400':
-          description: 'An RFC 6749 error: oauth.authorization_code_invalid, oauth.refresh_invalid (invalid_grant, a code or token issued to another client included), oauth.client_invalid (invalid_client, only for a request that sends client authentication), oauth.resource_mismatch (invalid_target), request.validation (invalid_request, unsupported_grant_type, invalid_scope).'
+          description: 'An RFC 6749 error: oauth.authorization_code_invalid, oauth.refresh_invalid (invalid_grant, a code or token issued to another client included), oauth.client_invalid (invalid_client, for a request that sends a client_secret in the body), oauth.resource_mismatch (invalid_target), request.validation (invalid_request, unsupported_grant_type, invalid_scope).'
           content:
             application/json:
               example:
                 error: invalid_grant
                 error_description: 'oauth.refresh_invalid: a refresh token is used once; a reused one ends its connection.'
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '401':
+          description: 'oauth.client_invalid as invalid_client, for a request that sends an Authorization header: every client is public (RFC 6749 §5.2).'
+          headers:
+            WWW-Authenticate:
+              description: The scheme the request used, for example Basic realm="oml" (RFC 6749 §5.2).
+              schema: { type: string }
+          content:
+            application/json:
+              example:
+                error: invalid_client
+                error_description: 'oauth.client_invalid: every client is public and sends no client authentication.'
               schema: { $ref: '#/components/schemas/OAuthError' }
         '415':
           description: A body other than application/x-www-form-urlencoded, as invalid_request.
@@ -2644,7 +2656,7 @@ paths:
           application/json:
             example:
               client_name: Example MCP client
-              redirect_uris: [http://127.0.0.1/callback]
+              redirect_uris: [https://claude.ai/api/mcp/auth_callback]
               token_endpoint_auth_method: none
               grant_types: [authorization_code, refresh_token]
               response_types: [code]
@@ -2658,7 +2670,7 @@ paths:
                 client_id: oml_client_8Rk2Tq5Vx1Lm7Pn3Wz9Ac4Yb6Dd0Eg
                 client_id_issued_at: 1793455980
                 client_name: Example MCP client
-                redirect_uris: [http://127.0.0.1/callback]
+                redirect_uris: [https://claude.ai/api/mcp/auth_callback]
                 token_endpoint_auth_method: none
                 grant_types: [authorization_code, refresh_token]
                 response_types: [code]
@@ -3781,10 +3793,10 @@ components:
       allOf:
         - { $ref: '#/components/schemas/Key' }
         - type: object
-          description: "A fresh 201 carries exactly one of value (a bearer key) and connect_code (a connector key). An idempotent replay (Idempotency-Replay: true) returns the stored response, which omits value and connect_code.code (docs/api/http-api.md, Idempotency)."
+          description: "A fresh 201 carries exactly one of value (a bearer key) and connect_code (a connector key). An idempotent replay (Idempotency-Replay: true) of a connector key's issuance returns the stored response, which omits connect_code.code (docs/api/http-api.md, Idempotency)."
           not: { required: [value, connect_code] }
           properties:
-            value: { type: string, description: "The secret — returned exactly once, journalled as issued-without-value; absent on a replay." }
+            value: { type: string, description: "The secret — returned exactly once, journalled as issued-without-value." }
             connect_code: { $ref: '#/components/schemas/ConnectCode' }
 
     KeyPage:
@@ -3814,7 +3826,7 @@ components:
         redirect_uri: { type: string }
         resource: { type: string, description: '<issuer>/mcp when the connection was created; its tokens work only while this is the current <issuer>/mcp.' }
         state: { type: string, enum: [authorized, open, revoked] }
-        live: { type: boolean, description: 'Open, its key neither revoked nor expired, its newest refresh token unexpired, and its resource current (docs/architecture/roles-and-keys.md, connections).' }
+        live: { type: boolean, description: 'Whether the connection is live, as docs/architecture/roles-and-keys.md (Connections) defines it.' }
         opened_at: { type: [string, 'null'], format: date-time }
         revoked_at: { type: [string, 'null'], format: date-time }
         revoked_cause: { type: [string, 'null'], enum: [admin, refresh_reuse, code_reuse, replaced, null] }
@@ -3880,7 +3892,7 @@ components:
       type: object
       required: [redirect_uris, client_name]
       properties:
-        redirect_uris: { type: array, minItems: 1, items: { type: string }, description: 'Each inside the allowlist: https://claude.ai/api/mcp/auth_callback, or http loopback (127.0.0.1, [::1], localhost) on any port.' }
+        redirect_uris: { type: array, minItems: 1, items: { type: string }, description: 'Each inside the allowlist: exactly https://claude.ai/api/mcp/auth_callback, matched byte for byte on the JSON string value, never after URL parsing or any further decoding.' }
         client_name: { type: string, description: 'Required, since the authorization page shows it; absent, it is request.validation (invalid_client_metadata).' }
         token_endpoint_auth_method: { type: string, enum: [none], description: 'Absent, it is registered as none and echoed as none; any other value is request.validation (invalid_client_metadata).' }
         grant_types: { type: array, items: { type: string, enum: [authorization_code, refresh_token] } }

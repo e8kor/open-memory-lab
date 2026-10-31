@@ -49,14 +49,15 @@ Caddy's `log` directive documentation, all fetched 2026-10-31.
   documents preferred, dynamic registration as the fallback, no pre-registered client (d5), with the
   document URL's form, an allow-list of global unicast addresses, TLS, proxy and concurrency bounds,
   a document cache that evicts and never refuses, and a token endpoint that identifies the client by
-  the connection; a fixed redirect allowlist — `https://claude.ai/api/mcp/auth_callback` and
-  loopback, matched on raw strings by a stated grammar (d6); the connector key, which has no value
-  and at most one open connection, `oml keys issue-agent --connect-code`, and show-once responses
-  stored in the idempotency record without their secret, for bearer keys too, amending ADR-0014 d3
-  (d7); the connect code — twelve Crockford base32 symbols, shown once, stored as a digest,
+  the connection; a fixed redirect allowlist of exactly `https://claude.ai/api/mcp/auth_callback`,
+  matched byte for byte after one form decoding (d6); the connector key, which has no value and at
+  most one open connection, `oml keys issue-agent --connect-code`, and connect-code responses
+  stored in the idempotency record without the code, amending ADR-0014 d3 (d7); the connect code —
+  twelve Crockford base32 symbols, shown once, stored as a digest,
   journalled by id, ten minutes by default, with a new code or a revoked connection ending every
   page in progress for the key (d8); the two-step authorization page with a sealed handle and no row
-  until a code verifies, no cookie, fixed headers, `Referrer-Policy: same-origin`, `iss` on every
+  until a code verifies, Connect and Cancel each using up the request, no cookie, fixed headers,
+  `Referrer-Policy: same-origin`, `iss` on every
   redirect, a warning against forwarded links, and a confirmation naming the tenant and built from
   the key's role (d9); opaque tokens bound to their connection's resource, rotation on every refresh
   by one conditional update, reuse ending the connection, and a redeemed code ending it only in the
@@ -71,14 +72,15 @@ Caddy's `log` directive documentation, all fetched 2026-10-31.
 - **`info.version` 0.2.0-design → 0.3.0-design** (d15): the error taxonomy, which the rule on this
   page names, gains eleven `oauth` codes, and the OpenAPI document gains `/mcp`, the two discovery
   documents, four OAuth operations and two `/v2` key operations. No `/v1` operation changes; on
-  `/v2` the show-once operations' idempotency record stores no secret. The
+  `/v2` the connect-code operations' idempotency record stores no code. The
   proposed ADR-0026, on another branch, also moves to 0.3.0-design; if its revision is still
   untagged when this lands the two share it, otherwise this change takes 0.4.0-design at rebase.
   `spec-v0.3` is cut at acceptance.
 - **Roadmap:** RS-2 restated in ADR-0018 d3's fixed form; the record meets its exit criterion on
   acceptance, when the row leaves the register. FR-34 opened: the flow is designed, not built, and
   no live connection has run. FR-35 opened: the `/v1` and `/v2` `401` answers carry no
-  `WWW-Authenticate` challenge, which RFC 9110 §15.5.2 requires.
+  `WWW-Authenticate` challenge, which RFC 9110 §15.5.2 requires. FR-36 opened: a bearer key's
+  issuance or rotation keeps its value in the idempotency record's stored response.
 - **Pages touched:** [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md), the
   [decision register](adr/index.md) (row; the D9, D13 and D14 cells; the ADR-0022 row says "key"
   where it said "token"), `mkdocs.yml`,

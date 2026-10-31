@@ -406,8 +406,9 @@ CREATE TABLE oauth_authorizations (    -- an authorization request whose connect
     code_challenge text        NOT NULL,       -- S256 only, 43 base64url characters
     state          text,                       -- at most 512 bytes; echoed verbatim
     expires_at     timestamptz NOT NULL,       -- the sealed handle's: ten minutes after the GET
-    code_id        uuid        NOT NULL        -- the verified connect code; plain uuid, since
-                                               -- the code is another tenant's row
+    code_id        uuid        NOT NULL,       -- the verified connect code; plain uuids, since
+    code_tenant_id uuid        NOT NULL,       -- the code is another tenant's row: these three
+    key_id         uuid        NOT NULL        -- are copied from it when it verifies
 );
 
 CREATE TABLE connect_codes (
@@ -418,11 +419,9 @@ CREATE TABLE connect_codes (
     issued_seq  bigint      NOT NULL,          -- journal seq of its connection.code_issued
     expires_at  timestamptz NOT NULL,
     redeemed_at timestamptz,                   -- its first correct entry on the page
-    voided_seq  bigint,                        -- seq of the connection.code_issued or the
-                                               -- connection.revoked that voided it (every code of
-                                               -- the key from which no connection has opened,
-                                               -- spent or not), or of the key.revoked that voided
-                                               -- an unredeemed one (ADR-0031 d8)
+    voided_seq  bigint,                        -- seq of the connection.code_issued,
+                                               -- connection.revoked or key.revoked that voided it
+                                               -- (roles-and-keys Connections; ADR-0031 d8)
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id)
 );
 
@@ -434,7 +433,8 @@ CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'auth
     id                   uuid        PRIMARY KEY,
     tenant_id            uuid        NOT NULL,
     key_id               uuid        NOT NULL,
-    code_id              uuid        NOT NULL REFERENCES connect_codes (id),
+    code_id              uuid        NOT NULL UNIQUE REFERENCES connect_codes (id),
+                                                -- one connect code, at most one connection
     client_id            text        NOT NULL,  -- no reference: oauth_clients is the provider tenant's;
                                                 -- the token endpoint's client (ADR-0031 d5)
     client_kind          text        NOT NULL CHECK (client_kind IN ('cimd', 'dcr')),
@@ -451,8 +451,8 @@ CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'auth
                                                 -- (ADR-0031 d10)
     auth_code_expires_at timestamptz,
     auth_code_redeemed_at timestamptz,          -- set at the token exchange; a presented code
-                                                -- whose row has it set is code_reuse only with
-                                                -- this client_id and a matching verifier
+                                                -- whose row has it set goes to the reuse rule
+                                                -- (roles-and-keys Connections)
     state                text        NOT NULL CHECK (state IN ('authorized', 'open', 'revoked')),
     opened_seq           bigint,                -- journal seq of its connection.opened
     revoked_seq          bigint,                -- its connection.revoked, or the connection.opened
@@ -486,7 +486,11 @@ matched row's `tenant_id` then sets `oml.tenant_id` for everything after. At `/m
 matches only a row of kind `access`, and at a refresh only a row of kind `refresh`
 ([roles and keys](../architecture/roles-and-keys.md#connections)). The token endpoint never reads
 `oauth_clients`: the client is the connection's `client_id`, so evicting a cached `cimd` row, or
-removing a lapsed one, never affects a connection.
+removing a lapsed one, never affects a connection. A confirmation, Connect or Cancel, deletes
+its `oauth_authorizations` row by `handle_hash` under the provider tenant (`DELETE … RETURNING`),
+then sets `oml.tenant_id` from the returned `code_tenant_id` before it reads `connect_codes` and
+writes `oauth_connections`, in one transaction; a later confirmation with that handle finds no row
+and answers `oauth.authorization_expired`.
 
 **Redemption and rotation are conditional updates.** Two racing requests with one code or one
 refresh token cannot both pass, because each mints only when its own update matched a row. The
@@ -504,11 +508,10 @@ RETURNING id;
 ```
 
 A presented code whose row has `auth_code_redeemed_at` set, or whose update returns no row because
-a racing exchange redeemed it first, is `code_reuse` only when the request's `client_id` equals the
-connection's and `S256(code_verifier)` equals the stored `code_challenge`, whatever the code's
-expiry: the token endpoint then revokes the connection (`connection.revoked`, cause
-`code_reuse`). Any other presentation of a redeemed code answers `invalid_grant`
-(`oauth.authorization_code_invalid`) and revokes nothing. A refresh runs in one transaction that
+a racing exchange redeemed it first, is judged by the reuse rule of
+[roles and keys](../architecture/roles-and-keys.md#connections); when it is reuse, the token
+endpoint revokes the connection (`connection.revoked`, cause `code_reuse`). A refresh runs in one
+transaction that
 does not take the chain lock:
 
 ```sql
@@ -527,7 +530,8 @@ token expired, the answer is `invalid_grant` and nothing is revoked. Before the 
 row lock, the refresh checks that the connection is open, that the request's `client_id` is the
 connection's, and the key's state and the connection's resource; a failed check answers
 `invalid_grant` and rotates nothing. Removal is
-operational: an authorization request's row 24 hours after it lapses; a registered client 24 hours
+operational: an authorization request's row at Connect or Cancel, in that step's commit, or 24
+hours after it lapses unused; a registered client 24 hours
 after its registration when no connection used it; an `authorized` connection row once its
 `auth_code_expires_at` has passed unexchanged; a token row only at its own `expires_at` or at its
 connection's revocation, so a rotated refresh token keeps its row, and reuse of it inside that
@@ -641,7 +645,7 @@ CREATE TABLE idempotency (
     idem_key       text        NOT NULL,
     request_digest bytea       NOT NULL,
     state          text        NOT NULL CHECK (state IN ('in_progress', 'committed')),
-    response       jsonb,                 -- a show-once response is stored without value and
+    response       jsonb,                 -- a connect-code response is stored without
                                           -- connect_code.code (http-api Idempotency)
     created_at     timestamptz NOT NULL,
     PRIMARY KEY (key_id, workarea_id, idem_key)
