@@ -68,8 +68,12 @@ a command-line tool. There is no web console — that is a deliberate choice, ex
 ## Honest status
 
 This is a design under review with one proof-of-concept behind it. **The M1 slice is built
-(the signed chain, the commit point, submit → review → promote → recall, standalone profile);
-everything else described here is not, and nothing has been measured.** Every page in this
+(the signed chain, the commit point, submit → review → promote → recall, standalone profile),
+and so is the part of M2 that lets an agent keep its whole memory in OML: one key that both
+stores and searches, reading back its own writes while they wait for review, searching within a
+budget, and replacing or proposing to retire a memory through review, served by eight of the
+agent plugin's twelve tools. Everything else described here is not built, and nothing has been
+measured.** Every page in this
 documentation is a design commitment with a tracked exit criterion, not a description of
 running software; where the PoC diverges from a page, the page wins and the code says so. Where a claim depends on a measurement
 (throughput, latency, recall quality), the page says so and points at the roadmap item that will
