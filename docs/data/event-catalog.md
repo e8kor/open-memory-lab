@@ -459,8 +459,8 @@ status read — until a second, non-proposing principal ratifies it.
 Forward-only ladder step — the ratification of a pending `workarea.status_proposed`, which it
 references — by a second, distinct dreamer/admin principal, with the policy that held at the
 moment snapshotted. `in_progress_released: true` marks an in-progress workarea's commit: it is
-journalled only when no version in the subtree is held, and from this event on the subtree is no
-longer in progress, so its promoted claims are readable at scopes outside it and the
+journalled only when no version in the subtree is held, `workareas.in_progress_released_seq`
+folds from it, and from this event on the subtree is no longer in progress, so its promoted claims are readable at scopes outside it and the
 [events tail](../api/http-api.md#events-tail) judges its later events by the ordinary clauses
 ([workareas](../architecture/workareas.md#in-progress-workareas)).
 
@@ -552,6 +552,9 @@ records; the old key stays usable through the bounded grace window and is revoke
 carries. The successor has no `key.issued` and its reproduced grants no `grant.issued`, so this
 event's seq is the successor's `issued_seq`, the epoch of each of its grant rows, and its first
 permission epoch ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
+Each reproduced grant carries its source grant's `unreviewed`, folded as
+[grant.issued](#grantissued) says ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d7,
+proposed).
 
 ### grant.issued
 
@@ -570,7 +573,9 @@ event's own journal seq, which makes every historical effective-access computati
 ([workareas](../architecture/workareas.md)). `unreviewed`, on a reader grant only and absent on
 the others, is whether the holder reads other keys' held claims inside the in-progress workareas
 the grant covers ([permission matrix](../architecture/roles-and-keys.md#permission-matrix),
-[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d7); a grant's value never changes.
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d7, proposed); a grant's value never
+changes. A reader grant's `grant.issued` that carries no `unreviewed`, as every one journalled
+before 0.3.0-design does, folds as `allow`.
 
 ### grant.revoked
 

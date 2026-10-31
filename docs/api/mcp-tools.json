@@ -10,7 +10,7 @@
       "oml_remember": "ADR-0030 d3 (proposed): inside an in-progress workarea a held write is readable at once, marked reviewed false, by the keys the permission matrix allows, and reaches readers outside only at the workarea's commit; the description's 'visible to others only after ratification' changes with the code that serves it.",
       "oml_learn": "ADR-0030 d3 (proposed): as for oml_remember.",
       "oml_get": "ADR-0030 d10 (proposed): inside an in-progress workarea, others' held versions the key may read are served too, marked reviewed false; the description changes with the code that serves it.",
-      "oml_workarea_info": "ADR-0030 d11 (proposed): the output gains in_progress, in_progress_root_id, reads_unreviewed and children[].in_progress; the description changes with the code that serves them.",
+      "oml_workarea_info": "ADR-0030 d11 (proposed): the output gains in_progress_root_id, reads_unreviewed and children[].in_progress_root_id; the description changes with the code that serves them.",
       "oml_events_tail": "ADR-0030 d10 (proposed): a tail scoped inside an in-progress workarea also shows other keys' submissions and the lifecycle events of held versions the key may read there, and a tail scoped outside shows none of its claim events from before its commit; the description's 'never another key's submission' changes with the code that serves it."
     }
   },

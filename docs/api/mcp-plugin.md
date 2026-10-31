@@ -396,9 +396,10 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
   [in-progress workarea](../architecture/workareas.md#in-progress-workareas)
   allows (`reads_unreviewed` on [`oml_workarea_info`](#oml_workarea_info)),
   else `false`. Those held rows join the hits, ranked in the same order, with
-  `state: held` and `reviewed: false`; an explicit `true` where the key's grant
-  blocks it is refused with `access.grant_refused`, and at a scope outside every
-  in-progress workarea it adds nothing
+  `state: held` and `reviewed: false`; an explicit `true` at a scope node inside
+  an in-progress subtree where a reader grant effective on it carries
+  `unreviewed: block` is refused with `access.grant_refused`, and at a scope
+  outside every in-progress workarea it adds nothing and is never refused
   ([retrieval](../architecture/retrieval.md#held-claims-inside-an-in-progress-workarea)).
 - `max_tokens` — **optional**: a budget in budget tokens (counter `oml-tc/1`,
   not a model's count), at most 2⁵³ − 1, as on the ring. Steering is never
@@ -494,8 +495,9 @@ its commit. Every item is a [claim item](#the-claim-item) with `text` and
 quality and latency are unmeasured — [FR-4](../product/roadmap.md).
 
 **Refusals** — scope outside the key's read access (same error as a
-nonexistent node, fail closed); `include_unreviewed: true` where a reader grant
-effective on the scope blocks it (`access.grant_refused`); `max_tokens` with
+nonexistent node, fail closed); `include_unreviewed: true` at a scope node
+inside an in-progress subtree where a reader grant effective on it carries
+`unreviewed: block` (`access.grant_refused`); `max_tokens` with
 `include_bodies: false` on the ring, or any field the schema does not declare
 (`request.validation`).
 Example:
@@ -831,7 +833,10 @@ this surface — it is a dreamer(review) verb behind the serve ceremony on the
 
 **Who may call:** keys with dreamer(propose) effective access. For a
 workarea edge: propose access on at least one endpoint **and** reader access
-on both. For a claim edge: both claims readable by the key. The
+on both. For a claim edge: both claims readable by the key, a held claim
+inside an in-progress workarea that the
+[permission matrix](../architecture/roles-and-keys.md#permission-matrix)'s
+footnote 6 lets it read included, wherever the other claim lies. The
 edge-authority rule is declared in
 [workareas](../architecture/workareas.md#edge-authority).
 
@@ -1010,7 +1015,6 @@ same one call; a key with no default is refused with
   "id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
   "path": "universe.procurement.metals-crew",
   "status": "committed",
-  "in_progress": false,
   "in_progress_root_id": null,
   "crew": {
     "name": "metals-crew",
@@ -1019,7 +1023,7 @@ same one call; a key with no default is refused with
   },
   "parent": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
   "children": [
-    { "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3", "path_leaf": "q1-2027", "status": "development", "in_progress": true }
+    { "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3", "path_leaf": "q1-2027", "status": "development", "in_progress_root_id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3" }
   ],
   "edges": [
     {
@@ -1040,10 +1044,11 @@ same one call; a key with no default is refused with
 `development` may run relaxed, marked self-signed review by tenant policy;
 `committed` requires full non-author review; `validated` refuses new writes
 entirely ([the status ladder](../architecture/workareas.md#the-status-ladder-d8)).
-`in_progress` marks an
-[in-progress workarea](../architecture/workareas.md#in-progress-workareas) and
-every node of its subtree, here the `q1-2027` child, and `in_progress_root_id`
-names the in-progress workarea. `reads_unreviewed` says whether this key reads
+`in_progress_root_id` names the
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas)
+whose subtree holds a node, while that workarea is in progress, and is null
+otherwise: here the `q1-2027` child is an in-progress workarea itself, and the
+node, inside none, carries null. `reads_unreviewed` says whether this key reads
 other keys' held rows on the node — only inside one, and only where no reader
 grant of the key blocks it
 ([permission matrix](../architecture/roles-and-keys.md#permission-matrix)) —

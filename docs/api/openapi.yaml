@@ -67,7 +67,7 @@ paths:
       tags: [memories]
       operationId: submitMemory
       summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
-      description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state, or, for a submission inside the same in-progress subtree, a held claim there the key may read — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); a readable ancestor inside an in-progress subtree named by a submission outside it is refused with workarea.in_progress_refused (ADR-0030 d2); lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
+      description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, its own row in any state, or a held claim inside an in-progress subtree that the permission matrix (footnote 6 of docs/architecture/roles-and-keys.md) lets it read, wherever the submission lands — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); a readable ancestor inside an in-progress subtree, held or promoted, named by a submission outside it is then workarea.in_progress_refused (ADR-0030 d2, d5); lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
         - { $ref: '#/components/parameters/XOMLWorkarea' }
@@ -248,7 +248,7 @@ paths:
       tags: [memories]
       operationId: getMemory
       summary: One memory with body (decrypted on the serving path) and attachment descriptors.
-      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history — plus, inside an in-progress workarea, held versions the key may read under the permission matrix (ADR-0030 d10). Get takes the row''s own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author''s key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.'
+      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history — plus, inside an in-progress workarea, held versions the key may read under the permission matrix (ADR-0030 d10). Get takes the row''s own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author''s key set, or, when it was promoted then, a key with reader effective access on its workarea, or, for a held version inside an in-progress subtree, a key the permission matrix (footnote 6) allowed on its workarea then; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the caller can read — its own rows in any state, promoted rows within its reader effective access, and, inside an in-progress subtree, the held versions the permission matrix (footnote 6) lets it read (ADR-0030 d5) — replaces is null when the caller cannot read the replaced version under the same test, and workarea_id is null on an own row whose node the key holds no role on.'
       parameters: [{ $ref: '#/components/parameters/ArtifactId' }]
       responses:
         '200':
@@ -605,7 +605,7 @@ paths:
       tags: [attachments]
       operationId: getAttachment
       summary: Fetch attachment bytes, decrypted on the serving path, plaintext digest verified before serving.
-      description: 'Requires: reader access to a promoted claim binding the digest; the author for own held; a reviewer under a valid serve_id. Logged as a read.'
+      description: 'Requires: reader access to a promoted claim binding the digest; the author for own held; a reviewer under a valid serve_id; for a held claim inside an in-progress subtree, a key the permission matrix (footnote 6 of docs/architecture/roles-and-keys.md) lets read it (ADR-0030 d10). Logged as a read.'
       parameters:
         - { name: digest, in: path, required: true, schema: { $ref: '#/components/schemas/Digest' } }
         - { name: serve_id, in: query, schema: { type: string }, description: Reviewer fetch under a serve binding. }
@@ -656,7 +656,7 @@ paths:
       tags: [claim-edges]
       operationId: proposeClaimEdge
       summary: Propose a claim-to-claim connection; pending until ratified.
-      description: 'Requires: dreamer(propose). The claim-edge label vocabulary is not fixed by the design (open detail, roadmap). An edge with one endpoint inside an in-progress subtree and the other outside it is refused with workarea.in_progress_refused, after both endpoints pass the readability check (ADR-0030 d2).'
+      description: 'Requires: dreamer(propose). The claim-edge label vocabulary is not fixed by the design (open detail, roadmap). Both endpoints must be readable by the key, a held claim inside an in-progress subtree that the permission matrix (footnote 6 of docs/architecture/roles-and-keys.md) lets it read included, wherever the other endpoint lies; an edge with one endpoint inside an in-progress subtree and the other outside it is then refused with workarea.in_progress_refused (ADR-0030 d2, d5).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -734,7 +734,6 @@ paths:
                 parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
                 path: universe.procurement.metals-crew
                 status: committed
-                in_progress: false
                 in_progress_root_id: null
                 crew:
                   name: metals-crew
@@ -774,7 +773,6 @@ paths:
                 parent_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
                 path: universe.procurement.metals-crew.q1-2027
                 status: development
-                in_progress: false
                 in_progress_root_id: null
                 crew:
                   name: metals-crew
@@ -805,7 +803,6 @@ paths:
                 parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
                 path: universe.procurement.metals-crew
                 status: committed
-                in_progress: false
                 in_progress_root_id: null
                 crew:
                   name: metals-crew
@@ -816,7 +813,7 @@ paths:
                 - id: wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3
                   path_leaf: q1-2027
                   status: development
-                  in_progress: false
+                  in_progress_root_id: null
                 edges:
                 - edge_id: we_01JB2Y6T8V1X3Z5B7D9FH2KM4P
                   from: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
@@ -853,7 +850,6 @@ paths:
                   parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
                   path: universe.procurement.metals-crew
                   status: committed
-                  in_progress: false
                   in_progress_root_id: null
                   crew:
                     name: metals-crew
@@ -864,7 +860,6 @@ paths:
                   parent_id: wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND
                   path: universe.procurement.metals-crew.q1-2027
                   status: development
-                  in_progress: false
                   in_progress_root_id: null
                   crew:
                     name: metals-crew
@@ -1002,7 +997,7 @@ paths:
       tags: [workareas]
       operationId: reparentWorkarea
       summary: Journalled single-transaction descendant path rewrite; dry_run previews paths and grants affected.
-      description: 'Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen); a move of a node into or out of an in-progress subtree is refused (workarea.in_progress_refused), and re-parenting the in-progress workarea itself moves its subtree whole (ADR-0030 d2).'
+      description: 'Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen); a move of a node into or out of an in-progress subtree is refused (workarea.in_progress_refused), and re-parenting the in-progress workarea itself moves its subtree whole; re-parenting an in-progress workarea, or any node whose subtree holds one, to a destination inside another in-progress subtree is refused with workarea.in_progress_refused, since subtrees never nest (ADR-0030 d2).'
       parameters:
         - { $ref: '#/components/parameters/WorkareaId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1063,7 +1058,6 @@ paths:
                 parent_id: wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL
                 path: universe.procurement.metals-crew
                 status: committed
-                in_progress: false
                 in_progress_root_id: null
                 crew:
                   name: metals-crew
@@ -2845,9 +2839,9 @@ components:
             memory or derived_fact, never steering or retirement versions) in the workareas of
             subtree(scope) where the key may read them join the hits, ranked in the same order,
             with memory.state held and reviewed false; they count against k and max_tokens. An
-            explicit true where a reader grant effective on the scope node blocks it is refused
-            with access.grant_refused; at a scope outside every in-progress workarea it adds
-            nothing. Absent, the answer is the prior one at every scope that existed before
+            explicit true at a scope node inside an in-progress subtree where a reader grant
+            effective on it carries unreviewed block is refused with access.grant_refused; at a
+            scope outside every in-progress workarea it adds nothing and is never refused. Absent, the answer is the prior one at every scope that existed before
             ADR-0030. Rules: docs/architecture/retrieval.md, Held claims inside an in-progress
             workarea.
         max_tokens:
@@ -3095,14 +3089,13 @@ components:
 
     Workarea:
       type: object
-      required: [id, parent_id, path, status, in_progress, in_progress_root_id]
+      required: [id, parent_id, path, status, in_progress_root_id]
       properties:
         id: { type: string }
         parent_id: { type: [string, 'null'], description: Null only for the tenant universe root. }
         path: { type: string, description: Derived ltree path; never the grant target. }
         status: { type: string, enum: [development, committed, validated] }
-        in_progress: { type: boolean, description: 'True for an in-progress workarea and every node of its subtree while the in-progress workarea is development (docs/architecture/workareas.md, In-progress workareas; ADR-0030 d1); false after its commit.' }
-        in_progress_root_id: { type: [string, 'null'], description: 'The in-progress workarea whose subtree holds the node — the node itself for that workarea — while in_progress is true; null otherwise.' }
+        in_progress_root_id: { type: [string, 'null'], description: 'The in-progress workarea whose subtree holds the node — the node itself for that workarea — while that workarea is development (docs/architecture/workareas.md, In-progress workareas; ADR-0030 d1); null otherwise, and after its commit. Non-null exactly when the node is inside an in-progress subtree; the creation mark itself is WorkareaCreate.in_progress.' }
         crew: { $ref: '#/components/schemas/CrewRecord' }
         created_at: { type: string, format: date-time }
 
@@ -3119,12 +3112,12 @@ components:
               items:
                 type: object
                 additionalProperties: false
-                required: [id, path_leaf, status, in_progress]
+                required: [id, path_leaf, status, in_progress_root_id]
                 properties:
                   id: { type: string }
                   path_leaf: { type: string }
                   status: { type: string, enum: [development, committed, validated] }
-                  in_progress: { type: boolean, description: As on Workarea. }
+                  in_progress_root_id: { type: [string, 'null'], description: As on Workarea. }
             edges:
               type: array
               description: The workarea edges touching the node whose other endpoint the key can read, in either direction, ordered by edge_id ascending; edge_id is the id the events tail reports.
@@ -3407,9 +3400,9 @@ components:
         unreviewed:
           type: string
           enum: [allow, block]
-          default: allow
           description: >-
-            Reader grants only (request.validation on any other role): whether the holder reads the
+            Reader grants only (request.validation on any other role); absent on a reader grant
+            means allow, so a client sends it only to block. Whether the holder reads the
             held claims of other keys inside the in-progress workareas this grant covers. A block on
             any reader grant effective on a node wins there. The rule is footnote 6 of the
             permission matrix in docs/architecture/roles-and-keys.md (ADR-0030 d7); a grant's value

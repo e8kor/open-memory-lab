@@ -14,7 +14,7 @@ asserts a claim; every claim is held on arrival, scanned, reviewed by an identit
 write it, and only then visible to others. This page is the map: the system in its context, the
 containers inside the Kubernetes boundary, the module structure inside every container, the five
 runtime scenarios that exercise them, and where each constitutional rule is enforced. Contracts live on the pages that own them — this page
-links, it does not restate. The constitution itself (rules R1–R4 and their bounded exceptions)
+links, it does not restate. The constitution itself (rules R1–R4 and their one bounded exception)
 is declared in [ADR-0001](../adr/ADR-0001-the-constitution.md).
 
 ## 1. System context (C4 level 1)
@@ -260,7 +260,7 @@ Where each constitutional rule is mechanically enforced. The rules are declared 
 |---|---|---|---|
 | **R1** | The surface an agent can call never promotes, signs, demotes or deletes — verb ceiling per role | The API surface itself: the MCP tool list omits the verbs; every HTTP endpoint checks the key's role; key issuance carries an issuer ceiling | [roles-and-keys.md](roles-and-keys.md), [api/mcp-plugin.md](../api/mcp-plugin.md) |
 | **R2** | The reviewer is never the author | Promotion time, in oml-server: the reviewer's key and principal are checked against the author **and the row's lineage closure** (pending and ratified edges), not just at key issuance; R2 extends to workarea edges (ratifier ≠ proposer) | [admission.md](admission.md), [workareas.md](workareas.md) |
-| **R3** | The gate changes visibility, not ranking — nothing is readable by others until ratified | The serving tier: held rows are excluded from every read path (FTS, vector, fetch, graph) outside an in-progress workarea, and inside one are served only behind its fence and marked `reviewed: false`; steering rows precede hits but are never ranked | [admission.md](admission.md), [retrieval.md](retrieval.md) |
+| **R3** | The gate changes visibility, not ranking — nothing is readable by others until ratified | The serving tier: held rows are excluded from every read path (FTS, vector, fetch, graph); steering rows precede hits but are never ranked | [admission.md](admission.md), [retrieval.md](retrieval.md) |
 | **R4** | No silent deletion — erasure is a journalled act via crypto-shredding; demotion keeps bytes | The journal table (append-only: REVOKE UPDATE/DELETE plus a guard trigger) and the erasure path (journalled erase event + DEK destruction, with a named copy-class inventory) | [storage.md](storage.md), [audit-and-lineage.md](audit-and-lineage.md) |
 
 One bounded exception exists and is named in the constitution, not discovered later: a
@@ -270,7 +270,9 @@ One bounded exception exists and is named in the constitution, not discovered la
 [ADR-0030](../adr/ADR-0030-in-progress-workareas.md) would add a second, relaxing only R3's first
 sentence: inside an [in-progress workarea](workareas.md#in-progress-workareas) its readers read
 held claims at once, marked, R2 holds in full, and nothing in it is readable outside until its
-commit. One honesty limit sits beside the
+commit. Under the proposed ADR-0030 (binding only on its acceptance), held rows inside an
+in-progress subtree are served behind its fence, marked `reviewed: false`, and the R3 row above
+gains that exception at its acceptance. One honesty limit sits beside the
 invariants: undeclared derivation — a writer omitting `derives_from` — is not detectable by the
 service; lineage exclusion is exactly as good as the declared graph.
 

@@ -39,8 +39,8 @@ OML sits between your crews and their memory and makes the write path accountabl
   and must be approved by an identity that did not write it before anyone else can read it. The
   reviewer sees everything the claim carries — including every attached file — before their
   verdict counts. Approval changes visibility, not ranking: nothing is quietly reordered, and
-  nothing unreviewed is served to others, except, marked as such, inside a workarea created to be
-  in progress.
+  nothing unreviewed is served to others, except, under the proposed decision above, marked as
+  such, inside a workarea created to be in progress.
 - **Files, images and PDFs, not just text.** Attachments travel with the claim, are named by
   their content so they cannot be swapped after the fact, and are stored encrypted. Where a
   file's text can be extracted deterministically, that text is scanned and reviewed too; where it

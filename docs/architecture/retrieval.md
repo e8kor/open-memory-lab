@@ -39,7 +39,9 @@ the calling key ([own](roles-and-keys.md#own)) — through own-work status, get,
 and recall with `include_own_held` ([own held rows in
 recall](#own-held-rows-in-recall)); demoted and erased rows are not served. This
 is R3 made operational: the gate changed visibility, and the read path is where
-that visibility is enforced. The one place another key reads a held row is
+that visibility is enforced. Under the proposed
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md), binding only on its
+acceptance, the one place another key reads a held row is
 inside an [in-progress workarea](workareas.md#in-progress-workareas), for the
 keys the [permission matrix](roles-and-keys.md#permission-matrix) allows, each
 row marked `reviewed: false`; a read scoped outside that subtree serves nothing
@@ -74,7 +76,8 @@ version of a retired claim
 out of the hits, so a ratified retirement, or a later supersession of one,
 changes no index row. Superseded versions are readable history under the same
 access, so the predicate hides nothing a reader may not see. Held rows enter
-neither index, except inside an in-progress subtree: elsewhere a held row is
+neither index, except, under the proposed ADR-0030, inside an in-progress
+subtree: elsewhere a held row is
 matched only through the author-fenced read of
 [held text containment](#held-text-containment), and inside one the indexes
 hold held and promoted rows alike behind a fence keyed by the subtree
@@ -135,7 +138,10 @@ partitioning is a performance and blast-radius choice layered under the
 security boundary, not a substitute for it: RLS is the isolation authority
 (declared in [security.md](security.md)); the per-tenant partition means one
 tenant's index build, vacuum or bloat never degrades another's graph, and an
-HNSW graph never spans tenants.
+HNSW graph never spans tenants. Under the proposed ADR-0030 each tenant
+partition is itself list-partitioned on `in_progress_root_id`, so an
+in-progress subtree's vectors sit in a graph of their own that no recall scoped
+outside it scans before its commit ([the in-progress fence](#the-in-progress-fence)).
 
 Two query-shape decisions:
 
@@ -306,9 +312,10 @@ mode the request is an own-held read
 
 ## Held claims inside an in-progress workarea
 
-This section is the single declaration site for how recall and its indexes
+Proposed in [ADR-0030](../adr/ADR-0030-in-progress-workareas.md), binding only on
+its acceptance: this section is the single declaration site for how recall and its indexes
 treat an [in-progress workarea](workareas.md#in-progress-workareas)
-([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d8, d9, d10). Which keys
+(ADR-0030 d8, d9, d10). Which keys
 may read the held claims of other keys there is declared once, in the
 [permission matrix](roles-and-keys.md#permission-matrix) (footnote 6); this
 section calls that answer, for a node, the key's **unreviewed access** there.
@@ -327,13 +334,15 @@ unreviewed access on the scope node, and `false` otherwise.
   below declares, and nothing is served twice.
   A workarea in the subtree where a reader grant blocks contributes
   its promoted hits only — absence, as a per-grant deny is in any subtree read.
-- **True, where the scope node itself blocks.** Refused with
+- **True, at a scope node inside an in-progress subtree where a reader grant
+  effective on it carries `unreviewed: block`.** Refused with
   `access.grant_refused`, details `{workarea_id, needed_role: "reader",
   unreviewed: "block"}`: the request names rows that exist and that the key's
   grants withhold, and narrowing silently would be coercion. A recall that
   leaves the field to its default never asks for them, so it never refuses.
 - **True, at a scope outside every in-progress subtree.** Nothing is added and
-  nothing is refused: no held claim of another key is readable there (R3).
+  nothing is refused, whatever a reader grant effective there carries: no held
+  claim of another key is readable there (R3).
 - **False.** Promoted hits only, plus own held rows under `include_own_held`.
 
 The added hits merge with the promoted hits under the
@@ -351,33 +360,55 @@ ADR-0030, since no in-progress subtree existed.
 up to `universe` — serves nothing from it, the caller's own held rows included,
 until its commit: no steering, no hits, and no candidate counted in `k`, the
 budget's `hits_omitted` or `next_hit_tokens`. The serving indexes cannot match
-those rows at such a scope (below). The vector scan can still be perturbed by
-them: inside rows are candidates in the same per-tenant HNSW graph, discarded
-after the index scan like every post-filtered candidate
-([pgvector layout](#pgvector-layout)), so what the subtree holds can change
-which hits an approximate scan scoped outside returns, or how many before its
-scan ceiling. That is a perturbation, never content, and it is a stated
-residual, tracked as [FR-31](../product/roadmap.md).
+those rows at such a scope, and the subtree's vectors sit in a graph that a
+recall scoped outside does not scan (below), so what the subtree holds changes
+neither which hits an outside recall returns nor how many.
 
 ### The in-progress fence
 
-- **Designed form (decided, not built).** Every held and promoted version in a
+- **Designed form (proposed, not built).** Every non-simulation held and promoted version in a
   workarea inside an in-progress subtree has the `memories_fts` row and the
-  `memory_embeddings` row it would have once promoted outside one, a held one
-  from its capture on, so a held claim and the same claim once promoted score
-  alike: ratification changes no index row and no score, and review never
-  reorders results (R3). Each such row carries `in_progress_root_id`, the
-  in-progress workarea whose subtree holds it
+  `memory_embeddings` row it would have once promoted outside one, a held one from its capture
+  on, so a held claim and the same claim once promoted score alike: ratification changes no
+  index row and no score, and review never reorders results (R3). Each such row carries
+  `in_progress_root_id`, the in-progress workarea whose subtree holds it, and so does the
+  version's `memories` row, stamped by the capture's round trip two and never changed, since no
+  version crosses the boundary while its root is in progress
   ([data/postgres-schema.md](../data/postgres-schema.md#full-text-search-and-embeddings)).
-  A simulation row keeps its per-simulation index, and a per-simulation index
-  row of a version inside an in-progress subtree carries `in_progress_root_id`
-  under the same policy, so an audience key's recall scoped outside skips it
-  too. A restrictive row-level security policy on each of these tables serves
-  a row whose root is still `development` only to a transaction whose
-  `oml.in_progress_root` names that root; its `WITH CHECK` equals its `USING`,
-  so an insert or update of such a row passes only there, and on
-  `memory_embeddings` it is created on every tenant partition as well as on the
-  parent:
+  A restrictive row-level security policy on each index table serves a row whose root is still
+  `development` only to a transaction whose `oml.in_progress_root` names that root; its
+  `WITH CHECK` equals its `USING`, so an insert or update of such a row passes only there, and
+  on `memory_embeddings` it is created on the parent and on every partition below it:
+    - **the subtree's own vector graph.** Each tenant partition of `memory_embeddings` is itself
+      list-partitioned on `in_progress_root_id`: one partition `FOR VALUES IN (NULL)` holds the
+      rows with no root, and each in-progress root has a partition of its own with its own HNSW
+      index, which `workarea.create` with `in_progress: true` creates as a table and attaches in
+      its own transaction, before round trip one, so the chain lock holds none of that DDL. The
+      attach takes `SHARE UPDATE EXCLUSIVE` on the tenant partition, and `ACCESS EXCLUSIVE` on a
+      default partition only if one exists, which it then scans
+      ([ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html), fetched 2026-10-31); no `DEFAULT` partition exists, so the attach locks and scans no
+      other partition, and an insert whose root has no partition fails rather than landing in a
+      shared graph. A recall scoped inside
+      scans its root's partition, which holds every embedded version of subtree(scope). A recall
+      scoped outside scans the no-root partition and the partitions of committed roots only,
+      never one whose root is `development`, so held writes inside use up no part of an outside
+      scan's ceiling and change neither which hits it returns nor how many. After the commit an
+      asynchronous move takes a committed root's rows into the no-root partition, clearing their
+      `in_progress_root_id`, and drops the root's partition once it is empty and no indexer work
+      item names that root; until then an outside recall reads both and deduplicates by
+      `(artifact_id, version)`, so no row is served nowhere at any moment and nothing moves under
+      the chain lock. A unique or primary key constraint on a partitioned table must include every
+      partition key column ([Table Partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html), fetched 2026-10-31), and this key must admit null, so
+      `memory_embeddings` carries no primary key: each leaf partition
+      carries a unique index on `(artifact_id, version)`, and each version's row is inserted
+      once, under its root, and moved, never copied. The DDL's cost and the move's cost are
+      unmeasured ([FR-25](../product/roadmap.md));
+    - **simulation rows.** A simulation row keeps its per-simulation index. One inside an
+      in-progress subtree is indexed there from its capture on, carrying `in_progress_root_id`
+      under the same policy, so its score does not change at ratification and an audience key's
+      recall scoped outside skips it too. The per-simulation index's DDL is undeclared, an open
+      detail named on the
+      [Postgres schema](../data/postgres-schema.md#full-text-search-and-embeddings);
     - **the root.** A version's root is the nearest ancestor-or-self of its
       workarea with `in_progress = true` and `status = 'development'`, or none.
       `oml-server` computes it in round trip one's statement, beside
@@ -385,13 +416,20 @@ residual, tracked as [FR-31](../product/roadmap.md).
       ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1), and sets
       `oml.in_progress_root` to it with `set_config(…, true)`,
       transaction-local, never from the client;
+    - **the row lock comes before the chain lock.** A rejection, demotion or erasure locks the
+      version's `memories` row `FOR UPDATE` in a sub-select that round trip one's advisory-lock
+      call consumes, for example
+      `SELECT pg_advisory_xact_lock($tenant), <chain-head read> FROM (SELECT 1 FROM memories WHERE tenant_id = $t AND artifact_id = $a AND version = $v FOR UPDATE) r`,
+      so its wait behind an `oml-indexer` insert that holds the row `FOR SHARE` happens before
+      the chain lock is held, and a statement that returns no row aborts the transaction;
     - **placement is decided under the chain lock.** Round trip two's
       statement, which runs once the lock is held, reads the root's status
-      again: a capture, reopen or reassignment into `held` inserts a
-      `memories_fts` row stamped with that root only while the root is still
-      `development`, and otherwise a `held_fts` row with no root, so a capture
-      serialized after a commit is an ordinary held row. The `tsvector` is still
-      computed before `BEGIN`, since it does not depend on the placement;
+      again: a capture or a reopen into `held` inserts a `memories_fts` row stamped with that
+      root only while the root is still `development`, and otherwise a `held_fts` row with no
+      root, so a capture serialized after a commit is an ordinary held row. A reassignment
+      between two nodes of one subtree, into `held` or not, inserts nothing: it is the checked
+      `UPDATE` of the existing rows' workarea and path. The `tsvector` is still computed before
+      `BEGIN`, since it does not depend on the placement;
     - **reads.** `oml-server` sets the setting, transaction-local, at the start
       of every read transaction to the resolved scope node's root, and leaves it
       empty at a scope outside;
@@ -399,23 +437,40 @@ residual, tracked as [FR-31](../product/roadmap.md).
       index row runs under the version's own root, set the same way: the
       capture insert, `oml-indexer`'s insert, the reassignment `UPDATE` of the
       rows' workarea and path between two nodes of one subtree, and the removals
-      at rejection, demotion and erasure. A transaction that moves a version out
-      of `held` or `promoted` takes its `memories` row `FOR UPDATE` in round trip
-      one's statement, so it and the indexer's insert serialize on that row;
-    - **the checks.** The `memories_fts` removal and the reassignment `UPDATE`
-      are each checked to affect exactly one row, and any other count aborts the
-      transaction with `system.internal`. Both index rows sit behind one fence
-      under one setting, so a passing check shows the embedding statement ran
-      where its row is visible. No `held_fts` statement runs for a version
+      at rejection, demotion and erasure;
+    - **re-parenting.** A re-parent rewrites the `workarea_path` of fenced `memory_embeddings`
+      rows once per in-progress root in the moved subtree, each `UPDATE` preceded by
+      `set_config('oml.in_progress_root', <root>, true)`, plus one `UPDATE` with the setting
+      empty for the unfenced rows. The sum of the affected counts is checked against the count
+      of the moved subtree's embedding rows, counted under the same settings, and any mismatch
+      aborts with `system.internal`;
+    - **the checks.** For a version whose state at the transaction is `held` or `promoted` (the
+      rejection of a held version, the demotion of a promoted one, the erasure of a held or
+      promoted one) the `memories_fts` removal is checked to affect exactly one row, and so is
+      the reassignment `UPDATE`; any other count aborts the transaction with `system.internal`.
+      An erasure of a rejected or demoted version inside runs no `memories_fts` or
+      `memory_embeddings` statement, since its rows were removed at that transition. Both index
+      rows sit behind one fence under one setting, so a passing check shows the embedding
+      statement ran where its row is visible. No `held_fts` statement runs for a version
       inside, and none is checked
-      ([held text containment](#held-text-containment)).
+      ([held text containment](#held-text-containment));
+    - **other reads.** The scoped listing, the graph and lineage reads, get and the attachment
+      fetch read `memories` through one SQL function, `served_memories(scope_root)`, that
+      applies the boundary on `memories.in_progress_root_id`, and no read path selects
+      `memories` directly for another key's row. The events tail applies the
+      [boundary condition](../api/http-api.md#events-tail) in `events_with_subjects`. Outside
+      the indexes the boundary is a predicate held by the port-contract tests of the PoC form
+      below, not a fence, a residual [security](security.md) states.
 
     The policy reads the root's status, so the commit, which changes one
     `workareas` row, makes every one of those rows matchable at scopes outside
-    in the same transaction, with nothing proportional to the subtree inside the
-    chain lock ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1). A
-    query scoped outside that forgets the boundary sees nothing behind it —
-    containment by construction at the boundary, the stance of
+    in the same transaction, with no index or lake row rewritten. The commit's held test is the
+    one statement under the chain lock that the subtree reaches: one probe of the partial index
+    `memories_held_by_root`, unmeasured ([FR-25](../product/roadmap.md);
+    [ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d12). A query of `memories_fts` or
+    `memory_embeddings` scoped outside that forgets the boundary sees nothing behind it, and its
+    scan of each outside graph is unchanged by what an inside graph holds — containment by
+    construction at the serving indexes, the stance of
     [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) d3. The policy's
     per-row cost is unmeasured ([FR-4](../product/roadmap.md)).
 
@@ -431,8 +486,9 @@ residual, tracked as [FR-31](../product/roadmap.md).
     `promoted`, in a transaction that sets `oml.in_progress_root`,
     transaction-local, to the root its work item carries. A rejection, demotion
     or erasure whose transaction ends first leaves that insert nothing to write;
-    one that arrives while the insert holds the row waits for it and then
-    removes the embedding it wrote.
+    one that arrives while the insert holds the row waits for it, before taking the chain lock,
+    and then removes the embedding it wrote. The indexer's Postgres role holds exactly the
+    privileges [security](security.md) lists for it.
 
     **Inside, the fence does not separate authors.** It filters by root alone,
     and the index rows carry no state and no author. A key whose grants block, a
@@ -442,17 +498,21 @@ residual, tracked as [FR-31](../product/roadmap.md).
     own held row inside is matched the same way: `memories_fts` joined to
     `memories` on `author_key_id` under the caller's [own](roles-and-keys.md#own)
     key set, since `held_fts` holds none there.
-- **PoC form (decided, not built).** The PoC is to serve a scope inside an
-  in-progress subtree through one port method whose SQL takes the root and the
-  workareas where the key has unreviewed access, to keep every recall scoped
-  outside off the subtree by a predicate, and to give `list_memories`,
-  `events_with_subjects` and the graph read the same root or exclusion.
-  Port-contract tests run against both stores are to assert, whatever the
-  query: that a read scoped outside never returns a row inside, on each of
-  those reads; that a blocked key's recall never returns another key's held
-  row inside; and that a capture racing a commit never yields a `memories_fts`
-  row of a held version whose root is committed. The code and README are to
-  state the gap to the designed form.
+- **PoC form (proposed, not built).** The PoC's two stores, `PgStore` and the `oml-app` double
+  `MemStore`, have neither `memories_fts` nor `memory_embeddings`: its migrations search
+  `memories` through a GIN index on `to_tsvector(claim)`. Its form is a port change.
+  `recall_fts` gains `unreviewed: &[Uuid]`, the nodes of subtree(scope) where
+  [footnote 6](roles-and-keys.md#permission-matrix) holds, and `own_key_ids: &[Uuid]`; on
+  `unreviewed` it matches held versions of any author, and on `readable` promoted served tips.
+  The use case computes both sets, and at a scope outside it excludes every node of a
+  `development` in-progress subtree from both. `list_memories`' `ListingFilter` gains the same
+  `unreviewed` set, and `events_with_subjects`, and the graph read once one is built, take the
+  same exclusion. Port-contract tests run against both stores are to assert, whatever the
+  query: that a read scoped outside never returns a row inside, on each of those reads; that a
+  blocked key's recall never returns another key's held row inside; and that a capture
+  serialized after the root's commit is returned to another key by no recall, listing or tail
+  scoped at a node of the former subtree, and to its author only under `include_own_held`. The
+  code and README are to state the gap to the designed form.
 
 ## Held text containment
 
