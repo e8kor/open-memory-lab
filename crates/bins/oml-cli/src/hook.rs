@@ -154,7 +154,10 @@ pub fn session_start(
         budget: &recall["budget"],
         query: &query,
         compacted: session.source.as_deref() == Some("compact"),
+        redact: &redact,
     });
+    // Every stored field was redacted before it was cut; this pass catches
+    // anything else the context carries.
     let document = json!({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
@@ -214,6 +217,29 @@ struct Rendered<'a> {
     budget: &'a Value,
     query: &'a str,
     compacted: bool,
+    /// The key's redaction, applied to every stored field before it is
+    /// flattened or cut, since a cut through the key would leave a part of
+    /// it no later redaction matches (ADR-0029 d4).
+    redact: &'a dyn Fn(&str) -> String,
+}
+
+impl Rendered<'_> {
+    /// A stored string field, redacted, then on one line.
+    fn text(&self, row: &Value, name: &str) -> String {
+        one_line(&(self.redact)(row[name].as_str().unwrap_or("?")))
+    }
+
+    /// A stored name, a claim key or the workarea path, redacted, on one
+    /// line, then cut to `KEY_CAP`. The key value is printable ASCII, so
+    /// neither the flattening nor the cut can alter a substituted
+    /// `[OML_API_KEY]`, though the cut may end the line inside it.
+    fn name(&self, raw: &str) -> String {
+        cut(one_line(&(self.redact)(raw)), KEY_CAP)
+    }
+
+    fn key_of(&self, row: &Value) -> String {
+        self.name(row["claim_key"].as_str().unwrap_or("?"))
+    }
 }
 
 /// The `additionalContext` text (cli/reference.md `oml hook session-start`,
@@ -229,7 +255,7 @@ fn render(r: &Rendered<'_>) -> String {
         Some(path) => out.push(format!(
             "OML memory for this session, from {}, workarea {}.",
             origin(r.server),
-            capped(path)
+            r.name(path)
         )),
         None => out.push(format!(
             "OML memory for this session, from {}, in this key's default workarea \
@@ -260,7 +286,7 @@ fn render(r: &Rendered<'_>) -> String {
     let steering: Vec<String> = r
         .steering
         .iter()
-        .map(|m| format!("- {}: {}", key_of(m), text(m, "body")))
+        .map(|m| format!("- {}: {}", r.key_of(m), r.text(m, "body")))
         .collect();
     push_or_none(&mut out, steering, "- none");
 
@@ -273,7 +299,14 @@ fn render(r: &Rendered<'_>) -> String {
     let own: Vec<String> = r
         .own
         .iter()
-        .map(|m| format!("- [{}] {} v{}", text(m, "state"), key_of(m), m["version"]))
+        .map(|m| {
+            format!(
+                "- [{}] {} v{}",
+                r.text(m, "state"),
+                r.key_of(m),
+                m["version"]
+            )
+        })
         .collect();
     push_or_none(&mut out, own, "- none");
 
@@ -286,9 +319,9 @@ fn render(r: &Rendered<'_>) -> String {
             let m = &h["memory"];
             format!(
                 "- [{}] {}: {}",
-                text(m, "state"),
-                key_of(m),
-                text(m, "body")
+                r.text(m, "state"),
+                r.key_of(m),
+                r.text(m, "body")
             )
         })
         .collect();
@@ -331,21 +364,6 @@ pub fn origin(url: &str) -> String {
     } else {
         format!("{scheme}://{host}")
     }
-}
-
-/// A stored string field on one line, its whitespace collapsed.
-fn text(row: &Value, name: &str) -> String {
-    one_line(row[name].as_str().unwrap_or("?"))
-}
-
-/// A row's claim key, on one line and capped.
-fn key_of(row: &Value) -> String {
-    capped(row["claim_key"].as_str().unwrap_or("?"))
-}
-
-/// `text` on one line, at most `KEY_CAP` characters.
-fn capped(text: &str) -> String {
-    cut(one_line(text), KEY_CAP)
 }
 
 /// `line` in at most `cap` characters, the last one `…` when it is cut.
