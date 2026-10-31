@@ -85,7 +85,7 @@ dreamer grant (flagged orphaned), and a policy naming
 
 - Keys expired → `oml keys rotate <key> <new-key-name>` or issue fresh dreamer keys
   (`oml keys issue <key-name> --role dreamer --grant <workarea>:dreamer`).
-- Keys exist but lack scope → `oml grants add <key-id> <workarea>:dreamer`.
+- Keys exist but lack scope → `oml grants add <key> <workarea>:dreamer`.
 - Orphaned vocabulary workarea → the named next action is propose freeze
   (`oml workareas status propose`), not a synthetic reviewer.
 - The unavailability is intended (a crew wound down) → this is
@@ -300,8 +300,8 @@ at a rollout is a bug in the new binary.
   binaries back ([upgrades](upgrades.md)) and file it; the denials were RLS
   doing its job against a buggy query.
 - No deploy correlation → treat as a probe: identify the key behind the
-  requests (`oml keys show <key-id>`), and revoke on reasonable suspicion
-  (`oml keys revoke <key-id> --reason …`) — revocation is journalled and
+  requests (`oml keys show <key>`), and revoke on reasonable suspicion
+  (`oml keys revoke <key> --reason …`) — revocation is journalled and
   reversible by reissue; a tenant-isolation breach is neither.
 - A spike → page. Zero-to-many is categorically different from
   zero-to-one.
@@ -540,7 +540,7 @@ previous one being complete.
    the backup-resident copies decay on the stated windows
    ([audit and lineage](../architecture/audit-and-lineage.md#the-honest-boundary)).
 4. **Revoke the remaining keys.** The admin key last
-   (`oml keys revoke <key-id> --reason offboarding`); from here the tenant
+   (`oml keys revoke <key> --reason offboarding`); from here the tenant
    has no acting principals.
 5. **Lake prefix disposition.** The tenant's lake and bodies prefixes now
    hold ciphertext whose DEKs are destroyed — noise. Removal is an

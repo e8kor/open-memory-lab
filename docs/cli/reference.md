@@ -337,9 +337,9 @@ what to do next. Both emit the same four named signals — the contract that
 ## The `oml-admin` plugin
 
 A Claude Code plugin that wraps this CLI for an operator working inside Claude Code. This section
-is its single declaration site ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d3; the key
-name and the `--crew` it passes are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md)
-d14's, not built: the shipped skill passes neither). It is
+is its single declaration site ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d3; the shipped
+skill passes the key's name and, when the operator names a crew, `--crew`, as the proposed
+[ADR-0026](../adr/ADR-0026-names-are-keys.md) d14 adds). It is
 listed beside the agent-facing `oml` plugin in the repository's marketplace and is installed
 separately: an agent that installs `oml` gains no admin instruction, and the `oml` plugin cannot
 issue keys, since its tools are the agent-safe subset ([agent plugin](../api/mcp-plugin.md);
