@@ -151,7 +151,10 @@ accepts it.
     the 8-second deadline bounds any other wait, below the 10 seconds after which Claude Code ends
     the hook itself (d7). The cost: a
     write-only key ([ADR-0028](ADR-0028-agent-key-issuance.md) d2), which recall refuses, gets no
-    session context at all, and a server slower than 3 seconds per request gets none either.
+    session context at all, a server slower than 3 seconds per request gets none either, and so
+    does an `https` server behind an internal certificate authority: the CLI's HTTP client
+    trusts the public roots it carries and not the system's trust store, and the hook adds no
+    dependency to change that.
 
 - **d6 — The output is one SessionStart hook document whose context frames the entries as stored
   data: the server and workarea, how to record, then steering, the agent's recent submissions

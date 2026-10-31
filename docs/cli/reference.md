@@ -370,7 +370,9 @@ value above, an `OML_API_KEY` that is not all printable ASCII among them; a miss
 `OML_API_KEY`; stdin that is not a JSON object, or whose `source` or `cwd` is not a string; an
 unreachable server; a typed refusal; a request, its TCP connect included, that takes longer than
 3 seconds; anything that holds the verb past 8 seconds, such as a DNS lookup, which has no
-deadline of its own; and an answer it cannot read. The context is printed whole or not at
+deadline of its own; an `https` server whose certificate does not chain to the public roots the
+CLI carries, as behind an internal certificate authority, since the CLI does not read the
+system's trust store; and an answer it cannot read. The context is printed whole or not at
 all: a failed listing sends no recall, and a failed recall prints nothing. A write-only key,
 which recall refuses, therefore gets no context.
 
