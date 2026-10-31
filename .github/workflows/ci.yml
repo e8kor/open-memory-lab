@@ -332,3 +332,89 @@ jobs:
           kubectl --namespace oml logs deployment/oml-server-lead --previous || true
           kubectl --namespace oml logs deployment/oml-server-lead || true
           cat "$RUNNER_TEMP"/port-forward*.log || true
+
+  # The client SDKs of docs/engineering/sdks.md: each suite runs against the
+  # server built from this checkout, on a throwaway database it creates and
+  # drops itself, and the generated layers must be current with openapi.yaml.
+  sdk-python:
+    name: Python SDK against the release server
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo build --release --locked --bin oml-server-lead --bin oml
+      - uses: astral-sh/setup-uv@v6
+      - name: Lint the hand-written code
+        working-directory: sdks/python
+        run: |
+          uv run --locked --python 3.11 --group generate ruff check src tests
+          uv run --locked --python 3.11 --group generate ruff format --check src tests
+      - name: pytest on the Python floor
+        working-directory: sdks/python
+        env:
+          OML_SERVER_BIN: ${{ github.workspace }}/target/release/oml-server-lead
+          OML_CLI_BIN: ${{ github.workspace }}/target/release/oml
+          OML_SDK_TEST_DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+        run: uv run --locked --python 3.11 pytest -v
+
+  sdk-typescript:
+    name: TypeScript SDK against the release server
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo build --release --locked --bin oml-server-lead --bin oml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install, type-check and build
+        working-directory: sdks/typescript
+        run: |
+          npm ci
+          npm run check
+          npm run build
+      - name: node --test
+        working-directory: sdks/typescript
+        env:
+          OML_SERVER_BIN: ${{ github.workspace }}/target/release/oml-server-lead
+          OML_CLI_BIN: ${{ github.workspace }}/target/release/oml
+          OML_SDK_TEST_DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+        run: npm test
+
+  sdk-generated:
+    name: generated SDK code is current with openapi.yaml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci
+        working-directory: sdks/typescript
+      - run: python scripts/generate_sdks.py --check

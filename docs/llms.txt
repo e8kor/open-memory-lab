@@ -66,6 +66,7 @@
 - [Test strategy](https://e8kor.github.io/open-memory-lab/engineering/test-strategy/): which tier proves which claim; citable property and conformance ids
 - [CI and toolchain](https://e8kor.github.io/open-memory-lab/engineering/ci-and-toolchain/): toolchain pins, merge gates, release machinery, the supply-chain claim
 - [Benchmark harness](https://e8kor.github.io/open-memory-lab/engineering/benchmark-harness/): the three harness tiers that will produce every performance number (FR-25)
+- [Client SDKs](https://e8kor.github.io/open-memory-lab/engineering/sdks/): the Python and TypeScript clients generated from openapi.yaml, their pinned generators, what the hand-written wrappers add, and the regeneration rule (FR-12)
 
 ## Product
 

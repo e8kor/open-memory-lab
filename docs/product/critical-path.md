@@ -167,8 +167,9 @@ M1.
 
 **Progress.** What FR-10 and FR-11 ask for is built, and the agent-only-memory scenario is a
 test in the repository's suite. Neither row has closed: both close when that scenario passes in
-continuous integration, and the [roadmap](roadmap.md) cites that run when they do. FR-12 is not
-built, and it still gates M2.
+continuous integration, and the [roadmap](roadmap.md) cites that run when they do. FR-12's
+Python and TypeScript clients are built; its batch write path and upload wrapper are not, and it
+still gates M2.
 
 ## M3 — Derived lakehouse
 
