@@ -1,6 +1,6 @@
 {
   "name": "oml-admin",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Issue an Open Memory Lab agent key from Claude Code. The key value goes to an owner-only file and never into the conversation.",
   "author": {
     "name": "e8kor"
