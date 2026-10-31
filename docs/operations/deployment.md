@@ -171,6 +171,106 @@ log, and the consumed secret cannot be claimed twice
 From here the ceremony continues in [cli/sessions.md](../cli/sessions.md):
 create a tenant, issue its first admin key, create workareas, issue crew keys.
 
+### The interim chart: the current build on Kubernetes
+
+**Built** — `deploy/helm/oml`, decided in the proposed
+[ADR-0033](../adr/ADR-0033-interim-helm-chart.md). CI job `chart` installs it on kind; no other
+cluster is recorded running it. The chart holds the one server binary the build has,
+`oml-server-lead`, and nothing else. It is the first revision of the umbrella chart above, not a
+second chart: the designed workloads and the `local` and `scaled` value sets join it at their
+milestones ([critical path](../product/critical-path.md)). Where it differs from the designed
+chart:
+
+| | Designed chart ([ADR-0016](../adr/ADR-0016-kubernetes-workloads.md), [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d16) | Interim chart |
+|---|---|---|
+| Server | `oml-server-lead`, lease-guarded, and `oml-server-follower`, default 0 | `oml-server-lead` alone: one replica under `Recreate`, which stops the old lead before the new one starts; the chain lock stays the fence (ADR-0033 d2) |
+| Other workloads | lake-writer, reconciler CronJob, indexer, bootstrap hook Job | none — decided, not built |
+| Signing key | a Secret or KMS; no volume holds the deployment's identity | the `kms-file` keyring on a ReadWriteOnce claim that `helm uninstall` keeps (ADR-0033 d3) |
+| Migrations | the bootstrap Job, under the owner role | the lead, at boot, under its one Postgres URL (ADR-0033 d6) |
+| Enrollment token | a Secret the bootstrap Job mints | the pod log: the lead prints a fresh token at every boot while no tenant exists (ADR-0033 d8) |
+| Postgres | CloudNativePG (`local`) or a managed service (`scaled`) | external, through an existing Secret's key (ADR-0033 d6) |
+| Object store | MinIO at the pinned tag (`local`) or S3 (`scaled`) | none: the build has no attachments |
+| Value sets | `local` and `scaled` | one `values.yaml`, whose comments carry each value's meaning |
+| Publication | a chart repository (the mockup above) | the `.tgz` and its signature bundle on each release page, from the first tag that runs the chart jobs ([CI and toolchain](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)) |
+
+The pod runs as the image's `oml` user, uid and gid 999, with `fsGroup: 999` under
+`fsGroupChangePolicy: OnRootMismatch`, a read-only root filesystem, every capability dropped,
+seccomp `RuntimeDefault` and no service account token (ADR-0033 d4, d5). Resource requests and limits
+ship as comments in `values.yaml`, not values; no number for them is measured
+([capacity](capacity.md)).
+
+#### Install
+
+Postgres comes first, as a Secret the chart reads and never writes:
+
+```console
+$ kubectl create namespace oml
+$ kubectl --namespace oml create secret generic oml-postgres \
+    --from-literal=OML_POSTGRES__URL='postgres://USER:PASSWORD@HOST:5432/DATABASE'
+$ helm install oml deploy/helm/oml --namespace oml
+$ kubectl --namespace oml rollout status deployment/oml-server-lead
+```
+
+From a release that carries the chart, the archive's URL replaces the checkout path:
+`helm install oml https://github.com/e8kor/open-memory-lab/releases/download/vX.Y.Z/oml-X.Y.Z.tgz`,
+with `--set image.digest=sha256:…` from that release's notes to pin the image. The lead applies
+migrations at boot with that URL, so its role needs the rights to migrate.
+
+#### Claiming the first admin key: the bootstrap race
+
+While no tenant exists, the lead prints a single-use enrollment token on stdout at every boot.
+The token sits in the pod log, and in whatever store the cluster ships container logs to, until a
+claim consumes it, and whoever presents it first receives the first admin key and the tenant.
+While the Service is cluster-internal, presenting it takes access to the cluster network or the
+`pods/portforward` right; an Ingress opens it to anyone on the Ingress's network who has seen the
+token. So the claim comes before any Ingress, through a port-forward, with the `oml` CLI on the
+operator's machine (the release tarball's `oml`, or a `cargo build` of the checkout):
+
+```console
+$ TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
+$ kubectl --namespace oml port-forward service/oml-server 8080:8080 &
+$ oml --server http://127.0.0.1:8080 bootstrap claim --token "$TOKEN" \
+    --tenant-name <tenant> --principal <you>
+```
+
+The key is printed once, and the CLI stores it in `~/.config/oml/credentials`
+([CLI reference](../cli/reference.md)). To claim and set up a crew in one step instead, run the
+quickstart through the same port-forward, as CI does:
+`OML_URL=http://127.0.0.1:8080 OML_CLI=oml OML_ENROLLMENT_TOKEN="$TOKEN" bash scripts/quickstart.sh`.
+A restart before the claim prints a new token, and the old one stops working: read the token
+from the running pod, not from `--previous`.
+
+Only then expose the API, if it needs to leave the cluster:
+`helm upgrade oml deploy/helm/oml --namespace oml --reuse-values --set ingress.enabled=true
+--set 'ingress.hosts[0].host=<host>'`. The install notes warn when an install enables the
+Ingress; the chart does not refuse one, because it cannot see whether the claim happened. The
+default Ingress path `/` also routes `/readyz`, whose body names the build
+([HTTP API](../api/http-api.md#health)); narrow `ingress.hosts[].paths` to keep it off the
+public route. The optional NetworkPolicy (`networkPolicy.enabled`) admits the API port from
+`networkPolicy.ingressFrom` alone — by default, pods in the release's Kubernetes namespace; add
+the ingress controller's namespace before enabling the Ingress — and lets the lead open
+connections to DNS and the Postgres port alone.
+
+#### Upgrades, restarts and uninstall
+
+Every upgrade and every restart stops the API, reads included, until the new lead is ready:
+`Recreate` stops the old pod first. The window is unmeasured; lead replacement is
+[FR-24](../product/roadmap.md)'s to measure. `helm uninstall` leaves the keyring claim
+(`oml-keyring` for a release named `oml`), and a reinstall under the same release name and
+namespace takes it back; under another name, `--set keyring.existingClaim=<claim>` attaches it.
+Losing the claim while the database is kept — deleting it, or losing the volume behind it —
+loses the deployment's identity, and the lead then refuses readiness (the fork-check row below).
+
+#### Failure modes
+
+| What the operator sees | Cause | What to do |
+|---|---|---|
+| The pod waits in `CreateContainerConfigError`, naming the Secret | The Postgres Secret or its key is missing | Create it (Install, above); the pod starts on its own once it exists |
+| `CrashLoopBackOff`; the log ends `fatal: postgres connect: …` | The URL in the Secret does not reach Postgres | Fix the Secret's URL or the network path; with the NetworkPolicy on, check `networkPolicy.postgres` |
+| `CrashLoopBackOff`; the log ends `fatal: keyring: keyring file permissions are not 0600 (ADR-0023 d4 kms-file shape)` | Something changed the keyring file's mode: the pod's `fsGroupChangePolicy` set back to `Always`, or a volume that applies an fsGroup itself or maps modes (ADR-0033 d4) | Restore `OnRootMismatch`, or move the claim to a volume that keeps file modes; set the file back to 0600 from a pod that mounts the claim as uid 999. Never replace the file: it holds the signing key |
+| `/readyz` answers 503 with `fork_check: failed`; the log says `STARTUP FORK CHECK FAILED`; no token is printed | The lead loaded a different signing key than the one that signed the chain — the keyring claim was replaced or emptied while the database was kept | Reattach the claim that holds the deployment's key ([Fork check failing](runbooks.md#fork-check-failing)); never delete the chain head |
+| No `enr_` line in the pod log | A tenant exists — the deployment was claimed — or the fork check failed (row above) | A claimed deployment prints no token; issue further keys with the admin key |
+
 ## The standalone profile
 
 One host, no orchestrator
@@ -451,7 +551,7 @@ exist to recover, and what recovery can never get back, is
 |---|---|---|
 | Postgres (kubernetes) | Base backups + WAL archiving (CloudNativePG-managed locally; the managed service's facility when scaled) | Plaintext-derived rows — pgvector embeddings, tsvector entries — are removed from live tables at erase time but **persist in base backups and WAL until the retention window expires**. The window is therefore an upper bound on how long erased-memory derivatives survive, and it is stated, per tenant policy, in the evidence export. |
 | Postgres (docker, standalone) | The host's own facility: `pg_dump` / base backups + WAL archiving against the host or containerized Postgres | Same shape, same window arithmetic — the erasure SLO follows the backup facility, not the profile. A profile with **no** backups has a trivially short window and a trivially absent restore story; both facts belong in the operator's declaration, not in silence. |
-| **Keyring file (`kms-file` profiles: docker, standalone)** | Whatever backs up the keyring path or its volume — host backups, volume snapshots, compose-volume copies | **A new copy class.** The keyring holds the KEK itself: any backup of it is a usable key copy, exactly like wrapped-DEK rows in Postgres backups, and it extends the erasure SLO the same way. Retired-KEK destruction is file deletion by the same host admin, journalled; the bound is only as real as the operator's file hygiene, and the inventory says so ([audit and lineage](../architecture/audit-and-lineage.md), [RS-12](../product/roadmap.md)). |
+| **Keyring file (`kms-file` profiles: docker, standalone, and the [interim chart](#the-interim-chart-the-current-build-on-kubernetes))** | Whatever backs up the keyring path or its volume — host backups, volume snapshots, compose-volume copies, snapshots of the interim chart's keyring claim | **A new copy class.** The keyring holds the KEK itself: any backup of it is a usable key copy, exactly like wrapped-DEK rows in Postgres backups, and it extends the erasure SLO the same way. Retired-KEK destruction is file deletion by the same host admin, journalled; the bound is only as real as the operator's file hygiene, and the inventory says so ([audit and lineage](../architecture/audit-and-lineage.md), [RS-12](../product/roadmap.md)). |
 | Delta tables | Table history until `VACUUM` + checkpoint cleanup, run inside the lake-writer — identical in all three profiles | Old parquet versions and checkpoints hold **ciphertext** of erased bodies until vacuumed. The DEK is already destroyed, so the bytes are unreadable, but the inventory still names them, and the vacuum cadence is the stated bound on their lifetime. |
 | Object store | Versioning (if enabled) on quarantine and bodies prefixes; in standalone, any host-level backup of the data directory plays the same role | Same shape: ciphertext versions survive until lifecycle rules (or host backup expiry) remove them; the window is the stated bound. Quarantine objects of refused submissions get a short, named expiry of their own. |
 | Read-event log | Partition drops on the retention window set by tenant policy ([retrieval](../architecture/retrieval.md)) | Not a backup, but the same discipline: the window is declared, and exports scope to it. |

@@ -133,6 +133,99 @@ decisions live on an engineering page, [M0 spikes](engineering/spikes/index.md).
   `mkdocs.yml`, [llms.txt](llms.txt) and this page. Outside `docs/`, the two scripts, their lock
   files and the workflow.
 
+### 2026-10-31 — A Helm chart for the current build's one lead (ADR-0033)
+
+[ADR-0033](adr/ADR-0033-interim-helm-chart.md), proposed on 2026-10-31, decides what a Helm
+chart holds while the build has one server binary, and this change builds it. Numbers 0030 to
+0032 are taken by records on other branches. It amends ADR-0016 (d4) and ADR-0023 (d16) for this
+chart only; their Status lines gain the back-pointer when the record is accepted.
+
+- **Decided and built:** `deploy/helm/oml`, the first revision of the one chart ADR-0016 d2
+  names, holding `oml-server-lead` alone (d1): one replica under `Recreate` in place of the lead
+  lease, with the chain lock as the fence (d2); the keyring on a ReadWriteOnce claim mounted at
+  `/var/lib/oml/keyring`, kept by `helm uninstall` and reattachable through
+  `keyring.existingClaim` (d3); uid and gid 999, the image's `oml` user, with `fsGroup: 999` under
+  `fsGroupChangePolicy: OnRootMismatch`, because the default policy turns the 0600 keyring into
+  0660 and the lead refuses it (d4); `runAsNonRoot`, a read-only root filesystem, every capability
+  dropped, seccomp `RuntimeDefault`, no service account token, resources as comments, and an
+  optional NetworkPolicy (d5); `OML_POSTGRES__URL` from an existing Secret's key, never a value
+  (d6); startup and liveness probes on `/healthz` and readiness on `/readyz` (d7); the Ingress
+  off by default, and install notes that give the claim of the enrollment token through
+  `kubectl port-forward` before any Ingress, and warn when an install enables one (d8);
+  `version` = `appVersion` = the workspace version, the image
+  `ghcr.io/e8kor/open-memory-lab:<appVersion>`, pinned by `image.digest` when set (d9); and the
+  release and CI jobs (d10).
+- **Checks:** `scripts/check_chart.py` runs `helm lint --strict` and `helm template` on the
+  default values, `ci/kind-values.yaml` and the optional features, and fails on a version
+  mismatch, a duplicated mapping key, or the loss of any property d2–d8 decide, NOTES.txt's
+  included; with `--image-user` it also requires the pod's ids to be the built image's.
+  `scripts/check_release.py` now also fails if `release.yml` stops checking the chart's version
+  against the tag, packaging it, signing it with `cosign sign-blob` or uploading the archive and
+  its bundle to the release. `ci.yml` gains job `chart`: kind, `pgvector/pgvector:pg17` in the
+  cluster, the image built from the checkout and loaded, `helm install`, the claim through
+  port-forward, `scripts/quickstart.sh`, then a restart that must keep the public key, answer
+  `/readyz` 200 and print no token, and an uninstall that must leave the keyring claim and a
+  reinstall that must load the same key. `release.yml` gains jobs `chart` and `chart-release`; its
+  other jobs are unchanged.
+- **Not run here:** the kind job and the release jobs. This change ran `helm lint`,
+  `helm template`, a strict Kubernetes schema validation of the rendered objects, both checkers
+  and `actionlint` locally, and the quickstart against the installed lead the way the kind job
+  drives it; the pull request's CI run is the kind job's first, and the first tag after it is the
+  release jobs' first. d4's fsGroup behaviour is read from the kubelet's source and the
+  Kubernetes documentation, not observed on a cluster.
+- **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
+  stays `0.2.0-design`. The chart is at the workspace version, 0.2.2, and moves with it.
+- **Pages touched:** [ADR-0033](adr/ADR-0033-interim-helm-chart.md), the
+  [decision register](adr/index.md) (row and the D15 cell), `mkdocs.yml`, [llms.txt](llms.txt),
+  [deployment](operations/deployment.md) (the interim chart's section and the keyring backup
+  row), [CI and toolchain](engineering/ci-and-toolchain.md) (the chart gate and the release
+  artifact) and this page; outside `docs/`, `deploy/helm/oml/`, `deploy/k8s/README.md`,
+  `scripts/check_chart.py`, `scripts/check_release.py`, `.github/workflows/ci.yml` and
+  `.github/workflows/release.yml`.
+
+### 2026-10-31 — Python and TypeScript clients generated from openapi.yaml (implementation, FR-12)
+
+[Client SDKs](engineering/sdks.md), a new engineering page, decides how the client half of
+[FR-12](product/roadmap.md) is made and kept current, and this change builds it. FR-12's batch
+half, `POST /v1/memories:batch`, changes the server and is not part of it. No ADR records the
+decision: FR-12 already decides that the clients are generated, and the page decides the
+generators, the package names, the wrapper and the regeneration rule, with the rejected
+alternatives. It amends no record.
+
+- **Decided and built:** `sdks/python`, the distribution `oml-sdk` imported as `oml_sdk`,
+  generated by openapi-python-client 0.29.1, and `sdks/typescript`, the npm package `oml-sdk`,
+  typed by openapi-typescript 7.13.0 over openapi-fetch 0.17.0, with every generator pinned and
+  locked in `uv.lock` and `package-lock.json`; neither is released to a registry. Over each, a
+  hand-written wrapper that takes the key from the caller or `OML_API_KEY`, sends one
+  `Idempotency-Key` per write and reuses it on every retry of that call, follows `next_cursor`
+  through the listing, raises one exception class per [errors.md](api/errors.md) family carrying
+  `code`, `rule`, `message` and `retryable`, and refuses uploads with `NotBuiltError`, because the
+  server serves no upload sessions yet.
+- **The regeneration rule:** `scripts/generate_sdks.py` regenerates both generated layers from
+  openapi.yaml, and with `--check` fails on stale generated code or on a change to the Python
+  generator's recorded warnings, so a change to openapi.yaml regenerates both clients in the
+  same change.
+- **Checks:** `sdks/python/tests` (pytest) and `sdks/typescript/test` (`node --test`) run against
+  a real `oml-server-lead` on a throwaway database: remember, held, the author's own recall, a
+  dreamer key's approve verdict, recall; a write whose response was lost, retried and replayed
+  under the same key; a key reused with another body, refused and not retried; the listing
+  iterated across pages; the error mapping. `.github/workflows/ci.yml` gains three jobs,
+  `sdk-python`, `sdk-typescript` and `sdk-generated`, and changes none.
+- **Not verified here:** the three CI jobs, which have not run yet. Locally both suites passed
+  against the installed `oml-server-lead` 0.2.0 and `oml` 0.2.2, the Python suite on Python 3.11
+  and 3.13 and the TypeScript suite on Node 24.
+- **Not built:** the batch write path and the upload wrapper, which keep FR-12 open; and the
+  Python generated layer types no `Workarea`, `WorkareaPage` or `WorkareaView`, the generator gap
+  the SDK page records.
+- **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
+  stays `0.2.0-design`.
+- **Pages touched:** [client SDKs](engineering/sdks.md), new; [HTTP API](api/http-api.md) and
+  [errors](api/errors.md), which link it; the FR-12 status on the [roadmap](product/roadmap.md),
+  the M2 progress on the [critical path](product/critical-path.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md), `mkdocs.yml`, [llms.txt](llms.txt) and this
+  page; outside `docs/`, `README.md`, `sdks/`, `scripts/generate_sdks.py` and
+  `.github/workflows/ci.yml`.
+
 ### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
 
 [ADR-0029](adr/ADR-0029-session-start-hook.md), accepted by the maintainer on 2026-10-31 with release v0.2.2, records what the maintainer decided on

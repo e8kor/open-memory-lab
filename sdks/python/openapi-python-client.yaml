@@ -1,0 +1,7 @@
+# Settings for the pinned openapi-python-client (docs/engineering/sdks.md).
+# --isolated keeps the formatting independent of any ruff configuration found
+# around the output directory, so a regeneration in a temporary directory is
+# byte-identical to one in place.
+post_hooks:
+  - ruff check --isolated --no-cache --fix-only --extend-select=I .
+  - ruff format --isolated --no-cache .

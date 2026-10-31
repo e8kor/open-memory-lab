@@ -1,0 +1,81 @@
+# Open Memory Lab — the interim chart (docs/adr/ADR-0033-interim-helm-chart.md).
+#
+# It runs the one server binary the build has, oml-server-lead, as the one
+# lead. The designed chart's other workloads — followers, the lake-writer, the
+# reconciler, the indexer and the bootstrap Job — are decided, not built
+# (docs/operations/deployment.md, "The interim chart").
+#
+# Not values, on purpose: the replica count and the strategy (one lead under
+# Recreate, ADR-0033 d2), the security context (d4, d5) and the probes (d7).
+
+image:
+  repository: ghcr.io/e8kor/open-memory-lab
+  # Empty: the chart's appVersion, which is the workspace version (ADR-0033 d9).
+  tag: ""
+  # sha256:… pins the image by digest; each release's notes print its index digest.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Postgres is external (ADR-0033 d6). The lead reads its connection URL from
+# this Secret's key; the chart never takes the URL or a password as a value.
+# Create it before the install:
+#   kubectl create secret generic oml-postgres \
+#     --from-literal=OML_POSTGRES__URL='postgres://USER:PASSWORD@HOST:5432/DATABASE'
+# The lead applies migrations at boot with this URL, so its role needs the
+# rights to migrate.
+postgres:
+  secretName: oml-postgres
+  secretKey: OML_POSTGRES__URL
+
+# The keyring claim holds the deployment signing key (ADR-0033 d3). helm
+# uninstall leaves it; a reinstall under the same release name and namespace
+# takes it back.
+keyring:
+  # The name of a claim that already holds a keyring, instead of a new one.
+  existingClaim: ""
+  # The keyring file is 65 bytes; a provisioner may round the request up.
+  size: 64Mi
+  # Empty: the cluster's default StorageClass.
+  storageClassName: ""
+
+# Off until the first admin key is claimed through kubectl port-forward: until
+# then, whoever presents the enrollment token from the pod log first receives
+# that key (ADR-0033 d8; NOTES.txt prints the ceremony).
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: oml.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: oml-tls
+  #    hosts:
+  #      - oml.example.com
+
+# Off by default: its peers are facts of the site (ADR-0033 d5).
+networkPolicy:
+  enabled: false
+  # Who may open connections to the API port. The default admits pods in the
+  # release's namespace; add the ingress controller's namespace before
+  # enabling the Ingress. An empty list admits every source.
+  ingressFrom:
+    - podSelector: {}
+  # Where the lead may open connections besides DNS (port 53): Postgres.
+  postgres:
+    port: 5432
+    # Peers that narrow it, e.g. an ipBlock for a managed Postgres. Empty: any
+    # destination, on that port alone.
+    to: []
+
+# Resource hints are comments, not claims: no number for them is measured
+# (docs/operations/capacity.md). Set requests and limits from your own
+# measurements.
+resources: {}
+#  requests:
+#    cpu: …
+#    memory: …
+#  limits:
+#    memory: …
