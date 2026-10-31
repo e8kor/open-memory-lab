@@ -120,6 +120,7 @@ credential to configure, which is the custody design, not an omission
 | `server.role`, signing-key location | lead only | `role: follower`, no key material | n/a | n/a | n/a | n/a |
 | `server.listen` / probe port | yes | yes | probe port | probe port | probe port | n/a |
 | `cluster.lease_*` | yes | lead-eligible only | yes (lake-writer lease) | no | no | no |
+| `oauth.issuer` | yes | yes (challenge, discovery documents, token audience) | no | no | no | no |
 | `reconciler.*` | no | no | no | yes | no | no |
 
 The standalone profile does not accept `server.role` at all — a standalone
@@ -149,6 +150,7 @@ design states no number it has not committed to
 | `server.listen` | deployment | stated at [FR-22](../product/roadmap.md) | API listen address; the other binaries expose `/healthz` + `/readyz` on a local probe port ([deployment](deployment.md)) |
 | `cluster.lease_ttl`, `cluster.lease_heartbeat` | deployment | profile default — unmeasured, tracked as [FR-24](../product/roadmap.md) | Lead lease and lake-writer lease parameters ([deployment](deployment.md)) |
 | `reconciler.every`, `reconciler.pass_deadline`, `reconciler.genesis_deadline` | deployment | profile default — unmeasured; measurement rides [FR-7](../product/roadmap.md)/[FR-18](../product/roadmap.md) | Scheduling and deadlines for incremental and full-genesis passes ([deployment](deployment.md)) |
+| `oauth.issuer` | deployment | unset — connections off | The public origin, `https` with no path, port only if not 443, no trailing slash, e.g. `https://oml.example.com`: the OAuth issuer, the base of every advertised URL, and `<issuer>/mcp` as the one protected resource. Unset, the discovery documents and `/oauth/*` answer `404`, `/mcp` is bearer-only, and a connect code is refused; a value that is not such an origin stops the process at start. Boot configuration because it is deployment identity: every token is bound to it, so a change ends every connection ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1, d14) |
 
 ### Journalled deployment settings (`oml settings apply` → `system.settings_applied`)
 
@@ -171,6 +173,9 @@ design states no number it has not committed to
 | `delta.optimize_schedule`, `delta.checkpoint_interval`, `delta.vacuum_retention` | deployment | daily bin-pack / weekly Z-order; checkpoint every 100 commits; vacuum retention = the table's erasure bound | Lake maintenance run inside the lake-writer; vacuum retention is an erasure-SLO term ([delta-tables](../data/delta-tables.md), [deployment](deployment.md)) |
 | `backup.postgres_retention`, `backup.kek_rotation_period`, `backup.object_lifecycle` | deployment | profile default — not measured, not regulator-sourced | **Declared** windows, not executed ones: the backup machinery runs outside OML, and these keys record what the operator declares so the erasure SLO and the evidence export can state it ([deployment](deployment.md), [audit and lineage](../architecture/audit-and-lineage.md)) |
 | `doctor.thresholds` | deployment | unmeasured defaults | The verdict thresholds `oml doctor` applies ([observability](observability.md)) |
+| `oauth.access_token_ttl` | deployment | **1 hour** — shipped default; at most 24 hours | Life of a connection's access token ([roles and keys](../architecture/roles-and-keys.md#connections)) |
+| `oauth.refresh_token_ttl` | deployment | **30 days** — shipped default | How long a refresh token stays redeemable unused; a connection idle longer needs a new connect code ([roles and keys](../architecture/roles-and-keys.md#connections)) |
+| `oauth.connect_code_ttl` | deployment | **10 minutes** — shipped default; 1 to 60 minutes | Life of a connect code from its minting ([roles and keys](../architecture/roles-and-keys.md#connections)) |
 
 ### Journalled tenant policy (not on this surface — listed for completeness)
 

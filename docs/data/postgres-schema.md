@@ -283,7 +283,8 @@ issued-without-value (D9, declared in [roles-and-keys](../architecture/roles-and
 CREATE TABLE api_keys (
     id         uuid        PRIMARY KEY,
     tenant_id  uuid,                    -- NULL for provider-level operator keys
-    hash       bytea       NOT NULL UNIQUE,
+    hash       bytea       UNIQUE,      -- SHA-256 of the value; NULL exactly for a connector
+                                        -- key, which has no value (ADR-0031 d7)
     role       text        NOT NULL
         CHECK (role IN ('reader', 'writer', 'dreamer', 'admin', 'operator')),
     principal  text        NOT NULL,
@@ -362,6 +363,99 @@ references, always bypass row security"
 A provider-level key (`tenant_id` NULL) matches no such reference, and carries no grant
 ([grant admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before it is imposed.
+
+## connections (ADR-0031)
+
+Connect codes, connections, their tokens, and the deployment-level state the authorization server
+keeps before a code names a key ([roles and keys](../architecture/roles-and-keys.md#connections),
+[HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). No code, token or
+authorization code is stored, only its SHA-256.
+
+```sql
+CREATE TABLE oauth_clients (           -- clients the authorization server knows; deployment-level
+    client_id       text        PRIMARY KEY,   -- a metadata document's https URL, or server-minted
+    tenant_id       uuid        NOT NULL,      -- always the reserved provider tenant
+    kind            text        NOT NULL CHECK (kind IN ('cimd', 'dcr')),
+    client_name     text        NOT NULL,
+    redirect_uris   text[]      NOT NULL,      -- each inside the redirect allowlist
+    metadata_digest bytea       NOT NULL,      -- SHA-256 of the document or registration as received
+    fetched_at      timestamptz,               -- cimd: when the cached document was fetched
+    created_at      timestamptz NOT NULL
+);
+
+CREATE TABLE oauth_authorizations (    -- one row per authorization request on the page
+    id             uuid        PRIMARY KEY,
+    tenant_id      uuid        NOT NULL,       -- always the reserved provider tenant
+    handle_hash    bytea       NOT NULL UNIQUE,-- SHA-256 of the handle the page's form carries
+    client_id      text        NOT NULL REFERENCES oauth_clients (client_id),
+    redirect_uri   text        NOT NULL,
+    code_challenge text        NOT NULL,       -- S256 only
+    state          text,                       -- echoed verbatim
+    attempts_left  integer     NOT NULL,       -- five at creation
+    expires_at     timestamptz NOT NULL,       -- ten minutes after creation
+    connection_id  uuid                        -- set when a connect code verifies; plain uuid,
+                                               -- since the connection is another tenant's row
+);
+
+CREATE TABLE connect_codes (
+    id          uuid        PRIMARY KEY,
+    tenant_id   uuid        NOT NULL,
+    key_id      uuid        NOT NULL,
+    hash        bytea       NOT NULL UNIQUE,   -- SHA-256 of the 12 decoded symbols
+    issued_seq  bigint      NOT NULL,          -- journal seq of its connection.code_issued
+    expires_at  timestamptz NOT NULL,
+    redeemed_at timestamptz,                   -- its first correct entry on the page
+    voided_seq  bigint,                        -- seq of the connection.code_issued that replaced it
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id)
+);
+
+-- one live code per key: minting a code voids every unredeemed one of the key in its commit.
+CREATE UNIQUE INDEX connect_codes_live ON connect_codes (key_id)
+    WHERE redeemed_at IS NULL AND voided_seq IS NULL;
+
+CREATE TABLE oauth_connections (
+    id                   uuid        PRIMARY KEY,
+    tenant_id            uuid        NOT NULL,
+    key_id               uuid        NOT NULL,
+    code_id              uuid        NOT NULL REFERENCES connect_codes (id),
+    client_id            text        NOT NULL,  -- no reference: oauth_clients is the provider tenant's
+    redirect_uri         text        NOT NULL,
+    code_challenge       text        NOT NULL,
+    auth_code_hash       bytea       UNIQUE,    -- the authorization code, until it is redeemed
+    auth_code_expires_at timestamptz,
+    state                text        NOT NULL CHECK (state IN ('authorized', 'open', 'revoked')),
+    opened_seq           bigint,                -- journal seq of its connection.opened
+    revoked_seq          bigint,                -- its connection.revoked, or the connection.opened
+                                                -- that replaced it
+    revoked_cause        text        CHECK (revoked_cause IN
+                             ('admin', 'refresh_reuse', 'code_reuse', 'replaced')),
+    created_at           timestamptz NOT NULL,
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id)
+);
+
+-- at most one open connection per key (ADR-0031 d7).
+CREATE UNIQUE INDEX oauth_connections_open ON oauth_connections (key_id) WHERE state = 'open';
+
+CREATE TABLE oauth_tokens (
+    hash          bytea       PRIMARY KEY,      -- SHA-256 of the token string
+    tenant_id     uuid        NOT NULL,
+    connection_id uuid        NOT NULL REFERENCES oauth_connections (id),
+    kind          text        NOT NULL CHECK (kind IN ('access', 'refresh')),
+    expires_at    timestamptz NOT NULL,
+    rotated_at    timestamptz,                  -- refresh only: presenting it after this is reuse
+    created_at    timestamptz NOT NULL
+);
+```
+
+`connect_codes`, `oauth_connections` and `oauth_tokens` carry their key's `tenant_id` and the
+tenant's RLS. `oauth_clients` and `oauth_authorizations` hold state from before any code names a
+key, so they belong to the reserved provider tenant, under its RLS, and hold no tenant content: a
+client's self-description and a page's request in progress. The code, authorization-code and token
+digests are found by the same pre-tenant authentication lookup that finds `api_keys.hash`; the
+matched row's `tenant_id` then sets `oml.tenant_id` for everything after. Removal is operational:
+an authorization request's row 24 hours after it lapses, a registered client 24 hours after its
+registration when no connection used it, a token row once it has expired or its connection was
+revoked.
 
 ## vocabularies (ADR-0021)
 
@@ -694,11 +788,14 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `grants`, `key_denials`, `bans` | keys/grants family events |
 | `simulations` | simulation open / end events |
 | `api_keys` (state columns) | key issue / revoke events |
+| `connect_codes`, `oauth_connections` (state columns) | `connection.code_issued`, `connection.opened`, `connection.revoked` |
 
 One honest exception inside that last row: `api_keys.hash` is operational secret material. The
 journal records issuance **without the key value** (show-once ceremony), so a re-fold reconstructs
 every key's existence, role, issuer and revocation — but not its hash. Losing the `api_keys` table
-means re-issuing keys, not re-folding them.
+means re-issuing keys, not re-folding them. `connect_codes.hash` and
+`oauth_connections.auth_code_hash` are the same kind of material, never journalled: a re-fold
+restores which codes and connections existed and when they ended, not the digests.
 
 **Operational** — state the journal does not define; losing it costs availability or history, not
 truth: `outbox` (deliveries not yet applied are re-derivable from the journal fold, which is what a
@@ -708,7 +805,10 @@ never load-bearing, the chain lock is), `dead_letter`, `idempotency` (replay pro
 re-opens a replay window bounded by key behaviour), `read_events` (retention-bounded by design),
 `artifact_keys` (key material — loss is unintended erasure, which is why its durability posture
 matters), `memories_fts` and `memory_embeddings` (rebuildable from promoted bodies while DEKs
-exist), `upload_sessions` (in-flight uploads restart).
+exist), `upload_sessions` (in-flight uploads restart), `oauth_tokens` (loss ends every open
+connection at its next request or refresh, and each needs a new connect code),
+`oauth_authorizations` (pages in progress start again) and `oauth_clients` (documents are fetched
+again; registered clients register again).
 
 ## Migrations
 

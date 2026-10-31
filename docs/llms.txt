@@ -1,6 +1,6 @@
 # Open Memory Lab
 
-> Design specification, revision 0.2.0-design, of an agentic external memory provider: every
+> Design specification, revision 0.3.0-design, of an agentic external memory provider: every
 > memory an agent writes is a claim, held until an identity that did not write it has reviewed
 > it, and only then visible to others. PostgreSQL is the system of record with per-tenant
 > Ed25519-signed hash chains; a Delta Lake lakehouse is derived and never authoritative; erasure
@@ -78,4 +78,4 @@
 
 ## Decisions
 
-- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0025 and ADR-0028, what each decides, and which page owns which decision
+- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0025, ADR-0028 and the proposed ADR-0031, what each decides, and which page owns which decision

@@ -57,6 +57,9 @@ implementation; thresholds are deliberately absent — nothing is measured yet
 | `oml_idempotency_replays_total` / `oml_idempotency_conflicts_total` | counter | Stored-response replays vs. same-key-different-digest errors ([HTTP API](../api/http-api.md)) |
 | `oml_upload_sessions_active` (tenant) | gauge | Resumable upload sessions open |
 | `oml_lead_lease_age_seconds` | gauge | Age of the current lead lease since acquisition ([deployment — the lead lease](deployment.md)). Paging-adjacent on the frontier-lag precedent: during a takeover, writes are refused until a new lead holds the lease and passes the fork check, so lease state — not pod status — is what says the write path is up. |
+| `oml_oauth_token_requests_total` (grant_type, outcome) | counter | Token exchanges and refreshes on the connection surface by RFC outcome; a rise in `invalid_grant` on `refresh_token` is lost refresh answers or stolen tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d10) |
+| `oml_oauth_connect_code_failures_total` | counter | Wrong connect-code entries on the authorization page; a sustained rate is someone guessing ([security](../architecture/security.md#connections-the-oauth-surface)) |
+| `oml_oauth_client_metadata_fetch_total` (outcome) | counter | Client metadata document fetches by outcome — fetched, cached, refused address, timeout, oversize, invalid; a deployment with no outbound HTTPS shows only failures |
 | `oml_lead_takeovers_total` | counter | `system.lead_acquired` events observed — lead takeovers. Nonzero during failover or rolling updates is the lease working; a climbing rate in steady state means lead churn, and every takeover is a write-refusal window ([FR-24](../product/roadmap.md) measures that window). |
 
 ### `oml-lakewriter`
@@ -125,6 +128,9 @@ What `oml doctor` reads, per tenant in scope of the caller's key:
 | `lead_lease` | lead-lease row in Postgres | The current lead's holder id, address, epoch and lease age; **exactly one lead lease held** is a doctor check in every profile ([deployment — the lead lease](deployment.md)). A companion check verifies **no follower holds the signing key**: checkable in Kubernetes from the pod spec (no signing-key Secret mounted in `oml-server-follower`); in docker and standalone it is stated, not checkable, beyond the absence of the key file on the follower's mounts — the honesty is the check's output, not a gap it hides. |
 | `reconciler` | journalled cursor + findings | Cursor lag, last pass time, open findings by class, repair halts |
 | `settings_drift` | configured vs. effective | Delegated to `oml settings show`; doctor flags that drift exists |
+| `oauth_discovery` | the two discovery documents, fetched by the CLI from `<issuer>` over the public network | Present only when `oauth.issuer` is set. `failing` when either document is unreachable, when `resource` is not exactly `<issuer>/mcp`, or when `issuer` is not the configured issuer — the signature of a proxy that does not route the paths or rewrites them; the output names the URL and the field ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)) |
+| `connect_codes` | `connect_codes` + `oauth_authorizations` | Live codes, codes that lapsed unredeemed in the window, and wrong entries in the window. `attention` when wrong entries exceed the threshold — someone is guessing, and the bound is L·G / 2⁶⁰ ([roles and keys](../architecture/roles-and-keys.md#connections)) |
+| `connections` | `oauth_connections` | Open connections per key, and connections revoked for `refresh_reuse` or `code_reuse` in the window. Any reuse revocation is `attention`: a stolen token, or a client that lost a refresh answer, and either way someone needs a new connect code |
 
 Doctor renders each field with a verdict (`ok` / `attention` / `failing`) and
 the rule it applied, in the same fail-closed, name-your-rule style as the

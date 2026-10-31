@@ -130,3 +130,4 @@ nav:
       - ADR-0024: adr/ADR-0024-performance-foundation.md
       - ADR-0025: adr/ADR-0025-the-agent-only-memory-surface.md
       - ADR-0028: adr/ADR-0028-agent-key-issuance.md
+      - ADR-0031: adr/ADR-0031-oauth-connections-by-connect-code.md

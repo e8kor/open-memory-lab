@@ -2,7 +2,7 @@
 id: architecture/roles-and-keys
 tier: engineering
 status: design draft for review · decided, not built
-answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers
+answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; what a connector key, a connect code and a connection are, and why a connection's token is never more than its key
 -->
 
 # Roles and keys
@@ -88,6 +88,7 @@ settings, tenants — a column names the key's role itself.
 | propose workarea status transition | — | — | ✓ | ✓ | — |
 | ratify status transition (non-proposer) | — | — | ✓ | ✓ | — |
 | issue / revoke / rotate keys (issuer ceiling) | — | — | — | ✓ | ✓ ⁴ |
+| mint a connect code / revoke a connection ([connections](#connections)) | — | — | — | ✓ | — |
 | create / re-parent workareas | — | — | — | ✓ | — |
 | reassign claims between workareas | — | — | — | ✓ | — |
 | ban / lift-ban an author or source | — | — | — | ✓ | — |
@@ -167,14 +168,19 @@ first checks that `tenant_id` is present if and only if the issuer is an operato
 5. each deny node lies inside its own grant's subtree — else `request.validation`;
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
-   key has none, and a key never inherits its issuer's default.
+   key has none, and a key never inherits its issuer's default;
+7. with `connect_code: true`, the key can hold a connection — a role other than `admin` or
+   `operator`, `held_by` other than `service`, and a deployment that sets `oauth.issuer` — else
+   `oauth.connect_refused` ([connections](#connections)).
 
 `held_by` is the issuing admin's attestation, so an operator key's issuance that carries it is
 `request.validation`; `held_by: service` keys are issued by a tenant admin like every other
 working key.
 
 `key.issued` is journalled first and one `grant.issued` per grant follows; the key value is
-returned only after the last `grant.issued` commits. If issuance fails after `key.issued`, the
+returned only after the last `grant.issued` commits. A connector key has no value: its
+`connection.code_issued` follows the last `grant.issued`, and its connect code is returned only
+after that commits. If issuance fails after `key.issued`, the
 server journals `key.revoked` for the key in a following commit, with `reason_digest` over the
 fixed reason `issuance_incomplete`, and the key is listed as revoked. Its value was never
 disclosed, so it authenticates no request either way, including before that commit lands.
@@ -469,7 +475,8 @@ rule below); after that moment no component holds or reproduces it. The journal 
 `key.issued` as issued-without-value; log lines name keys by `key_id` only, never by value or
 hash ([observability](../operations/observability.md) owns the logging rules); journal payloads
 carry key ids, never key material. A key value found anywhere but the issuance terminal and the
-caller's `Authorization` header is a defect. The one exception is the file `oml keys issue-agent
+caller's `Authorization` header is a defect. A connector key has no value anywhere: the server
+mints none, and `api_keys.hash` is null ([connections](#connections)). The one exception is the file `oml keys issue-agent
 --out` creates for it, the one place a key value may rest outside the show-once response: new,
 owner-only (mode 0600), written once, never overwritten, and the operator's to delete once the key
 is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),
@@ -515,6 +522,86 @@ journalled state each answer was computed against, so "when did this key stop be
 X" is answerable from journalled grants plus epochs — reproducibly, which is the property the
 evidence export leans on.
 
+## Connections
+
+This section is the single declaration site for connector keys, connect codes, connections and
+their tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, d8, d10, d11).
+The HTTP side — the `/mcp` challenge, the discovery documents, the OAuth endpoints and the
+authorization page — is declared on the
+[HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients). A **connection** is one
+OAuth client's standing authority to act as one connector key at `/mcp`; it exists so that
+Claude's hosted apps, which cannot hold a key, can use the [agent plugin](../api/mcp-plugin.md)
+without a key value being pasted anywhere. Decided, not built ([FR-34](../product/roadmap.md)).
+
+**Connector keys.** A key issued with `connect_code: true` (`oml keys issue-agent …
+--connect-code`, [CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)) is a connector
+key. The server mints no value for it — `api_keys.hash` is null — so it authenticates no request
+by itself; its one credential path is a connection, and a connection reaches only `/mcp`. Its role
+is `reader`, `writer` or `dreamer`, it is not `held_by: service`, and the
+[issuance order](#grant-admissibility-and-refusal-order) is otherwise unchanged. A key is a bearer
+key or a connector key, never both, and a connector key has at most one connection open: opening
+one revokes the earlier in the same commit. The key id on every journal event therefore names
+exactly one credential path.
+
+**Connect codes.** A connect code is twelve symbols of Crockford's base32 alphabet (`0`–`9`,
+`A`–`Z` without `I`, `L`, `O`, `U`), 60 bits from a cryptographically secure generator, shown as
+three groups of four, `7KQ2-M9XD-4TPA`. An entry is decoded by Crockford's rule — case, hyphens
+and spaces ignored, `O` read as `0`, `I` and `L` as `1`. The code is shown once, in the issuance
+or minting response, and appears in no log line, no URL and no journal payload; `connect_codes`
+holds the SHA-256 of the decoded symbols, and `connection.code_issued` carries only the code's id
+and expiry ([event catalog](../data/event-catalog.md#connectioncode_issued)). It lives
+`oauth.connect_code_ttl` ([configuration](../operations/configuration.md); shipped 10 minutes, 1
+to 60), is spent by its first correct entry on the authorization page, and is voided when a newer
+code is minted for the same key. With L live codes and G wrong entries during their life, the
+chance that any entry finds one is at most L·G / 2⁶⁰.
+
+**Lifecycle.**
+
+```mermaid
+stateDiagram-v2
+    [*] --> code_live : connector key issued, or code minted\n(connection.code_issued)
+    code_live --> code_voided : newer code minted
+    code_live --> code_lapsed : expiry reached
+    code_live --> code_spent : correct entry on the page
+    code_spent --> authorized : Connect\n(authorization code, 60 s)
+    code_spent --> [*] : Cancel, or the page lapses after 10 minutes
+    authorized --> open : token exchange\n(connection.opened)
+    authorized --> [*] : authorization code expires unexchanged
+    open --> revoked : admin revoke, refresh or code reuse,\nor a newer connection for the key\n(connection.revoked, or the newer connection.opened)
+    code_voided --> [*]
+    code_lapsed --> [*]
+    revoked --> [*]
+```
+
+A key revoked or expired leaves its connection `open` in the table and refused at every request,
+because each token lookup reads the key's state; `key.revoked` records when. A revoked connection
+never reopens: the key needs a new code.
+
+**Tokens.** An access token is `oml_at_` and a refresh token `oml_rt_`, each followed by 43 base62
+characters under the generation rule of the [key format](#key-format); the shared `oml_` prefix
+keeps secret scanners matching, and the second underscore keeps a token from parsing as a key.
+`oauth_tokens` stores the SHA-256 of each, never the token, by the same argument as a key's hash.
+An access token lives `oauth.access_token_ttl` (shipped 1 hour, at most 24) and is bound to
+`<issuer>/mcp`. Every refresh answers a new pair and marks the presented refresh token rotated; a
+refresh token unused for `oauth.refresh_token_ttl` (shipped 30 days) expires. A rotated refresh
+token presented again, or an authorization code redeemed twice, revokes the connection and every
+token it holds. Tokens are read from the `Authorization` header only, never from a body or a query
+string.
+
+**A token is exactly its key.** At `/mcp` an access token resolves to its connection, which must
+be open, and to that connection's key, which must be neither revoked nor expired; from there the
+request is the key's request. The verb ceiling, [grant admissibility and the refusal
+order](#grant-admissibility-and-refusal-order), grants, denials, [own](#own) and the permission
+epoch apply to the key, on every request, with no cache. The scope `mcp` adds and narrows nothing.
+A token is accepted nowhere but `/mcp`, so it reaches only the agent-safe subset: a connection can
+do at most what its key can, never more. The MCP facade dispatches its ring calls under the key it
+resolved and never forwards the token.
+
+**Revocation.** `oml keys disconnect <key-id> <connection-id>`
+(`POST /v2/keys/{key_id}/connections/{connection_id}/revoke`) ends a connection: the lead refuses
+its tokens at their next request, and a follower after replication lag, as for a revoked key
+([key lifecycle](#key-lifecycle)). Revoking or expiring the key ends every connection of it the same way.
+
 ## Review independence and the evidence of collusion
 
 Lineage-closure exclusion stops a key from reviewing its own declared work. The **independence
@@ -543,5 +630,7 @@ no threshold auto-demotes anything.
 This page's decisions are registered as ADR-0010 ([decision register](../adr/index.md)); grant
 admissibility, the refusal order, the issuance order, own and the effective verbs are
 [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14). One
-adjacent decision is named elsewhere: programs hold keys, humans hold ceremonies, and OAuth for
-MCP clients remains a named roadmap trigger ([roadmap](../product/roadmap.md)).
+adjacent decision is named elsewhere: programs hold keys and humans hold ceremonies. Connector
+keys, connect codes and connections are the proposed
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s (d7, d8, d10, d11), which
+restates [RS-2](../product/roadmap.md).

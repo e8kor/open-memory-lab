@@ -71,6 +71,38 @@ The compose credentials are for a laptop, and the server listens on the loopback
 The plugin and its tools are described in [plugins/oml](plugins/oml/README.md). Releases, their
 signatures and SBOMs are on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
 
+## Using OML from claude.ai and your phone
+
+**Status:** decided, not built. The [roadmap](docs/product/roadmap.md) tracks it.
+
+Claude on the web, Claude Desktop and the Claude apps for iOS and Android cannot hold an OML key,
+so OML will connect them with a one-time connect code. The server must run at a public HTTPS
+address with connections turned on, and the person connecting needs a claude.ai account; Anthropic
+offers custom connectors on every plan, one on the Free plan
+([Anthropic Help Center](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
+read 2026-10-31).
+
+1. The administrator creates the agent's key together with a connect code:
+
+    ```sh
+    oml keys issue-agent --principal crew/claude-mobile --workarea <workarea-id> --connect-code
+    ```
+
+    It prints two lines: the connector address, such as `https://oml.example.com/mcp`, and a code
+    such as `7KQ2-M9XD-4TPA`. The code works once and for ten minutes.
+
+2. On claude.ai, open Customize > Connectors and add a custom connector with exactly that
+   address.
+3. Claude opens OML's connect page. Enter the code. The page shows which agent identity and which
+   workareas the connection will use, and that nothing written through it reaches anyone else
+   until someone else approves it. Confirm.
+4. The connector is then available in every Claude app signed in to that account, the phone apps
+   included.
+
+Claude never receives the key itself, only access that OML can withdraw. The administrator ends it
+with `oml keys disconnect`, revoking the key ends it too, and a code that ran out before use is
+replaced with `oml keys connect-code`.
+
 ## Documentation
 
 The full design lives in [`docs/`](docs/) and is published via GitHub Pages at

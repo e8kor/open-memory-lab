@@ -2,7 +2,7 @@
 id: data/event-catalog
 tier: engineering
 status: design draft for review · decided, not built
-answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events
+answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events; the connection events and why refreshes are not events
 -->
 
 # Journal event catalog
@@ -498,9 +498,15 @@ genesis byte rule).
   "issued_by_key_id": "…", "expiry": "2027-10-29T00:00:00Z",
   "value_disclosed": false,
   "held_by": "agent",
-  "default_workarea_id": "…"
+  "default_workarea_id": "…",
+  "credential": "bearer"
 }
 ```
+
+`credential` is `bearer` for a key with a value and `connection` for a connector key, which has
+no value at all; its connect code follows in `connection.code_issued`
+([roles and keys](../architecture/roles-and-keys.md#connections),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7).
 
 A key issued without its value (show-once ceremony; the journal never learns the secret), under the
 issuer ceiling: role no higher than the issuer's. `held_by` is the issuing admin's journalled
@@ -605,6 +611,59 @@ before this event exists.
 
 Lifts a ban; the ban row stays as history rather than being deleted (R4 in spirit: no silent
 removal of governance acts).
+
+### connection.code_issued
+
+```json
+{
+  "code_id": "…", "key_id": "…", "issued_by_key_id": "…",
+  "expires_at": "2026-10-31T14:13:00Z", "voids_code_id": null
+}
+```
+
+A connect code minted for a connector key, at its issuance or later. The payload carries the
+code's id and expiry and nothing derived from the code, not even its digest: the journal is kept
+forever and exported, and a digest of a 60-bit secret is a brute-force target that a code alive for
+minutes never needs to outlast; the digest lives only in `connect_codes`
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8). `voids_code_id` names an
+unredeemed code of the same key that this one replaces, else null.
+
+### connection.opened
+
+```json
+{
+  "connection_id": "…", "key_id": "…", "code_id": "…",
+  "client_id": "https://…", "client_kind": "cimd",
+  "client_metadata_digest": "sha256:…",
+  "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
+  "resource": "https://oml.example.com/mcp",
+  "replaces_connection_id": null
+}
+```
+
+A connection opens at the token exchange, when its first tokens exist. The envelope's
+`api_key_id` and `principal` are the connector key's. `client_id`, `client_kind` (`cimd` or
+`dcr`) and the digest of the client's document or registration tell the admin which client used
+the code. `replaces_connection_id` names the key's earlier open connection, which this commit
+revokes with no event of its own (ADR-0031 d7, d12).
+
+### connection.revoked
+
+```json
+{
+  "connection_id": "…", "key_id": "…",
+  "revoked_by_key_id": "…", "cause": "admin", "reason_digest": "sha256:…"
+}
+```
+
+A connection ends: `cause` is `admin` (`oml keys disconnect`; `reason_digest` over the reason
+given, else null), `refresh_reuse` (a rotated refresh token was presented again) or `code_reuse`
+(an authorization code was redeemed twice). For the two reuse causes `revoked_by_key_id` is null
+and the envelope names the connector key, whose past token triggered it; a connection is revoked
+once, so a holder of past tokens can cause at most one such event. Every token of the connection
+is refused from then on: on the lead at its next request, on a follower after replication lag. A
+revoked or expired key ends its connections with no event of this type, because every token lookup
+reads the key's state and `key.revoked` records when.
 
 ## Simulation family
 
@@ -868,7 +927,14 @@ from the journalled rule-set pin, and letting hostile input write into the signe
 an attacker the chain's growth. Whether refused submissions should leave a durable trace outside
 the chain (a scan-refusal log shaped like the read log) is RS-16 on the
 [roadmap](../product/roadmap.md). Upload-session part arrivals are operational state in `upload_sessions`; only the
-completed attachment binding (`submission.attach`) is journalled. Where an event's exact payload
+completed attachment binding (`submission.attach`) is journalled. On the connection surface
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d12), issuing an access token
+and refreshing are not events: they change no authority, and one event per access-token lifetime
+per connection would grow the chain with events that decide nothing and tie a refresh to the
+per-tenant chain lock. Authorization requests, wrong connect-code entries, client registrations
+and client metadata fetches are not events either: they are unauthenticated input, which by the
+scan-veto reasoning never writes into the chain. A connect code spent with no token exchange is
+visible in `connect_codes` and journals nothing, since no authority came of it. Where an event's exact payload
 fields are still open (for example the independence-axis fields a `policy_snapshot` must carry for
 crew-level independence), the owning page says so and the gap is tracked in the
 [roadmap](../product/roadmap.md).

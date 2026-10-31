@@ -2,7 +2,7 @@
 id: api/errors
 tier: engineering
 status: design draft for review · decided, not built
-answers: which typed error codes exist, their family, HTTP status and retryability, and why the taxonomy is closed
+answers: which typed error codes exist, their family, HTTP status and retryability, and why the taxonomy is closed; how the oauth family travels inside RFC error shapes on the OAuth endpoints
 -->
 
 # Error taxonomy
@@ -56,8 +56,45 @@ one taxonomy ([ADR-0022](../adr/ADR-0022-two-ring-api.md)):
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `auth.missing` | 401 | No `Authorization: Bearer` header. | Every request on either ring authenticates; only `/healthz` and `/readyz` do not. |
-| `auth.invalid` | 401 | The key is unknown, malformed, expired or revoked (`details.reason` says which). | Tenant and identity derive from the key, server-side, or not at all — an unverifiable caller gets nothing (D6). |
+| `auth.missing` | 401 | No `Authorization: Bearer` header. | Every request on either ring authenticates, and so does `/mcp`; only `/healthz`, `/readyz`, the discovery documents and the OAuth endpoints do not. |
+| `auth.invalid` | 401 | The key is unknown, malformed, expired or revoked (`details.reason` says which). At `/mcp` the same reasons cover a connection's access token: unknown, expired, a revoked connection, a revoked or expired connector key. Anywhere else an access token is not a credential and answers `reason: unknown`. | Tenant and identity derive from the key, server-side, or not at all — an unverifiable caller gets nothing (D6); a token is exactly its key ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11). |
+
+At `/mcp` both codes carry the RFC 9728 challenge, `WWW-Authenticate: Bearer
+resource_metadata="…", scope="mcp"`, with `error="invalid_token"` added to an `auth.invalid`
+([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)). The bodies are
+unchanged.
+
+## `oauth` — connections
+
+The refusals of the connection flow
+([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients),
+[roles and keys — connections](../architecture/roles-and-keys.md#connections),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d13). Where they surface decides
+their shape. At `POST /oauth/token` and `POST /oauth/register` the body is the RFC's
+`{"error", "error_description"}`: `error` is the RFC code in the third column, the one an OAuth
+client branches on, and `error_description` begins with the OML code and its rule. At
+`/oauth/authorize` a refusal is a redirect to the client carrying `error`, `error_description`
+and `state`, except where the third column says *page*: then nothing is redirected, and the
+`text/html` page names the code. `oauth.connect_refused` answers on `/v2` in the envelope above.
+Malformed parameters on the OAuth endpoints are `request.validation`, carried as
+`invalid_request` or as the RFC's own name for the fault (`unsupported_grant_type`,
+`unsupported_response_type`, `invalid_scope`, `invalid_client_metadata`).
+
+| Code | HTTP | OAuth `error` | Fires when | The rule it names |
+|---|---|---|---|---|
+| `oauth.client_invalid` | 400 | *page* at authorize; `invalid_client` at token | The `client_id` is unknown; its metadata document cannot be fetched within the fetch bounds, is not JSON, lacks `client_id`, `client_name` or `redirect_uris`, names a `client_id` other than its own URL, or asks for client authentication other than `none`; or a token request's `client_id` differs from the one its code or refresh token was issued to (`details.reason` in the description). | Clients are public and identified by a verified document or a registration; a client the server cannot identify is never shown to a person (ADR-0031 d5). |
+| `oauth.redirect_refused` | 400 | *page* at authorize; `invalid_redirect_uri` at register | A redirect URI is outside the allowlist, or an authorize request's `redirect_uri` is not exactly one of the client's registered URIs. | An authorization code goes only to `https://claude.ai/api/mcp/auth_callback` or a loopback address, by exact match; a refused redirect is never followed (ADR-0031 d6; RFC 6749 §4.1.2.1). |
+| `oauth.pkce_required` | 400 | `invalid_request` | An authorize request without `code_challenge`, or with a `code_challenge_method` other than `S256`. | Every authorization is bound by S256 PKCE to the client that started it (ADR-0031 d4). |
+| `oauth.resource_mismatch` | 400 | `invalid_target` | A `resource` parameter that is not exactly `<issuer>/mcp`, at authorize or token. | A token is issued for the one protected resource and accepted nowhere else (ADR-0031 d10; RFC 8707 §2). |
+| `oauth.authorization_expired` | 400 | `access_denied`; *page* when the handle is unknown | The authorization request outlived its ten minutes, spent its five attempts, or the form's handle names no live request. | A page acts only on a live request it rendered, for a bounded number of tries (ADR-0031 d9). |
+| `oauth.connect_code_invalid` | 400 | *page* — the code form again, with the attempts left | The connect code entered is unknown, expired or already spent — one answer for all three. | A connect code is single-use and short-lived, and the page never tells a guesser that a code existed (ADR-0031 d8, d9). |
+| `oauth.authorization_code_invalid` | 400 | `invalid_grant` | The authorization code is unknown, expired, already redeemed — which also revokes the connection opened from it — issued to another client or redirect URI, or its PKCE verifier does not match. | An authorization code is redeemed once, by the client that holds the verifier, within its sixty seconds (ADR-0031 d9, d10; RFC 6749 §4.1.2). |
+| `oauth.refresh_invalid` | 400 | `invalid_grant` | The refresh token is unknown or expired, was already rotated — which revokes the connection — or belongs to a revoked connection or to a revoked or expired key. | A refresh token is used once; a reused one ends its connection (ADR-0031 d10). |
+| `oauth.connect_refused` | 422 | — (`/v2` envelope) | A connect code is asked for a key that cannot hold a connection: an `admin` or `operator` role, `held_by: service`, a key with a bearer value, a revoked or expired key, or a deployment without `oauth.issuer` (`details.reason` ∈ `role` \| `held_by_service` \| `bearer_key` \| `revoked` \| `expired` \| `not_configured`). | A connection acts as one agent key on the agent-safe surface; a key that cannot act there, or already has a value, gets no connect code (ADR-0031 d7, d8). |
+
+The one throttle on these endpoints, the cap on unused dynamic registrations, answers
+`429 limit.rate` at `POST /oauth/register` in the same RFC shape, as `invalid_request` with
+`Retry-After`. No limit keys on a source address (ADR-0031 d14).
 
 ## `access` — what this key may do
 
@@ -221,7 +258,7 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 
 | HTTP | Codes |
 |---|---|
-| 400 | `request.validation`, `request.idempotency_key_required` |
+| 400 | `request.validation`, `request.idempotency_key_required`, `oauth.client_invalid`, `oauth.redirect_refused`, `oauth.pkce_required`, `oauth.resource_mismatch`, `oauth.authorization_expired`, `oauth.connect_code_invalid`, `oauth.authorization_code_invalid`, `oauth.refresh_invalid` |
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
@@ -229,7 +266,7 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `request.workarea_unresolved`, `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `request.workarea_unresolved`, `oauth.connect_refused`, `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |

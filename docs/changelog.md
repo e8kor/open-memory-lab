@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design cover, and what each revision changed
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design and 0.3.0-design cover, and what each revision changed
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design co
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.2.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.3.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,59 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.3.0-design
+
+### 2026-10-31 — Connections: Claude's hosted apps over OAuth, bound by a one-time connect code (ADR-0031)
+
+The proposed [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md) designs how claude.ai,
+Claude Desktop and the Claude iOS and Android apps reach the [agent plugin](api/mcp-plugin.md)
+through a claude.ai custom connector, on the maintainer's three fixed decisions: OML as an OAuth
+2.1 protected resource with its own authorization server, beside unchanged bearer keys; the binding
+by a one-time connect code; the build after iteration 3. It amends ADR-0010 (d3, d7), ADR-0014
+(d1, d2, d4), ADR-0015 (d1), ADR-0018 (d4) and ADR-0028 (d1); their Status lines gain the
+back-pointer on acceptance, not before. Sources: the MCP authorization specification, revision
+2025-11-25, and Anthropic's connector documentation, both fetched 2026-10-31.
+
+- **Decided, not built:** the `/mcp` `401` keeps its typed body and gains the RFC 9728 challenge
+  (d2); one protected-resource document at `/.well-known/oauth-protected-resource/mcp` and one
+  RFC 8414 document (d3); `/oauth/authorize`, `/oauth/token` and `/oauth/register`, unversioned,
+  in the RFCs' shapes, S256 PKCE only, public clients only, one scope `mcp` (d4); client ID
+  metadata documents preferred, dynamic registration as the fallback, no pre-registered client
+  (d5); a fixed redirect allowlist — `https://claude.ai/api/mcp/auth_callback` and loopback (d6);
+  the connector key, which has no value and at most one open connection, and
+  `oml keys issue-agent --connect-code` (d7); the connect code — twelve Crockford base32 symbols,
+  shown once, stored as a digest, journalled by id, ten minutes by default (d8); the two-step
+  authorization page with no cookie and fixed headers (d9); opaque tokens, rotation on every
+  refresh, reuse ending the connection (d10); a token as exactly its key, and
+  `oml keys disconnect` (d11); `connection.code_issued`, `connection.opened` and
+  `connection.revoked`, and no event for a refresh (d12); the `oauth` error family (d13); the
+  configuration keys, doctor fields, proxy routing and cluster mode (d14); the build order (d16).
+- **The vocabulary** gains three rows, *connection*, *connect code*, and *access token, refresh
+  token*, because "grant" belongs to workarea grants and "token" alone could mean a key (d7).
+- **`info.version` 0.2.0-design → 0.3.0-design** (d15): the error taxonomy, which the rule on this
+  page names, gains nine `oauth` codes, and the OpenAPI document gains `/mcp`, the two discovery
+  documents, four OAuth operations and two `/v2` key operations. No `/v1` operation changes. The
+  proposed ADR-0026, on another branch, also moves to 0.3.0-design; if its revision is still
+  untagged when this lands the two share it, otherwise this change takes 0.4.0-design at rebase.
+  `spec-v0.3` is cut at acceptance.
+- **Roadmap:** RS-2 restated in ADR-0018 d3's fixed form, its exit criterion met by this record;
+  it leaves the register when the record is accepted. FR-34 opened: the flow is designed, not
+  built, and no live connection has run.
+- **Pages touched:** [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md), the
+  [decision register](adr/index.md) (row; the D9, D13 and D14 cells), `mkdocs.yml`,
+  [llms.txt](llms.txt), [HTTP API](api/http-api.md), [openapi.yaml](api/openapi.yaml),
+  [mcp-tools.json](api/mcp-tools.json) (the revision only), [errors](api/errors.md),
+  [the agent plugin](api/mcp-plugin.md), [roles and keys](architecture/roles-and-keys.md),
+  [security](architecture/security.md), [event catalog](data/event-catalog.md),
+  [Postgres schema](data/postgres-schema.md), [configuration](operations/configuration.md),
+  [observability](operations/observability.md), [CLI reference](cli/reference.md),
+  [roadmap](product/roadmap.md), [the overview](index.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md)
+  (the revision), and this page; outside `docs/`, `README.md` (using OML from claude.ai and a
+  phone) and `CONTRIBUTING.md` (the revision and the vocabulary rows).
+- **Not built.** No code changes with this entry; the implementation follows iteration 3, and the
+  pure modules d16 names may land before it.
 
 ## 0.2.0-design
 

@@ -2,7 +2,7 @@
 id: architecture/security
 tier: engineering
 status: design draft for review · decided, not built
-answers: what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included
+answers: what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection surface adds to the threat model and what it leaves
 -->
 
 # Security and tenancy
@@ -113,6 +113,7 @@ Who loads what. "Never" entries are the point of the table.
 | Postgres role | RLS-scoped service role (write) | RLS-scoped **read** role + read-log append | per-tenant `SET`-tenant RLS role, no `BYPASSRLS` | read-only RLS role | per-tenant RLS role | none (talks HTTP) |
 | Object-store credentials | quarantine + bodies | read (promoted bodies) | per-tenant lake prefixes | read-only | read (promoted bodies) | none |
 | API keys | verifies hashes; never stores values | verifies hashes | holds none | holds none | holds none | bearer of operator/admin/dreamer keys |
+| Connect codes and connection tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)) | mints them; stores digests only; rotates refresh tokens | verifies access-token digests; mints none | holds none | holds none | holds none | prints a connect code once; holds no token |
 
 Two statements in this map deserve their own sentences.
 
@@ -371,12 +372,45 @@ surface: the stated guidance is to inspect attachments in a sandboxed viewer, an
 is a malware-scanning claim — the deterministic scan catches what its rules name, and for opaque
 binaries the reviewed claim is provenance + digest + scan result ([admission.md](admission.md)).
 
+## Connections: the OAuth surface
+
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) lets Claude's hosted apps reach
+`/mcp` through a connection: an OAuth client bound, by a one-time connect code, to one connector
+key ([roles and keys](roles-and-keys.md#connections); the HTTP side in the
+[HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). It adds three things an
+attacker can reach without a key — two discovery documents, three OAuth endpoints and an HTML page
+— and one thing the lead does that it did not do before: fetch a URL a client chose. The threats
+below are the delta; every control is a design commitment, none is built, penetration-tested or
+measured.
+
+| Threat | Controls | Residual |
+|---|---|---|
+| **A connect code read or intercepted** (shoulder-surfed, a forwarded message, a shared screen) and entered first by someone else | Single use; alive `oauth.connect_code_ttl` (shipped 10 minutes); never in a URL, a log line or the journal; one live code per key. `connection.opened` names the client and redirect URI that used it, and `oml keys show` lists the connection, so the admin sees an unexpected one and revokes it. | For its minutes, the code is a bearer secret: whoever enters it first connects as the key, within the key's grants and only at `/mcp`. |
+| **Consent phishing**: an attacker starts an authorization from their own client and sends the person the link | The page names the client — a document client by the host that served its document, a registered one marked "name not verified" — and the redirect URI's host, before the code is asked for; the redirect allowlist delivers an authorization code only to `https://claude.ai/api/mcp/auth_callback` or the person's own loopback interface; PKCE binds the code to the client that started the flow. | A link started from the attacker's own claude.ai account delivers to claude.ai's callback like any other; whether claude.ai then refuses a callback that its own sign-in did not start, by `state`, is claude.ai's behavior and is not in the cited sources. The person's defense is the rule the admin gives with the code: enter it only on a page reached by adding the connector yourself. |
+| **Cross-site request forgery** on the page | No cookie is set, so a cross-site form has no ambient credential to ride; each `POST` must carry the live authorization request's 256-bit handle and an `Origin` equal to the issuer's; `state` is echoed verbatim for the client's own check. | — |
+| **Clickjacking and injected content** | `frame-ancestors 'none'`; `default-src 'none'` with one hashed style block and no script; client-supplied names HTML-escaped and shortened; `logo_uri` never loaded. | — |
+| **Open redirect** | A redirect URI is admitted only by exact match against the fixed allowlist, at registration, in a fetched document and in the request; a refused client or redirect URI is a page, never a redirect (RFC 6749 §4.1.2.1). | — |
+| **Authorization code interception** | S256 PKCE only; a 60-second, single-use code; a second redemption revokes the connection opened from it. | — |
+| **A local program posing as Claude Code** behind a loopback redirect | The page names the loopback host and warns that the result goes to a program on this computer, as the MCP specification asks for `localhost` redirects. | A loopback redirect cannot prove which program listens; a person who confirms a connection started by a hostile local program connects that program. |
+| **Access-token theft** | Opaque, stored as digests, accepted only at `/mcp` and only in the `Authorization` header, alive `oauth.access_token_ttl` (shipped 1 hour); each request re-resolves the key, so a revoked connection or key refuses it at the next request on the lead. | A stolen access token is the key's capability at `/mcp` until it expires or the connection is revoked; on a follower, until replication catches up. |
+| **Refresh-token theft** | Rotation on every use; presenting a rotated refresh token revokes the connection and every token in it, journalled as `connection.revoked` with cause `refresh_reuse`. | A thief who refreshes before the client does holds the connection until the client's next refresh trips the reuse check. The same check ends a connection whose legitimate refresh answer was lost, and the person reconnects with a new code ([FR-34](../product/roadmap.md)). |
+| **Server-side request forgery** through a client metadata document URL | `https` on the default port; the host must resolve only to public unicast addresses and the TCP connection goes to the address checked; no redirect followed; 5 seconds and 16 KiB at most; the token path never fetches. | The lead, which holds the signing key, makes outbound HTTPS requests to hosts an unauthenticated client names. The bounds keep them off internal addresses; they do not make the lead's egress something a client cannot cause. |
+| **Registration flooding** | Dynamic registrations open nothing by themselves, lapse after 24 hours unused, and are capped at 10 000 unused; the cap answers `429 limit.rate`. | A flood can stall new dynamic registrations; metadata-document clients and open connections are unaffected. |
+| **Guessing a connect code** | 60 bits per code; five attempts per authorization request; one message for an unknown, expired or spent code; doctor counts wrong entries. | With L live codes and G wrong entries during their life, the chance any entry hits one is at most L·G / 2⁶⁰ — a bound, not a measurement. No limit keys on a source address: behind a proxy it is the proxy's. |
+| **A token used beyond its key** | A token resolves to its key on every request and every rule applies to the key; it is not a credential on `/v1` or `/v2`; the facade never forwards it. | — |
+
+Tenancy is unchanged: a connection's rows carry its key's `tenant_id` and its tenant's RLS; the
+deployment-level rows — clients and authorization requests not yet bound to a key — belong to the
+reserved provider tenant and hold no tenant content
+([Postgres schema](../data/postgres-schema.md#connections-adr-0031)).
+
 ## Trust boundaries
 
 ```mermaid
 flowchart LR
   subgraph clients["Tenant clients — untrusted"]
     A["Agent / crew<br/>(bearer API key)"]
+    H["Claude hosted apps via claude.ai<br/>(connection access token, /mcp only)"]
     CLI["oml CLI<br/>(operator / admin / dreamer key)"]
   end
 
@@ -399,6 +433,7 @@ flowchart LR
   KMS["KMS<br/>KEK never leaves"]
 
   A -- "HTTPS, bearer key" --> S
+  H -- "HTTPS, access token" --> S
   CLI -- "HTTPS, bearer key" --> S
   S --> PG
   S --> OS
@@ -412,7 +447,8 @@ flowchart LR
 ```
 
 Boundary crossings, read off the diagram: everything a tenant can do crosses exactly one boundary,
-into oml-server, carrying a bearer key — there is no client path to Postgres, the object store, the
+into oml-server, carrying a bearer key or a connection's access token that resolves to one —
+there is no client path to Postgres, the object store, the
 lake or KMS. The signing authority never crosses out of the TCB. The privileged services sit
 between the data stores but hold no authority to sign and (lake-writer, reconciler) no authority to
 decrypt; their writes either go through RLS-scoped sessions or come back around through oml-server
@@ -481,6 +517,13 @@ rounded up to a guarantee.
    for non-author review under other keys
    ([transport and internal authentication](#transport-and-internal-authentication)). Its
    resolution is [FR-32](../product/roadmap.md).
+9. **A connect code is a bearer secret for its minutes, and the lead now fetches client-chosen
+   URLs.** Whoever enters a code first connects as its key, within that key's grants and only at
+   `/mcp`; the admin learns of it from `connection.opened`, after the fact. The lead's fetch of a
+   client metadata document is bounded to public addresses, one TCP connection, 5 seconds and 16 KiB,
+   and it is still egress an unauthenticated client can cause from the process that holds the
+   signing key ([Connections](#connections-the-oauth-surface)). Verifying the flow against a live
+   client is [FR-34](../product/roadmap.md).
 
 Everything on this page is decided, not built; no control here has been penetration-tested,
 load-tested or measured, and the roadmap rows named above are where each open edge is tracked to an

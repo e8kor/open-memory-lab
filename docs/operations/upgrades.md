@@ -8,7 +8,7 @@ answers: who runs migrations and when; in what order the binaries move; how much
 # Upgrades
 
 **Status:** design draft for review · decided, not built — no upgrade has ever
-run, because no version has ever shipped; this spec is `0.2.0-design`
+run, because no version has ever shipped; this spec is `0.3.0-design`
 ([openapi.yaml](../api/openapi.yaml)) and the page commits the shape of every
 future N → N+1.
 
