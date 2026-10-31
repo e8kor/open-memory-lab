@@ -24,6 +24,10 @@ use oml_transport_http::mcp::{ARGUMENTS_OUTSIDE_THE_SCHEMA, MCP_PROTOCOL_VERSION
 
 const ENROLLMENT: &str = "enr_test_fixture_token";
 
+/// 2^53 − 1: the largest budget recall takes, the largest integer RFC 8785
+/// serializes exactly (chain-format.md, the signed fields).
+const MAX_TOKENS: u64 = 9_007_199_254_740_991;
+
 fn base_url() -> String {
     std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
@@ -1430,6 +1434,36 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
 }
 
 #[tokio::test]
+async fn oml_my_work_limit_is_at_most_200_as_on_the_ring() {
+    let (router, db) = fresh_router().await;
+    let (writer, _, _, _) = crew(&router).await;
+
+    // The served schema states the ring's page bound, so an agent never
+    // sends a limit the catalog admits and the ring refuses (ADR-0025 d12).
+    let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
+    let my_work = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "oml_my_work")
+        .expect("oml_my_work is served");
+    let limit = &my_work["inputSchema"]["properties"]["limit"];
+    assert_eq!(limit["minimum"], 1, "{limit}");
+    assert_eq!(limit["maximum"], 200, "{limit}");
+
+    let at_bound = call_tool(&router, &writer, 2, "oml_my_work", json!({"limit": 200})).await;
+    assert_eq!(at_bound["isError"], false, "{at_bound}");
+    let refused = call_tool(&router, &writer, 3, "oml_my_work", json!({"limit": 201})).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"], "request.validation",
+        "{refused}"
+    );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
 async fn oml_recall_serves_steering_as_claim_items_with_text_and_no_score() {
     let (router, db) = fresh_router().await;
     let (writer, dreamer, reader, _crew) = crew(&router).await;
@@ -1582,8 +1616,9 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_from_the_catalog_schem
     let (router, db) = fresh_router().await;
     let (agent, _, reader, _) = agent_crew(&router).await;
 
-    // tools/list advertises both inputs and the ring's k maximum (ADR-0025
-    // d12).
+    // tools/list advertises both inputs and the ring's k and max_tokens
+    // maxima, the latter the largest integer RFC 8785 digests exactly
+    // (retrieval.md token budgets; ADR-0025 d7, d12).
     let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
     let recall = listed["result"]["tools"]
         .as_array()
@@ -1596,6 +1631,7 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_from_the_catalog_schem
     assert_eq!(properties["include_own_held"]["default"], false);
     assert_eq!(properties["max_tokens"]["type"], "integer");
     assert_eq!(properties["max_tokens"]["minimum"], 1);
+    assert_eq!(properties["max_tokens"]["maximum"], MAX_TOKENS);
     assert_eq!(properties["k"]["maximum"], 100);
 
     remember_all(
@@ -1664,6 +1700,10 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_from_the_catalog_schem
     for (id, args) in [
         (6, json!({"query": "aluminium price", "max_tokens": 0})),
         (7, json!({"query": "aluminium price", "k": 101})),
+        (
+            8,
+            json!({"query": "aluminium price", "max_tokens": MAX_TOKENS + 1}),
+        ),
     ] {
         let refused = call_tool(&router, &agent, id, "oml_recall", args).await;
         assert_eq!(refused["isError"], true, "{refused}");
