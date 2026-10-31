@@ -74,7 +74,7 @@ paths:
       tags: [memories]
       operationId: submitMemory
       summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
-      description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
+      description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea resolves from the key (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
         - { $ref: '#/components/parameters/XOMLWorkarea' }
@@ -122,10 +122,10 @@ paths:
       tags: [memories]
       operationId: searchMemories
       summary: Structured, paginated listing of memory summaries.
-      description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true the listing resolves no workarea, and an X-OML-Workarea header is refused (request.validation). Without own, the listing returns promoted served tips within reader effective access, defaulting to the token workarea''s subtree (ADR-0022 d4) — a self_signed version only when the scope node is its own workarea; a retired claim''s tip, its retirement version, among them, flagged retirement true; others'' held rows are never returned (R3). workarea_id is a subtree filter (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
+      description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true the listing resolves no workarea, and an X-OML-Workarea header is refused (request.validation). Without own, the listing returns promoted served tips within reader effective access, defaulting to the key''s default-workarea subtree (ADR-0022 d4) — a self_signed version only when the scope node is its own workarea; a retired claim''s tip, its retirement version, among them, flagged retirement true; others'' held rows are never returned (R3). workarea_id is a subtree filter (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
       parameters:
         - { $ref: '#/components/parameters/XOMLWorkarea' }
-        - { name: workarea_id, in: query, schema: { type: string }, description: "A subtree filter that must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it. Without own, a node where reader is effective; the listing is the intersection of its subtree with the scope's, and the scope still resolves from the token (request.workarea_unresolved for a key with neither a default nor X-OML-Workarea)." }
+        - { name: workarea_id, in: query, schema: { type: string }, description: "A subtree filter that must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it. Without own, a node where reader is effective; the listing is the intersection of its subtree with the scope's, and the scope still resolves from the key (request.workarea_unresolved for a key with neither a default nor X-OML-Workarea)." }
         - { name: claim_key, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
         - { name: kind, in: query, schema: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] } }
@@ -178,7 +178,7 @@ paths:
       tags: [memories]
       operationId: recallMemories
       summary: Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
-      description: 'Requires: reader effective access on the subtree. Default scope is the token workarea''s subtree — the key''s default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.'
+      description: 'Requires: reader effective access on the subtree. Default scope is the key''s default-workarea subtree — the key''s default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.'
       parameters: [{ $ref: '#/components/parameters/XOMLWorkarea' }]
       requestBody:
         required: true
@@ -1818,8 +1818,8 @@ paths:
     post:
       tags: [keys]
       operationId: mintConnectCode
-      summary: Mint a fresh one-time connect code for a connector key; voids every unredeemed code of that key.
-      description: 'Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, the stored idempotency response omits it, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d8). Lifetime: the oauth.connect_code_ttl setting; key.revoked voids the key''s unredeemed code.'
+      summary: Mint a fresh one-time connect code for a connector key; voids every code of that key from which no connection has opened.
+      description: 'Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, the stored idempotency response omits it, so a replay carries no code, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids every code of the key from which no connection has opened, unredeemed or spent, so a page holding a spent code and an authorized connection made from one can no longer open a connection. Lifetime: the oauth.connect_code_ttl setting; key.revoked voids the key''s unredeemed code.'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1845,7 +1845,7 @@ paths:
       tags: [keys]
       operationId: revokeConnection
       summary: Journalled revocation of one connection; every token of it is refused at its next request served by the lead, and after replication lag on a follower.
-      description: 'Requires: admin key role. Journals connection.revoked with cause admin (ADR-0031 d11). A revoked connection never reopens; the key needs a new connect code. Revoking a key ends its connections too, with no event of their own: every token lookup reads the key state. Served whether or not oauth.issuer is set.'
+      description: 'Requires: admin key role. Journals connection.revoked with cause admin (ADR-0031 d11). The same commit voids every code of the key from which no connection has opened, as minting does (ADR-0031 d8). The connection named must be open or revoked: an authorized connection is not journalled or listed, and naming one answers 404 access.not_found, as an unknown id does. A revoked connection never reopens; the key needs a new connect code. Revoking a key ends its connections too, with no event of their own: every token lookup reads the key state. Served whether or not oauth.issuer is set.'
       parameters:
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/ConnectionId' }
@@ -2524,14 +2524,14 @@ paths:
       tags: [oauth]
       operationId: authorize
       summary: Start an authorization — validates the client, redirect URI and S256 PKCE, then renders the connect-code page.
-      description: 'Unauthenticated; the person proves authority by the connect code (ADR-0031 d9). The parameter bounds are checked first, before any fetch. A parameter past its bound, a refused client or a refused redirect URI is a page, never a redirect (request.validation, oauth.client_invalid, oauth.redirect_refused); any later refusal redirects with the RFC error, state and iss (RFC 9207). Past 10 000 live authorization requests, or 10 000 cached document clients for an uncached document, the refusal page answers 429 limit.rate. The page sets no cookie and carries the headers ADR-0031 d9 fixes: a Content-Security-Policy with default-src none, form-action self plus the redirect origin and frame-ancestors none, Cache-Control no-store, Referrer-Policy same-origin (no-referrer would make the browser send Origin: null on the page''s own POST), X-Content-Type-Options nosniff.'
+      description: 'Unauthenticated; the person proves authority by the connect code (ADR-0031 d9). The parameter bounds are checked first, before any fetch. A parameter past its bound (a present code_challenge that does not match the pattern included), a refused client or a refused redirect URI is a page, never a redirect (request.validation, oauth.client_invalid, oauth.redirect_refused); any later refusal, oauth.pkce_required for an absent code_challenge or an absent or non-S256 code_challenge_method among them, redirects with the RFC error, state and iss (RFC 9207). The authorization request writes no row: the page carries it as a handle sealed by an AEAD under a key the lead holds only in memory, so opening pages is not capped, and a full document cache evicts rather than refuses (ADR-0031 d5, d9). The page sets no cookie and carries the headers ADR-0031 d9 fixes: a Content-Security-Policy with default-src none, form-action self plus the redirect origin and frame-ancestors none, Cache-Control no-store, Referrer-Policy same-origin (no-referrer would make the browser send Origin: null on the page''s own POST), X-Content-Type-Options nosniff.'
       security: []
       parameters:
         - { name: response_type, in: query, required: true, schema: { type: string, enum: [code] } }
         - { name: client_id, in: query, required: true, schema: { type: string, maxLength: 2048 }, description: 'An https metadata-document URL in the admitted form (no userinfo, fragment, query, dot segment, percent-encoded / or ., or non-default port; its own WHATWG serialization), or a client_id that POST /oauth/register minted.' }
         - { name: redirect_uri, in: query, required: false, schema: { type: string, maxLength: 2048 }, description: 'Exactly one of the client''s registered URIs, matched on the raw string, inside the allowlist; optional for a client with exactly one.' }
-        - { name: code_challenge, in: query, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' } }
-        - { name: code_challenge_method, in: query, required: true, schema: { type: string, enum: [S256] } }
+        - { name: code_challenge, in: query, required: false, schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }, description: 'Required by the flow: absent, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted. Present but not matching the pattern, it is request.validation on the page.' }
+        - { name: code_challenge_method, in: query, required: false, schema: { type: string, enum: [S256] }, description: 'Required by the flow: absent (which RFC 7636 §4.3 reads as plain) or anything but S256, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted.' }
         - { name: state, in: query, required: false, schema: { type: string, maxLength: 512 }, description: 'At most 512 bytes; echoed verbatim on the redirect, percent-encoded as a query parameter.' }
         - { name: resource, in: query, required: false, schema: { type: string }, description: 'When sent, exactly <issuer>/mcp.' }
         - { name: scope, in: query, required: false, schema: { type: string, enum: [mcp] } }
@@ -2542,14 +2542,9 @@ paths:
             text/html:
               schema: { type: string }
         '302':
-          description: A refusal after the redirect URI was validated, redirected with error, error_description, state and iss.
+          description: A refusal after the redirect URI was validated (oauth.pkce_required, oauth.resource_mismatch, request.validation), redirected with error, error_description, state and iss.
         '400':
           description: A refusal page naming its code (request.validation for a parameter past its bound, oauth.client_invalid, oauth.redirect_refused).
-          content:
-            text/html:
-              schema: { type: string }
-        '429':
-          description: The refusal page, limit.rate — the cap on live authorization requests or on cached document clients is full.
           content:
             text/html:
               schema: { type: string }
@@ -2557,7 +2552,7 @@ paths:
       tags: [oauth]
       operationId: authorizeSubmit
       summary: The page's own form — the connect code, then the confirmation.
-      description: 'Two submissions and no others: step 2 carries exactly handle and connect_code; step 3 carries exactly handle and action, accepted only when the request already holds a verified code''s id; any other combination is request.validation on the page. Every submission needs the handle of a live authorization request and either Sec-Fetch-Site: same-origin or, when that header is absent, an Origin equal to the issuer origin; Origin: null is refused. With a correct connect_code of a key that is neither revoked nor expired, the code is spent and the page shows the tenant by its operator-set name, the key''s principal, role and grants and what the connection may do, with Connect and Cancel; a wrong code answers the form again (400 oauth.connect_code_invalid) with the attempts left, and the fifth wrong entry redirects with access_denied. action=connect creates the connection (authorized) and redirects with a 60-second, single-use authorization code, state and iss; action=cancel redirects with access_denied, state and iss (ADR-0031 d9).'
+      description: 'Two submissions and no others. Every submission first needs either Sec-Fetch-Site: same-origin or, when that header is absent, an Origin equal to the issuer origin; Origin: null and anything else answer 403 oauth.origin_refused on the page, never redirected, consuming no attempt. Step 2 carries exactly handle (the sealed handle of the first page) and connect_code; step 3 carries exactly handle and action, where the handle names the request row a verified code wrote and whose code is not voided; any other combination is request.validation on the page. With a correct connect_code of a key that is neither revoked nor expired, the code is spent, the authorization request''s row is written under a fresh handle, and the page shows the tenant by its operator-set name, the key''s principal, role and grants and what the connection may do, with Connect and Cancel; a wrong code answers the form again (400 oauth.connect_code_invalid) with the attempts left and a new sealed handle, and the fifth wrong entry redirects with access_denied. action=connect creates the connection (authorized) and redirects with a 60-second, single-use authorization code, state and iss; action=cancel redirects with access_denied, state and iss (ADR-0031 d9).'
       security: []
       requestBody:
         required: true
@@ -2588,7 +2583,12 @@ paths:
         '303':
           description: The redirect to the client, with code, state and iss, or with error, state and iss.
         '400':
-          description: The form again, or a refusal page naming its code (oauth.connect_code_invalid, oauth.authorization_expired).
+          description: The form again, or a refusal page naming its code (oauth.connect_code_invalid, oauth.authorization_expired, request.validation).
+          content:
+            text/html:
+              schema: { type: string }
+        '403':
+          description: The refusal page for a submission that fails the origin check, oauth.origin_refused; never redirected, and no attempt is consumed.
           content:
             text/html:
               schema: { type: string }
@@ -2598,7 +2598,7 @@ paths:
       tags: [oauth]
       operationId: token
       summary: Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh token.
-      description: 'Public clients only (token_endpoint_auth_method none). authorization_code requires the PKCE code_verifier and the same client_id, and opens the connection (connection.opened); redirect_uri is required exactly when the authorize request carried it and must then equal it, and when that request omitted it, redirect_uri may be omitted or must equal the client''s one registered URI. refresh_token answers a new pair and marks the presented token rotated; presenting a rotated refresh token, or redeeming an authorization code twice, revokes the connection (connection.revoked) and answers invalid_grant. The exchange and every refresh read the key state and the connection''s resource: a revoked or expired key, or a resource that is not the current <issuer>/mcp, answers invalid_grant. A code or refresh token issued to another client is invalid_grant too (RFC 6749 §5.2). Refusals are RFC 6749 §5.2 bodies whose error_description begins with the OML code (ADR-0031 d4, d10, d13). The token path makes no outbound call.'
+      description: 'Public clients only (token_endpoint_auth_method none). authorization_code requires the PKCE code_verifier and the same client_id, and opens the connection (connection.opened); redirect_uri is required exactly when the authorize request carried it and must then equal it, and when that request omitted it, redirect_uri may be omitted or must equal the client''s one registered URI. refresh_token answers a new pair and marks the presented token rotated; only a token of kind refresh is a refresh_token. Presenting a rotated refresh token revokes the connection (connection.revoked) and answers invalid_grant; a code presented after its redemption revokes it only when client_id is the connection''s and the verifier matches, and otherwise answers invalid_grant and revokes nothing. A failed exchange does not consume the code. The client is the one stored on the code''s or refresh token''s connection; the client tables are never read here, a client_id that differs from the connection''s is invalid_grant, and invalid_client answers only a request that sends client authentication. The exchange and every refresh read the key state, the code''s voiding and the connection''s resource: a revoked or expired key, a voided code, or a resource that is not the current <issuer>/mcp, answers invalid_grant. A code or refresh token issued to another client is invalid_grant too (RFC 6749 §5.2). Refusals are RFC 6749 §5.2 bodies whose error_description begins with the OML code (ADR-0031 d4, d10, d13). The token path makes no outbound call.'
       security: []
       requestBody:
         required: true
@@ -2618,7 +2618,7 @@ paths:
                 scope: mcp
               schema: { $ref: '#/components/schemas/TokenResponse' }
         '400':
-          description: 'An RFC 6749 error: oauth.authorization_code_invalid, oauth.refresh_invalid (invalid_grant, a code or token issued to another client included), oauth.client_invalid (invalid_client, a client the server cannot identify), oauth.resource_mismatch (invalid_target), request.validation (invalid_request, unsupported_grant_type, invalid_scope).'
+          description: 'An RFC 6749 error: oauth.authorization_code_invalid, oauth.refresh_invalid (invalid_grant, a code or token issued to another client included), oauth.client_invalid (invalid_client, only for a request that sends client authentication), oauth.resource_mismatch (invalid_target), request.validation (invalid_request, unsupported_grant_type, invalid_scope).'
           content:
             application/json:
               example:
@@ -2636,7 +2636,7 @@ paths:
       tags: [oauth]
       operationId: registerClient
       summary: RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only, redirect URIs inside the allowlist.
-      description: 'Unauthenticated and not journalled. Answers a server-minted client_id, no secret and no registration access token. A registered client that opens no connection within 24 hours is removed; past 10 000 unused registrations the endpoint answers 429 limit.rate (ADR-0031 d5).'
+      description: 'Unauthenticated and not journalled. Answers a server-minted client_id, no secret and no registration access token. client_name is required, since the page shows it; an absent token_endpoint_auth_method is registered and echoed as none, and any other value than none is request.validation (invalid_client_metadata). A registered client that opens no connection within 24 hours is removed; past 10 000 unused registrations the endpoint answers 429 limit.rate (ADR-0031 d5).'
       security: []
       requestBody:
         required: true
@@ -2942,7 +2942,7 @@ components:
 
     ErrorCode:
       type: string
-      description: The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page.
+      description: The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 and oauth.attach_refused as an /mcp tool result, both in this envelope.
       enum:
         - auth.missing
         - auth.invalid
@@ -2966,6 +2966,8 @@ components:
         - oauth.connect_code_invalid
         - oauth.authorization_code_invalid
         - oauth.refresh_invalid
+        - oauth.origin_refused
+        - oauth.attach_refused
         - oauth.connect_refused
         - idempotency.in_progress
         - idempotency.digest_mismatch
@@ -3148,7 +3150,7 @@ components:
       type: object
       additionalProperties: false
       description: >-
-        Names no workarea: the default scope is the token workarea's subtree — the key's
+        Names no workarea: the default scope is the key's default-workarea subtree — the key's
         default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields are
         refused (request.validation).
       required: [query]
@@ -3879,8 +3881,8 @@ components:
       required: [redirect_uris, client_name]
       properties:
         redirect_uris: { type: array, minItems: 1, items: { type: string }, description: 'Each inside the allowlist: https://claude.ai/api/mcp/auth_callback, or http loopback (127.0.0.1, [::1], localhost) on any port.' }
-        client_name: { type: string }
-        token_endpoint_auth_method: { type: string, enum: [none] }
+        client_name: { type: string, description: 'Required, since the authorization page shows it; absent, it is request.validation (invalid_client_metadata).' }
+        token_endpoint_auth_method: { type: string, enum: [none], description: 'Absent, it is registered as none and echoed as none; any other value is request.validation (invalid_client_metadata).' }
         grant_types: { type: array, items: { type: string, enum: [authorization_code, refresh_token] } }
         response_types: { type: array, items: { type: string, enum: [code] } }
 

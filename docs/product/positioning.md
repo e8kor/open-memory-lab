@@ -55,7 +55,7 @@ floor, [roadmap](roadmap.md); [critical path](critical-path.md) M2), and feature
 vocabularies only ever extend that base, at no cost beyond one extra MCP tool listing until a workarea's policy opts in.
 The API makes the layering structural ([ADR-0022](../adr/ADR-0022-two-ring-api.md)): the
 provider is the `/v1` ring, under a compatibility covenant and with the target workarea carried
-by the token itself; the lab is the `/v2` ring, where the steroids evolve without ever touching
+by the key itself; the lab is the `/v2` ring, where the steroids evolve without ever touching
 the foundation.
 
 The install story makes it operational ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)):

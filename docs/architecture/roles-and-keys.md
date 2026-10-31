@@ -544,7 +544,8 @@ key. The server mints no value for it — `api_keys.credential` is `connection` 
 connection, and a connection reaches only `/mcp`. Its role is `reader`, `writer` or `dreamer`, it
 is not `held_by: service`, and the [issuance order](#grant-admissibility-and-refusal-order) is
 otherwise unchanged. A key is a bearer key or a connector key, never both, and a connector key has
-at most one connection open: opening one revokes the earlier in the same commit. The key id on
+at most one connection open: opening one revokes the earlier open one, live or not, in the same
+commit. The key id on
 every journal event therefore names exactly one credential path. A connector key is not rotated:
 `POST /v2/keys/{key_id}/rotate` on one answers `422 oauth.connect_refused`
 (`details.reason: connector_key`), because a rotated successor's value would make it a bearer key.
@@ -560,7 +561,14 @@ holds the SHA-256 of the decoded symbols, and `connection.code_issued` carries o
 and expiry ([event catalog](../data/event-catalog.md#connectioncode_issued)). It lives
 `oauth.connect_code_ttl` ([configuration](../operations/configuration.md); shipped 10 minutes, 1
 to 60), is spent by its first correct entry on the authorization page, and is voided when a newer
-code is minted for the same key or when the key is revoked, in that `key.revoked`'s commit. The
+code is minted for the same key or when the key is revoked, in that `key.revoked`'s commit.
+Minting a code, or revoking a connection of the key (`connection.revoked`, whatever its cause),
+also ends every live authorization request
+holding a code of that key and every `authorized` connection of it, in the same commit: it voids
+every code of the key from which no connection has opened, spent or not, and Connect and the token
+exchange refuse a voided code, so a later Connect answers `oauth.authorization_expired` and a later
+exchange `invalid_grant` (`oauth.authorization_code_invalid`). A page holding a code someone else
+entered therefore cannot open a connection after the admin mints a new one. The
 idempotency record of an issuance or a minting stores its response without the code, so a replay
 returns no code ([HTTP API — idempotency](../api/http-api.md#idempotency)). With L live codes and G wrong entries
 during their life, the chance that any entry finds one is at most L·G / 2⁶⁰; L counts every
@@ -575,9 +583,9 @@ stateDiagram-v2
     code_live --> code_lapsed : expiry reached
     code_live --> code_spent : correct entry on the page
     code_spent --> authorized : Connect\n(authorization code, 60 s)
-    code_spent --> [*] : Cancel, or the page lapses after 10 minutes
+    code_spent --> [*] : Cancel, the page lapses after 10 minutes,\nor a newer code or a connection revoke voids it
     authorized --> open : token exchange\n(connection.opened)
-    authorized --> [*] : authorization code expires unexchanged
+    authorized --> [*] : authorization code expires unexchanged,\nor a newer code or a connection revoke voids it
     open --> revoked : admin revoke, refresh or code reuse,\nor a newer connection for the key\n(connection.revoked, or the newer connection.opened)
     code_voided --> [*]
     code_lapsed --> [*]
@@ -590,7 +598,10 @@ valid, and its authorization code or refresh token answers `invalid_grant`
 (`oauth.authorization_code_invalid`, `oauth.refresh_invalid`). The token exchange reads it in the
 transaction that commits `connection.opened`, so no connection opens after its key's
 `key.revoked`. The connection row is created at Connect, `authorized`; until then the
-authorization request holds only the verified code's id.
+authorization request's row, written when the code verified, holds the code's id. An
+`authorized` connection is not journalled and not listed: `oml keys disconnect` names an open
+connection, and naming an `authorized` one answers `access.not_found`, as an unknown id does; a
+newer code or the revocation of the key's open connection ends it.
 
 A connection is **live** while it is open, its key is neither revoked nor expired, its newest
 refresh token is unexpired, and its resource is the current `<issuer>/mcp`. An open connection
@@ -604,19 +615,28 @@ that is not live stays `open` in the table, with no event, because nothing an ac
   is refused at every request, and works again only if that origin is set again before its
   refresh token lapses ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1).
 
-A revoked connection never reopens: the key needs a new code.
+An open connection that is not live is still replaced, and so never revives, once a newer
+connection of its key opens. A revoked connection never reopens: the key needs a new code.
 
 **Tokens.** An access token is `oml_at_` and a refresh token `oml_rt_`, each followed by 43 base62
 characters under the generation rule of the [key format](#key-format). The second underscore
 keeps a token from parsing as a key, and so from matching the scan's key pattern; the scan's
 `secret.api_token` row names both token formats beside the key format
 ([admission](admission.md)). `oauth_tokens` stores the SHA-256 of each, never the token, by the
-same argument as a key's hash. An access token lives `oauth.access_token_ttl` (shipped 1 hour, at
-most 24) and is bound to its connection's resource, `<issuer>/mcp` when the connection was
-created. Every refresh answers a new pair and marks the presented refresh token rotated; a refresh
-token unused for `oauth.refresh_token_ttl` (shipped 30 days) expires. A rotated refresh token
-presented again, or an authorization code redeemed twice, revokes the connection and every token
-it holds. The evidence outlives the first use: an authorization code's digest is kept after
+same argument as a key's hash. An access token lives `oauth.access_token_ttl` and a refresh token
+unused for `oauth.refresh_token_ttl` expires; both are journalled settings whose defaults and
+admissible ranges are declared on [configuration](../operations/configuration.md). An access token
+is bound to its connection's resource, `<issuer>/mcp` when the connection was created. Every
+refresh answers a new pair and marks the presented refresh token rotated, in one conditional
+update that two racing refreshes cannot both pass
+([Postgres schema](../data/postgres-schema.md#connections-adr-0031)). A rotated refresh token
+presented again revokes the connection and every token it holds. A redeemed authorization code
+presented again does the same only when the request's `client_id` is the connection's and the
+S256 of its `code_verifier` is the stored challenge, because only the holder of the verifier can
+have redeemed first; any other presentation of a redeemed code answers `invalid_grant`
+(`oauth.authorization_code_invalid`) and revokes nothing, and a failed exchange — a wrong
+verifier, client or `redirect_uri` — does not consume the code. The evidence outlives the first
+use: an authorization code's digest is kept after
 redemption, marked redeemed, until the connection is revoked, and a rotated refresh token's row
 keeps its own expiry and stays until that expiry or the revocation, so a reuse inside either window
 is always recognized. Tokens are read from the `Authorization` header only, never from a body or a
@@ -633,18 +653,26 @@ logging rules and lists these among what a log line never carries.
 **A token is exactly its key.** At `/mcp` an access token resolves to its connection, which must
 be open and whose `resource` must equal the current `<issuer>/mcp`, else `auth.invalid`
 (`reason: unknown`), and to that connection's key, which must be neither revoked nor expired; from
-there the request is the key's request. A refresh refuses the same resource mismatch as
+there the request is the key's request. At `/mcp` only an `oauth_tokens` row of kind `access`
+authenticates. A refresh token presented there answers `auth.invalid` (`reason: unknown`) and is
+neither rotated nor counted as reuse. At `/oauth/token` only a row of kind `refresh` is a
+`refresh_token`, and any other token answers `invalid_grant` (`oauth.refresh_invalid`). A refresh
+refuses the same resource mismatch as
 `oauth.refresh_invalid`. The verb ceiling, [grant admissibility and the refusal
 order](#grant-admissibility-and-refusal-order), grants, denials, [own](#own) and the permission
 epoch apply to the key, on every request, with no cache. The scope `mcp` adds and narrows nothing.
 A token is accepted nowhere but `/mcp`, so it reaches only the agent-safe subset: a connection can
 do at most what its key can, never more. The MCP facade dispatches its ring calls under the key it
-resolved and never forwards the token.
+resolved and never forwards the token. For the same reason a connection cannot upload: an upload's
+parts travel on `/v1` under a key value, and `oml_attach` `open` under a connection answers
+`oauth.attach_refused` before any session is created
+([agent plugin](../api/mcp-plugin.md#oml_attach)).
 
 **Revocation.** `oml keys disconnect <key-id> <connection-id>`
 (`POST /v2/keys/{key_id}/connections/{connection_id}/revoke`) ends a connection: the lead refuses
 its tokens at their next request, and a follower after replication lag, as for a revoked key
-([key lifecycle](#key-lifecycle)). Revoking or expiring the key ends every connection of it the same way.
+([key lifecycle](#key-lifecycle)); the same commit voids the key's codes from which no connection
+has opened, as minting does. Revoking or expiring the key ends every connection of it the same way.
 Revoking a connection and listing a key's connections are served whether or not `oauth.issuer` is
 set, so an admin can clean up while the surface is off.
 

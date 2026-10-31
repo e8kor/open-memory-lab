@@ -384,25 +384,30 @@ CREATE TABLE oauth_clients (           -- clients the authorization server knows
     redirect_uris   text[]      NOT NULL,      -- each inside the redirect allowlist
     metadata_digest bytea       NOT NULL,      -- SHA-256 of the document or registration as received
     fetched_at      timestamptz,               -- cimd: when the cached document was fetched;
-                                               -- at most 10 000 cimd rows at once (ADR-0031 d5)
+                                               -- kept at most 24 hours from it; at most 10 000
+                                               -- cimd rows, the least recently used one no open
+                                               -- connection names evicted first (ADR-0031 d5)
+    last_used_at    timestamptz,               -- cimd: the eviction order
     created_at      timestamptz NOT NULL
 );
 
-CREATE TABLE oauth_authorizations (    -- one row per authorization request on the page;
-                                       -- at most 10 000 live at once (ADR-0031 d9)
+CREATE TABLE oauth_authorizations (    -- an authorization request whose connect code verified;
+                                       -- before that the request is only its sealed handle and
+                                       -- has no row (ADR-0031 d9)
     id             uuid        PRIMARY KEY,
     tenant_id      uuid        NOT NULL,       -- always the reserved provider tenant
-    handle_hash    bytea       NOT NULL UNIQUE,-- SHA-256 of the handle the page's form carries
-    client_id      text        NOT NULL REFERENCES oauth_clients (client_id),
+    handle_hash    bytea       NOT NULL UNIQUE,-- SHA-256 of the confirmation's 256-bit handle
+    client_id      text        NOT NULL,       -- no reference: a cached document may be evicted
+    client_kind    text        NOT NULL CHECK (client_kind IN ('cimd', 'dcr')),
+    metadata_digest bytea      NOT NULL,       -- copied from the sealed handle
     redirect_uri   text        NOT NULL,
     redirect_uri_sent boolean  NOT NULL,       -- whether the request carried redirect_uri,
                                                -- for the token endpoint's rule
     code_challenge text        NOT NULL,       -- S256 only, 43 base64url characters
     state          text,                       -- at most 512 bytes; echoed verbatim
-    attempts_left  integer     NOT NULL,       -- five at creation
-    expires_at     timestamptz NOT NULL,       -- ten minutes after creation
-    code_id        uuid                        -- set when a connect code verifies; plain uuid,
-                                               -- since the code is another tenant's row
+    expires_at     timestamptz NOT NULL,       -- the sealed handle's: ten minutes after the GET
+    code_id        uuid        NOT NULL        -- the verified connect code; plain uuid, since
+                                               -- the code is another tenant's row
 );
 
 CREATE TABLE connect_codes (
@@ -413,8 +418,11 @@ CREATE TABLE connect_codes (
     issued_seq  bigint      NOT NULL,          -- journal seq of its connection.code_issued
     expires_at  timestamptz NOT NULL,
     redeemed_at timestamptz,                   -- its first correct entry on the page
-    voided_seq  bigint,                        -- seq of the connection.code_issued that replaced
-                                               -- it, or of the key.revoked that voided it
+    voided_seq  bigint,                        -- seq of the connection.code_issued or the
+                                               -- connection.revoked that voided it (every code of
+                                               -- the key from which no connection has opened,
+                                               -- spent or not), or of the key.revoked that voided
+                                               -- an unredeemed one (ADR-0031 d8)
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id)
 );
 
@@ -427,7 +435,11 @@ CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'auth
     tenant_id            uuid        NOT NULL,
     key_id               uuid        NOT NULL,
     code_id              uuid        NOT NULL REFERENCES connect_codes (id),
-    client_id            text        NOT NULL,  -- no reference: oauth_clients is the provider tenant's
+    client_id            text        NOT NULL,  -- no reference: oauth_clients is the provider tenant's;
+                                                -- the token endpoint's client (ADR-0031 d5)
+    client_kind          text        NOT NULL CHECK (client_kind IN ('cimd', 'dcr')),
+    client_metadata_digest bytea     NOT NULL,  -- these two copied from the authorization request at
+                                                -- Connect, for connection.opened
     redirect_uri         text        NOT NULL,
     redirect_uri_sent    boolean     NOT NULL,  -- copied from the authorization request
     resource             text        NOT NULL,  -- <issuer>/mcp at Connect; connection.opened
@@ -439,7 +451,8 @@ CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'auth
                                                 -- (ADR-0031 d10)
     auth_code_expires_at timestamptz,
     auth_code_redeemed_at timestamptz,          -- set at the token exchange; a presented code
-                                                -- whose row has it set is code_reuse
+                                                -- whose row has it set is code_reuse only with
+                                                -- this client_id and a matching verifier
     state                text        NOT NULL CHECK (state IN ('authorized', 'open', 'revoked')),
     opened_seq           bigint,                -- journal seq of its connection.opened
     revoked_seq          bigint,                -- its connection.revoked, or the connection.opened
@@ -469,9 +482,51 @@ tenant's RLS. `oauth_clients` and `oauth_authorizations` hold state from before 
 key, so they belong to the reserved provider tenant, under its RLS, and hold no tenant content: a
 client's self-description and a page's request in progress. The code, authorization-code and token
 digests are found by the same pre-tenant authentication lookup that finds `api_keys.hash`; the
-matched row's `tenant_id` then sets `oml.tenant_id` for everything after. A presented
-authorization code whose row has `auth_code_redeemed_at` set is reuse, whatever its expiry: the
-token endpoint revokes the connection (`connection.revoked`, cause `code_reuse`). Removal is
+matched row's `tenant_id` then sets `oml.tenant_id` for everything after. At `/mcp` the lookup
+matches only a row of kind `access`, and at a refresh only a row of kind `refresh`
+([roles and keys](../architecture/roles-and-keys.md#connections)). The token endpoint never reads
+`oauth_clients`: the client is the connection's `client_id`, so evicting a cached `cimd` row, or
+removing a lapsed one, never affects a connection.
+
+**Redemption and rotation are conditional updates.** Two racing requests with one code or one
+refresh token cannot both pass, because each mints only when its own update matched a row. The
+token exchange, in the transaction that commits `connection.opened` under the per-tenant chain
+lock, first reads the row by `auth_code_hash` and checks the client, the verifier, the
+`redirect_uri`, the code's voiding, the key and the resource, and a failed check consumes nothing;
+then:
+
+```sql
+UPDATE oauth_connections
+   SET auth_code_redeemed_at = now(), state = 'open', opened_seq = $seq
+ WHERE auth_code_hash = $h AND state = 'authorized'
+   AND auth_code_redeemed_at IS NULL AND auth_code_expires_at > now()
+RETURNING id;
+```
+
+A presented code whose row has `auth_code_redeemed_at` set, or whose update returns no row because
+a racing exchange redeemed it first, is `code_reuse` only when the request's `client_id` equals the
+connection's and `S256(code_verifier)` equals the stored `code_challenge`, whatever the code's
+expiry: the token endpoint then revokes the connection (`connection.revoked`, cause
+`code_reuse`). Any other presentation of a redeemed code answers `invalid_grant`
+(`oauth.authorization_code_invalid`) and revokes nothing. A refresh runs in one transaction that
+does not take the chain lock:
+
+```sql
+SELECT connection_id FROM oauth_tokens WHERE hash = $h AND kind = 'refresh';   -- $c
+SELECT id FROM oauth_connections WHERE id = $c FOR UPDATE;
+UPDATE oauth_tokens SET rotated_at = now()
+ WHERE hash = $h AND kind = 'refresh' AND rotated_at IS NULL AND expires_at > now()
+RETURNING connection_id;
+-- one row: insert the new access and refresh rows for $c, then commit
+```
+
+When the update returns no row while the row with that hash has `rotated_at` set, the token was
+rotated already: that is reuse, and the revocation (`connection.revoked`, cause `refresh_reuse`)
+commits in a transaction that takes the per-tenant chain lock. When it returns no row because the
+token expired, the answer is `invalid_grant` and nothing is revoked. Before the update, under the
+row lock, the refresh checks that the connection is open, that the request's `client_id` is the
+connection's, and the key's state and the connection's resource; a failed check answers
+`invalid_grant` and rotates nothing. Removal is
 operational: an authorization request's row 24 hours after it lapses; a registered client 24 hours
 after its registration when no connection used it; an `authorized` connection row once its
 `auth_code_expires_at` has passed unexchanged; a token row only at its own `expires_at` or at its
@@ -555,6 +610,9 @@ CREATE TABLE lead_lease (        -- cluster-mode lead election (ADR-0023 d14); N
     singleton        boolean PRIMARY KEY DEFAULT true CHECK (singleton),  -- one row
     holder_node_id   text        NOT NULL,
     address          text        NOT NULL,   -- followers discover the lead here
+    oauth_issuer     text,                   -- the lead's oauth.issuer, NULL when unset; written when
+                                             -- it takes the lease; followers serve the OAuth surface
+                                             -- from it and have none of their own (ADR-0031 d14)
     lease_epoch      bigint      NOT NULL,
     expires_at       timestamptz NOT NULL    -- renewed on heartbeat; takeover journals
 );                                           -- system.lead_acquired; the chain lock is the fence
@@ -824,7 +882,8 @@ restores which codes and connections existed and when they ended, not the digest
 
 **Operational** — state the journal does not define; losing it costs availability or history, not
 truth: `outbox` (deliveries not yet applied are re-derivable from the journal fold, which is what a
-lake repair does), `lake_frontier` (cache), `lead_lease` (holder id, address, epoch, expiry — the
+lake repair does), `lake_frontier` (cache), `lead_lease` (holder id, address, the lead's
+`oauth.issuer`, epoch, expiry — the
 cluster-mode lead election row, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md);
 never load-bearing, the chain lock is), `dead_letter`, `idempotency` (replay protection; loss
 re-opens a replay window bounded by key behaviour), `read_events` (retention-bounded by design),

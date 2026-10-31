@@ -33,52 +33,63 @@ implementation milestone where it changes what the repository holds.
 
 The proposed [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md) designs how claude.ai,
 Claude Desktop and the Claude iOS and Android apps reach the [agent plugin](api/mcp-plugin.md)
-through a claude.ai custom connector, on the maintainer's three fixed decisions: OML as an OAuth
-2.1 protected resource with its own authorization server, beside unchanged bearer keys; the binding
-by a one-time connect code; the build after iteration 3. It amends ADR-0010 (d3, d7), ADR-0014
-(d1, d2, d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0025 (d2) and ADR-0028 (d1); their Status lines
-gain the back-pointer on acceptance, not before. Sources: the MCP authorization specification,
-revision 2025-11-25, Anthropic's connector documentation, the client ID metadata document draft
-(-02), RFC 9700, RFC 9207 and the Fetch Standard, all fetched 2026-10-31.
+through a claude.ai custom connector, on the maintainer's three fixed decisions: OML as an OAuth 2.1
+protected resource with its own authorization server, beside unchanged bearer keys; the binding by a
+one-time connect code; the build after iteration 3. It amends ADR-0010 (d3, d7), ADR-0014 (d1, d2,
+d3, d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0025 (d2, d15) and ADR-0028 (d1); their Status lines gain
+the back-pointer on acceptance, not before. Sources: the MCP authorization specification, revision
+2025-11-25, Anthropic's connector documentation, the client ID metadata document draft (-02), RFC
+9700, RFC 9207, the Fetch Standard, the IANA IPv4 and IPv6 Special-Purpose Address Registries and
+Caddy's `log` directive documentation, all fetched 2026-10-31.
 
 - **Decided, not built:** the `/mcp` `401` keeps its typed body and gains the RFC 9728 challenge
-  (d2); one protected-resource document at `/.well-known/oauth-protected-resource/mcp` and one
-  RFC 8414 document (d3); `/oauth/authorize`, `/oauth/token` and `/oauth/register`, unversioned,
-  in the RFCs' shapes, S256 PKCE only, public clients only, one scope `mcp` (d4); client ID
-  metadata documents preferred, dynamic registration as the fallback, no pre-registered client
-  (d5), with the document URL's form, the fetch's address, TLS, proxy and concurrency bounds; a
-  fixed redirect allowlist — `https://claude.ai/api/mcp/auth_callback` and loopback, matched on
-  raw strings (d6);
-  the connector key, which has no value and at most one open connection, and
-  `oml keys issue-agent --connect-code` (d7); the connect code — twelve Crockford base32 symbols,
-  shown once, stored as a digest, journalled by id, ten minutes by default (d8); the two-step
-  authorization page with no cookie, fixed headers, `Referrer-Policy: same-origin`, `iss` on every
+  (d2); one protected-resource document at `/.well-known/oauth-protected-resource/mcp` and one RFC
+  8414 document (d3); `/oauth/authorize`, `/oauth/token` and `/oauth/register`, unversioned, in the
+  RFCs' shapes, S256 PKCE only, public clients only, one scope `mcp` (d4); client ID metadata
+  documents preferred, dynamic registration as the fallback, no pre-registered client (d5), with the
+  document URL's form, an allow-list of global unicast addresses, TLS, proxy and concurrency bounds,
+  a document cache that evicts and never refuses, and a token endpoint that identifies the client by
+  the connection; a fixed redirect allowlist — `https://claude.ai/api/mcp/auth_callback` and
+  loopback, matched on raw strings by a stated grammar (d6); the connector key, which has no value
+  and at most one open connection, `oml keys issue-agent --connect-code`, and show-once responses
+  stored in the idempotency record without their secret, for bearer keys too, amending ADR-0014 d3
+  (d7); the connect code — twelve Crockford base32 symbols, shown once, stored as a digest,
+  journalled by id, ten minutes by default, with a new code or a revoked connection ending every
+  page in progress for the key (d8); the two-step authorization page with a sealed handle and no row
+  until a code verifies, no cookie, fixed headers, `Referrer-Policy: same-origin`, `iss` on every
   redirect, a warning against forwarded links, and a confirmation naming the tenant and built from
-  the key's role (d9); opaque tokens bound to their connection's resource, rotation on every
-  refresh, reuse ending the connection (d10); a token as exactly its key, the key's state read at
-  code entry, exchange and refresh, when a connection is live, and `oml keys disconnect` (d11); `connection.code_issued`, `connection.opened` and
-  `connection.revoked`, and no event for a refresh (d12); the `oauth` error family (d13); the
-  configuration keys, doctor fields, proxy routing and cluster mode (d14); the build order (d16).
+  the key's role (d9); opaque tokens bound to their connection's resource, rotation on every refresh
+  by one conditional update, reuse ending the connection, and a redeemed code ending it only in the
+  hands of its verifier's holder (d10); a token as exactly its key, only an access token at `/mcp`,
+  the key's state read at code entry, exchange and refresh, when a connection is live, `oml_attach`
+  refused under a connection, and `oml keys disconnect` (d11); `connection.code_issued`,
+  `connection.opened` and `connection.revoked`, and no event for a refresh (d12); the `oauth` error
+  family (d13); the configuration keys, doctor fields, proxy routing and access logs, and cluster
+  mode with the follower serving the lead's issuer (d14); the build order (d16).
 - **The vocabulary** gains three rows, *connection*, *connect code*, and *access token, refresh
   token*, because "grant" belongs to workarea grants and "token" alone could mean a key (d7).
 - **`info.version` 0.2.0-design → 0.3.0-design** (d15): the error taxonomy, which the rule on this
-  page names, gains nine `oauth` codes, and the OpenAPI document gains `/mcp`, the two discovery
-  documents, four OAuth operations and two `/v2` key operations. No `/v1` operation changes. The
+  page names, gains eleven `oauth` codes, and the OpenAPI document gains `/mcp`, the two discovery
+  documents, four OAuth operations and two `/v2` key operations. No `/v1` operation changes; on
+  `/v2` the show-once operations' idempotency record stores no secret. The
   proposed ADR-0026, on another branch, also moves to 0.3.0-design; if its revision is still
   untagged when this lands the two share it, otherwise this change takes 0.4.0-design at rebase.
   `spec-v0.3` is cut at acceptance.
-- **Roadmap:** RS-2 restated in ADR-0018 d3's fixed form, its exit criterion met by this record;
-  it leaves the register when the record is accepted. FR-34 opened: the flow is designed, not
-  built, and no live connection has run.
+- **Roadmap:** RS-2 restated in ADR-0018 d3's fixed form; the record meets its exit criterion on
+  acceptance, when the row leaves the register. FR-34 opened: the flow is designed, not built, and
+  no live connection has run. FR-35 opened: the `/v1` and `/v2` `401` answers carry no
+  `WWW-Authenticate` challenge, which RFC 9110 §15.5.2 requires.
 - **Pages touched:** [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md), the
-  [decision register](adr/index.md) (row; the D9, D13 and D14 cells), `mkdocs.yml`,
+  [decision register](adr/index.md) (row; the D9, D13 and D14 cells; the ADR-0022 row says "key"
+  where it said "token"), `mkdocs.yml`,
   [llms.txt](llms.txt), [HTTP API](api/http-api.md), [openapi.yaml](api/openapi.yaml),
   [mcp-tools.json](api/mcp-tools.json) (the revision only), [errors](api/errors.md),
   [the agent plugin](api/mcp-plugin.md), [roles and keys](architecture/roles-and-keys.md),
   [security](architecture/security.md), [event catalog](data/event-catalog.md),
   [Postgres schema](data/postgres-schema.md), [configuration](operations/configuration.md),
   [observability](operations/observability.md), [CLI reference](cli/reference.md),
-  [roadmap](product/roadmap.md), [admission](architecture/admission.md) (the token formats in
+  [roadmap](product/roadmap.md), [positioning](product/positioning.md) ("key" where it said
+  "token"), [admission](architecture/admission.md) (the token formats in
   `secret.api_token`), [the overview](index.md),
   [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md)
   (the revision), and this page; outside `docs/`, `README.md` (using OML from claude.ai and a

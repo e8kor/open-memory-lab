@@ -59,7 +59,7 @@ implementation; thresholds are deliberately absent — nothing is measured yet
 | `oml_lead_lease_age_seconds` | gauge | Age of the current lead lease since acquisition ([deployment — the lead lease](deployment.md)). Paging-adjacent on the frontier-lag precedent: during a takeover, writes are refused until a new lead holds the lease and passes the fork check, so lease state — not pod status — is what says the write path is up. |
 | `oml_oauth_token_requests_total` (grant_type, outcome) | counter | Token exchanges and refreshes on the connection surface by RFC outcome; a rise in `invalid_grant` on `refresh_token` is lost refresh answers or stolen tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d10) |
 | `oml_oauth_connect_code_failures_total` | counter | Wrong connect-code entries on the authorization page; a sustained rate is someone guessing ([security](../architecture/security.md#connections-the-oauth-surface)) |
-| `oml_oauth_client_metadata_fetch_total` (outcome) | counter | Client metadata document fetches by outcome — fetched, cached, refused address, timeout, oversize, invalid; a deployment with no outbound HTTPS shows only failures |
+| `oml_oauth_client_metadata_fetch_total` (outcome) | counter | Client metadata document fetches by outcome — fetched, cached, a stale copy served, refused address, timeout, oversize, invalid, busy; a deployment with no outbound HTTPS shows only failures |
 | `oml_lead_takeovers_total` | counter | `system.lead_acquired` events observed — lead takeovers. Nonzero during failover or rolling updates is the lease working; a climbing rate in steady state means lead churn, and every takeover is a write-refusal window ([FR-24](../product/roadmap.md) measures that window). |
 
 ### `oml-lakewriter`
@@ -111,7 +111,9 @@ retention window bounds how long erased plaintext-derived rows survive
 ([CLI reference](../cli/reference.md)). Both read through the HTTP API with an
 operator or admin key, from Postgres — not from the metrics pipeline — so they
 work on a deployment with no Prometheus at all, and they are authoritative
-when the two disagree. `--json` is supported everywhere; the JSON shape below
+when the two disagree. One field is not read from Postgres: `connect_code_failures`
+is the lead's own count, read through the same API. `--json` is supported everywhere; the JSON shape
+below
 is the contract.
 
 What `oml doctor` reads, per tenant in scope of the caller's key, and, for an operator key, the
@@ -129,9 +131,9 @@ deployment-level fields marked so:
 | `lead_lease` | lead-lease row in Postgres | The current lead's holder id, address, epoch and lease age; **exactly one lead lease held** is a doctor check in every profile ([deployment — the lead lease](deployment.md)). A companion check verifies **no follower holds the signing key**: checkable in Kubernetes from the pod spec (no signing-key Secret mounted in `oml-server-follower`); in docker and standalone it is stated, not checkable, beyond the absence of the key file on the follower's mounts — the honesty is the check's output, not a gap it hides. |
 | `reconciler` | journalled cursor + findings | Cursor lag, last pass time, open findings by class, repair halts |
 | `settings_drift` | configured vs. effective | Delegated to `oml settings show`; doctor flags that drift exists |
-| `oauth_discovery` | the two discovery documents, fetched by the CLI from `<issuer>` over the public network | Present only when `oauth.issuer` is set. `failing` when either document is unreachable, when `resource` is not exactly `<issuer>/mcp`, or when `issuer` is not the configured issuer — the signature of a proxy that does not route the paths or rewrites them; the output names the URL and the field ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)) |
+| `oauth_discovery` | the two discovery documents, fetched by the CLI from `<issuer>` over the public network, and the issuer the lead recorded in `lead_lease` | Present only when `oauth.issuer` is set. `failing` when either document is unreachable, when `resource` is not exactly `<issuer>/mcp`, or when `issuer` is not the issuer the lead recorded — the signature of a proxy that does not route the paths or rewrites them, or of a node serving another issuer than the lead's; the output names the URL and the field. The CLI reaches whichever node the proxy routes it to, so it sees a node serving another issuer only when routed there ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients), [configuration](configuration.md)) |
 | `connect_codes` | `connect_codes` | Per tenant: live codes, and codes that lapsed unredeemed in the window ([roles and keys](../architecture/roles-and-keys.md#connections)) |
-| `connect_code_failures` | `oauth_authorizations` | **Deployment-level, operator key only.** Wrong connect-code entries in the window, deployment-wide: a wrong entry matches no code, so it names no key and no tenant, and the attempts live in the reserved provider tenant's rows, which no tenant admin's doctor reads. `oml_oauth_connect_code_failures_total` is the metrics view of the same count. `attention` when wrong entries exceed the threshold — someone is guessing, and the bound is L·G / 2⁶⁰ |
+| `connect_code_failures` | the lead's in-memory count | **Deployment-level, operator key only.** Wrong connect-code entries since the lead started, deployment-wide: a wrong entry matches no code, so it names no key and no tenant, and it writes no row, since an authorization request has none until its code verifies ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d9); the count starts again at a restart or takeover, and no tenant admin's doctor reads it. `oml_oauth_connect_code_failures_total` is the metrics view of the same count. `attention` when wrong entries exceed the threshold — someone is guessing, and the bound is L·G / 2⁶⁰ |
 | `connections` | `oauth_connections` + `oauth_tokens` + `api_keys` | Per key: live connections — open, the key neither revoked nor expired, the newest refresh token unexpired, the resource the current `<issuer>/mcp` ([roles and keys](../architecture/roles-and-keys.md#connections)) — and, apart, open connections that are not live, by why. Connections revoked for `refresh_reuse` or `code_reuse` in the window; any reuse revocation is `attention`: a stolen token, or a client that lost a refresh answer, and either way someone needs a new connect code |
 
 Doctor renders each field with a verdict (`ok` / `attention` / `failing`) and
@@ -152,6 +154,7 @@ check list on top of the common fields above:
 | kubernetes (`local`) | The MinIO pin (same fact as docker); the single-node durability reduction is reported, not silent. |
 | kubernetes (`scaled`) | Quorum-synchronous settings on the journal domain (`synchronous_commit`, quorum standbys), as [deployment](deployment.md) requires. |
 | all profiles, cluster mode | Exactly one lead lease held; no follower holds the signing key (pod-spec-checkable in Kubernetes; stated, not checkable, in docker and standalone — see `lead_lease` above). |
+| any profile with `oauth.issuer` set | A reverse proxy that writes access logs records neither the `Location` header of `POST /oauth/authorize` nor the request bodies of `POST /oauth/authorize` and `POST /oauth/token` ([HTTP API — behind a proxy](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)): stated, not checkable — doctor cannot read a proxy's configuration, and its output says so rather than reporting `ok`. |
 
 ## Structured logging
 
@@ -196,7 +199,9 @@ What logs may carry instead:
   digest of any of them — including the bodies of `POST /oauth/authorize` and
   `POST /oauth/token` and the `Location` header of the authorize redirect, whose
   query carries the authorization code. Ids only: `key_id`, `connection_id`,
-  `code_id`, the authorization request's row id
+  `code_id`, the authorization request's row id. The rule binds `oml-server`'s
+  own log; a reverse proxy's access log is bound by the proxy requirement on
+  the [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)
   ([roles and keys](../architecture/roles-and-keys.md#connections),
   [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8, d10).
 

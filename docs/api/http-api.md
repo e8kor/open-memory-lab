@@ -197,11 +197,16 @@ sequenceDiagram
 
 **Show-once responses are stored without their secret.** The stored response of a show-once
 operation — `POST /v2/keys`, `POST /v2/keys/{key_id}/connect-codes` and
-`POST /v2/keys/{key_id}/rotate` — omits `value` and `connect_code.code`, so no idempotency record
-holds a key value or a connect code. A replay returns that redacted body with
-`Idempotency-Replay: true`, and a caller that lost the secret mints a new code or rotates
-([roles and keys — key format](../architecture/roles-and-keys.md#key-format),
-[connections](../architecture/roles-and-keys.md#connections)).
+`POST /v2/keys/{key_id}/rotate` — omits `value` and `connect_code.code`, for bearer and connector
+keys alike, so no idempotency record holds a key value or a connect code. A replay returns that
+body, which carries no secret, with `Idempotency-Replay: true`; the first answer is the only one
+that carries it. A caller that lost the secret revokes the key and issues another, rotates the
+successor, or mints a new code, and the CLI says which
+([CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation);
+[roles and keys — key format](../architecture/roles-and-keys.md#key-format),
+[connections](../architecture/roles-and-keys.md#connections)). This is the one exception to the
+byte-for-byte replay above, decided, not built
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, amending ADR-0014 d3).
 
 A `committed` record is retained for at least **24 hours** — a committed floor, not an
 estimate. The `idempotency.retention` setting
@@ -306,7 +311,7 @@ exist (R1, R4).
 
 One endpoint for the two submission verbs; `verb` selects the journal event
 (`submission.remember` / `submission.learn`, [event catalog](../data/event-catalog.md)). The
-request names no workarea — the target resolves from the token
+request names no workarea — the target resolves from the key
 ([Two rings](#two-rings), ADR-0022 d4): the key's journalled `default_workarea`, or the
 `X-OML-Workarea` header as the explicit per-request override, honored only within the key's
 grants. A key with neither is refused with `request.workarea_unresolved` (422).
@@ -381,7 +386,7 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 
 Ranked retrieval over **promoted** rows in scope: FTS + vector, served from Postgres, never from
 the lake (D12; [retrieval.md](../architecture/retrieval.md)). The request names no workarea: the
-default scope is the **token workarea's subtree** — the key's `default_workarea`, or the
+default scope is the **key's default-workarea subtree** — the key's `default_workarea`, or the
 `X-OML-Workarea` header as the override (within grants; neither present answers
 `request.workarea_unresolved` — there is no tenant-wide fallback). Request: `query`, `k`,
 optional `kinds` filter (hits only), `include_bodies`, and:
@@ -442,7 +447,7 @@ operator key answers `access.verb_ceiling`. It resolves no workarea, and an `X-O
 header sent with `own=true` is `request.validation`. An own row
 on a node where the key holds no role carries `workarea_id` and `workarea_path` as null
 ([naming a node](../architecture/roles-and-keys.md#own)). Without `own`, scope defaults to the
-token workarea's subtree, with `X-OML-Workarea` as the override, and the listing returns promoted
+key's default-workarea subtree, with `X-OML-Workarea` as the override, and the listing returns promoted
 served tips within reader effective access only — a `self_signed` version only when the scope
 node is its own workarea ([retrieval](../architecture/retrieval.md#the-rule-postgres-serves-the-lake-never-does)):
 held rows belonging to others are never returned, whatever the filter says (R3).
@@ -454,7 +459,7 @@ is a node the key holds some role on, under the
 [naming rule](../architecture/roles-and-keys.md#own), and the filter narrows the listing to the
 key's rows in that node's subtree, whatever the key holds below it. Without `own` it is a node
 where reader is effective, and the listing is the intersection of its subtree with the scope's:
-the scope still resolves from the token, so a key with neither a default workarea nor the header
+the scope still resolves from the key, so a key with neither a default workarea nor the header
 answers `request.workarea_unresolved` whatever `workarea_id` says.
 
 A retired claim's served tip is its retirement version,
@@ -742,8 +747,8 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 | `POST /v2/keys/{key_id}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
 | `POST /v2/keys/{key_id}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. |
 | `POST /v2/keys/{key_id}/denials/{denial_id}/lift` | Journalled lift. |
-| `POST /v2/keys/{key_id}/connect-codes` | Mint a fresh connect code for a connector key → `201` `{code_id, code, expires_at, connector_url}`, the code shown once; every unredeemed code of the key is voided in the same commit (`connection.code_issued`). A bearer key, a revoked or expired key, or a deployment without `oauth.issuer` answers `422 oauth.connect_refused`. |
-| `POST /v2/keys/{key_id}/connections/{connection_id}/revoke` | `{reason?}` → journalled `connection.revoked`; every token of the connection is refused at its next request served by the lead, and after replication lag on a follower. A revoked connection never reopens. `GET /v2/keys/{key_id}` lists a key's connections. Both are served whether or not the deployment sets `oauth.issuer`. |
+| `POST /v2/keys/{key_id}/connect-codes` | Mint a fresh connect code for a connector key → `201` `{code_id, code, expires_at, connector_url}`, the code shown once; in the same commit (`connection.code_issued`) every code of the key from which no connection has opened is voided, unredeemed or spent, so a page that holds a spent code, and an `authorized` connection made from one, can no longer open a connection ([connections](../architecture/roles-and-keys.md#connections)). A bearer key, a revoked or expired key, or a deployment without `oauth.issuer` answers `422 oauth.connect_refused`. |
+| `POST /v2/keys/{key_id}/connections/{connection_id}/revoke` | `{reason?}` → journalled `connection.revoked`; every token of the connection is refused at its next request served by the lead, and after replication lag on a follower, and the same commit voids the key's codes from which no connection has opened, as minting does. A revoked connection never reopens. The route names an open connection: an `authorized` one is not journalled and not listed, and naming one answers `access.not_found`, as an unknown id does. `GET /v2/keys/{key_id}` lists a key's open and revoked connections. Both are served whether or not the deployment sets `oauth.issuer`. |
 | `GET /v2/keys/{key_id}/effective-access?workarea=…` | The resolved answer: what this key may do where, and which deny produced each hole — reproducible from journalled grants by construction (permission epoch). |
 
 `POST /v2/tenants` (**operator**) creates a tenant; the operator then issues its first admin key
@@ -802,10 +807,10 @@ never from the request's `Host`:
 
 | Endpoint | Does |
 |---|---|
-| `GET /oauth/authorize` | Checks the parameter bounds first — `state` at most 512 bytes, `client_id` and `redirect_uri` at most 2 048 bytes each, `code_challenge` matching `^[A-Za-z0-9_-]{43}$` — then validates the client (a metadata document fetched under the bounds below, or a registered client), the redirect URI (the allowlist match below), `response_type=code`, an S256 `code_challenge`, `resource` and `scope`, then renders the connect-code page for an authorization request alive 10 minutes. A parameter past its bound (`request.validation`), a refused client or redirect URI (`oauth.client_invalid`, `oauth.redirect_refused`) is a `400` page and is never redirected to (RFC 6749 §4.1.2.1); a later refusal — `oauth.pkce_required`, `oauth.resource_mismatch`, `request.validation` — redirects with `error`, `error_description`, `state` and `iss`. At most 10 000 authorization requests are live at once and at most 10 000 document clients are cached; past either cap the request answers the refusal page with `429 limit.rate`. |
-| `POST /oauth/authorize` | The page's own form, in two submissions and no others. Step 2: exactly `handle` and `connect_code`. Step 3: exactly `handle` and `action` (`connect` \| `cancel`), accepted only when the handle's request already holds a verified code's id. Any other combination — both fields, an action before a verified code, a second code after one verified — is `request.validation` on the page. Every submission needs a live handle and either `Sec-Fetch-Site: same-origin` or, when that header is absent, an `Origin` equal to the issuer origin; `Origin: null` is refused. A correct code of a key that is neither revoked nor expired is spent and the confirmation page shows what the connection will act as (below); a wrong one — unknown, expired, spent, or a revoked or expired key's — answers the form again, `400 oauth.connect_code_invalid`, with the attempts left, and the fifth ends the request with `access_denied` (`oauth.authorization_expired`, which also answers a handle past its 10 minutes). `connect` creates the connection, `authorized`, and redirects (`303`) with a 60-second, single-use authorization code, `state` verbatim, percent-encoded as a query parameter, and `iss`; `cancel` with `access_denied`, `state` and `iss`. |
-| `POST /oauth/token` | `application/x-www-form-urlencoded`. `grant_type=authorization_code` with `code`, `client_id`, `redirect_uri`, `code_verifier` and optional `resource`, or `grant_type=refresh_token` with `refresh_token`, `client_id` and optional `resource` → `200` `{access_token, token_type: "Bearer", expires_in, refresh_token, scope: "mcp"}` with `Cache-Control: no-store`. `redirect_uri` is required exactly when the authorize request carried it, and must then equal it byte for byte; when the authorize request omitted it, `redirect_uri` may be omitted or must equal the client's one registered URI; anything else is `oauth.authorization_code_invalid`. The first exchange opens the connection; each refresh rotates the refresh token, and a reused one, or a reused authorization code, revokes the connection. The exchange and every refresh read the key's state and the connection's resource: a revoked or expired key, or a connection whose resource is not the current `<issuer>/mcp`, answers `invalid_grant`. Refusals are RFC 6749 §5.2 bodies: `oauth.authorization_code_invalid` and `oauth.refresh_invalid` as `invalid_grant` — a code or refresh token issued to another client included (RFC 6749 §5.2) — `oauth.client_invalid` as `invalid_client` for a client the server cannot identify, `oauth.resource_mismatch` as `invalid_target`. The path makes no outbound call. |
-| `POST /oauth/register` | RFC 7591, `application/json`: `redirect_uris` (each inside the allowlist), `client_name`, `token_endpoint_auth_method: "none"`, `grant_types` within `authorization_code` and `refresh_token`, `response_types` `["code"]` → `201` with a server-minted `client_id`, no secret, no registration access token; a redirect URI outside the allowlist is `oauth.redirect_refused` as `invalid_redirect_uri`. A client that opens no connection within 24 hours is removed; past 10 000 unused registrations the endpoint answers `429 limit.rate`. |
+| `GET /oauth/authorize` | Checks the parameter bounds first — `state` at most 512 bytes, `client_id` and `redirect_uri` at most 2 048 bytes each, and a `code_challenge` that is present matching `^[A-Za-z0-9_-]{43}$` — then validates the client (a metadata document fetched under the bounds below, or a registered client), the redirect URI (the allowlist match below), `response_type=code`, PKCE, `resource` and `scope`, then renders the connect-code page for an authorization request alive 10 minutes. A parameter past its bound, a present `code_challenge` that does not match the pattern included (`request.validation`), and a refused client or redirect URI (`oauth.client_invalid`, `oauth.redirect_refused`) are a `400` page and are never redirected to (RFC 6749 §4.1.2.1). After the client and the redirect URI are accepted, an absent `code_challenge`, or a `code_challenge_method` that is absent (RFC 7636 §4.3 reads that as `plain`) or not `S256`, is `oauth.pkce_required`; it and every other later refusal — `oauth.resource_mismatch`, `request.validation` — redirect with `error`, `error_description`, `state` and `iss`. The authorization request writes no row: the page's form carries it as a handle sealed by an AEAD under a key the lead generates at its start and holds only in memory, so opening pages grows no table and needs no cap, and a restart or takeover ends every page in progress ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d9). |
+| `POST /oauth/authorize` | The page's own form, in two submissions and no others. Every submission first needs either `Sec-Fetch-Site: same-origin` or, when that header is absent, an `Origin` equal to the issuer origin; `Origin: null` and anything else answer `403 oauth.origin_refused` on the page, never redirected, and consume no attempt. Step 2: exactly `handle`, the sealed handle the first page carries, and `connect_code`. Step 3: exactly `handle` and `action` (`connect` \| `cancel`), where the handle names the request row a verified code wrote and whose code is not voided. Any other combination — both fields, an action before a verified code, a second code after one verified — is `request.validation` on the page. A correct code of a key that is neither revoked nor expired is spent, the authorization request's row is written with the code's id under a fresh 256-bit handle, and the confirmation page shows what the connection will act as (below); a wrong one — unknown, expired, spent, or a revoked or expired key's — answers the form again, `400 oauth.connect_code_invalid`, with the attempts left and a new sealed handle carrying one attempt fewer, and the fifth ends the request with `access_denied` (`oauth.authorization_expired`, which also answers a handle past its 10 minutes, one that does not open under the lead's key, and a step-3 handle whose code a newer code or a revocation voided). `connect` creates the connection, `authorized`, and redirects (`303`) with a 60-second, single-use authorization code, `state` verbatim, percent-encoded as a query parameter, and `iss`; `cancel` with `access_denied`, `state` and `iss`. |
+| `POST /oauth/token` | `application/x-www-form-urlencoded`. `grant_type=authorization_code` with `code`, `client_id`, `redirect_uri`, `code_verifier` and optional `resource`, or `grant_type=refresh_token` with `refresh_token`, `client_id` and optional `resource` → `200` `{access_token, token_type: "Bearer", expires_in, refresh_token, scope: "mcp"}` with `Cache-Control: no-store`. `redirect_uri` is required exactly when the authorize request carried it, and must then equal it byte for byte; when the authorize request omitted it, `redirect_uri` may be omitted or must equal the client's one registered URI; anything else is `oauth.authorization_code_invalid`. The first exchange opens the connection; each refresh rotates the refresh token, and a reused one, or a reused authorization code, revokes the connection. Only a token of kind `refresh` is a `refresh_token`: an access token, or any other string, sent as one is `invalid_grant` (`oauth.refresh_invalid`). The client is the one stored on the connection the code or the refresh token belongs to (`oauth_connections.client_id`), and the client tables are never read here, so a document client whose cached document lapsed still refreshes; a `client_id` that differs from the connection's is `invalid_grant` (`oauth.authorization_code_invalid` or `oauth.refresh_invalid`). An absent `code` or `refresh_token` is `request.validation` (`invalid_request`), and an unknown one `invalid_grant`, whatever its `client_id`. A presented code that is already redeemed is reuse, and revokes the connection, only when the request's `client_id` is the connection's and the S256 of its `code_verifier` is the stored challenge; any other presentation of a redeemed code is `invalid_grant` and revokes nothing. A failed exchange — a wrong verifier, client or `redirect_uri` — does not consume the code. Rotation and redemption are conditional updates declared on the [Postgres schema](../data/postgres-schema.md#connections-adr-0031). The exchange and every refresh read the key's state, the code's voiding and the connection's resource: a revoked or expired key, a voided code, or a connection whose resource is not the current `<issuer>/mcp`, answers `invalid_grant`. Refusals are RFC 6749 §5.2 bodies: `oauth.authorization_code_invalid` and `oauth.refresh_invalid` as `invalid_grant` — a code or refresh token issued to another client included (RFC 6749 §5.2) — `oauth.client_invalid` as `invalid_client` only for a request that sends client authentication (a `client_secret` or an `Authorization` header), since every client is public, `oauth.resource_mismatch` as `invalid_target`. The path makes no outbound call. |
+| `POST /oauth/register` | RFC 7591, `application/json`: `redirect_uris` (each inside the allowlist), `client_name`, `token_endpoint_auth_method: "none"`, `grant_types` within `authorization_code` and `refresh_token`, `response_types` `["code"]` → `201` with a server-minted `client_id`, no secret, no registration access token; a redirect URI outside the allowlist is `oauth.redirect_refused` as `invalid_redirect_uri`. `client_name` is required, because the page shows it, and its absence is `request.validation` as `invalid_client_metadata`. An absent `token_endpoint_auth_method`, which RFC 7591 §2 reads as `client_secret_basic`, is registered as `none` and echoed as `none`; any other value is `request.validation` as `invalid_client_metadata`. A client that opens no connection within 24 hours is removed; past 10 000 unused registrations the endpoint answers `429 limit.rate`. |
 
 **Client identity.** A `client_id` that is an `https` URL with a path names a client ID metadata
 document. Its form is checked first: no userinfo, no fragment, no query, no `.` or `..` path
@@ -813,33 +818,61 @@ segment, no percent-encoded `/` or `.`, no port but the default, and exactly its
 serialization, else `oauth.client_invalid` (`reason: client_id_form`). `oml-server` then fetches
 it at `GET /oauth/authorize`, under these bounds:
 
-- every A and AAAA answer for the host is globally routable unicast; refused are `0.0.0.0/8`,
-  `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`,
-  `192.0.0.0/24`, `192.0.2.0/24`, `192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`,
-  `203.0.113.0/24`, `224.0.0.0/4`, `240.0.0.0/4`, `::/128`, `::1/128`, `fc00::/7`, `fe80::/10`,
-  `ff00::/8`, `2001:db8::/32`, and every IPv6 address that embeds an IPv4 address
-  (`::ffff:0:0/96`, `::/96`, `64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16`, `2001::/32`), refused
-  outright rather than unwrapped;
+- every A and AAAA answer for the host is inside an allow-list, and the fetch is refused if any
+  answer is not. An AAAA answer is admitted only inside `2000::/3`, the global unicast space, and
+  never inside `2001::/23`, `2001:db8::/32`, `2002::/16` or `3fff::/20`, the blocks inside it that
+  the IANA IPv6 Special-Purpose Address Registry (fetched 2026-10-31, last updated 2025-10-09)
+  marks not globally reachable or that embed an IPv4 address. An A answer is admitted only when it
+  is unicast, outside `224.0.0.0/4`, outside the deprecated 6to4 relay block `192.88.99.0/24`, and
+  inside no block the IANA IPv4 Special-Purpose Address Registry (fetched 2026-10-31, last updated
+  2025-10-09) marks "Globally Reachable: False" — as fetched, `0.0.0.0/8`, `10.0.0.0/8`,
+  `100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24`,
+  `192.0.2.0/24`, `192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`,
+  `240.0.0.0/4` and `255.255.255.255/32`. Every IPv6 form that embeds an IPv4 address — `::/96`,
+  `::ffff:0:0/96`, `::ffff:0:0:0/96`, `64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16`, Teredo's
+  `2001::/32` — is therefore refused by construction, never unwrapped, as are `100::/64`,
+  `5f00::/16`, `fc00::/7`, `fec0::/10`, `fe80::/10` and `ff00::/8`, all outside `2000::/3`. A
+  network-specific NAT64 prefix (RFC 6052) on the lead's own network lies inside `2000::/3` and
+  cannot be recognized; the deployment's egress policy refuses it
+  ([security](../architecture/security.md#connections-the-oauth-surface));
 - the TCP connection is made to the checked address with no second resolution, and the HTTP
   client ignores proxy environment variables;
 - TLS verifies the certificate against the web PKI for the URL's host, which is also the SNI;
 - no redirect is followed; the request sends `Accept-Encoding: identity`; the fetch is cut at 5
   seconds and at 16 KiB of bytes received;
-- at most 16 fetches run at once on the lead and one per host; past either cap the request is
+- at most 16 fetches run at once on the lead, at most one per host name and at most one per
+  resolved address; past any cap, with no cached copy to serve, the request is
   `oauth.client_invalid` (`reason: fetch_busy`).
 
 The body is JSON whose `client_id` equals the URL, carrying `client_name` and `redirect_uris`,
-with `token_endpoint_auth_method` absent or `none`; it is cached as its `Cache-Control` allows, for
-at most 24 hours. Any other `client_id` must be one `POST /oauth/register` minted. No client is
-pre-registered and none holds a secret.
+with `token_endpoint_auth_method` absent or `none`. It is cached as its `Cache-Control` allows and
+kept at most 24 hours from its fetch; within those 24 hours a copy past its `Cache-Control`
+lifetime is served when a fresh fetch fails or a fetch cap is full. At most 10 000 documents are
+cached; a full cache never refuses: it evicts the least recently used document no open connection
+names, and when every cached document is named by one, the fetched document serves its request
+uncached. Nothing after `GET /oauth/authorize` reads the cache — the sealed handle carries what
+the page needs, and the token endpoint identifies the client by the connection — so an eviction
+affects no page in progress and no connection. Any other `client_id` must be one
+`POST /oauth/register` minted. No client is pre-registered and none holds a secret.
 
 **The redirect allowlist.** Exactly `https://claude.ai/api/mcp/auth_callback`, and loopback.
 Matching is on the strings as written in the raw registration, document or request, never after
-URL parsing. A loopback URI has scheme `http`, no userinfo, no fragment, and a host that is
-byte-exactly `127.0.0.1`, `[::1]` or `localhost` — `127.1`, `0x7f000001`, `localhost.` and any
-upper case are refused; it matches a registered URI when scheme, host, path and query are
-byte-equal, and only the port may differ (RFC 8252 §7.3). Every other URI matches byte for byte,
-port included. Nothing else, at registration, in a document or in an authorize request.
+URL parsing. A loopback URI is exactly:
+
+- `http://`, then
+- a host that is byte-exactly `127.0.0.1`, `[::1]` or `localhost`, then
+- optionally `:` and a port of one to five ASCII digits with no leading zero and a value from 1 to
+  65535, then
+- a path that begins with `/`, then
+- optionally `?` and a query;
+
+and it contains no `@`, `\`, `#`, `%2F`, `%2f`, `%5C` or `%5c`, no ASCII control character and no
+whitespace. It matches a registered URI when the two are byte-equal once the `:port` part is
+removed from each (RFC 8252 §7.3). Refused, among others: `http://localhost:1@evil.example/cb`,
+`http://localhost:/cb`, `http://localhost:08080/cb`, `http://localhost:65536/cb`,
+`http://127.1/cb`, `http://0x7f000001/cb`, `http://localhost./cb` and `http://LOCALHOST/cb`.
+Every other URI matches byte for byte, port included. Nothing else, at registration, in a document
+or in an authorize request.
 
 **The authorization page.** It sets no cookie and runs no script. Every page carries
 `Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; form-action 'self' <redirect
@@ -849,23 +882,57 @@ origin>; frame-ancestors 'none'; base-uri 'none'`, `Cache-Control: no-store`,
 (the Fetch Standard, "append a request `Origin` header", fetched 2026-10-31). It names the client —
 a document client's `client_name` "verified by" the document URL's whole host, in lower-case ASCII
 (the punycode A-label form), never shortened and rendered apart from `client_name`; a registered
-client's `client_name` marked "name not verified" — and the redirect URI's host. Above the code
-field it tells the person to enter the code only on a page they opened themselves by adding the
-connector, and to close a link someone sent them; for a loopback redirect it warns that the result
-goes to a program on this computer. After a correct code it shows the tenant by its operator-set
-name, the key's principal, role and grants, and what the connection may do, built from the key's
-role and effective access. Client-supplied strings are HTML-escaped and shortened; `logo_uri` is
-never loaded. The page's sentences, and the one message for a wrong code, are fixed by
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d9.
+client's `client_name` marked "name not verified" — and the redirect URI's host. Its sentences
+are fixed, word for word:
+
+- Above the code field, for every redirect: "Enter the code only if you opened this page yourself,
+  by adding the connector in Claude, in the last few minutes. If someone sent you this link, close
+  it."
+- For a loopback redirect, after that: "The result goes to a program on this computer. Continue
+  only if you started this from Claude Code here."
+- A wrong code — unknown, expired, spent or a dead key's alike — with the attempts left: "This code
+  is not valid. Check it, or ask your administrator for a new one."
+
+After a correct code, the confirmation shows the tenant the key belongs to, by the name the
+operator gave it at `POST /v2/tenants`, which no tenant admin can set; the key's principal and
+role; every workarea it holds a grant on, with the grant's role; and one sentence per kind of verb
+the key's role and effective access give it:
+
+- where it holds writer: "Claude can remember and learn as this agent in `<workareas>`."
+- where it holds reader: "Claude can recall and read as this agent in `<workareas>`."
+- where it holds dreamer(propose): "Claude can propose edits and edges as this agent in
+  `<workareas>`."
+- where it holds writer or dreamer(propose): "Everything it writes is held until someone other
+  than its author reviews it."
+- for each granted workarea whose tenant policy permits `self_signed` rows: "In `<workarea>`, its
+  writes may be self-signed and readable there without review."
+- last, always: "It cannot approve, demote, delete or administer anything."
+
+The buttons are Connect and Cancel. Client-supplied strings are HTML-escaped and shortened;
+`logo_uri` is never loaded
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d9).
 
 **Behind a proxy.** A reverse proxy in front of `oml-server` — the hosted deployment's Caddy
 included — forwards `/mcp`, `/.well-known/oauth-protected-resource/mcp`,
 `/.well-known/oauth-authorization-server` and `/oauth/*` unchanged, with no path rewriting and no
-caching, and needs no other change: the page's headers are `oml-server`'s own. Claude's hosted
+caching; the page's headers are `oml-server`'s own. A proxy that writes access logs must not
+record the `Location` response header of `POST /oauth/authorize`, whose query carries the
+authorization code, nor the request bodies of `POST /oauth/authorize` and `POST /oauth/token`,
+which carry the connect code, the authorization code, the verifier and the refresh token. Caddy's
+access-log fields include response headers under `resp_headers` (Caddy's `log` directive
+documentation, fetched 2026-10-31), so the hosted Caddy's `log` directive carries
+`format filter` with `resp_headers>Location delete`, whatever Caddy records by default, and adds
+nothing that logs a request body. Doctor cannot read a proxy's configuration: the rule is stated,
+not checkable ([observability](../operations/observability.md#per-profile-checks)). Claude's hosted
 apps call from `160.79.104.0/21` (Anthropic's connector documentation, fetched 2026-10-31); a
 firewall that admits by address admits that range on `/mcp`, the two documents, `/oauth/token`
 and `/oauth/register`, while `/oauth/authorize` is reached by the person's own browser. In cluster
-mode a follower forwards the OAuth endpoints to the lead, which writes, and validates access
+mode a follower has no `oauth.issuer` of its own: it serves the challenge, the discovery documents
+and token validation from the value the lead records in the `lead_lease` row
+([configuration](../operations/configuration.md),
+[Postgres schema](../data/postgres-schema.md#outbox-dead_letter-idempotency)), so a follower never
+honors tokens or serves documents for an issuer the lead does not, beyond replication lag. A
+follower forwards the OAuth endpoints to the lead, which writes, and validates access
 tokens from its replica for the reads it serves, with the revocation lag a key has there. A
 follower forwards an `/mcp` request that carries an access token and reaches a write verb as the
 whole `/mcp` `POST` to the lead's `/mcp`, over the enrolled hop, with the token unchanged in

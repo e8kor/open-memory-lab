@@ -120,12 +120,12 @@ exactly the grant it names.
 |---|---|
 | `oml keys issue --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <node>] [--write-only] [--expires <duration>] [--label <text>]` | Issue a key. Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key id ever again. |
 | `oml keys issue-agent --principal <principal> --workarea <workarea-id> [--held-by agent\|human] [--write-only] [--out <path>] [--connect-code]` | The one key the [agent plugin](../api/mcp-plugin.md) needs, in one call: a `POST /v2/keys` with role `writer`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea-id>` and its reader grant unless `--write-only` (above), and `default_workarea_id` set to `<workarea-id>`. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file and neither line carries it ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The key's name, as the positional argument, arrives with names. With `--connect-code` the request carries `connect_code: true`: the key is a connector key with no value, for a claude.ai custom connector, and the verb prints the connector URL and the connect code instead (below; [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). |
-| `oml keys connect-code <key-id>` | Mint a fresh connect code for a connector key (`POST /v2/keys/{key_id}/connect-codes`), for a code that lapsed or a connection that was revoked; every unredeemed code of the key is voided. Prints the same two lines as `issue-agent --connect-code`. Refused with `oauth.connect_refused` for a bearer key, a revoked or expired key, or a deployment without `oauth.issuer`. |
-| `oml keys disconnect <key-id> <connection-id> [--reason <text>]` | End a connection (`POST /v2/keys/{key_id}/connections/{connection_id}/revoke`), journalled as `connection.revoked`; its tokens are refused at their next request served by the lead, and after replication lag on a follower. A revoked connection never reopens: the key needs a new code. Revoking the key ends its connections too. Works whether or not the deployment sets `oauth.issuer`. |
+| `oml keys connect-code <key-id>` | Mint a fresh connect code for a connector key (`POST /v2/keys/{key_id}/connect-codes`), for a code that lapsed or a connection that was revoked; every code of the key from which no connection has opened is voided, so a page holding an earlier code, spent or not, can no longer open one. Prints the same two lines as `issue-agent --connect-code`. Refused with `oauth.connect_refused` for a bearer key, a revoked or expired key, or a deployment without `oauth.issuer`. |
+| `oml keys disconnect <key-id> <connection-id> [--reason <text>]` | End a connection (`POST /v2/keys/{key_id}/connections/{connection_id}/revoke`), journalled as `connection.revoked`; its tokens are refused at their next request served by the lead, and after replication lag on a follower. The same commit voids the key's codes from which no connection has opened, as `oml keys connect-code` does. The connection named is an open one: an `authorized` connection, the 60 seconds between Connect and the token exchange, is not listed and cannot be named (`access.not_found`); a new code ends it. A revoked connection never reopens: the key needs a new code. Revoking the key ends its connections too. Works whether or not the deployment sets `oauth.issuer`. |
 | `oml keys revoke <key-id>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
 | `oml keys rotate <key-id> [--grace <duration>]` | Mint a successor key — new key id, linked by `rotated_from`, grants reproduced from the journalled grant records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). A connector key is refused with `oauth.connect_refused` (`connector_key`): run `oml keys connect-code` for a fresh connection, or issue a new connector key and revoke the old one for a fresh identity ([connections](../architecture/roles-and-keys.md#connections)). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `oml keys list [--role …] [--expiring <duration>]` | Key ids, roles, labels, expiries. Never values. |
-| `oml keys show <key-id>` | One key: grants, denials, epoch, issuance and revocation events; for a connector key, its connections — id, client, redirect host, state, whether it is live, opened and revoked times. |
+| `oml keys show <key-id>` | One key: grants, denials, epoch, issuance and revocation events; for a connector key, its open and revoked connections — id, client, redirect host, state, whether it is live, opened and revoked times. |
 
 **`oml keys issue-agent` output.** On success the verb prints exactly two lines on stdout, the ones
 the `oml` plugin reads, and every other line on stderr:
@@ -183,11 +183,31 @@ it expires. The code is single use and shown this once; the server keeps its dig
 journal its id. `--out` with `--connect-code` is refused (exit `2`): there is no value to write,
 and a code is for a person to read and type within minutes. `--json` prints the `201` body, which
 carries the code; an idempotent replay of the request returns the stored body, which omits the
-code, so a lost code is replaced with `oml keys connect-code`. Give the code only to the person who
+code (below). Give the code only to the person who
 will connect, with the rule that it is entered only on a page they reached by adding the connector
 themselves; the page repeats that rule above the code field, and it is the only defense against a
 link someone else started, since neither the page nor `connection.opened` can tell whose claude.ai
 account started the request ([security](../architecture/security.md#connections-the-oauth-surface)).
+
+**A replayed answer carries no secret.** The idempotency record of `POST /v2/keys`,
+`POST /v2/keys/{key_id}/rotate` and `POST /v2/keys/{key_id}/connect-codes` stores its response
+without the key value and without the connect code, so a retry of a request that already
+committed gets a `201` with `Idempotency-Replay: true` and no secret
+([HTTP API — idempotency](../api/http-api.md#idempotency),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). On such an answer
+`oml keys issue`, `oml keys issue-agent` (with or without `--out` or `--connect-code`),
+`oml keys rotate` and `oml keys connect-code` print nothing on stdout and write no file — the
+empty `--out` file the CLI created is removed — name the key id on stderr, and the successor's
+after a rotation, and exit `2`, with one line saying the secret went only to the first answer and
+what replaces it:
+
+- `oml keys issue`, `oml keys issue-agent`: revoke the key and issue another;
+- `oml keys rotate`: rotate the successor, whose value no one holds, with `oml keys rotate`;
+- `issue-agent --connect-code`, `oml keys connect-code`: mint a new code with
+  `oml keys connect-code <key-id>`.
+
+With `--json` the verb prints the replayed body as it came, which carries no secret, and exits
+`2` the same way.
 
 ## `oml grants`, `oml deny`, `oml bans` — scope and refusal
 

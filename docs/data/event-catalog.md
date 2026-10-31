@@ -625,9 +625,13 @@ A connect code minted for a connector key, at its issuance or later. The payload
 code's id and expiry and nothing derived from the code, not even its digest: the journal is kept
 forever and exported, and a digest of a 60-bit secret is a brute-force target that a code alive for
 minutes never needs to outlast; the digest lives only in `connect_codes`
-([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8). `voids_code_id` names an
-unredeemed code of the same key that this one replaces, else null. A `key.revoked` voids the key's
-unredeemed code in its own commit, with no event of this family.
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8). `voids_code_id` names the
+unredeemed code of the same key that this one replaces, else null. The same commit voids every
+other code of the key from which no connection has opened — a code spent on a page that has not
+yet produced a connection, or whose authorization is still `authorized` — so neither can open one
+after this code exists; which codes those are follows from the journal, since every
+`connection.opened` names its `code_id`. A `key.revoked` voids the key's unredeemed code in its own
+commit, with no event of this family.
 
 ### connection.opened
 
@@ -648,7 +652,8 @@ A connection opens at the token exchange, when its first tokens exist. The envel
 software used the code, and not whose account: every connection from claude.ai names the same
 client and redirect URI, whichever claude.ai account completed it (ADR-0031 d8). `resource` is the
 `<issuer>/mcp` the connection's tokens are bound to. `replaces_connection_id` names the key's
-earlier open connection, which this commit revokes with no event of its own (ADR-0031 d7, d12).
+earlier open connection, live or not, which this commit revokes with no event of its own, so an
+open connection that had stopped working never revives (ADR-0031 d7, d11, d12).
 Like the rest of the `connection.*` family, the event is on no key's events tail
 ([HTTP API](../api/http-api.md#events-tail)); the evidence export carries it.
 
@@ -663,7 +668,10 @@ Like the rest of the `connection.*` family, the event is on no key's events tail
 
 A connection ends: `cause` is `admin` (`oml keys disconnect`; `reason_digest` over the reason
 given, else null), `refresh_reuse` (a rotated refresh token was presented again) or `code_reuse`
-(an authorization code was redeemed twice). For the two reuse causes `revoked_by_key_id` is null
+(an authorization code was presented again after its redemption, by the connection's client with
+the matching verifier). An `admin` revocation names an open connection, never an `authorized` one.
+Whatever the cause, the commit also voids every code of the key from which no connection has
+opened, as `connection.code_issued` does. For the two reuse causes `revoked_by_key_id` is null
 and the envelope names the connector key, whose past token triggered it; a connection is revoked
 once, so a holder of past tokens can cause at most one such event. Every token of the connection
 is refused from then on: on the lead at its next request, on a follower after replication lag. A
