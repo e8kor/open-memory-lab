@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0014-http-api-and-mcp-facade
 tier: engineering
-status: accepted design
+status: accepted design · amended by ADR-0025
 answers: why there is one versioned JSON HTTP API, and why MCP over streamable HTTP is a stateless facade over it rather than a second surface
 -->
 
 # ADR-0014 — One versioned JSON HTTP API; MCP streamable HTTP as a stateless facade
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
 
 Everything this record decides is design — no code exists. The contract itself — routes, payloads,
 pagination, the OpenAPI document — is owned by [api/http-api.md](../api/http-api.md); the MCP tool

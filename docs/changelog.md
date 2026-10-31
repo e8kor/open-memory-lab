@@ -107,11 +107,12 @@ platforms, assembling the index or signing its digest. No tag has run the new pi
 
 ### 2026-10-30 — the agent-only memory surface (ADR-0025)
 
-[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) (proposed) decides the surface
-FR-10 and FR-11 need and the access model it rests on. It proposes amending ADR-0001 (d5),
-ADR-0008 (d4, d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2),
-ADR-0018 (d4) and ADR-0022 (d4, d6); each of those records' Status lines gains the back-pointer
-when ADR-0025 is accepted.
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) decides the surface FR-10 and FR-11
+need and the access model it rests on. It amends ADR-0001 (d5), ADR-0008 (d4, d6), ADR-0010
+(d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2), ADR-0018 (d4) and ADR-0022
+(d4, d6), and each of those records' Status lines carries the back-pointer. Proposed on
+2026-10-30; accepted by the maintainer on 2026-10-31, with the build that implements it, and
+tagged `spec-v0.2`.
 
 - **Decided:** grant admissibility per key role and one four-step refusal order, so one
   writer-role key with writer and reader grants remembers and recalls; issuance that carries
