@@ -156,20 +156,32 @@ the workareas it is granted. With it an agent reads back its own writes while th
 review, searches within a budget with standing instructions served first, replaces a memory with
 a new version and proposes retiring one; a new version replaces the old one for other readers
 only once someone other than its author approves it, and the event feed shows each key only the
-events it may see. **Not implemented yet:** the other four plugin tools, attachments and the
+events it may see. Workareas, crews, keys and tenants carry names: one each, given at creation,
+unique among its kind and never changed or reused, and the server and the plugin's tools accept a
+name wherever they accept an id, so an agent is pointed at `metals-crew` rather than at a long id.
+A name a key may not see is answered exactly as its id would be. Crews are records of their own
+that workareas and keys point to, and an administrator's key reads the shape of its tenant's
+workarea tree but never a memory in it. On its first start on data an earlier version wrote, the
+server names every row that has no name (the root workarea becomes `universe`, a usable earlier
+name is kept, and any other row gets a name made from its id), turns each crew an earlier version
+stored on a workarea into a crew record, ends every denial an earlier version let an
+administrator's key carry, and records all of it in the signed history before it serves a
+request. **Not implemented yet:** the other four plugin tools, attachments and the
 object lake, erasure ceremonies, checking the signed chain against a live server (the
 command-line verifier reads an export of the whole chain that the server does not serve yet, so
 `oml audit verify-chain` stops with an error that says so), follower servers and read scaling,
-simulations, embedding-based retrieval, and the operator tier; on keys, adding or revoking a
-grant after issuance, lifting a denial, retrying an issuance safely, rotation, and expiry (a key
-issued with an expiry is refused); held writes that expire when nobody reviews them; the record
-of what each search served; and links between workareas. Three working pieces differ from the
-design. An agent's search of its own waiting writes reads them through a store query restricted
-to their author, not through the separate author-only search index the design specifies. A
-write retried while its first attempt is still running never gets the design's "still in
-progress" answer: it gets the first attempt's receipt as a replay, or, for a new memory whose
-name the first attempt has just taken, the refusal that the name is in use. And the design has
-the server name, on its first start, the tenants and workareas an earlier version created; this
-build does not name them yet, so started on data an earlier version wrote, the server reports
-itself not ready and refuses every request, while a deployment that starts empty runs as
-before. The [critical path](docs/product/critical-path.md) orders what lands next.
+simulations, embedding-based retrieval, and the operator tier; on keys, revoking a key, adding or
+revoking a grant after issuance, an administrator lifting a denial, retrying an issuance safely,
+rotation, and expiry (a key issued with an expiry is refused); using crews to decide whether a
+reviewer is independent of a memory's author; held writes that expire when nobody reviews them;
+the record of what each search served; and links between workareas. Three working pieces differ
+from the design. An agent's search of its own waiting writes reads them through a store query
+restricted to their author, not through the separate author-only search index the design
+specifies. A write retried while its first attempt is still running never gets the design's "still
+in progress" answer: it gets the first attempt's receipt as a replay, or, for a new memory whose
+claim the first attempt has just recorded, the refusal that the claim already exists. And the
+design records each tenant's name in a history kept for the whole deployment, where the one-time
+enrollment also names the deployment's first operator key; this build has neither that history nor
+operator keys, so it records the tenant's name in the tenant's own signed history, and the
+enrollment names the tenant's first administrator key within that tenant. The [critical
+path](docs/product/critical-path.md) orders what lands next.
