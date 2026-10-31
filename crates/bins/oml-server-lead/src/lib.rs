@@ -2,8 +2,8 @@
 //! compositions): configuration (oml.toml + `OML_` environment,
 //! configuration.md), the kms-file keyring (ADR-0023 d4), the runtime
 //! clock/id/scanner adapters, the startup fork check (ADR-0002 d7), the
-//! startup names check (ADR-0026 d11) and the state constructor the
-//! integration tests share with `main`.
+//! startup naming and names check (ADR-0026 d11), and the start and state
+//! constructors the integration tests share with `main`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,12 +12,14 @@ use sqlx::Row;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
+use axum::Router;
 use oml_app::App;
 use oml_app::domain::{EventTime, KeySet};
 use oml_app::ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use oml_app::ports::{
     AdmissionEnvelope, Clock, IdGen, KeyringError, KeyringStore, ScanOutcome, Scanner, Signer,
 };
+use oml_app::types::AssignedNames;
 use oml_pg::{ForkCheckError, PgStore};
 use oml_transport_http::{ApiState, BuildInfo, DbPing, time::system_event_time};
 
@@ -340,14 +342,13 @@ pub async fn startup_fork_check(
 }
 
 /// The startup names check: the store holds no row that predates names, or
-/// the failure names `names_assigned` and each table that holds one.
-/// ADR-0026 d11 has the lead name such rows, journalled as
-/// `system.names_assigned`, before it serves; that naming is not built, a
-/// divergence the README states, so a lead that fails this check serves no
-/// request (`/readyz` reports `names_assigned`, every other route answers
-/// `system.unavailable`) rather than failing request by request on the
-/// first row with no name. A store this build bootstrapped passes, and a
-/// store the check cannot read fails it.
+/// the failure names `names_assigned` and each table that holds one. The
+/// lead's start runs it after its naming, and alone when the fork check
+/// failed, since the naming signs ([`start_lead`]); a lead that fails it
+/// serves no request (`/readyz` reports `names_assigned`, every other route
+/// answers `system.unavailable`) rather than failing request by request on
+/// the first row with no name (ADR-0026 d11). A store this build
+/// bootstrapped passes, and a store the check cannot read fails it.
 pub async fn startup_names_check(store: &PgStore, tenants: &[Uuid]) -> Result<(), String> {
     match store.rows_without_names(tenants).await {
         Ok(rows) if rows.is_empty() => Ok(()),
@@ -357,13 +358,33 @@ pub async fn startup_names_check(store: &PgStore, tenants: &[Uuid]) -> Result<()
                 .map(|(table, n)| format!("{table} {n}"))
                 .collect();
             Err(format!(
-                "names_assigned: rows that predate names ({}), which this build does not name \
-                 yet (ADR-0026 d11)",
+                "names_assigned: rows that predate names ({}), which the lead names at its \
+                 start, before it serves (ADR-0026 d11)",
                 rows.join(", ")
             ))
         }
         Err(e) => Err(format!("names_assigned: the store could not be read: {e}")),
     }
+}
+
+/// The lead's naming at its start, before it serves: every row of
+/// `tenants` that predates names is named under rules 1–5 of http-api.md
+/// "Rows created before names", in one `system.names_assigned` per chain
+/// that has any, and then the startup names check reads that none is left,
+/// so a chain the naming refuses, or a row it leaves, fails the start's
+/// names by name. A chain with nothing to name journals nothing, so every
+/// later start journals nothing (ADR-0026 d11, d15).
+async fn startup_names(
+    app: &LeadApp,
+    store: &PgStore,
+    tenants: &[Uuid],
+) -> Result<Vec<AssignedNames>, String> {
+    let assigned = app
+        .name_rows_that_predate_names(tenants)
+        .await
+        .map_err(|e| format!("names_assigned: {e}"))?;
+    startup_names_check(store, tenants).await?;
+    Ok(assigned)
 }
 
 /// The single-use enrollment token minted against an empty database
@@ -391,6 +412,19 @@ pub fn pg_ping(pool: PgPool) -> DbPing {
     })
 }
 
+/// The lead's app: one store handle and the signer, which exists only here
+/// (ADR-0023 d13).
+#[must_use]
+pub fn lead_app(store: &PgStore, signing_key: SigningKey) -> LeadApp {
+    App::new(
+        store.clone(),
+        LeadSigner::new(signing_key),
+        SystemClock,
+        OsIds,
+        MarkerScanner,
+    )
+}
+
 /// The lead composition: one store handle drives the app and the transport's
 /// head reads; the signer exists only here (ADR-0023 d13).
 #[must_use]
@@ -401,13 +435,22 @@ pub fn lead_state(
     fork_check_ok: bool,
     enrollment_token: Option<String>,
 ) -> LeadState {
-    let app = App::new(
-        store.clone(),
-        LeadSigner::new(signing_key),
-        SystemClock,
-        OsIds,
-        MarkerScanner,
-    );
+    composed(
+        lead_app(store, signing_key),
+        store,
+        db_ping,
+        fork_check_ok,
+        enrollment_token,
+    )
+}
+
+fn composed(
+    app: LeadApp,
+    store: &PgStore,
+    db_ping: DbPing,
+    fork_check_ok: bool,
+    enrollment_token: Option<String>,
+) -> LeadState {
     ApiState::new(
         Arc::new(app),
         store.clone(),
@@ -416,6 +459,65 @@ pub fn lead_state(
         enrollment_token,
     )
     .with_build(build_info())
+}
+
+/// What the lead's start decided before it serves: the boot order after the
+/// keyring, per deployment.md and ADR-0002 d7 — the tenants, the fork check,
+/// the names, the enrollment token and the router built on them.
+pub struct LeadStart {
+    /// Every tenant the start found.
+    pub tenants: Vec<Uuid>,
+    /// The startup fork check: on a failure the router refuses writes and
+    /// `/readyz` answers 503 (ADR-0002 d7).
+    pub fork_check: Result<(), String>,
+    /// The chains the start named, one `system.names_assigned` each, or why
+    /// a row is left with no name, in which case the router serves no
+    /// request (ADR-0026 d11).
+    pub names: Result<Vec<AssignedNames>, String>,
+    /// The single-use enrollment token, minted against an empty deployment
+    /// whose fork check passed (deployment.md bootstrap).
+    pub enrollment_token: Option<String>,
+    pub router: Router,
+}
+
+/// The lead's start over a migrated store, `main`'s and the tests' alike:
+/// enumerate the tenants, run the fork check, then name every row that
+/// predates names, mint the enrollment token against an empty deployment,
+/// and build the router on what they found. Only a failed tenant
+/// enumeration fails the start.
+pub async fn start_lead(store: &PgStore, signing_key: SigningKey) -> Result<LeadStart, String> {
+    let tenants = enumerate_tenants(store.pool())
+        .await
+        .map_err(|e| format!("tenant enumeration: {e}"))?;
+    let fork_check = startup_fork_check(store, signing_key.verifying_key(), &tenants).await;
+    let app = lead_app(store, signing_key);
+    // The naming signs, and the lead never signs on top of a fork (ADR-0002
+    // d7): after a failed fork check the start only reads whether a row has
+    // no name.
+    let names = if fork_check.is_ok() {
+        startup_names(&app, store, &tenants).await
+    } else {
+        startup_names_check(store, &tenants)
+            .await
+            .map(|()| Vec::new())
+    };
+    let enrollment_token = (tenants.is_empty() && fork_check.is_ok()).then(mint_enrollment_token);
+    let router = composed(
+        app,
+        store,
+        pg_ping(store.pool().clone()),
+        fork_check.is_ok(),
+        enrollment_token.clone(),
+    )
+    .with_names_assigned(names.is_ok())
+    .into_router();
+    Ok(LeadStart {
+        tenants,
+        fork_check,
+        names,
+        enrollment_token,
+        router,
+    })
 }
 
 /// This binary's build, as `build.rs` captured it (http-api.md "Health").

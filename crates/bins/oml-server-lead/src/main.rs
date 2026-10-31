@@ -1,20 +1,17 @@
 //! `oml-server-lead` — boot order per deployment.md and ADR-0002 d7:
-//! configuration, Postgres, migrations, keyring, fork check, names check,
-//! then the listener. A failed fork check does not exit: `/readyz` answers
-//! 503 and every write answers `system.unavailable` until an operator
-//! intervenes (http-api.md "Health"). Nor does a failed names check: rows
-//! that predate names, which this build does not name yet (ADR-0026 d11),
-//! keep `/readyz` at 503 and every request at `system.unavailable`.
+//! configuration, Postgres, migrations, keyring, fork check, the naming of
+//! rows that predate names, then the listener. A failed fork check does not
+//! exit: `/readyz` answers 503 and every write answers `system.unavailable`
+//! until an operator intervenes (http-api.md "Health"). Nor does a failed
+//! naming: a row the start could not name (ADR-0026 d11) keeps `/readyz` at
+//! 503 and every request at `system.unavailable`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oml_app::ports::{KeyringStore as _, Signer as _};
 use oml_pg::PgStore;
-use oml_server_lead::{
-    Config, FileKeyring, LeadSigner, enumerate_tenants, lead_state, mint_enrollment_token, pg_ping,
-    startup_fork_check, startup_names_check,
-};
+use oml_server_lead::{Config, FileKeyring, LeadSigner, start_lead};
 
 fn config_path_arg() -> Result<Option<PathBuf>, String> {
     let mut args = std::env::args().skip(1);
@@ -64,35 +61,24 @@ async fn run() -> Result<(), String> {
         "deployment signing key loaded (kms-file)"
     );
 
-    let tenants = enumerate_tenants(store.pool())
-        .await
-        .map_err(|e| format!("tenant enumeration: {e}"))?;
-    let fork_check_ok = match startup_fork_check(&store, signer.verifying_key(), &tenants).await {
-        Ok(()) => {
-            tracing::info!(tenants = tenants.len(), "startup fork check passed");
-            true
-        }
-        Err(failures) => {
-            // ADR-0002 d7: never sign on top of a fork. Writes are refused
-            // (system.unavailable) and /readyz reports 503; reads keep
-            // flowing so an operator can inspect.
-            tracing::error!(%failures, "STARTUP FORK CHECK FAILED — refusing writes");
-            false
-        }
-    };
-    let names_assigned = match startup_names_check(&store, &tenants).await {
-        Ok(()) => true,
+    let start = start_lead(&store, signing_key).await?;
+    match &start.fork_check {
+        Ok(()) => tracing::info!(tenants = start.tenants.len(), "startup fork check passed"),
+        // ADR-0002 d7: never sign on top of a fork. Writes are refused
+        // (system.unavailable) and /readyz reports 503; reads keep flowing
+        // so an operator can inspect.
+        Err(failures) => tracing::error!(%failures, "STARTUP FORK CHECK FAILED — refusing writes"),
+    }
+    match &start.names {
+        Ok(assigned) => tracing::info!(chains = assigned.len(), "startup names assigned"),
+        // ADR-0026 d11: the lead names every row that predates names before
+        // it serves; a row it could not name keeps it serving nothing,
+        // rather than failing on each request that meets one.
         Err(failure) => {
-            // ADR-0026 d11: the lead names every row that predates names
-            // before it serves; this build does not yet, so it serves
-            // nothing rather than fail on each request that meets one.
-            tracing::error!(%failure, "STARTUP NAMES CHECK FAILED — serving no request");
-            false
+            tracing::error!(%failure, "STARTUP NAMES CHECK FAILED — serving no request")
         }
-    };
-
-    let enrollment_token = if tenants.is_empty() && fork_check_ok {
-        let token = mint_enrollment_token();
+    }
+    if let Some(token) = &start.enrollment_token {
         // The one-time ceremony secret: stdout, once, never logged again
         // (deployment.md bootstrap — show-once).
         println!(
@@ -102,27 +88,13 @@ async fn run() -> Result<(), String> {
         println!(
             "POST /v2/bootstrap/claim {{\"enrollment_token\": \"...\", \"name\": \"<key-name>\"}}"
         );
-        Some(token)
-    } else {
-        None
-    };
-
-    let db_ping = pg_ping(store.pool().clone());
-    let router = lead_state(
-        &store,
-        signing_key,
-        db_ping,
-        fork_check_ok,
-        enrollment_token,
-    )
-    .with_names_assigned(names_assigned)
-    .into_router();
+    }
 
     let listener = tokio::net::TcpListener::bind(&config.listen)
         .await
         .map_err(|e| format!("bind {}: {e}", config.listen))?;
     tracing::info!(addr = %config.listen, "serving both rings");
-    axum::serve(listener, router)
+    axum::serve(listener, start.router)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| format!("serve: {e}"))?;

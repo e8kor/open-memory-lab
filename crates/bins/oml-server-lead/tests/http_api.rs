@@ -19,14 +19,17 @@ use uuid::Uuid;
 
 use oml_app::App;
 use oml_app::domain::name::Name;
-use oml_app::domain::sha256_digest_string;
+use oml_app::domain::{
+    EventDraft, EventTime, Sha256Hash, SignedEnvelope, event_types, next_envelope,
+    sha256_digest_string, sign,
+};
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{IdGen as _, JournalStore};
 use oml_app::types::CrewCreateRequest;
 use oml_pg::{MIGRATOR, PgStore};
 use oml_server_lead::{
     LeadSigner, MarkerScanner, OsIds, SystemClock, enumerate_tenants, lead_state, pg_ping,
-    startup_fork_check, startup_names_check,
+    start_lead, startup_fork_check, startup_names_check,
 };
 use oml_transport_http::DbPing;
 use sqlx::migrate::Migrate as _;
@@ -414,13 +417,13 @@ async fn poc_store() -> (String, PgStore, Uuid) {
     (db_name, store, root)
 }
 
-/// A lead whose store holds rows that predate names, which this build does
-/// not name yet (ADR-0026 d11; a divergence the README states), fails its
-/// startup names check by name and, built so, reports `names_assigned` not
-/// ready on `/readyz` and answers every request on either ring — a read, a
-/// write, the bootstrap claim, `/mcp` — with `system.unavailable` naming
-/// `names_assigned`, before any credential is read; `/healthz` still
-/// answers (http-api.md "Health", "Rows created before names").
+/// A lead whose store holds rows that predate names, left unnamed by its
+/// start (ADR-0026 d11), fails its startup names check by name and, built
+/// so, reports `names_assigned` not ready on `/readyz` and answers every
+/// request on either ring — a read, a write, the bootstrap claim, `/mcp` —
+/// with `system.unavailable` naming `names_assigned`, before any credential
+/// is read; `/healthz` still answers (http-api.md "Health", "Rows created
+/// before names").
 #[tokio::test]
 async fn a_lead_over_rows_that_predate_names_is_not_ready_and_serves_no_request() {
     let (db_name, store, root) = poc_store().await;
@@ -511,6 +514,256 @@ async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped(
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["checks"]["names_assigned"], "ok", "{body}");
     drop_db(&rig.db_name).await;
+}
+
+/// A database at the PoC schema (0001–0005) holding, for each of `tenants`,
+/// the chain the PoC journalled, signed by `signing` — `tenant.genesis`
+/// with its `tenant_name`, a `root` workarea and an admin key with no name,
+/// whose value is `oml_poc_admin_<n>` — and the rows the PoC folded from it,
+/// then migrated by this build, so that every row predates names (ADR-0026
+/// d11): the database's name and the store.
+async fn poc_chains_store(
+    signing: &SigningKey,
+    tenants: &[(Uuid, Uuid, &str)],
+) -> (String, PgStore) {
+    let db_name = fresh_database().await;
+    let mut conn = PgConnection::connect(&db_url(&db_name))
+        .await
+        .expect("connect");
+    conn.ensure_migrations_table()
+        .await
+        .expect("migrations table");
+    for migration in MIGRATOR.iter().filter(|m| m.version <= 5) {
+        conn.apply(migration)
+            .await
+            .expect("the PoC migrations apply");
+    }
+    for (n, &(tenant, root, tenant_name)) in tenants.iter().enumerate() {
+        let admin = Uuid::from_u128(0xD810 + u128::try_from(n).expect("n"));
+        let drafts = [
+            (
+                event_types::TENANT_GENESIS,
+                json!({ "tenant_name": tenant_name }),
+            ),
+            (
+                event_types::WORKAREA_CREATE,
+                json!({
+                    "workarea_id": root, "parent_id": null, "name": "root",
+                    "status": "committed", "crew": null, "prefix": null,
+                }),
+            ),
+            (
+                event_types::KEY_ISSUED,
+                json!({
+                    "key_id": admin, "role": "admin", "principal": "oml/admin",
+                    "issued_by_key_id": null, "expiry": null, "value_disclosed": false,
+                    "held_by": "human", "default_workarea_id": root,
+                }),
+            ),
+        ];
+        let mut head: Option<SignedEnvelope> = None;
+        let mut events = Vec::new();
+        for (seq, (event_type, payload)) in drafts.into_iter().enumerate() {
+            let draft = EventDraft {
+                tenant_id: tenant,
+                event_id: Uuid::from_u128(
+                    0xE810_0000 + (admin.as_u128() << 8) + u128::try_from(seq).expect("seq"),
+                ),
+                event_type: event_type.to_owned(),
+                principal: "oml/admin".to_owned(),
+                api_key_id: None,
+                at: EventTime::parse(&format!("2026-10-01T09:00:{seq:02}.000000Z")).expect("time"),
+                payload,
+            };
+            let event = sign(
+                next_envelope(head.as_ref(), draft).expect("lawful"),
+                signing,
+            )
+            .expect("signs");
+            head = Some(event.clone());
+            events.push(event);
+        }
+        let mut tx = conn.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(tenant)
+            .bind(tenant_name)
+            .execute(&mut *tx)
+            .await
+            .expect("PoC tenant");
+        for event in &events {
+            let env = &event.envelope;
+            sqlx::query(
+                "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+                 api_key_id, at, payload, signed_bytes, signed_bytes_hash, sig) \
+                 VALUES ($1, $2, $3, $4, $5, $6, NULL, ($7)::timestamptz, $8, $9, $10, $11)",
+            )
+            .bind(tenant)
+            .bind(i64::try_from(env.seq).expect("seq"))
+            .bind(env.event_id)
+            .bind(&env.event_type)
+            .bind(env.prev_hash.0.to_vec())
+            .bind(&env.principal)
+            .bind(env.at.as_str())
+            .bind(&env.payload)
+            .bind(&event.signed_bytes)
+            .bind(event.hash.0.to_vec())
+            .bind(event.sig.to_bytes().to_vec())
+            .execute(&mut *tx)
+            .await
+            .expect("journal row");
+        }
+        let last = head.expect("the chain has a head");
+        sqlx::query(
+            "INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES ($1, $2, $3)",
+        )
+        .bind(tenant)
+        .bind(i64::try_from(last.envelope.seq).expect("seq"))
+        .bind(last.hash.0.to_vec())
+        .execute(&mut *tx)
+        .await
+        .expect("chain head");
+        sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+             VALUES ($1, $2, NULL, 'root', 'committed')",
+        )
+        .bind(root)
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("PoC root");
+        sqlx::query(
+            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
+             default_workarea_id, issued_seq) VALUES ($1, $2, $3, 'admin', 'oml/admin', 'human', $4, 3)",
+        )
+        .bind(admin)
+        .bind(tenant)
+        .bind(Sha256Hash::digest(format!("oml_poc_admin_{n}").as_bytes()).0.to_vec())
+        .bind(root)
+        .execute(&mut *tx)
+        .await
+        .expect("PoC admin key");
+        tx.commit().await.expect("commit the PoC rows");
+    }
+    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
+    store
+        .migrate()
+        .await
+        .expect("0006 applies over the PoC's rows");
+    (db_name, store)
+}
+
+/// How many `system.names_assigned` the tenant's chain journals, and its
+/// head seq.
+async fn names_assigned_on(store: &PgStore, tenant: Uuid) -> (usize, u64) {
+    let events = store
+        .events_range(tenant, 1, 1000)
+        .await
+        .expect("the chain");
+    let assigned = events
+        .iter()
+        .filter(|e| e.envelope.event_type == event_types::SYSTEM_NAMES_ASSIGNED)
+        .count();
+    (assigned, events.last().expect("a chain").envelope.seq)
+}
+
+/// The lead's start over a store whose rows all predate names names them
+/// before it serves: one `system.names_assigned` on each chain, signed so
+/// the chain still verifies, after which `/readyz` reports `names_assigned`
+/// ok and the rows are served by their names; a second start finds nothing
+/// to name, journals nothing and serves as the first (http-api.md "Rows
+/// created before names"; ADR-0026 d11).
+#[tokio::test]
+async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_second_start_journals_nothing()
+ {
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let tenants = [
+        (Uuid::from_u128(0xA810), Uuid::from_u128(0xB810), "oml"),
+        (Uuid::from_u128(0xA811), Uuid::from_u128(0xB811), "acme"),
+    ];
+    let (db_name, store) = poc_chains_store(&signing, &tenants).await;
+    for &(tenant, _, _) in &tenants {
+        assert_eq!(
+            names_assigned_on(&store, tenant).await,
+            (0, 3),
+            "the PoC chain"
+        );
+    }
+
+    for start in 1..=2 {
+        let started = start_lead(&store, signing.clone())
+            .await
+            .expect("the start reads the store");
+        assert_eq!(started.fork_check, Ok(()), "start {start}");
+        let named = started
+            .names
+            .as_ref()
+            .unwrap_or_else(|failure| panic!("start {start}: {failure}"));
+        assert_eq!(
+            named.len(),
+            if start == 1 { tenants.len() } else { 0 },
+            "start {start}: the chains it named"
+        );
+        assert_eq!(started.enrollment_token, None, "start {start}");
+        for &(tenant, _, _) in &tenants {
+            assert_eq!(
+                names_assigned_on(&store, tenant).await,
+                (1, 4),
+                "start {start}: one system.names_assigned on the chain, journalled once"
+            );
+        }
+        let (status, _, body) = send(&started.router, "GET", "/readyz", Call::default()).await;
+        assert_eq!(status, StatusCode::OK, "start {start}: {body}");
+        assert_eq!(
+            body["checks"]["names_assigned"], "ok",
+            "start {start}: {body}"
+        );
+        for (n, &(_, root, _)) in tenants.iter().enumerate() {
+            let (status, _, body) = send(
+                &started.router,
+                "GET",
+                &format!("/v2/workareas/{root}"),
+                Call::auth(&format!("oml_poc_admin_{n}")),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "start {start}: {body}");
+            assert_eq!(
+                body["path"], "universe",
+                "start {start}: rule 1 named the root"
+            );
+        }
+    }
+    drop(store);
+    drop_db(&db_name).await;
+}
+
+/// The naming signs, and the lead never signs on top of a fork: a start
+/// whose fork check fails, here under a key that did not sign the chains,
+/// names nothing and journals nothing, and its router serves no request,
+/// `/readyz` reporting both checks (ADR-0002 d7, ADR-0026 d11).
+#[tokio::test]
+async fn a_start_whose_fork_check_fails_names_nothing_and_serves_no_request() {
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let tenants = [(Uuid::from_u128(0xA820), Uuid::from_u128(0xB820), "oml")];
+    let (db_name, store) = poc_chains_store(&signing, &tenants).await;
+    let foreign = SigningKey::from_bytes(&OsIds.new_secret());
+    let started = start_lead(&store, foreign)
+        .await
+        .expect("the start reads the store");
+    assert!(started.fork_check.is_err(), "a chain the key did not sign");
+    let failure = started.names.as_ref().expect_err("nothing is named");
+    assert!(failure.contains("names_assigned"), "{failure}");
+    assert_eq!(names_assigned_on(&store, tenants[0].0).await, (0, 3));
+    let (status, _, body) = send(&started.router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["checks"]["fork_check"], "failed", "{body}");
+    assert_eq!(body["checks"]["names_assigned"], "unassigned", "{body}");
+    drop(store);
+    drop_db(&db_name).await;
 }
 
 #[tokio::test]

@@ -13,13 +13,13 @@
 -- names") by the lead at its first start on this schema, before it serves
 -- a request, in one system.names_assigned per chain whose fold fills the
 -- name, crew_id and path columns added here. That naming lives in the
--- lead's startup path, beside the startup fork check (crates/bins/
--- oml-server-lead), not in SQL, and is not built yet: until it is, every
--- row this migration finds keeps NULL names, and a lead whose startup names
--- check finds one serves no request — /readyz reports names_assigned not
--- ready and every other route answers system.unavailable — a divergence the
--- README states. prior_name is history no reference reads; the
--- naming reads each prior name from the journal, never from these columns.
+-- lead's startup path, after the startup fork check (crates/bins/
+-- oml-server-lead), not in SQL: until it has run, every row this migration
+-- finds keeps NULL names, and a lead whose start leaves one unnamed serves
+-- no request — /readyz reports names_assigned not ready and every other
+-- route answers system.unavailable. prior_name is history no reference
+-- reads; the naming reads each prior name from the journal, never from
+-- these columns.
 --
 -- Renaming tenants.name and workareas.name breaks every earlier binary,
 -- which reads them, so this upgrade stops them before it migrates

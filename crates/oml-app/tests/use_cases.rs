@@ -5014,14 +5014,14 @@ fn derived(kind: NamedKind, id: Uuid) -> String {
     Name::derived(kind, id).as_str().to_owned()
 }
 
-/// At its first start on the names schema the lead names every row that
-/// predates names under rules 1–4 and journals the result as one
-/// `system.names_assigned` on the chain, whose fold alone gives those rows
-/// their names; every earlier event stays as it was signed, and a second
-/// start finds nothing to name and journals nothing (http-api.md rows
-/// created before names; ADR-0026 d11).
+/// The naming of rows that predate names, which the lead runs at its first
+/// start on the names schema, names every such row under rules 1–4 and
+/// journals the result as one `system.names_assigned` on the chain, whose
+/// fold alone gives those rows their names; every earlier event stays as it
+/// was signed, and a second call finds nothing to name and journals nothing
+/// (http-api.md rows created before names; ADR-0026 d11).
 #[tokio::test]
-async fn the_lead_names_legacy_rows_once_one_system_names_assigned_per_chain_and_a_second_start_journals_nothing()
+async fn naming_rows_that_predate_names_journals_one_event_per_chain_and_a_second_call_journals_nothing()
  {
     let tenant = Uuid::from_u128(0xA600);
     let id = |n: u128| Uuid::from_u128(0xB600 + n);
@@ -5075,7 +5075,7 @@ async fn the_lead_names_legacy_rows_once_one_system_names_assigned_per_chain_and
     let assigned = app
         .name_rows_that_predate_names(&[tenant])
         .await
-        .expect("the first start names the chain");
+        .expect("the first call names the chain");
     let events = journal(&store, tenant).await;
     assert_eq!(events.len(), poc.events.len() + 1, "one event per chain");
     assert_eq!(
@@ -5193,11 +5193,11 @@ async fn the_lead_names_legacy_rows_once_one_system_names_assigned_per_chain_and
     let keys = KeySet::new(vec![SigningKey::from_bytes(&TEST_SEED).verifying_key()]);
     verify_chain(&events, &keys, None).expect("the named chain verifies");
 
-    // A second start finds no row without a name, and journals nothing.
+    // A second call finds no row without a name, and journals nothing.
     let again_assigned = app
         .name_rows_that_predate_names(&[tenant])
         .await
-        .expect("the second start");
+        .expect("the second call");
     assert!(again_assigned.is_empty());
     assert_eq!(hashes(&journal(&store, tenant).await), hashes(&events));
 }

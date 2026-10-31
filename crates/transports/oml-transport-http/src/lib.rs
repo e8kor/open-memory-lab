@@ -170,13 +170,13 @@ where
         self
     }
 
-    /// The composition's startup names check. `false` means the store holds
-    /// rows that predate names, which the lead names before it serves
-    /// (ADR-0026 d11; http-api.md "Rows created before names") and which
-    /// this build does not name yet: `/readyz` reports `names_assigned` not
-    /// ready and every route but the two probes answers `system.unavailable`
-    /// with that reason, so no request reaches a row with no name. Without
-    /// the call every row is taken as named.
+    /// The composition's startup names check. `false` means the lead's
+    /// start, which names every row that predates names before it serves
+    /// (ADR-0026 d11; http-api.md "Rows created before names"), left a row
+    /// with no name: `/readyz` reports `names_assigned` not ready and every
+    /// route but the two probes answers `system.unavailable` with that
+    /// reason, so no request reaches a row with no name. Without the call
+    /// every row is taken as named.
     #[must_use]
     pub fn with_names_assigned(mut self, names_assigned: bool) -> Self {
         self.names_assigned = names_assigned;
