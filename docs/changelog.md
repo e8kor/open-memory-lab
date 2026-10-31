@@ -29,6 +29,38 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
+
+The proposed [ADR-0029](adr/ADR-0029-session-start-hook.md) records what the maintainer decided on
+2026-10-31, and this change builds it: the `oml` plugin ships a SessionStart hook that runs a Rust
+subcommand of the `oml` CLI, on by default and bounded by a token budget. Numbers 0026 and 0027
+are taken by records on other branches. It amends no record.
+
+- **Decided and built:** `oml hook session-start`, which sends the own-work listing
+  (`own=true`, ten newest) and a recall with `include_own_held` under a budget of 800 budget
+  tokens (`OML_SESSION_CONTEXT_MAX_TOKENS`, 1 to 2000), queried with the words of the working
+  directory's name (d1–d3); `OML_URL` and `OML_API_KEY` alone, never the stored admin credentials
+  or `OML_CLI_KEY`, and the key value redacted from everything it prints (d4); no output and exit
+  0 on every failure, `OML_SESSION_CONTEXT=off` included, with a 3-second timeout per request and
+  a context printed whole or not at all (d5); one SessionStart hook document whose context frames
+  the entries as stored data and asks for the summary's durable facts after a compaction (d6);
+  `plugins/oml/hooks/hooks.json`, which runs the verb only when `oml` is on `PATH` (d7); and the
+  `permissions.allow` rule in the plugin README (d8).
+- **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` runs the verb against the real lead behind a
+  request recorder; `scripts/check_plugin.py` now also fails if `plugins/oml/hooks/hooks.json` is
+  missing or does not parse, or if its SessionStart hooks are not exactly one command that runs
+  `oml hook session-start`, exits 0 with no output when `oml` is not on `PATH`, and exits 0 when
+  that `oml` fails.
+- **Not verified here:** that Claude Code runs the hook and adds its context to a session; the
+  tests run the binary, not Claude Code.
+- **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
+  stays `0.2.0-design`, and no package version moves until the release.
+- **Pages touched:** [ADR-0029](adr/ADR-0029-session-start-hook.md), the
+  [decision register](adr/index.md) (row and the D14 cell), `mkdocs.yml`, [llms.txt](llms.txt),
+  [CLI reference](cli/reference.md), [agent plugin](api/mcp-plugin.md) and this page; outside
+  `docs/`, `plugins/oml/README.md`, `plugins/oml/hooks/hooks.json` and
+  `scripts/check_plugin.py`.
+
 ### 2026-10-31 — The agent-only memory surface (implementation)
 
 An implementation milestone; no decision changes. The code now serves what

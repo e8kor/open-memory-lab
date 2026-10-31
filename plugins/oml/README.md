@@ -53,6 +53,32 @@ it from there; the `oml-admin` plugin in this marketplace runs it that way from 
 so the value never enters the conversation. See the
 [CLI reference](../../docs/cli/reference.md#oml-keys-issuance-revocation-rotation).
 
+## Every session starts from memory
+
+When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
+session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It reads the
+workarea's steering, your key's ten newest submissions and the memories that match the name of
+the directory you work in, at most 800 budget tokens of matches, and adds them to the session as
+stored data to check. After a compaction it also asks Claude to record the summary's durable facts
+with `oml_remember`. It reads `OML_URL` and `OML_API_KEY`, never the CLI's own credentials, and
+prints nothing when the server does not answer. Set `OML_SESSION_CONTEXT=off` to turn it off, or
+`OML_SESSION_CONTEXT_MAX_TOKENS` to change the budget. Without the CLI the hook does nothing. See
+the [CLI reference](../../docs/cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
+
+A plugin cannot allow its own tools for you, so Claude Code asks you before each call to
+`oml_remember` or `oml_recall` until you allow them. To allow every tool of this plugin, add the rule to
+`permissions.allow` in your settings:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__plugin_oml_oml"]
+  }
+}
+```
+
+Every write stays held until a different identity reviews it.
+
 ## Other MCP clients
 
 The server speaks stateless streamable HTTP at `/mcp`. Any client that accepts this shape
