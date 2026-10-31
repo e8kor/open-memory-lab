@@ -8,7 +8,10 @@
 //! (ADR-0001 d2). `access` holds grant admissibility, effective access, the
 //! refusal order, effective verbs and content-tail visibility (ADR-0025 d1,
 //! d2, d14, d15); `budget` holds the budget token, the budget cut and the
-//! recall order (ADR-0025 d6, d7, d8).
+//! recall order (ADR-0025 d6, d7, d8), held hits merged under it included
+//! (ADR-0030 d8, d9); `in_progress` holds the in-progress subtree, its
+//! boundary and the precondition of its commit (ADR-0030 d1, d2, d12,
+//! proposed).
 
 #![forbid(unsafe_code)]
 
@@ -16,6 +19,7 @@ pub mod access;
 pub mod budget;
 pub mod chain;
 pub mod envelope;
+pub mod in_progress;
 pub mod jcs;
 pub mod keys;
 pub mod model;

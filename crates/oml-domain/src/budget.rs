@@ -1,11 +1,14 @@
 //! Recall budgets and the recall order — pure functions over counts and
 //! ranks that the app has already fetched (ADR-0025 d6, d7, d8;
-//! ADR-0019 d1).
+//! ADR-0030 d8, d9, proposed; ADR-0019 d1).
 //!
 //! The rules are declared on `docs/architecture/retrieval.md`: "Token
-//! budgets" (the budget token and the cut) and "The recall-ordering
-//! contract" (segment 1's structural order and the hits' total order). This
+//! budgets" (the budget token and the cut), "The recall-ordering contract"
+//! (segment 1's structural order and the hits' total order) and "Held claims
+//! inside an in-progress workarea" (held hits merged under that order). This
 //! module mirrors them and adds nothing.
+
+use std::collections::BTreeSet;
 
 use uuid::Uuid;
 
@@ -117,4 +120,45 @@ pub fn hit_order<T>(rows: &mut [T], rank: impl Fn(&T) -> (f32, Uuid)) {
         let (b_score, b_id) = rank(b);
         b_score.total_cmp(&a_score).then_with(|| a_id.cmp(&b_id))
     });
+}
+
+/// The hits a recall serves, from its promoted hit candidates and its held
+/// ones — the key's own held rows under `include_own_held` (ADR-0025 d4)
+/// and, at a scope inside an in-progress subtree, the held claims of other
+/// keys under `include_unreviewed` (ADR-0030 d8, proposed): one list under
+/// the total order of [`hit_order`], each version once, cut to `k`, then
+/// cut by [`cut`] against `max_tokens` with steering counted first and never
+/// cut (retrieval.md, the recall-ordering contract, "Held claims inside an
+/// in-progress workarea" and "Token budgets"; ADR-0025 d7, d8). The order
+/// reads a hit's score and `artifact_id`, never its state; inside an
+/// in-progress subtree a held version scores as it will once promoted
+/// (ADR-0030 d9), so there ratification changes neither the order nor the
+/// cut.
+///
+/// `rank` names a candidate's (score, `artifact_id`). A version that arrives
+/// in both held lists, a key's own held row inside, is served once, at its
+/// first place in the order. `tokens` names a candidate's [`budget_tokens`]
+/// count. The answer is the served hits in order and the budget object of
+/// [`cut`], `None` without `max_tokens`.
+pub fn merge_hits<T>(
+    promoted: Vec<T>,
+    held: Vec<T>,
+    k: usize,
+    steering: &[u64],
+    max_tokens: Option<u64>,
+    rank: impl Fn(&T) -> (f32, Uuid),
+    tokens: impl Fn(&T) -> u64,
+) -> (Vec<T>, Option<Budget>) {
+    let mut hits = promoted;
+    hits.extend(held);
+    hit_order(&mut hits, &rank);
+    let mut seen = BTreeSet::new();
+    hits.retain(|hit| seen.insert(rank(hit).1));
+    hits.truncate(k);
+    let counts: Vec<u64> = hits.iter().map(tokens).collect();
+    let budget = cut(steering, &counts, max_tokens);
+    if let Some(budget) = &budget {
+        hits.truncate(budget.hits_served);
+    }
+    (hits, budget)
 }
