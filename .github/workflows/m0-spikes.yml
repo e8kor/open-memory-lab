@@ -1,0 +1,56 @@
+name: M0 spikes
+
+# The critical path's M0 experiments that a GitHub runner can host
+# (docs/engineering/spikes/index.md): the chain-format test vectors cross-checked outside
+# Rust, and spike 3 (RLS hardening) against the deployment's Postgres pin. Each script pins
+# its Python dependencies inline and in a committed lock file, and runs with --locked.
+# Spikes 1, 2 and 4 need MinIO topologies or a standby and are not run here.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m0-spikes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chain-vectors:
+    name: chain-format vectors reproduce outside Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"
+      - run: uv run --python 3.13 --locked --script scripts/check_chain_vectors.py
+
+  rls-spike:
+    name: spike 3, RLS hardening (pg17)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # The deployment pin (docs/operations/deployment.md). POSTGRES_USER is a superuser
+        # in this image, so the spike mints its owner and service roles and runs S3.2.
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"
+      # --require-all: a scenario that does not run fails the job.
+      - run: uv run --python 3.13 --locked --script testing/spikes/rls/spike_rls.py --require-all
+        env:
+          OML_SPIKE_PG_DSN: postgresql://oml:oml_dev_only@127.0.0.1:5432/oml_dev
