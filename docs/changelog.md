@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design cover, and what each revision changed
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design and 0.3.0-design cover, and what each revision changed
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design co
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.2.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.3.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,68 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.3.0-design
+
+### 2026-10-31 — In-progress workareas (ADR-0030, proposed)
+
+[ADR-0030](adr/ADR-0030-in-progress-workareas.md), proposed on 2026-10-31, decides the in-progress
+workarea. It would amend ADR-0001 (d3, d5), ADR-0008 (d4), ADR-0009 (d1, d3, d4), ADR-0013 (d1,
+d4), ADR-0018 (d4), ADR-0025 (d1, d2, d3, d4, d5, d8, d9, d12, d13, d14, d15) and ADR-0028 (d1, d2);
+their Status lines gain the back-pointer on acceptance, not before. It reopens, bounded, the
+optimistic review ADR-0012 rejected.
+
+- **Decided:**
+    - **The workarea.** An in-progress workarea is a `development` workarea an admin creates with
+      `in_progress: true`, the only act that sets the mark, which only its own commit ends. Its
+      subtree is one unit: nodes inside stay `development`, and no claim or node crosses the
+      boundary before the commit.
+    - **The constitution.** A second bounded relaxation of R3's first sentence; R2 holds in full,
+      and no workarea inside one admits self-signing.
+    - **Unreviewed reads.** Other keys' held claims are readable only inside in-progress
+      workareas, under the `unreviewed: allow | block` attribute of reader grants: `allow` by
+      default, a block on any reader grant effective on a node winning there. The rule is
+      declared once, in the permission matrix.
+    - **Recall.** `include_unreviewed`, defaulting to the key's unreviewed access on the scope
+      node, adds held claims ranked in the one total order and marked `reviewed: false`. An explicit `true`
+      where the scope blocks is `access.grant_refused`, and at a scope outside it adds nothing.
+      Held and promoted claims inside are indexed alike behind a fence keyed by the subtree, so
+      ratification changes no score.
+    - **Other reads.** Get, the scoped listing and the events tail serve held claims inside under
+      the same unreviewed access, and every read scoped outside skips the subtree whole, own rows
+      included. The workarea read reports `in_progress`, `in_progress_root_id` and
+      `reads_unreviewed`.
+    - **The commit.** The in-progress workarea's move to `committed` is refused while anything in
+      its subtree is held, and releases every promoted claim in it at once.
+- **`info.version` 0.2.0-design → 0.3.0-design**, because `/v1` request and response shapes change
+  (`RecallRequest.include_unreviewed`, `MemorySummary.reviewed`). Two error codes are added,
+  `workarea.held_remaining` and `workarea.in_progress_refused`, both `409`. No operation, event
+  type or claim state is added. `workarea.create`, `workarea.status_transition` and `grant.issued`
+  gain a payload field each.
+- **The agent plugin.** `oml_recall` gains `include_unreviewed`, the claim item gains `reviewed`,
+  and `oml_workarea_info` gains the in-progress fields. In [mcp-tools.json](api/mcp-tools.json) the
+  served entries change only with the code that serves them, so `_meta.pending_design` names what
+  this record adds to `oml_recall`, `oml_remember`, `oml_learn`, `oml_get`, `oml_workarea_info`
+  and `oml_events_tail`. The `oml-memory` skill says to weigh other keys' held rows, not trust them as reviewed.
+- **Roadmap:** [FR-31](product/roadmap.md) gains the commit refusal's signal. The fence's costs are
+  tracked against FR-4 and FR-25, and no number is stated.
+- **Pages touched:**
+    - decisions: the [decision register](adr/index.md) (register row; D8, D9, D11, D12, D13 and D14
+      cells) and `mkdocs.yml`;
+    - architecture: [workareas](architecture/workareas.md),
+      [roles and keys](architecture/roles-and-keys.md), [retrieval](architecture/retrieval.md),
+      [admission](architecture/admission.md), [the overview](architecture/overview.md);
+    - API: [HTTP API](api/http-api.md), [openapi.yaml](api/openapi.yaml), [errors](api/errors.md),
+      [the agent plugin](api/mcp-plugin.md), [mcp-tools.json](api/mcp-tools.json);
+    - data and CLI: [Postgres schema](data/postgres-schema.md),
+      [event catalog](data/event-catalog.md), [CLI reference](cli/reference.md);
+    - product and the rest: [concepts](concepts.md), [commitments](product/commitments.md),
+      [roadmap](product/roadmap.md), [CI and toolchain](engineering/ci-and-toolchain.md) and
+      [upgrades](operations/upgrades.md) (the version), [llms.txt](llms.txt) and this page;
+    - outside `docs/`: `CONTRIBUTING.md` (the version and the vocabulary pointer) and
+      `plugins/oml/skills/oml-memory/SKILL.md`.
+- **Not built.** Nothing above is implemented by this entry. The `spec-v0.3` tag waits for the
+  record's acceptance.
 
 ## 0.2.0-design
 

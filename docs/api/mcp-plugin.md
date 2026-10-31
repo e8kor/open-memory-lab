@@ -116,7 +116,12 @@ count change by [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
 d12). There is no tool whose success changes
 what *other* keys can read, except by entering the admission pipeline as a
 held submission that an independent reviewer must ratify
-([admission](../architecture/admission.md), R3).
+([admission](../architecture/admission.md), R3). Inside an
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas) that
+held submission is readable at once, marked `reviewed: false`, by the keys the
+[permission matrix](../architecture/roles-and-keys.md#permission-matrix)
+allows; it still promotes only by non-author review, and it reaches readers
+outside only at the commit, a two-identity act no tool here can take.
 
 Concretely:
 
@@ -195,7 +200,7 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
 | Tool | One line | Role class |
 |---|---|---|
 | [`oml_remember`](#oml_remember) | Submit a memory — held on arrival | writer |
-| [`oml_recall`](#oml_recall) | Search promoted memories in a subtree, optionally with the caller's own held rows and a budget; steering first | reader |
+| [`oml_recall`](#oml_recall) | Search promoted memories in a subtree, optionally with the caller's own held rows, inside an in-progress workarea other keys' held rows marked `reviewed: false`, and a budget; steering first | reader |
 | [`oml_learn`](#oml_learn) | Submit a derived fact with declared lineage — held on arrival | writer |
 | [`oml_get`](#oml_get) | Read one claim version by id | reader, or the calling key for its own rows |
 | [`oml_supersede`](#oml_supersede) | Propose a new version of a claim, or its retirement — held on arrival | writer (own claims); dreamer (propose) otherwise |
@@ -224,6 +229,7 @@ nothing else.
 | `version` | Its ordinal within the `claim_key` |
 | `kind` | `memory`, `derived_fact`, `steering`, or a vocabulary kind |
 | `state` | `held`, `promoted`, `demoted`, `rejected`, `erased` |
+| `reviewed` | True exactly when `state` is `promoted` and the version is not self-signed: it stands on non-author review. Another key's held claim, which a key reads only inside an [in-progress workarea](../architecture/workareas.md#in-progress-workareas), reads `false` |
 | `tip` | Whether it is the claim's served tip for the calling key, audience-scoped: for a key in a simulation's audience the overlay tip, which shadows the default tip, and for every other key the default tip ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); a superseded version is `promoted` with `tip: false` |
 | `retirement` | True on a retirement version ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)) |
 | `replaces` | `{artifact_id, version}` of the version a supersession replaces; null for version 1, and null when the calling key cannot read the replaced version, under the same test as `derives_from` ([http-api](http-api.md#get-get-v1memoriesartifact_id)) |
@@ -384,6 +390,15 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
   held rows that match join the hits, ranked in the same order and flagged
   `state: held`; they count against `k` and the budget
   ([retrieval](../architecture/retrieval.md#own-held-rows-in-recall)).
+- `include_unreviewed` — **optional**; default `true` where the key may read
+  other keys' held rows on the scope node, which only an
+  [in-progress workarea](../architecture/workareas.md#in-progress-workareas)
+  allows (`reads_unreviewed` on [`oml_workarea_info`](#oml_workarea_info)),
+  else `false`. Those held rows join the hits, ranked in the same order, with
+  `state: held` and `reviewed: false`; an explicit `true` where the key's grant
+  blocks it is refused with `access.grant_refused`, and at a scope outside every
+  in-progress workarea it adds nothing
+  ([retrieval](../architecture/retrieval.md#held-claims-inside-an-in-progress-workarea)).
 - `max_tokens` — **optional**: a budget in budget tokens (counter `oml-tc/1`,
   not a model's count), at most 2⁵³ − 1, as on the ring. Steering is never
   cut; the hits served are the longest rank prefix that fits; the cut is
@@ -401,6 +416,7 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
       "version": 1,
       "kind": "steering",
       "state": "promoted",
+      "reviewed": true,
       "tip": true,
       "retirement": false,
       "replaces": null,
@@ -419,6 +435,7 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
       "version": 1,
       "kind": "memory",
       "state": "promoted",
+      "reviewed": true,
       "tip": true,
       "retirement": false,
       "replaces": null,
@@ -436,6 +453,7 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
       "version": 2,
       "kind": "memory",
       "state": "held",
+      "reviewed": false,
       "tip": false,
       "retirement": false,
       "replaces": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "version": 1 },
@@ -467,13 +485,18 @@ no position among the hits, however well or badly they match the query, and a
 budget never cuts them. Hits are promoted served tips plus, with
 `include_own_held`, the caller's own held rows — here the caller's held
 version 2, listed beside the promoted version 1 it would replace; the two are
-never merged. Every item is a [claim item](#the-claim-item) with `text` and
+never merged — plus, at a scope inside an in-progress workarea with
+`include_unreviewed`, other keys' held rows, each `reviewed: false`. A recall
+scoped outside an in-progress workarea returns nothing from inside it until
+its commit. Every item is a [claim item](#the-claim-item) with `text` and
 `tokens`; `budget` is present if and only if `max_tokens` was sent. Recall
 quality and latency are unmeasured — [FR-4](../product/roadmap.md).
 
 **Refusals** — scope outside the key's read access (same error as a
-nonexistent node, fail closed); `max_tokens` with `include_bodies: false` on
-the ring, or any field the schema does not declare (`request.validation`).
+nonexistent node, fail closed); `include_unreviewed: true` where a reader grant
+effective on the scope blocks it (`access.grant_refused`); `max_tokens` with
+`include_bodies: false` on the ring, or any field the schema does not declare
+(`request.validation`).
 Example:
 
 ```json
@@ -564,7 +587,11 @@ pass-through fields as on [`oml_remember`](#oml_remember). Example:
 ## `oml_get`
 
 Read one claim version by id: the caller's own rows in any state, anyone
-else's promoted versions within read access. It is how an agent reads back
+else's promoted versions within read access, and, inside an
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas),
+anyone else's held versions the
+[permission matrix](../architecture/roles-and-keys.md#permission-matrix)
+lets the key read, with `reviewed: false`. It is how an agent reads back
 what it wrote before review, and how it follows a `replaces` or
 `derives_from` pointer. (Rides `GET /v1/memories/{artifact_id}` — the
 provider ring.)
@@ -589,6 +616,7 @@ and `attachments`:
   "version": 2,
   "kind": "memory",
   "state": "held",
+  "reviewed": false,
   "tip": false,
   "retirement": false,
   "replaces": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "version": 1 },
@@ -612,7 +640,8 @@ it, as a redacted bare id, so a reader learns that it exists and its id,
 never its content ([FR-31](../product/roadmap.md)).
 
 **Refusals** — `access.not_found` for anything the key may not read, a held
-row of another key included: unknown and unreadable are indistinguishable;
+row of another key included outside an in-progress workarea, or inside one
+where the key's grant blocks it: unknown and unreadable are indistinguishable;
 `lifecycle.erased` for an erased version this key could read before its
 erasure, and `access.not_found` for any other erased version
 ([errors](errors.md)).
@@ -860,8 +889,9 @@ the closed set for workarea edges. Example:
 The caller's own submissions and where each stands: held, promoted, demoted,
 rejected, erased. It is the one view of its held rows a key has without a
 reader grant — held content is invisible to everyone but its author and its
-reviewers until ratified (R3) — and the honest answer to "did my memory make
-it". (Rides the own-work listing, `GET /v1/memories?own=true` — the provider
+reviewers until ratified (R3), outside an
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas) —
+and the honest answer to "did my memory make it". (Rides the own-work listing, `GET /v1/memories?own=true` — the provider
 ring.)
 
 **Who may call:** any reader, writer, dreamer or admin key; the result is
@@ -898,6 +928,7 @@ key wrote, newest first ([http-api.md](http-api.md#search-get-v1memories)).
       "version": 1,
       "kind": "derived_fact",
       "state": "held",
+      "reviewed": false,
       "tip": false,
       "retirement": false,
       "replaces": null,
@@ -914,6 +945,7 @@ key wrote, newest first ([http-api.md](http-api.md#search-get-v1memories)).
       "version": 1,
       "kind": "memory",
       "state": "promoted",
+      "reviewed": true,
       "tip": true,
       "retirement": false,
       "replaces": null,
@@ -977,6 +1009,8 @@ same one call; a key with no default is refused with
   "id": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
   "path": "universe.procurement.metals-crew",
   "status": "committed",
+  "in_progress": false,
+  "in_progress_root_id": null,
   "crew": {
     "name": "metals-crew",
     "charter_uri": "https://crews.example.com/metals/charter.md",
@@ -984,7 +1018,7 @@ same one call; a key with no default is refused with
   },
   "parent": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
   "children": [
-    { "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3", "path_leaf": "q1-2027", "status": "development" }
+    { "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3", "path_leaf": "q1-2027", "status": "development", "in_progress": true }
   ],
   "edges": [
     {
@@ -996,6 +1030,7 @@ same one call; a key with no default is refused with
     }
   ],
   "my_effective_verbs": ["recall", "read", "graph_read", "events_tail", "remember", "learn", "attach", "supersede"],
+  "reads_unreviewed": false,
   "permission_epoch": 815
 }
 ```
@@ -1004,6 +1039,15 @@ same one call; a key with no default is refused with
 `development` may run relaxed, marked self-signed review by tenant policy;
 `committed` requires full non-author review; `validated` refuses new writes
 entirely ([the status ladder](../architecture/workareas.md#the-status-ladder-d8)).
+`in_progress` marks an
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas) and
+every node of its subtree, here the `q1-2027` child, and `in_progress_root_id`
+names the in-progress workarea. `reads_unreviewed` says whether this key reads
+other keys' held rows on the node — only inside one, and only where no reader
+grant of the key blocks it
+([permission matrix](../architecture/roles-and-keys.md#permission-matrix)) —
+and so what `oml_recall`'s `include_unreviewed` defaults to with this node as
+its scope.
 The crew record is recorded, not operated — OML stores it and journals its
 changes; the crew is managed elsewhere. `my_effective_verbs` is a derived
 answer — the union, over the grant roles effective on the node, of the
@@ -1092,7 +1136,12 @@ none is refused with `request.workarea_unresolved`), and the tail is filtered
 to the events the key may see under the per-family visibility rule declared on
 [http-api.md](http-api.md#events-tail). R3 applies to the stream exactly as to
 reads: another writer's held submission never appears here — a key sees only
-its own `submission.*` and `simulation.write` events — and no review or key-administration event
+its own `submission.*` and `simulation.write` events — except inside an
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas),
+where a tail scoped inside it also shows the submissions the key may read
+under the [permission matrix](../architecture/roles-and-keys.md#permission-matrix),
+with no author named, and a tail scoped outside it shows nothing of its claims
+until its commit. No review or key-administration event
 appears at all, so the tail cannot be used to watch the review queue from
 outside.
 
@@ -1285,7 +1334,10 @@ Operational notes:
   nothing and duplicate nothing.
 - **Expect `held`.** A successful write is a claim under test. Poll
   [`oml_my_work`](#oml_my_work) or [`oml_events_tail`](#oml_events_tail) if
-  the agent's plan depends on its memory becoming visible to others.
+  the agent's plan depends on its memory becoming visible to others. Inside an
+  [in-progress workarea](../architecture/workareas.md#in-progress-workareas)
+  the crew's other agents read it at once, marked `reviewed: false`, and
+  readers outside see the workarea's claims only after its commit.
 - **Start each session from memory.** In Claude Code the `oml` plugin's
   SessionStart hook runs `oml hook session-start` when the CLI is on `PATH`,
   which injects the workarea's steering, the key's recent submissions and the
@@ -1308,4 +1360,7 @@ are [ADR-0022](../adr/ADR-0022-two-ring-api.md)'s. `oml_get`,
 `oml_supersede`, the claim item, own held rows and budgets on recall, the
 own-work and workarea reads, and the events-tail visibility rule are
 the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
-which would amend ADR-0014 d2.
+which would amend ADR-0014 d2. `include_unreviewed`, the `reviewed` field and
+the in-progress fields of the workarea read are the proposed
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md)'s, which would amend
+ADR-0025 d12 and d14.

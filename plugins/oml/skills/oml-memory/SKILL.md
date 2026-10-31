@@ -41,9 +41,21 @@ crew. They come before the hits and are not ranked, so read them first.
 
 Pass `include_own_held: true` to search your own held writes as well. They come back among
 the hits with `state: "held"` and `tip: false`, and a held revision is listed beside the
-approved version it would replace. Recall never returns another key's held writes, and
-your own held steering and retirements are not in force until approved, so recall leaves
-them out; read them with `oml_my_work` and `oml_get`.
+approved version it would replace. Outside an in-progress workarea, recall never returns
+another key's held writes, and your own held steering and retirements are not in force
+until approved, so recall leaves them out; read them with `oml_my_work` and `oml_get`.
+
+## Weigh what nobody has reviewed yet
+
+In an in-progress workarea, recall also returns your crew's writes that no one has
+reviewed yet, each with `state: "held"` and `reviewed: false`, ranked among the reviewed
+memories, which carry `reviewed: true`. Treat an item with `reviewed: false` as working
+knowledge to weigh, not approved fact: check it against reviewed memories and its stated
+source before you act on it, and name it in `derives_from` when you build on it. Pass
+`include_unreviewed: false` to recall reviewed memories only. `oml_workarea_info` reports
+whether a workarea is in progress (`in_progress`) and whether your key reads such writes
+there (`reads_unreviewed`). Nothing in an in-progress workarea is visible outside it until
+the workarea is committed.
 
 Pass `max_tokens` to bound the answer. Every item carries its `tokens`, the server's count
 of one token per four bytes of text, rounded up, which is not your model's count. Steering

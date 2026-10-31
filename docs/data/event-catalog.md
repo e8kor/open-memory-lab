@@ -63,7 +63,10 @@ fractional digits; displays like the one above may trim.
 
 ## Submission family
 
-Writes enter held; nothing in this family changes visibility. Pipeline:
+Writes enter held; nothing in this family changes visibility, except that a write inside an
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas) is readable at once by
+the keys the [permission matrix](../architecture/roles-and-keys.md#permission-matrix) allows, as
+its readers' grants decide, not as any payload field says. Pipeline:
 [admission](../architecture/admission.md).
 
 ### submission.remember
@@ -254,7 +257,8 @@ Visibility and existence changes. Each enqueues its outbox row in the same trans
 }
 ```
 
-Ratified content becomes readable by others and silver materialization is enqueued. Journalled for
+Ratified content becomes readable by others — inside an in-progress subtree, at scopes inside it
+only, until the subtree's commit — and silver materialization is enqueued. Journalled for
 a claim's first promoted version, with `previous_tip_version` null; the promotion of a supersession
 journals `lifecycle.supersede` instead
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
@@ -373,11 +377,15 @@ Tree and edge governance. Rules: [workareas](../architecture/workareas.md).
   "workarea_id": "…", "parent_id": "…",
   "name": "crew-redline", "status": "development",
   "crew": {"name": "redline", "charter_uri": "…", "external_manager": "…"},
-  "prefix": null
+  "prefix": null,
+  "in_progress": false
 }
 ```
 
-A new node under an existing parent; refused when the parent is validated. A non-null `prefix`
+A new node under an existing parent; refused when the parent is validated. `in_progress: true`
+makes it an [in-progress workarea](../architecture/workareas.md#in-progress-workareas); this event
+is the only one that sets the mark, and `workareas.in_progress` folds from it
+([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d1). A non-null `prefix`
 registers the workarea as a vocabulary ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the
 prefix is tenant-unique and **permanent** — never reused or reassigned, even after the vocabulary
 retires — and `vocab_prefixes` folds from exactly these events.
@@ -441,13 +449,18 @@ status read — until a second, non-proposing principal ratifies it.
   "workarea_id": "…", "from": "committed", "to": "validated",
   "transition_id": "…",
   "proposed_by_key_id": "…", "ratified_by_key_id": "…",
-  "policy_snapshot": {"children_all_validated": true}
+  "policy_snapshot": {"children_all_validated": true},
+  "in_progress_released": false
 }
 ```
 
 Forward-only ladder step — the ratification of a pending `workarea.status_proposed`, which it
 references — by a second, distinct dreamer/admin principal, with the policy that held at the
-moment snapshotted.
+moment snapshotted. `in_progress_released: true` marks an in-progress workarea's commit: it is
+journalled only when no version in the subtree is held, and from this event on the subtree is no
+longer in progress, so its promoted claims are readable at scopes outside it and the
+[events tail](../api/http-api.md#events-tail) judges its later events by the ordinary clauses
+([workareas](../architecture/workareas.md#in-progress-workareas)).
 
 ### workarea.crew_updated
 
@@ -545,13 +558,17 @@ permission epoch ([workareas](../architecture/workareas.md#grants-bind-to-node-i
   "grant_id": "…", "key_id": "…",
   "workarea_node_id": "…", "role": "reader",
   "deny": [{"subtree_node_id": "…"}],
+  "unreviewed": "allow",
   "epoch": 17
 }
 ```
 
 Binds a key to a workarea node id (never a path) with per-grant deny masks; `epoch` is this
 event's own journal seq, which makes every historical effective-access computation reproducible
-([workareas](../architecture/workareas.md)).
+([workareas](../architecture/workareas.md)). `unreviewed`, on a reader grant only and absent on
+the others, is whether the holder reads other keys' held claims inside the in-progress workareas
+the grant covers ([permission matrix](../architecture/roles-and-keys.md#permission-matrix),
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d7); a grant's value never changes.
 
 ### grant.revoked
 

@@ -233,8 +233,14 @@ CREATE TABLE workareas (
     status     text        NOT NULL
         CHECK (status IN ('development', 'committed', 'validated')),
     crew       jsonb,                  -- {name, charter_uri, external_manager}
+    in_progress boolean    NOT NULL DEFAULT false,
+                                       -- decided, not built (ADR-0030 d1): set only by
+                                       -- workarea.create, never changed; the node and its
+                                       -- subtree are in progress while this is true and
+                                       -- status = 'development' (workareas, In-progress workareas)
     created_at timestamptz NOT NULL,
-    UNIQUE (tenant_id, id)             -- target of the tenant-scoped grant and denial references
+    UNIQUE (tenant_id, id),            -- target of the tenant-scoped grant and denial references
+    CHECK (NOT in_progress OR parent_id IS NOT NULL)   -- universe is never in progress
 );
 
 -- exactly one universe root per tenant; it is permanently 'committed'.
@@ -315,10 +321,15 @@ CREATE TABLE grants (
                                           -- roles-and-keys Grant admissibility (ADR-0025 d1)
     workarea_node_id uuid   NOT NULL,               -- node id, never a path
     deny             jsonb  NOT NULL DEFAULT '[]',  -- subtree masks inside THIS grant only
+    unreviewed       text                           -- decided, not built (ADR-0030 d7): reader
+        CHECK (unreviewed IN ('allow', 'block')),   -- grants only, from grant.issued; a block on
+                                                    -- any reader grant effective on a node wins
+                                                    -- (roles-and-keys, permission matrix fn 6)
     epoch            bigint NOT NULL,               -- journal seq of this grant's grant.issued,
                                                     -- or of the key.rotated that reproduced it
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
-    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id)
+    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id),
+    CHECK ((role = 'reader') = (unreviewed IS NOT NULL))
 );
 
 CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all grants
@@ -541,10 +552,12 @@ absent; the full copy-class inventory and its honest boundary live in
 
 ## Full-text search and embeddings
 
-The serving tier's two indexes over promoted rows, and the author-fenced index of held text. All
-three are plaintext-derived, so all three are in the erasure inventory and are removed at erase
-time. Which indexed rows recall serves is declared in
-[retrieval](../architecture/retrieval.md#the-serving-tier).
+The serving tier's two indexes over promoted rows — and, inside an in-progress subtree, over its
+held and promoted rows alike, behind the in-progress fence — and the author-fenced index of held
+text. All three are plaintext-derived, so all three are in the erasure inventory and are removed
+at erase time. Which indexed rows recall serves is declared in
+[retrieval](../architecture/retrieval.md#the-serving-tier), and the fence in
+[retrieval](../architecture/retrieval.md#the-in-progress-fence).
 
 ```sql
 CREATE TABLE memories_fts (
@@ -552,11 +565,28 @@ CREATE TABLE memories_fts (
     artifact_id uuid    NOT NULL,
     version     integer NOT NULL,
     tsv         tsvector NOT NULL,
+    in_progress_root_id uuid REFERENCES workareas (id),
+                                    -- decided, not built (ADR-0030 d9): the in-progress
+                                    -- workarea whose subtree holds the row, NULL outside one;
+                                    -- inside one, held rows are indexed here from capture on
     PRIMARY KEY (tenant_id, artifact_id, version)
 );
 CREATE INDEX memories_fts_gin ON memories_fts USING gin (tsv);
 
+-- decided, not built (ADR-0030 d9): the in-progress fence, on memories_fts and,
+-- identically, on memory_embeddings. A row of a subtree still in progress is
+-- served only to a transaction whose oml.in_progress_root names its root:
+-- oml-server sets it from the resolved scope node, or, transaction-local, from
+-- a removed version's own row; the root's commit releases every row at once.
+CREATE POLICY in_progress_fence ON memories_fts AS RESTRICTIVE
+    USING (in_progress_root_id IS NULL
+           OR in_progress_root_id = nullif(current_setting('oml.in_progress_root', true), '')::uuid
+           OR NOT EXISTS (SELECT 1 FROM workareas w
+                          WHERE w.id = in_progress_root_id AND w.status = 'development'));
+
 -- decided, not built (ADR-0025 d5): held text, fenced to its author.
+-- No row inside an in-progress subtree: those are indexed in memories_fts
+-- behind the in-progress fence (ADR-0030 d9).
 -- A row exists only while its version is held: every transition into held
 -- inserts it (capture, with tsv computed from the NFC plaintext before BEGIN;
 -- reopen, and a reassignment that re-enters held, with tsv computed on the
@@ -578,6 +608,8 @@ CREATE TABLE memory_embeddings (
     workarea_path ltree   NOT NULL,   -- filter column for subtree-scoped queries
     embedding     vector  NOT NULL,   -- dimension bound to the embedding model: open RS
     embedder      text    NOT NULL,   -- plugin identity+version that produced the row (ADR-0019)
+    in_progress_root_id uuid,         -- as on memories_fts, under the same in_progress_fence
+                                      -- policy (ADR-0030 d9)
     PRIMARY KEY (tenant_id, artifact_id, version)
 ) PARTITION BY LIST (tenant_id);
 

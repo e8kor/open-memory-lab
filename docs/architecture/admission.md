@@ -9,7 +9,9 @@ answers: what the admission pipeline does between capture and release; what a re
 
 **Status:** design draft for review · decided, not built
 
-Admission is the pipeline every write crosses before anyone but its author can read it:
+Admission is the pipeline every write crosses before anyone but its author can read it — the one
+exception being an [in-progress workarea](workareas.md#in-progress-workareas), whose readers read
+a held claim at once, marked, while the pipeline below runs unchanged:
 
 > capture → quarantine → deterministic scan → non-author review → ratification → journal → release.
 
@@ -32,8 +34,10 @@ The durable state column on a memory row takes four values: `held`, `promoted`, 
 `erased` (the row shape is in the [Postgres schema](../data/postgres-schema.md)). *Scanned*
 and *under review* are phases within `held` — the journal records the scan verdict and each
 review verdict as events, but a claim that has been scanned and is waiting for a reviewer is
-still held: invisible to everyone but its author. The gate changes visibility exactly once,
-at ratification.
+still held: invisible to everyone but its author, outside an
+[in-progress workarea](workareas.md#in-progress-workareas). The gate changes visibility exactly
+once, at ratification — and, for a claim inside an in-progress workarea, its audience beyond
+that workarea once more, at the workarea's commit.
 
 ```mermaid
 stateDiagram-v2
@@ -63,7 +67,7 @@ Reading the diagram:
   event (digest or ciphertext reference only — never body plaintext), the metadata row in
   state `held`, and an outbox row. The write is durable iff that transaction commits; the
   commit protocol is [storage](storage.md)'s to define. The author can see their own held
-  claim; nobody else can see it at all. Supersession targets the current served tip
+  claim; outside an in-progress workarea nobody else can see it at all. Supersession targets the current served tip
   ([HTTP API](../api/http-api.md#supersede-post-v1memoriesartifact_idsupersede)); revising one's
   own held claim before its review is [RS-17](../product/roadmap.md). Claim text is
   Unicode-normalized to **NFC** at this step — before the plaintext digest is computed and before the scan runs — so the digest,
@@ -84,7 +88,9 @@ Reading the diagram:
 - **Review and ratification.** Reviewers record verdicts; when the workarea's policy is
   satisfied (k approving verdicts from identities meeting the independence axis), the server
   ratifies: a journalled promotion event carrying a snapshot of the policy it was decided
-  under. Only ratification makes the claim readable by others. A supersession or retirement
+  under. Only ratification makes the claim readable by others, except to the readers of an
+  in-progress workarea the [permission matrix](roles-and-keys.md#permission-matrix) allows, and
+  a claim inside one is readable outside it only after that workarea's commit. A supersession or retirement
   version passes this same pipeline — held on arrival, served with the version it replaces —
   and changes the claim's tip only at ratification, by compare-and-set
   ([audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); it
@@ -109,8 +115,13 @@ Reading the diagram:
 One rule holds across every workarea status: effective access decides who may *write*
 (defined in [workareas](workareas.md)); status changes only which review policy applies,
 never grant resolution. A `development` workarea may, by journalled tenant policy, permit
-marked `self_signed` rows — the one bounded exception, scoped in
+marked `self_signed` rows — the self-signing relaxation, scoped in
 [ADR-0001](../adr/ADR-0001-the-constitution.md); such rows never promote beyond that workarea.
+The constitution's second bounded relaxation, the
+[in-progress workarea](workareas.md#in-progress-workareas), changes who may read a held claim and
+when its workarea contributes, never this pipeline: every claim inside one is promoted only by
+non-author verdicts, and no workarea inside one admits self-signing
+([ADR-0030](../adr/ADR-0030-in-progress-workareas.md)).
 Simulation writes pass this same pipeline with their audience as the reviewer pool
 ([simulations](simulations.md)).
 

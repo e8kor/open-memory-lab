@@ -72,6 +72,7 @@ settings, tenants — a column names the key's role itself.
 |---|---|---|---|---|---|
 | recall / search (FTS, vector) — logged | ✓ | — | — | — | — |
 | read body / fetch — logged | ✓ ⁵ | — | — | — | — |
+| read another key's held claim inside an in-progress workarea — logged | ✓ ⁶ | — | — | — | — |
 | graph and lineage read (serialize, don't compute) | ✓ | — | — | — | — |
 | workarea info / events tail | ✓ | — | — | — | — |
 | own-work status (own submissions only) | ✓ | ✓ | ✓ | ✓ | — |
@@ -112,7 +113,34 @@ next section.
 ⁴ The operator issues only each tenant's first admin key, and operator keys (see
 [issuer ceiling](#issuer-ceiling)).
 ⁵ The calling key may fetch its [own](#own) rows in any state (own-work path); everyone else
-sees promoted rows only ([http-api](../api/http-api.md)).
+sees promoted rows only ([http-api](../api/http-api.md)), and held rows of other keys only
+under footnote 6.
+
+⁶ **Unreviewed reads.** This footnote is the single declaration site for which keys read the
+held claims of other keys ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d5–d7). Each
+reader grant carries `unreviewed`, `allow` or `block`, default `allow`; a grant of another role
+that carries it is `request.validation`. A key may read the held claims of other keys on node N
+exactly when:
+
+1. N lies inside an [in-progress subtree](workareas.md#in-progress-workareas). Nowhere else:
+   `committed` and `validated` workareas, and `development` workareas outside every in-progress
+   subtree, keep R3 unconditionally. A reader grant on `universe` with `allow` therefore reads
+   them in every in-progress workarea of the tenant and in no other workarea.
+2. `reader` is in `effective_roles(N)`.
+3. No reader grant effective on N carries `unreviewed: block` — **a block wins**, as a deny
+   does. A grant is effective on N when its node is N or an ancestor of N and its own deny list
+   names neither N nor an ancestor of N, so a grant whose deny masks N neither allows nor
+   blocks there.
+
+The answer is a pure `oml-domain` function beside `effective_roles`, computed on every request
+with no cache. Global denials, the simulation audience and the [naming rule](#own) still apply. A
+key whose grants block reads its own held rows in any state, under [own](#own). The attribute is
+journalled on `grant.issued` and stored on the grant, and a grant's value never changes:
+another value is a revoked grant and a new one. The workarea read reports the answer as
+`reads_unreviewed` ([http-api](../api/http-api.md#workareas)); what recall, get, the listings
+and the events tail serve under it is declared in
+[retrieval](retrieval.md#held-claims-inside-an-in-progress-workarea) and on the
+[events tail](../api/http-api.md#events-tail).
 
 Promote, sign and delete appear in no column: promotion is an effect of ratification inside the
 admission pipeline, signing is done by `oml-server` with the deployment key
@@ -127,7 +155,11 @@ beyond it. How a
 `self_signed` version may take a claim's tip is declared in
 [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). The
 exception is declared in [workareas.md](workareas.md) and ADR-0001; it does not change this
-matrix — it changes the review policy a development workarea applies.
+matrix — it changes the review policy a development workarea applies. A second bounded
+relaxation, the [in-progress workarea](workareas.md#in-progress-workareas), relaxes only R3's
+"nothing is readable by others until it is ratified", for the keys footnote 6 names; R2 holds
+there in full, and no workarea inside one admits self-signing
+([ADR-0030](../adr/ADR-0030-in-progress-workareas.md)).
 
 ## Grant admissibility and refusal order
 
@@ -164,7 +196,8 @@ first checks that `tenant_id` is present if and only if the issuer is an operato
    admissible, grant_index}`: `role` the first refused grant's role, `admissible` the key role's
    admissible set, `grant_index` that grant's 0-based position in `grants`;
 4. every grant node and deny node exists in the tenant — else `access.not_found`;
-5. each deny node lies inside its own grant's subtree — else `request.validation`;
+5. each deny node lies inside its own grant's subtree, and `unreviewed` appears only on a
+   reader grant ([footnote 6](#permission-matrix)) — else `request.validation`;
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
    key has none, and a key never inherits its issuer's default.

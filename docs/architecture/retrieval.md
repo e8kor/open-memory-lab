@@ -2,7 +2,7 @@
 id: architecture/retrieval
 tier: engineering
 status: design draft for review · decided, not built
-answers: where reads are served from and in what order; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut
+answers: where reads are served from and in what order; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how held claims inside an in-progress workarea join recall and its indexes; how a recall budget is counted and cut
 -->
 
 # Retrieval: reads are served from Postgres, journalled
@@ -39,7 +39,12 @@ the calling key ([own](roles-and-keys.md#own)) — through own-work status, get,
 and recall with `include_own_held` ([own held rows in
 recall](#own-held-rows-in-recall)); demoted and erased rows are not served. This
 is R3 made operational: the gate changed visibility, and the read path is where
-that visibility is enforced.
+that visibility is enforced. The one place another key reads a held row is
+inside an [in-progress workarea](workareas.md#in-progress-workareas), for the
+keys the [permission matrix](roles-and-keys.md#permission-matrix) allows, each
+row marked `reviewed: false`; a read scoped outside that subtree serves nothing
+from it, promoted rows included, until its commit
+([below](#held-claims-inside-an-in-progress-workarea)).
 
 `self_signed` rows — the constitution's bounded development exception
 ([workareas.md](workareas.md)) — are served only to reads whose scope node is
@@ -68,9 +73,12 @@ version of a retired claim
 ([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip))
 out of the hits, so a ratified retirement, or a later supersession of one,
 changes no index row. Superseded versions are readable history under the same
-access, so the predicate hides nothing a reader may not see. Held rows never
-enter either index: a held row is matched only through the author-fenced read
-of [held text containment](#held-text-containment).
+access, so the predicate hides nothing a reader may not see. Held rows enter
+neither index, except inside an in-progress subtree: elsewhere a held row is
+matched only through the author-fenced read of
+[held text containment](#held-text-containment), and inside one the indexes
+hold held and promoted rows alike behind a fence keyed by the subtree
+([the in-progress fence](#the-in-progress-fence)).
 
 Two kinds are excluded from both shared indexes by default: vocabulary rows
 (`term`, `term_mapping`, `vocab_release` — a 50k-term vocabulary must not
@@ -163,8 +171,10 @@ asserted anywhere in this design until that measurement runs (D17).
 
 Embeddings are computed by `oml-indexer`, a separate workload running under
 its own **key-less** credentials per tenant — it holds no signing key and no
-verdict authority; it reads promoted text on the serving side of decryption
-and writes embedding rows. Everything it produces is plaintext-derived and
+verdict authority; it reads promoted text on the serving side of decryption,
+and the held text of claims inside an in-progress subtree
+([the in-progress fence](#the-in-progress-fence)), and writes embedding rows. It
+holds no credential that reaches quarantine. Everything it produces is plaintext-derived and
 therefore in the erasure inventory: on erase, embedding and `tsvector` rows
 are removed from live tables, and their persistence in base backups and WAL
 until the named backup retention window expires is stated honestly where the
@@ -204,7 +214,9 @@ Membership and order of both segments are fixed
   ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)), served tips of kind
   `term`, `term_mapping` or `vocab_release` — never retirement versions, never
   versions of retired claims, plus the caller's own held rows when it asks for
-  them ([below](#own-held-rows-in-recall)). A `self_signed` version is a hit
+  them ([below](#own-held-rows-in-recall)), plus, at a scope inside an
+  in-progress subtree, the held claims of other keys under `include_unreviewed`
+  ([below](#held-claims-inside-an-in-progress-workarea)). A `self_signed` version is a hit
   only when the scope node is its own workarea. The `kinds` filter names only
   `memory` and `derived_fact`, as ADR-0021 d9 keeps it: a recall that sends it
   narrows the hits to those kinds, and one that omits it also receives
@@ -268,7 +280,9 @@ steering and own held retirement versions never enter recall — neither is in
 force — and own-work status and get reach them. `include_own_held` defaults to
 `false`, which is exactly the prior behaviour; no other key's result changes,
 and the recall ceiling stays reader on the scope, so a writer-only key reads
-its held rows through own-work status and get.
+its held rows through own-work status and get. An own held row inside an
+[in-progress subtree](workareas.md#in-progress-workareas) joins only a recall
+scoped inside that subtree: a recall scoped outside skips the subtree whole.
 
 Held rows have no embedding, so a held row's score is the fusion function
 evaluated with its full-text rank and no vector term: the vector component
@@ -289,10 +303,100 @@ and how far below is unmeasured ([FR-4](../product/roadmap.md)). In cluster
 mode the request is an own-held read
 ([reads in cluster mode](#reads-in-cluster-mode)).
 
+## Held claims inside an in-progress workarea
+
+This section is the single declaration site for how recall and its indexes
+treat an [in-progress workarea](workareas.md#in-progress-workareas)
+([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d8, d9, d10). Which keys
+may read the held claims of other keys there is declared once, in the
+[permission matrix](roles-and-keys.md#permission-matrix) (footnote 6); this
+section calls that answer, for a node, the key's **unreviewed access** there.
+
+**`include_unreviewed`.** `RecallRequest` and `oml_recall` take
+`include_unreviewed` (boolean). Its default is `true` when the key has
+unreviewed access on the scope node, and `false` otherwise.
+
+- **True, at a scope inside an in-progress subtree.** The hit candidates also
+  include every held version, of any author, of kind `memory` or
+  `derived_fact`, never a retirement version, that is in a workarea within
+  subtree(scope) where the key has unreviewed access, and that the query and
+  the `kinds` filter admit, under the simulation predicate and global denials.
+  The key's own held rows in those workareas are among them; `include_own_held`
+  adds its own held rows elsewhere in the subtree, and nothing is served twice.
+  A workarea in the subtree where a reader grant blocks contributes
+  its promoted hits only — absence, as a per-grant deny is in any subtree read.
+- **True, where the scope node itself blocks.** Refused with
+  `access.grant_refused`, details `{workarea_id, needed_role: "reader",
+  unreviewed: "block"}`: the request names rows that exist and that the key's
+  grants withhold, and narrowing silently would be coercion. A recall that
+  leaves the field to its default never asks for them, so it never refuses.
+- **True, at a scope outside every in-progress subtree.** Nothing is added and
+  nothing is refused: no held claim of another key is readable there (R3).
+- **False.** Promoted hits only, plus own held rows under `include_own_held`.
+
+The added hits merge with the promoted hits under the
+[one total order](#the-recall-ordering-contract-steering-rows-first-unranked)
+before the `k` cut and the [budget](#token-budgets), each with
+`state: "held"`, `tip: false` and `reviewed: false`. A held successor carries
+`replaces` and is listed beside the promoted tip it would replace, never
+merged with it. Applicable steering stays promoted steering only, so a held
+steering row never enters segment 1, and a held retirement version never takes
+a claim out of recall; get and the listings reach both. Absent, the field
+gives exactly the prior answer at every scope that could exist before
+ADR-0030, since no in-progress subtree existed.
+
+**Outside.** A recall scoped outside an in-progress subtree — at any ancestor,
+up to `universe` — serves nothing from it, the caller's own held rows included,
+until its commit: no steering, no hits, and no candidate counted in `k`, the
+budget's `hits_omitted` or `next_hit_tokens`. The serving indexes cannot match
+those rows at such a scope (below), so nothing in the answer says that the
+subtree holds anything.
+
+### The in-progress fence
+
+- **Designed form (decided, not built).** Every held and promoted version in a
+  workarea inside an in-progress subtree has the `memories_fts` row and the
+  `memory_embeddings` row it would have once promoted outside one, a held one
+  from its capture on — a simulation row keeps its per-simulation index — so a
+  held claim and the same claim once promoted score alike: ratification changes no index row and no score, and review never
+  reorders results (R3). Each such row carries `in_progress_root_id`, the
+  in-progress workarea whose subtree holds it
+  ([data/postgres-schema.md](../data/postgres-schema.md#full-text-search-and-embeddings)).
+  A restrictive row-level security policy on both tables serves a row whose
+  root is still `development` only to a transaction whose
+  `oml.in_progress_root` names that root:
+    - `oml-server` sets it at the start of every transaction from the resolved
+      scope node, never from the client, and leaves it empty at a scope
+      outside;
+    - a commit that removes a version's index rows — rejection, demotion,
+      erasure — sets it, transaction-local, to that version's root, read from
+      the version's row in round trip one; a reassignment between two nodes of
+      one subtree, held or not, only updates the rows' workarea and path;
+    - the FTS removal is checked to affect exactly one row, as `held_fts`
+      removals are ([held text containment](#held-text-containment)). Both rows
+      sit behind one fence under one setting, so a passing check shows the
+      embedding removal ran where its row is visible.
+
+    The policy reads the root's status, so the commit, which changes one
+    `workareas` row, makes every one of those rows matchable at scopes outside
+    in its own commit, with nothing proportional to the subtree inside the
+    chain lock ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1). A
+    query that forgets the boundary still sees nothing behind it — containment
+    by construction, the stance of
+    [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) d3. The policy's
+    per-row cost is unmeasured ([FR-4](../product/roadmap.md)).
+- **PoC form (decided, not built).** The PoC is to serve a scope inside an
+  in-progress subtree through one port method whose SQL takes the root and the
+  workareas where the key has unreviewed access, and to keep every recall
+  scoped outside off the subtree by a predicate; a port-contract test run
+  against both stores is to assert that a scope outside never returns a row
+  inside, whatever the query, and the code and README are to state the gap to
+  the designed form.
+
 ## Held text containment
 
-Held text is matched only through a read fenced to its author, never through
-the shared serving indexes
+Outside every in-progress subtree, held text is matched only through a read
+fenced to its author, never through the shared serving indexes
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d5) — the same
 containment-by-construction stance as the
 [simulation read predicate](#the-simulation-read-predicate): a forgotten
@@ -328,7 +432,9 @@ predicate fails toward invisibility.
   behind its held state. Its rows are `tsvector` entries, and the
   [erasure inventory](audit-and-lineage.md#the-erasure-inventory) lists the
   table on its own row.
-  `memories_fts` and `memory_embeddings` stay promoted-only.
+  `memories_fts` and `memory_embeddings` stay promoted-only outside every
+  in-progress subtree, and `held_fts` holds no row inside one: those rows are
+  indexed under [the in-progress fence](#the-in-progress-fence).
 - **PoC form (decided, not built).** The PoC, which stores bodies inline, is
   to match held text through one port method whose SQL hard-codes the state
   `held` and the author key set; a port-contract test run against both stores
@@ -438,6 +544,11 @@ and its reads follow one routing policy
   read-your-writes on an agent's own work is the one place staleness visibly
   breaks an agent's loop, and held rows are author-only anyway, so one routing
   rule buys the guarantee with no extra machinery.
+- **A recall that serves held claims of other keys inside an in-progress
+  subtree** routes as promoted-row recall does, below: those rows are not the
+  caller's own writes, so replication lag bounds them the same way. A caller
+  that needs its own writes at once also sends `include_own_held: true`, which
+  makes the request an own-held read.
 - **Promoted-row recall and get serve from the follower's local replica**, with
   staleness stated honestly: the bound is **replication lag, exposed as a
   follower metric** — never hidden, never assumed zero. One consequence said
@@ -466,6 +577,7 @@ digesting:
 | `kinds` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
 | `include_bodies` | the boolean, default `true` applied |
 | `include_own_held` | the boolean, default `false` applied |
+| `include_unreviewed` | the boolean, the scope's default applied: `true` when the key has [unreviewed access](#held-claims-inside-an-in-progress-workarea) on the scope node, else `false` |
 | `max_tokens` | the integer, `null` when absent |
 | `terms` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
 | `expand_terms` | the string, default `"none"` applied |
@@ -551,4 +663,7 @@ This page's decisions are registered as ADR-0013
 ([decision register](../adr/index.md)); own held rows in recall, held text
 containment, token budgets, the segment membership and order, and the read-log
 content are the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
-which would amend ADR-0013 d1, d2 and d5.
+which would amend ADR-0013 d1, d2 and d5. Held claims inside an in-progress
+workarea, `include_unreviewed` and the in-progress fence are the proposed
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md)'s, which would amend
+ADR-0013 d1 and d4 and ADR-0025 d4, d5, d8 and d9.

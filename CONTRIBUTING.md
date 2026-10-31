@@ -68,7 +68,8 @@ are the checklist every review holds a change against:
   scoped, re-verified form.
 - **Fixed vocabulary (d4).** One word per concept; a spelling in the "never" column of the
   table — ADR-0018 d4, with the rows the proposed
-  [ADR-0025](docs/adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add — is a defect
+  [ADR-0025](docs/adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add and the row the
+  proposed [ADR-0030](docs/adr/ADR-0030-in-progress-workareas.md) d13 adds — is a defect
   wherever it appears.
 - **One declaration site (d5).** Each rule, table or identifier family is declared on exactly
   one page and linked from everywhere else; a paraphrase on a second page is drift.
@@ -94,7 +95,7 @@ will fail the pull request.
 
 ## Spec versioning and tags
 
-The specification carries its own version, currently **0.2.0-design** (matching
+The specification carries its own version, currently **0.3.0-design** (matching
 `info.version` in [docs/api/openapi.yaml](docs/api/openapi.yaml)). The conventions:
 
 - **`spec-v0.1`** is tagged when implementation starts, freezing the design the build is held
