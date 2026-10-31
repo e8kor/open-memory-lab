@@ -234,7 +234,8 @@ accepts it.
 - Unverified: the tests run the verb against the real lead in process, not inside Claude Code.
   `claude plugin validate` checks the hook file's shape; that Claude Code runs the command and
   adds the context to a session is the hooks reference's statement, not a check in this
-  repository.
+  repository. The [roadmap](../product/roadmap.md) tracks it as FR-33, which closes on a recorded
+  session, on a named Claude Code version, that includes a run after a compaction.
 - Process: the record registers at its three points (this file, a [register](index.md) row and a
   `mkdocs.yml` nav entry); `llms.txt` names it; one [changelog](../changelog.md) entry records the
   change. On acceptance, and not before, this record's Status line and frontmatter `status`
