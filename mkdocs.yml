@@ -101,6 +101,7 @@ nav:
       - Test strategy: engineering/test-strategy.md
       - CI and toolchain: engineering/ci-and-toolchain.md
       - Benchmark harness: engineering/benchmark-harness.md
+      - Client SDKs: engineering/sdks.md
   - Decisions:
       - Index: adr/index.md
       - ADR template: adr/TEMPLATE.md

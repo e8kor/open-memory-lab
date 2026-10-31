@@ -67,6 +67,9 @@ docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <dreamer
     review verdict --memory <artifact_id> --approve
 ```
 
+Python and TypeScript clients for the HTTP API are in [sdks/python](sdks/python/README.md) and
+[sdks/typescript](sdks/typescript/README.md); they do not upload files yet.
+
 The compose credentials are for a laptop, and the server listens on the loopback interface only.
 The plugin and its tools are described in [plugins/oml](plugins/oml/README.md). Releases, their
 signatures and SBOMs are on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
