@@ -1,0 +1,47 @@
+Warning(s) encountered while generating. Client was generated, but some pieces may be missing
+WARNING parsing GET /v2/workareas within workareas.
+Cannot parse response for status code <openapi_python_client.schema.untrusted_string.UntrustedString object> (Could not find reference in parsed models or enums), response will be omitted from generated client
+{
+  "$ref": "#/components/schemas/Workarea"
+}
+WARNING parsing POST /v2/workareas within workareas.
+Cannot parse response for status code <openapi_python_client.schema.untrusted_string.UntrustedString object> (Could not find reference in parsed models or enums), response will be omitted from generated client
+{
+  "$ref": "#/components/schemas/Workarea"
+}
+WARNING parsing GET /v2/workareas/{workarea_id} within workareas.
+Cannot parse response for status code <openapi_python_client.schema.untrusted_string.UntrustedString object> (Could not find reference in parsed models or enums), response will be omitted from generated client
+{
+  "$ref": "#/components/schemas/WorkareaView"
+}
+WARNING parsing GET /v2/workareas/{workarea_id}/tree within workareas.
+Cannot parse response for status code <openapi_python_client.schema.untrusted_string.UntrustedString object> (Could not find reference in parsed models or enums), response will be omitted from generated client
+{
+  "$ref": "#/components/schemas/WorkareaPage"
+}
+WARNING parsing POST /v2/workareas/{workarea_id}/crew within workareas.
+Cannot parse response for status code <openapi_python_client.schema.untrusted_string.UntrustedString object> (Could not find reference in parsed models or enums), response will be omitted from generated client
+{
+  "$ref": "#/components/schemas/Workarea"
+}
+Unable to process schema /components/schemas/Workarea:
+Found conflicting enums named WorkareaStatus with incompatible values.
+Failure to process schema has resulted in the removal of:
+/components/schemas/Workarea
+/components/schemas/WorkareaPage
+{
+  "enum": [
+    "development",
+    "committed",
+    "validated"
+  ],
+  "type": "string"
+}
+Unable to process schema /components/schemas/WorkareaView:
+Reference <openapi_python_client.schema.untrusted_string.UntrustedString object> in allOf was not processed
+Failure to process schema has resulted in the removal of:
+/components/schemas/WorkareaView
+{
+  "$ref": "#/components/schemas/Workarea"
+}
+If you believe this was a mistake or this tool is missing a feature you need, please open an issue at https://github.com/openapi-generators/openapi-python-client/issues/new/choose

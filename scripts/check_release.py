@@ -1,4 +1,4 @@
-"""The release workflow ships one signed image index for both platforms.
+"""The release workflow ships one signed image index for both platforms, and the signed chart.
 
 Run by .github/workflows/ci.yml (job image). Holds .github/workflows/release.yml
 to docs/engineering/ci-and-toolchain.md "Release artifacts", failing with every
@@ -14,6 +14,11 @@ disagreement found:
 - every image build passes OML_BUILD_COMMIT and OML_BUILD_COMMIT_TIME, since the
   image context has no .git and /readyz names the build it serves
   (docs/api/http-api.md "Health").
+- a job needing the version job checks the chart's version against the tag,
+  packages deploy/helm/oml with `helm package` and signs the archive with
+  `cosign sign-blob`, and a job needing both it and the job that creates the
+  GitHub release uploads the archive and its signature bundle with
+  `gh release upload` (docs/adr/ADR-0033-interim-helm-chart.md d10).
 
 Dependencies: stdlib + PyYAML.
 """
@@ -31,6 +36,11 @@ BUILD_ACTION = "docker/build-push-action@"
 MATRIX_REF = re.compile(r"^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$")
 COSIGN_SIGN = re.compile(r"\bcosign\s+sign(?=\s)")
 BUILD_ARGS = ("OML_BUILD_COMMIT", "OML_BUILD_COMMIT_TIME")
+HELM_PACKAGE = re.compile(r"\bhelm\s+package\s+deploy/helm/oml\b")
+CHART_VERSION = re.compile(r"\bhelm\s+show\s+chart\s+deploy/helm/oml\b")
+COSIGN_SIGN_BLOB = re.compile(r"\bcosign\s+sign-blob\b[^\n]*\.tgz")
+RELEASE_CREATE = re.compile(r"\bgh\s+release\s+create\b")
+RELEASE_UPLOAD = re.compile(r"\bgh\s+release\s+upload\b")
 
 
 def main() -> int:
@@ -80,7 +90,60 @@ def main() -> int:
         elif inspect is not None and sign < inspect:
             errors.append(f"job {name}: signs the index before asserting its platforms")
 
+    check_chart(errors, jobs)
     return report(errors)
+
+
+def check_chart(errors: list[str], jobs: dict) -> None:
+    """The chart is packaged at the tag's version, signed, and attached to the release (ADR-0033 d10)."""
+    versions = {name for name, job in jobs.items() if "version" in job.get("outputs", {})}
+    packagers = {name: job for name, job in jobs.items() if step_matching(job, HELM_PACKAGE) is not None}
+    if not packagers:
+        errors.append("no job packages deploy/helm/oml with helm package, so the release carries no chart")
+        return
+    for name, job in packagers.items():
+        package = step_matching(job, HELM_PACKAGE)
+        compare = step_matching(job, CHART_VERSION)
+        sign = step_matching(job, COSIGN_SIGN_BLOB)
+        if not set(needs(job)) & versions:
+            errors.append(f"job {name}: packages the chart without needing the job that reads the tag's version")
+        if compare is None or compare > package:
+            errors.append(f"job {name}: does not check the chart's version against the tag before packaging it")
+        if sign is None or sign < package:
+            errors.append(f"job {name}: does not sign the chart archive with cosign sign-blob after packaging it")
+
+    creators = {name for name, job in jobs.items() if step_matching(job, RELEASE_CREATE) is not None}
+    uploaders = {
+        name: job
+        for name, job in jobs.items()
+        if any(RELEASE_UPLOAD.search(run) and ".tgz" in run for run in runs(job))
+    }
+    if not uploaders:
+        errors.append("no job uploads the chart archive to the GitHub release with gh release upload")
+    for name, job in uploaders.items():
+        upstream = ancestors(jobs, name)
+        if not upstream & creators:
+            errors.append(f"job {name}: uploads the chart without needing the job that creates the release")
+        if not upstream & set(packagers):
+            errors.append(f"job {name}: uploads the chart without needing the job that packages it")
+        if not any(RELEASE_UPLOAD.search(run) and ".sigstore.json" in run for run in runs(job)):
+            errors.append(f"job {name}: uploads the chart archive without its signature bundle")
+
+
+def step_matching(job: dict, pattern: re.Pattern) -> int | None:
+    return next((i for i, run in enumerate(runs(job)) if pattern.search(run)), None)
+
+
+def ancestors(jobs: dict, name: str) -> set[str]:
+    """Every job `name` needs, directly or through another job."""
+    found: set[str] = set()
+    todo = list(needs(jobs.get(name, {})))
+    while todo:
+        job = todo.pop()
+        if job not in found:
+            found.add(job)
+            todo.extend(needs(jobs.get(job, {})))
+    return found
 
 
 def steps(job: dict) -> list[dict]:
@@ -125,7 +188,10 @@ def report(errors: list[str]) -> int:
     for e in errors:
         print(f"release check: {e}", file=sys.stderr)
     if not errors:
-        print("release check: release.yml builds, merges and signs one index for linux/amd64 and linux/arm64")
+        print(
+            "release check: release.yml builds, merges and signs one index for linux/amd64 and linux/arm64,"
+            " and attaches the signed chart"
+        )
     return 1 if errors else 0
 
 

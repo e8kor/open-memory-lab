@@ -25,6 +25,11 @@ Field names and endpoint spellings are design identifiers: normative in shape, a
 spelling at implementation without a design change (the same caveat the
 [event catalog](../data/event-catalog.md) carries).
 
+Python and TypeScript clients are generated from [openapi.yaml](openapi.yaml), with hand-written
+wrappers for the key, idempotency keys, pagination and the error taxonomy; the generators, the
+wrappers and the rule that regenerates them on every change to this contract are decided on
+[client SDKs](../engineering/sdks.md).
+
 ## Two rings
 
 One keyed listener carries two **stability rings**
