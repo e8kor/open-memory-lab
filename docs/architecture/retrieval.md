@@ -2,7 +2,7 @@
 id: architecture/retrieval
 tier: engineering
 status: design draft for review · decided, not built
-answers: where reads are served from and in what order; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope
+answers: where reads are served from and in what order; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut
 -->
 
 # Retrieval: reads are served from Postgres, journalled
@@ -34,14 +34,23 @@ the Postgres scale ceiling that follows is a tracked FR in
 partition strategy), not a solved problem.
 
 Reads return **promoted rows only**, within the key's effective access
-([workareas.md](workareas.md)). Held rows are visible solely to their author
-through own-work status; demoted and erased rows are not served. This is R3
-made operational: the gate changed visibility, and the read path is where that
-visibility is enforced.
+([workareas.md](workareas.md)). Held rows are visible solely to their author —
+the calling key ([own](roles-and-keys.md#own)) — through own-work status, get,
+and recall with `include_own_held` ([own held rows in
+recall](#own-held-rows-in-recall)); demoted and erased rows are not served. This
+is R3 made operational: the gate changed visibility, and the read path is where
+that visibility is enforced.
 
 `self_signed` rows — the constitution's bounded development exception
-([workareas.md](workareas.md)) — are served only to reads scoped within their
-own workarea; no query scoped outside it returns them.
+([workareas.md](workareas.md)) — are served only to reads whose scope node is
+their own workarea: a recall, its steering segment or a listing scoped
+anywhere else, at an ancestor or at a descendant, never returns them, and an
+events tail shows their events only when its `workarea_id` is that workarea
+([events tail](../api/http-api.md#events-tail)). Get resolves no workarea and
+takes a row's own workarea as its implicit scope, so a non-own `self_signed`
+version is readable by id by a key with reader effective access on its own
+workarea, and by no other key
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3, d8).
 
 ## The serving tier
 
@@ -51,10 +60,24 @@ Two indexes over promoted rows, both in Postgres, both under tenant RLS:
   text.
 - **Vector search**: `memory_embeddings`, embeddings over promoted claim text.
 
+Of the rows they admit, the indexes hold every promoted version, superseded
+ones included. Which of them recall serves is the served-tip predicate of the
+[hits rule](#the-recall-ordering-contract-steering-rows-first-unranked), not
+index membership: it keeps superseded versions, retirement versions and every
+version of a retired claim
+([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip))
+out of the hits, so a ratified retirement, or a later supersession of one,
+changes no index row. Superseded versions are readable history under the same
+access, so the predicate hides nothing a reader may not see. Held rows never
+enter either index: a held row is matched only through the author-fenced read
+of [held text containment](#held-text-containment).
+
 Two kinds are excluded from both shared indexes by default: vocabulary rows
 (`term`, `term_mapping`, `vocab_release` — a 50k-term vocabulary must not
 drown a tenant's organic memories in every hybrid recall; a vocabulary
-workarea's policy may opt in, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md))
+workarea's journalled policy may opt in, and its vocabulary rows are then
+[hits](#the-recall-ordering-contract-steering-rows-first-unranked),
+[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md))
 and, when ADR-0020 lands, imported rows under its `index_policy` default. The
 exclusions mirror each other deliberately: reference data is fetch- and
 filter-served unless a journalled policy prices it into the shared indexes.
@@ -64,7 +87,10 @@ Recall accepts a `terms` filter (CURIE annotations, ADR-0021) and
 **materialized per-release `is_a` closure** before retrieval — a lookup, never
 a graph walk at query time. Expansion resolves per CURIE against the release
 pinned by the vocabulary that owns the expanded prefix; steering order, `k`
-and the token-budget row (FR-11) are untouched by expansion.
+and the [token budget](#token-budgets) are untouched by expansion. A server
+that does not yet serve `terms` or `expand_terms` refuses them by name with
+`request.validation`, never ignores them
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d16).
 
 ### Text handling
 
@@ -159,6 +185,50 @@ A recall result has two segments, in this order:
    order of a combined query — fusion weighting is an implementation choice
    inside this contract and is unmeasured like the rest of the tier).
 
+Membership and order of both segments are fixed
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d8):
+
+- **Applicable steering** for scope node N is every promoted, served-tip row
+  of kind `steering` that is not part of a retired claim, whose workarea is N
+  or an ancestor of N, within the key's reader effective access. A
+  descendant's steering belongs to another crew and does not apply at N. A
+  `self_signed` steering row applies only when N is its own workarea; it never
+  applies at a descendant scope.
+  Segment 1 is ordered structurally, never by the query: depth from the
+  `universe` root ascending, then `promoted_at` ascending, then `artifact_id`
+  ascending. Steering never appears among the hits, and the `kinds` filter
+  applies to hits only.
+- **Hits** are served tips (tip, state `promoted`) of kind `memory` or
+  `derived_fact` — plus, in a workarea whose journalled policy opts the
+  vocabulary kinds into the shared indexes
+  ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)), served tips of kind
+  `term`, `term_mapping` or `vocab_release` — never retirement versions, never
+  versions of retired claims, plus the caller's own held rows when it asks for
+  them ([below](#own-held-rows-in-recall)). A `self_signed` version is a hit
+  only when the scope node is its own workarea. The `kinds` filter names only
+  `memory` and `derived_fact`, as ADR-0021 d9 keeps it: a recall that sends it
+  narrows the hits to those kinds, and one that omits it also receives
+  opted-in vocabulary hits. The order is total: score descending,
+  then `artifact_id` ascending in byte order. The score is the store's fused
+  score; where a store ranks by full text alone, as the PoC does, it is to be
+  `ts_rank(to_tsvector('simple', body), plainto_tsquery('simple', query))`
+  with normalization 0, compared as `float4`; in the in-memory test store it
+  is the count of distinct query terms matched. Equal order across stores is
+  not asserted. A superseded version is never a hit; it stays fetchable by id
+  as history.
+- **Served tip**, in both bullets above: for a key in a simulation's
+  audience, a claim's served tip is its overlay tip for that simulation where
+  one exists and shadows the default tip
+  ([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)),
+  and the default tip it shadows is then neither a hit nor applicable steering
+  for that key; for every other key the served tip is the default tip
+  (`memories_served_tip`), and overlay tips are never served
+  ([the simulation read predicate](#the-simulation-read-predicate)).
+- **Determinism** holds over a fixed candidate list: the same candidates
+  always come back in the same order. Whether approximate vector search fixes
+  the candidate list for a given query is part of FR-4's measurement, not a
+  property this page claims.
+
 The contract is part of the API surface ([api/http-api.md](../api/http-api.md)
 and the MCP `recall` tool): clients may rely on segment order, and nothing a
 client sends re-ranks segment 1.
@@ -167,10 +237,164 @@ How the result is assembled is a hot-path rule, not an implementation accident
 ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d4): steering rows, hits
 and bodies hydrate in **one or two prepared statements, fetched set-wise, never
 one query per hit**; fusion of the FTS and vector candidate lists is computed
-in one pass, never a third query round; and the server-side token-budget
-truncation of [FR-11](../product/roadmap.md) is a performance feature as well
-as an ergonomics one — rows the budget cuts are never decrypted and never
-cross the wire.
+in one pass, never a third query round; and the server-side
+[token budget](#token-budgets) is a performance feature as well as an
+ergonomics one — rows the budget cuts are never decrypted and never cross the
+wire.
+
+## Own held rows in recall
+
+A recall with `include_own_held: true`
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d4) also takes
+as hit candidates the calling key's [own](roles-and-keys.md#own) rows that
+are:
+
+- in state `held`;
+- of kind `memory` or `derived_fact`, and not retirement versions;
+- in a workarea within subtree(scope) ∩ the key's reader effective access,
+  minus its global denials;
+- when a simulation row or sim-derived, only while the key is in that
+  simulation's audience ([own](roles-and-keys.md#own));
+- matched by the query;
+- admitted by the request's `kinds` filter when one is sent, as promoted hits
+  are.
+
+They are ranked by the same total order as promoted hits and interleaved in
+`hits`, each with `state: held` and `tip: false`, and they count against `k`
+and the [token budget](#token-budgets) exactly like promoted hits. A held
+successor carries `replaces`; the promoted tip it would replace stays among
+the hits until ratification, and the two are never deduplicated. Own held
+steering and own held retirement versions never enter recall — neither is in
+force — and own-work status and get reach them. `include_own_held` defaults to
+`false`, which is exactly the prior behaviour; no other key's result changes,
+and the recall ceiling stays reader on the scope, so a writer-only key reads
+its held rows through own-work status and get.
+
+Held rows have no embedding, so a held row's score is the fusion function
+evaluated with its full-text rank and no vector term: the vector component
+contributes exactly what an absent candidate list contributes under the fusion
+in use. Held and promoted candidates are then merged under the one total order
+— score descending, then `artifact_id` ascending in byte order — before the
+`k` cut, so, given the same scored candidates, the interleaving, the `k` cut,
+the budget cut and the read-log ids are a pure function of them: on one
+server, over a fixed candidate list, the same request always serves the same
+rows. Across servers they agree only where the scores agree, since fusion is
+an implementation choice. In the PoC both scores are to be
+`ts_rank` under the same `simple` configuration and `plainto_tsquery`, so they
+compare directly. Because a held row has no vector term, under any fusion in
+which an absent list contributes nothing and a vector match never lowers a
+score, it scores no higher than it would once promoted, so own held rows rank
+at or below their promoted rank; this affects only the author's own result,
+and how far below is unmeasured ([FR-4](../product/roadmap.md)). In cluster
+mode the request is an own-held read
+([reads in cluster mode](#reads-in-cluster-mode)).
+
+## Held text containment
+
+Held text is matched only through a read fenced to its author, never through
+the shared serving indexes
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d5) — the same
+containment-by-construction stance as the
+[simulation read predicate](#the-simulation-read-predicate): a forgotten
+predicate fails toward invisibility.
+
+- **Designed form (decided, not built).** A `held_fts` table holds one
+  `tsvector` row per held version, keyed by author key and workarea
+  ([data/postgres-schema.md](../data/postgres-schema.md#full-text-search-and-embeddings)).
+  Every transition into held inserts the row, in the commit that makes the
+  transition: the capture commit, with the `tsvector` computed from the NFC
+  plaintext before `BEGIN`; a [reopen](admission.md#reopening-a-rejection), and
+  a reassignment that re-enters held, with the `tsvector` computed on the
+  serving path under the same decrypt rule as get. Every transition out of held
+  — promotion, rejection and erasure among them — removes it in the commit
+  that makes the transition. A reassignment updates the row's `workarea_id` in
+  its own commit, so the read-access filter of
+  [own held rows in recall](#own-held-rows-in-recall) never reads a stale node,
+  and a reassignment that re-enters held removes the version from
+  `memories_fts` and `memory_embeddings` in that same commit. Besides tenant
+  RLS the table carries an author policy over the caller's own key set,
+  `author_key_id = ANY (string_to_array(current_setting('oml.own_key_ids'), ',')::uuid[])`:
+  `oml-server` sets `oml.own_key_ids` from the authenticated key and its
+  journalled `rotated_from` chain at the start of every transaction, never
+  from the client, so a session reads only the held rows of its
+  [own](roles-and-keys.md#own) keys and a rotated key still matches its
+  predecessor's. Under that policy a row the setting does not match is
+  skipped silently, so a forgotten predicate fails toward invisibility on
+  reads but toward retention on removals. Every commit that moves a version
+  out of held, or reassigns a held version, therefore checks that its
+  `held_fts` DELETE or UPDATE affected exactly one row, and the capture insert
+  checks that it inserted one; any other count aborts the commit with
+  `system.internal`, so the transition fails rather than leaving held text
+  behind its held state. Its rows are `tsvector` entries, and the
+  [erasure inventory](audit-and-lineage.md#the-erasure-inventory) lists the
+  table on its own row.
+  `memories_fts` and `memory_embeddings` stay promoted-only.
+- **PoC form (decided, not built).** The PoC, which stores bodies inline, is
+  to match held text through one port method whose SQL hard-codes the state
+  `held` and the author key set; a port-contract test run against both stores
+  is to assert that it never returns another key's row, whatever the query,
+  and the code and README are to state the gap to the designed form.
+
+## Token budgets
+
+This section is the single declaration site for recall budgets
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d6, d7).
+
+**The budget token.** The recall budget unit is the **budget token** under
+counter `oml-tc/1`: tokens(row) = ⌈`body_bytes` ÷ 4⌉, where `body_bytes` is the
+UTF-8 octet length of the row's NFC-normalized body — the clear integer the
+submission event journals: `submission.remember`, `submission.learn`, or
+`simulation.write` for a simulation row
+([event catalog](../data/event-catalog.md#submission-family)).
+Only the body text is counted, never ids, paths or metadata. The divisor 4 is a
+convention, not a measured ratio, and the count is not any model's tokenizer
+count; how far the two differ for real text is unmeasured —
+[FR-30](../product/roadmap.md). Clients convert with their own ratio from the
+per-row counts. Changing the function mints a new counter id; `oml-tc/1` never
+changes meaning.
+
+**Per-row counts.** Every served row carries `tokens`, whether or not a budget
+was sent: steering items, hits, get results and own-work listing items.
+
+**The parameter.** `max_tokens` is an integer from 1 to 2⁵³ − 1. The upper
+bound is the [read log](#the-read-log)'s: the request digest canonicalizes
+`max_tokens` under [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785), which
+serializes an integer exactly only below 2⁵³
+([chain format](../data/chain-format.md#the-signed-fields)), so a larger value
+is refused with `request.validation` rather than digested lossily. Absent,
+there is no budget and the response carries no `budget` object. `max_tokens`
+together with `include_bodies: false` is refused with `request.validation`:
+counting bodies that are not sent gives the caller a meaningless budget.
+
+**The cut.** Over the steering counts S, the `k`-capped ranked hit counts H
+(own held rows included when asked) and the budget M:
+
+1. s = ΣS. Steering is never cut.
+2. remaining = max(M − s, 0).
+3. The hits served are the longest prefix H[0..j) whose sum is at most
+   remaining. The first hit that does not fit ends the list: no skip-ahead to a
+   smaller later hit, and no partial body.
+4. truncated = (j < |H|).
+
+**The budget object.** `{max_tokens, counter: "oml-tc/1", steering_tokens: s,
+used_tokens: s + ΣH[0..j), truncated, hits_omitted: |H| − j, next_hit_tokens}`,
+where `next_hit_tokens` is tokens(H[j]), or null when nothing was cut.
+`used_tokens` exceeds `max_tokens` only when steering alone exceeds it, and the
+object shows that; steering past the budget is served whole, never refused,
+and only hits of 0 budget tokens — empty bodies — can follow it.
+
+**Worked example.** Steering [120], hits [300, 250, 90], M = 500: s = 120,
+remaining = 380; the first hit (300) fits, the second (250) does not, so the
+list ends there and the 90-token hit is not served. The answer serves one hit,
+with `used_tokens` 420, `truncated` true, `hits_omitted` 2, `next_hit_tokens`
+250.
+
+**What the cut costs.** `k` caps the candidates before the budget applies;
+counts come from `body_bytes` without decryption; rows the budget cuts are
+never hydrated, decrypted or sent, and the served rows hydrate in one set-wise
+statement ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d4). A strict
+prefix can serve zero hits when the top hit exceeds what remains of the
+budget; the budget object says so.
 
 ## Decrypt on serve
 
@@ -209,14 +433,15 @@ and its reads follow one routing policy
 ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d9):
 
 - **Own-held reads route to the lead and the primary.** A read of the caller's
-  own held rows, and any submit-then-get sequence, is served from the primary:
+  own held rows — a recall with `include_own_held: true` among them — and any
+  submit-then-get sequence, is served from the primary:
   read-your-writes on an agent's own work is the one place staleness visibly
   breaks an agent's loop, and held rows are author-only anyway, so one routing
   rule buys the guarantee with no extra machinery.
 - **Promoted-row recall and get serve from the follower's local replica**, with
   staleness stated honestly: the bound is **replication lag, exposed as a
   follower metric** — never hidden, never assumed zero. One consequence said
-  plainly: a supersede acknowledged by the lead may briefly serve the old tip
+  plainly: a supersession ratified on the lead may briefly serve the old tip
   from a lagging follower; the stated staleness bound covers exactly that
   window.
 - **The escape hatch is named, not built:** an LSN fence — the submit response
@@ -226,8 +451,31 @@ and its reads follow one routing policy
 
 ## The read log
 
-Every read is logged: key, role, workarea, the memory ids served (or the query
-digest for searches), timestamp. Design commitments:
+Every read is logged: key, role, workarea, the memory ids served, timestamp,
+and for a recall the request digest. A recall logs exactly the artifact ids
+served after the `k` and [budget](#token-budgets) cuts — own held ids included,
+since an author reading its own rows is still a read — never the candidate list
+before the cuts. `query_digest` is SHA-256 over the RFC 8785 JSON of an object
+whose members, listed below, are always present, with defaults applied before
+digesting:
+
+| Member | Value digested |
+|---|---|
+| `query` | the NFC-normalized string |
+| `k` | the integer, default 8 applied |
+| `kinds` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
+| `include_bodies` | the boolean, default `true` applied |
+| `include_own_held` | the boolean, default `false` applied |
+| `max_tokens` | the integer, `null` when absent |
+| `terms` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
+| `expand_terms` | the string, default `"none"` applied |
+| `scope` | the resolved node id |
+
+So two requests share a digest only when they differ solely in the order or
+repetition of `kinds` or `terms` entries, and one request gets one digest on
+every server; the served ids, logged beside it, record what each read
+returned ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d9).
+Design commitments:
 
 - **Outside the hash chain.** Read events go to `read_events`, a partitioned,
   retention-bounded log — not to the journal. Reads are orders of magnitude
@@ -300,4 +548,7 @@ review, not as a quiet extension of recall.
 ## Decision record
 
 This page's decisions are registered as ADR-0013
-([decision register](../adr/index.md)).
+([decision register](../adr/index.md)); own held rows in recall, held text
+containment, token budgets, the segment membership and order, and the read-log
+content are the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
+which would amend ADR-0013 d1, d2 and d5.

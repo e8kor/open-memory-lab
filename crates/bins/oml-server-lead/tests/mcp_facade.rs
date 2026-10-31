@@ -20,9 +20,13 @@ use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::IdGen as _;
 use oml_pg::PgStore;
 use oml_server_lead::{OsIds, lead_state, pg_ping};
-use oml_transport_http::mcp::{MCP_PROTOCOL_VERSION, SERVED_TOOLS};
+use oml_transport_http::mcp::{ARGUMENTS_OUTSIDE_THE_SCHEMA, MCP_PROTOCOL_VERSION, SERVED_TOOLS};
 
 const ENROLLMENT: &str = "enr_test_fixture_token";
+
+/// 2^53 − 1: the largest budget recall takes, the largest integer RFC 8785
+/// serializes exactly (chain-format.md, the signed fields).
+const MAX_TOKENS: u64 = 9_007_199_254_740_991;
 
 fn base_url() -> String {
     std::env::var("DATABASE_URL")
@@ -144,6 +148,19 @@ async fn call_tool(router: &Router, token: &str, id: u64, name: &str, args: Valu
 
 /// Bootstrap, one crew workarea, and a writer, dreamer and reader key on it.
 async fn crew(router: &Router) -> (String, String, String, Uuid) {
+    crew_with_writer_grants(router, &["writer"]).await
+}
+
+/// The crew of [`crew`] with its writer an agent that remembers and recalls
+/// on one key: a writer-role key admits reader grants (ADR-0025 d1).
+async fn agent_crew(router: &Router) -> (String, String, String, Uuid) {
+    crew_with_writer_grants(router, &["writer", "reader"]).await
+}
+
+async fn crew_with_writer_grants(
+    router: &Router,
+    writer_grants: &[&str],
+) -> (String, String, String, Uuid) {
     let (status, boot) = send(
         router,
         "POST",
@@ -168,22 +185,22 @@ async fn crew(router: &Router) -> (String, String, String, Uuid) {
     assert_eq!(status, StatusCode::CREATED, "{wa}");
     let crew = Uuid::parse_str(wa["id"].as_str().expect("workarea id")).expect("uuid");
     let mut keys = Vec::new();
-    for (role, principal) in [
-        ("writer", "crew/agent-7"),
-        ("dreamer", "crew/reviewer-3"),
-        ("reader", "crew/agent-recall"),
+    for (role, principal, grants) in [
+        ("writer", "crew/agent-7", writer_grants),
+        ("dreamer", "crew/reviewer-3", &["dreamer"][..]),
+        ("reader", "crew/agent-recall", &["reader"][..]),
     ] {
+        let grants: Vec<Value> = grants
+            .iter()
+            .map(|grant| json!({"workarea_node_id": crew, "role": grant}))
+            .collect();
         let (status, key) = send(
             router,
             "POST",
             "/v2/keys",
             Some(&admin),
             Some(&format!("issue-{role}")),
-            Some(&json!({
-                "role": role,
-                "principal": principal,
-                "grants": [{"workarea_node_id": crew, "role": role}],
-            })),
+            Some(&json!({"role": role, "principal": principal, "grants": grants})),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{key}");
@@ -381,10 +398,14 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
     assert_eq!(before["isError"], false, "{before}");
     assert_eq!(before["structuredContent"]["hits"], json!([]));
 
-    // The writer's key carries no read grant: the ring's typed refusal.
+    // The writer's key carries no read grant, so its scope is not readable:
+    // the ring's typed refusal, absence (ADR-0025 d1).
     let refused = call_tool(&router, &writer, 4, "oml_recall", recall.clone()).await;
     assert_eq!(refused["isError"], true, "{refused}");
-    assert!(refused["structuredContent"]["error"]["code"].is_string());
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"], "access.not_found",
+        "{refused}"
+    );
     assert!(refused["structuredContent"]["error"]["rule"].is_string());
 
     // A different identity ratifies over the HTTP API — never over MCP.
@@ -418,24 +439,145 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
     assert_eq!(hits[0]["state"], "promoted");
     assert_eq!(after["structuredContent"]["steering"], json!([]));
 
-    // The events tail shows the journal the loop wrote.
-    let tail = call_tool(
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_events_tail_accepts_scope_and_answers_events_head_seq_next_after_seq_idle() {
+    let (router, db) = fresh_router().await;
+    let (writer, dreamer, reader, crew) = crew(&router).await;
+    let held = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_remember",
+        json!({
+            "claim_key": "supplier-quote-am-7741",
+            "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
+            "idempotency_key": "crew-procure/run-1/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(held["isError"], false, "{held}");
+    let artifact = held["structuredContent"]["artifact_id"].clone();
+    let (status, served) = send(
+        &router,
+        "POST",
+        "/v2/review/next",
+        Some(&dreamer),
+        Some("n-1"),
+        Some(&json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    let (status, verdict) = send(
+        &router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(&dreamer),
+        Some("v-1"),
+        Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+
+    // An omitted after_seq starts from the beginning, as on the ring, and an
+    // omitted scope is the key's default workarea (ADR-0025 d15).
+    let whole = call_tool(
         &router,
         &reader,
-        6,
+        2,
         "oml_events_tail",
         json!({"limit": 200}),
     )
     .await;
-    assert_eq!(tail["isError"], false, "{tail}");
-    let items = tail["structuredContent"]["items"]
-        .as_array()
-        .expect("items");
-    assert!(!items.is_empty());
+    assert_eq!(whole["isError"], false, "{whole}");
+    let page = &whole["structuredContent"];
+    let head = page["head_seq"].as_u64().expect("head_seq");
+    assert_eq!(page["next_after_seq"].as_u64(), Some(head), "{page}");
+    assert_eq!(page["idle"], true, "{page}");
+    let events = page["events"].as_array().expect("events");
+    for event in events {
+        let mut fields: Vec<&str> = event
+            .as_object()
+            .expect("an event")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(
+            fields,
+            ["at", "event_type", "seq", "subject", "workarea"],
+            "hashes, signatures, payloads and identities are dropped: {event}"
+        );
+    }
+    let promote = events
+        .iter()
+        .find(|e| e["event_type"] == "lifecycle.promote")
+        .expect("the promote");
     assert_eq!(
-        tail["structuredContent"]["head_seq"],
-        items.last().expect("last")["seq"]
+        promote["subject"],
+        json!({"artifact_id": artifact, "claim_key": "supplier-quote-am-7741", "version": 1})
     );
+    assert_eq!(promote["workarea"], crew.to_string());
+    let created = events
+        .iter()
+        .find(|e| e["event_type"] == "workarea.create")
+        .expect("the crew's creation");
+    assert_eq!(created["subject"], json!({"workarea_id": crew.to_string()}));
+    assert_eq!(created["workarea"], crew.to_string());
+    assert!(
+        events
+            .iter()
+            .all(|e| e["event_type"] != "submission.remember"),
+        "another key's submission is not on this key's tail: {page}"
+    );
+
+    // scope is the ring's workarea_id: naming the default answers the same.
+    let scoped = call_tool(
+        &router,
+        &reader,
+        3,
+        "oml_events_tail",
+        json!({"scope": crew, "limit": 200}),
+    )
+    .await;
+    assert_eq!(scoped["structuredContent"], *page, "{scoped}");
+
+    // A page short of the head is not idle and resumes where its scan ended.
+    let first = call_tool(
+        &router,
+        &reader,
+        4,
+        "oml_events_tail",
+        json!({"after_seq": 0, "limit": 1}),
+    )
+    .await;
+    let first = &first["structuredContent"];
+    assert_eq!(
+        first["events"],
+        json!([]),
+        "the genesis is not on the content tail"
+    );
+    assert_eq!(first["next_after_seq"], 1, "{first}");
+    assert_eq!(first["idle"], false, "{first}");
+
+    // A scope outside read access and an after_seq past the head are the
+    // ring's refusals.
+    for (args, code) in [
+        (
+            json!({"scope": Uuid::from_u128(0xBEEF)}),
+            "access.not_found",
+        ),
+        (json!({"after_seq": head + 1}), "request.validation"),
+    ] {
+        let refused = call_tool(&router, &reader, 5, "oml_events_tail", args).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], code,
+            "{refused}"
+        );
+    }
 
     drop_db(&db).await;
 }
@@ -496,7 +638,7 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
         &writer,
         4,
         "tools/call",
-        json!({"name": "oml_my_work", "arguments": {}}),
+        json!({"name": "oml_graph", "arguments": {}}),
     )
     .await;
     assert_eq!(unbuilt["error"]["code"], -32602);
@@ -506,6 +648,1313 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
             .expect("message")
             .contains("not built yet")
     );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn tools_list_serves_exactly_the_eight_built_tools() {
+    let (router, db) = fresh_router().await;
+    let (writer, _, _, _) = crew(&router).await;
+
+    // The served subset of mcp-tools.json, in catalog order (ADR-0025 d12).
+    let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "oml_remember",
+            "oml_recall",
+            "oml_learn",
+            "oml_get",
+            "oml_supersede",
+            "oml_my_work",
+            "oml_workarea_info",
+            "oml_events_tail",
+        ]
+    );
+
+    // The other four catalog tools are named as not built, never unknown.
+    for (id, name) in (2..).zip(["oml_attach", "oml_relate_propose", "oml_graph", "oml_vocab"]) {
+        let body = rpc(
+            &router,
+            &writer,
+            id,
+            "tools/call",
+            json!({"name": name, "arguments": {}}),
+        )
+        .await;
+        assert_eq!(body["error"]["code"], -32602, "{body}");
+        let message = body["error"]["message"].as_str().expect("message");
+        assert!(message.contains("not built yet"), "{body}");
+        assert!(!message.contains("(R1)"), "{body}");
+    }
+
+    drop_db(&db).await;
+}
+
+/// The claim the supersession tests propose versions of.
+const CLAIM: &str = "supplier-quote-am-7741";
+const REVISED: &str =
+    "Accra Metals revised its aluminium price to 408 USD/t for Q1-2027 delivery, quote AM-7741-r2.";
+
+/// The writer remembers [`QUOTE`] as version 1 of [`CLAIM`] and the dreamer
+/// ratifies it; its `artifact_id`.
+async fn ratified(router: &Router, writer: &str, dreamer: &str) -> String {
+    remember_all(router, writer, &[(CLAIM, "memory", QUOTE)]).await;
+    approve_as(router, dreamer, "v1").await;
+    let work = call_tool(
+        router,
+        writer,
+        90,
+        "oml_my_work",
+        json!({"claim_key": CLAIM}),
+    )
+    .await;
+    let items = work["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(items.len(), 1, "{work}");
+    items[0]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned()
+}
+
+/// The artifact ids of an `oml_recall` result's hits, in rank order.
+fn hit_ids(result: &Value) -> Vec<&str> {
+    result["structuredContent"]["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .filter_map(|hit| hit["artifact_id"].as_str())
+        .collect()
+}
+
+#[tokio::test]
+async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_everyone_else() {
+    let (router, db) = fresh_router().await;
+    // The writer holds no reader grant: its own rows need none
+    // (roles-and-keys.md#own; ADR-0025 d3).
+    let (writer, dreamer, reader, crew) = crew(&router).await;
+    remember_all(&router, &writer, &[(CLAIM, "memory", QUOTE)]).await;
+    let work = call_tool(&router, &writer, 1, "oml_my_work", json!({})).await;
+    let id = work["structuredContent"]["items"][0]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+
+    // The author reads its held row back: the claim item with text,
+    // derives_from and attachments (mcp-plugin.md `oml_get`; ADR-0025 d12).
+    let got = call_tool(&router, &writer, 2, "oml_get", json!({"artifact_id": id})).await;
+    assert_eq!(got["isError"], false, "{got}");
+    let item = &got["structuredContent"];
+    assert_eq!(
+        fields(item),
+        vec![
+            "artifact_id",
+            "attachments",
+            "claim_key",
+            "created_at",
+            "derives_from",
+            "kind",
+            "promoted_at",
+            "replaces",
+            "retirement",
+            "state",
+            "text",
+            "tip",
+            "tokens",
+            "version",
+            "workarea",
+            "workarea_path",
+        ]
+    );
+    assert_eq!(item["state"], "held");
+    assert_eq!(item["tip"], false);
+    assert_eq!(item["text"], QUOTE);
+    assert_eq!(item["tokens"], tokens(QUOTE));
+    assert_eq!(item["workarea"], crew.to_string());
+    assert_eq!(item["derives_from"], json!([]));
+    assert_eq!(item["attachments"], json!([]));
+    // The item is what the ring's get answers, `body` named `text` and
+    // `workarea_id` named `workarea`.
+    let (status, ring) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories/{id}"),
+        Some(&writer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ring}");
+    for name in fields(item) {
+        let from = match name {
+            "text" => "body",
+            "workarea" => "workarea_id",
+            other => other,
+        };
+        assert_eq!(item[name], ring[from], "{name}");
+    }
+
+    // Everyone else gets absence: a held row of another key, an id naming
+    // no row and an id that can name none are indistinguishable.
+    let unknown = OsIds.new_id().to_string();
+    for (n, token, artifact_id) in [
+        (3, &reader, id.as_str()),
+        (4, &dreamer, id.as_str()),
+        (5, &writer, unknown.as_str()),
+        (6, &writer, "art_01JB2YN4P6R8TA1CW3EY5G7J9L"),
+    ] {
+        let refused = call_tool(
+            &router,
+            token,
+            n,
+            "oml_get",
+            json!({"artifact_id": artifact_id}),
+        )
+        .await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], "access.not_found",
+            "{refused}"
+        );
+    }
+
+    // Ratified, the row is any reader's to get, promoted and the tip.
+    approve_as(&router, &dreamer, "v1").await;
+    let got = call_tool(&router, &reader, 7, "oml_get", json!({"artifact_id": id})).await;
+    assert_eq!(got["isError"], false, "{got}");
+    assert_eq!(got["structuredContent"]["state"], "promoted");
+    assert_eq!(got["structuredContent"]["tip"], true);
+    assert_eq!(got["structuredContent"]["text"], QUOTE);
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified() {
+    let (router, db) = fresh_router().await;
+    let (writer, dreamer, reader, crew) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+
+    let proposed = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_supersede",
+        json!({
+            "artifact_id": v1,
+            "text": REVISED,
+            "reason": "supplier issued a revised quote",
+            "idempotency_key": "crew-procure/run-2/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(proposed["isError"], false, "{proposed}");
+    let receipt = &proposed["structuredContent"];
+    let v2 = receipt["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+    assert_eq!(
+        receipt,
+        &json!({
+            "artifact_id": v2,
+            "claim_key": CLAIM,
+            "version": 2,
+            "state": "held",
+            "retirement": false,
+            "replaces": {"artifact_id": v1, "version": 1},
+            "workarea": crew.to_string(),
+            "idempotent_replay": false,
+        })
+    );
+
+    // Held: every reader's recall still serves the target as the tip, and
+    // the successor is its author's alone to read back.
+    let recall = json!({"query": "aluminium price"});
+    let before = call_tool(&router, &reader, 2, "oml_recall", recall.clone()).await;
+    assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
+    let target = call_tool(&router, &reader, 3, "oml_get", json!({"artifact_id": v1})).await;
+    assert_eq!(target["structuredContent"]["tip"], true, "{target}");
+    let own = call_tool(&router, &writer, 4, "oml_get", json!({"artifact_id": v2})).await;
+    assert_eq!(own["structuredContent"]["state"], "held", "{own}");
+    assert_eq!(own["structuredContent"]["tip"], false, "{own}");
+    assert_eq!(own["structuredContent"]["text"], REVISED, "{own}");
+    assert_eq!(
+        own["structuredContent"]["replaces"],
+        json!({"artifact_id": v1, "version": 1})
+    );
+    assert_eq!(own["structuredContent"]["derives_from"], json!([v1]));
+    let hidden = call_tool(&router, &reader, 5, "oml_get", json!({"artifact_id": v2})).await;
+    assert_eq!(
+        hidden["structuredContent"]["error"]["code"], "access.not_found",
+        "{hidden}"
+    );
+
+    // A non-author ratifies: the tip moves, and the target stays readable
+    // as history.
+    approve_as(&router, &dreamer, "v2").await;
+    let after = call_tool(&router, &reader, 6, "oml_recall", recall).await;
+    assert_eq!(hit_ids(&after), [v2.as_str()], "{after}");
+    let old = call_tool(&router, &reader, 7, "oml_get", json!({"artifact_id": v1})).await;
+    assert_eq!(old["structuredContent"]["state"], "promoted", "{old}");
+    assert_eq!(old["structuredContent"]["tip"], false, "{old}");
+    let new = call_tool(&router, &reader, 8, "oml_get", json!({"artifact_id": v2})).await;
+    assert_eq!(new["structuredContent"]["state"], "promoted", "{new}");
+    assert_eq!(new["structuredContent"]["tip"], true, "{new}");
+
+    // The target is no longer the tip: the ring's refusal names the one to
+    // propose against.
+    let stale = call_tool(
+        &router,
+        &writer,
+        9,
+        "oml_supersede",
+        json!({"artifact_id": v1, "text": REVISED, "idempotency_key": "crew-procure/run-3/step-1"}),
+    )
+    .await;
+    assert_eq!(stale["isError"], true, "{stale}");
+    let error = &stale["structuredContent"]["error"];
+    assert_eq!(error["code"], "submission.tip_conflict", "{stale}");
+    assert_eq!(
+        error["details"]["current_tip"],
+        json!({"artifact_id": v2, "version": 2})
+    );
+
+    // A reader key proposes nothing (R1 on the ring).
+    let denied = call_tool(
+        &router,
+        &reader,
+        10,
+        "oml_supersede",
+        json!({"artifact_id": v2, "text": REVISED, "idempotency_key": "reader-1"}),
+    )
+    .await;
+    assert_eq!(
+        denied["structuredContent"]["error"]["code"], "access.verb_ceiling",
+        "{denied}"
+    );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_supersede_with_retirement_proposes_retiring_the_claim() {
+    let (router, db) = fresh_router().await;
+    let (writer, dreamer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+    let why = "Retired: quote AM-7741 lapsed on 2026-12-01 and was not renewed.";
+
+    let proposed = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_supersede",
+        json!({
+            "artifact_id": v1,
+            "text": why,
+            "retirement": true,
+            "idempotency_key": "crew-procure/run-2/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(proposed["isError"], false, "{proposed}");
+    let receipt = &proposed["structuredContent"];
+    assert_eq!(receipt["retirement"], true, "{receipt}");
+    assert_eq!(receipt["state"], "held", "{receipt}");
+    assert_eq!(receipt["version"], 2, "{receipt}");
+    assert_eq!(
+        receipt["replaces"],
+        json!({"artifact_id": v1, "version": 1})
+    );
+    let v2 = receipt["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+
+    // Proposed, not in force: the claim is served until a non-author
+    // ratifies the retirement.
+    let recall = json!({"query": "aluminium price"});
+    let before = call_tool(&router, &reader, 2, "oml_recall", recall.clone()).await;
+    assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
+
+    // Ratified, the claim is retired: recall serves nothing of it, and get
+    // answers every version as history (audit-and-lineage.md; ADR-0025 d11).
+    approve_as(&router, &dreamer, "v2").await;
+    let after = call_tool(&router, &reader, 3, "oml_recall", recall).await;
+    assert_eq!(after["structuredContent"]["hits"], json!([]), "{after}");
+    assert_eq!(after["structuredContent"]["steering"], json!([]), "{after}");
+    let old = call_tool(&router, &reader, 4, "oml_get", json!({"artifact_id": v1})).await;
+    assert_eq!(old["structuredContent"]["state"], "promoted", "{old}");
+    assert_eq!(old["structuredContent"]["tip"], false, "{old}");
+    let retirement = call_tool(&router, &reader, 5, "oml_get", json!({"artifact_id": v2})).await;
+    let item = &retirement["structuredContent"];
+    assert_eq!(item["state"], "promoted", "{retirement}");
+    assert_eq!(item["tip"], true, "{retirement}");
+    assert_eq!(item["retirement"], true, "{retirement}");
+    assert_eq!(item["text"], why, "{retirement}");
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn a_replayed_oml_supersede_is_an_idempotent_replay() {
+    let (router, db) = fresh_router().await;
+    let (writer, dreamer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+    let args = json!({
+        "artifact_id": v1,
+        "text": REVISED,
+        "idempotency_key": "crew-procure/run-2/step-1",
+    });
+
+    let first = call_tool(&router, &writer, 1, "oml_supersede", args.clone()).await;
+    assert_eq!(first["isError"], false, "{first}");
+    assert_eq!(first["structuredContent"]["idempotent_replay"], false);
+
+    // The same key and request: the stored response, flagged, and no
+    // second write — even once the target is no longer the tip (D13).
+    let mut expected = first["structuredContent"].clone();
+    expected["idempotent_replay"] = json!(true);
+    let replay = call_tool(&router, &writer, 2, "oml_supersede", args.clone()).await;
+    assert_eq!(replay["isError"], false, "{replay}");
+    assert_eq!(replay["structuredContent"], expected);
+    approve_as(&router, &dreamer, "v2").await;
+    let late = call_tool(&router, &writer, 3, "oml_supersede", args.clone()).await;
+    assert_eq!(late["isError"], false, "{late}");
+    assert_eq!(late["structuredContent"], expected);
+    let work = call_tool(
+        &router,
+        &writer,
+        4,
+        "oml_my_work",
+        json!({"claim_key": CLAIM}),
+    )
+    .await;
+    assert_eq!(
+        work["structuredContent"]["items"]
+            .as_array()
+            .expect("items")
+            .len(),
+        2,
+        "{work}"
+    );
+
+    // The same key with a different request is a typed refusal.
+    let mut changed = args;
+    changed["text"] = json!("Accra Metals revised its aluminium price to 405 USD/t.");
+    let mismatch = call_tool(&router, &writer, 5, "oml_supersede", changed).await;
+    assert_eq!(mismatch["isError"], true, "{mismatch}");
+    assert_eq!(
+        mismatch["structuredContent"]["error"]["code"], "idempotency.digest_mismatch",
+        "{mismatch}"
+    );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes() {
+    let (router, db) = fresh_router().await;
+    let (writer, dreamer, _, _) = crew(&router).await;
+    remember_all(
+        &router,
+        &writer,
+        &[(
+            CLAIM,
+            "term",
+            "aluminium: a light silvery-white metal, symbol Al.",
+        )],
+    )
+    .await;
+    let work = call_tool(&router, &writer, 1, "oml_my_work", json!({})).await;
+    let term = work["structuredContent"]["items"][0]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+    let propose = |id: u64, idem: &str| {
+        let (router, writer, term) = (&router, &writer, &term);
+        let args =
+            json!({"artifact_id": term, "text": "aluminium: element 13.", "idempotency_key": idem});
+        async move { call_tool(router, writer, id, "oml_supersede", args).await }
+    };
+
+    // Held, the term is no tip: the tip check answers before the
+    // vocabulary-kind check (ADR-0025 d10 step 5).
+    let held = propose(2, "term-1").await;
+    assert_eq!(
+        held["structuredContent"]["error"]["code"], "submission.tip_conflict",
+        "{held}"
+    );
+
+    // Ratified, it is refused on this tool, which carries no vocabulary
+    // fields (ADR-0025 d12) ...
+    approve_as(&router, &dreamer, "term").await;
+    let refused = propose(3, "term-2").await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"], "request.validation",
+        "{refused}"
+    );
+    assert!(
+        refused["structuredContent"]["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("HTTP API")),
+        "{refused}"
+    );
+
+    // ... and superseded on the HTTP API, held like any successor.
+    let (status, accepted) = send(
+        &router,
+        "POST",
+        &format!("/v1/memories/{term}/supersede"),
+        Some(&writer),
+        Some("term-3"),
+        Some(&json!({"body": "aluminium: element 13."})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    assert_eq!(accepted["state"], "held");
+    assert_eq!(accepted["replaces"]["artifact_id"], term.as_str());
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() {
+    let (router, db) = fresh_router().await;
+    let (status, boot) = send(
+        &router,
+        "POST",
+        "/v2/bootstrap/claim",
+        None,
+        None,
+        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{boot}");
+    let admin = boot["value"].as_str().expect("admin key").to_owned();
+    let root = boot["root_workarea_id"].as_str().expect("root").to_owned();
+    let (status, wa) = send(
+        &router,
+        "POST",
+        "/v2/workareas",
+        Some(&admin),
+        Some("wa-1"),
+        Some(&json!({
+            "parent_id": root,
+            "name": "metals-crew",
+            "crew": {"name": "metals-crew"},
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{wa}");
+    let crew = wa["id"].as_str().expect("workarea id").to_owned();
+    let issue = |idem: &'static str, role: &'static str, grants: Value| {
+        let (router, admin) = (&router, &admin);
+        async move {
+            let (status, key) = send(
+                router,
+                "POST",
+                "/v2/keys",
+                Some(admin),
+                Some(idem),
+                Some(&json!({"role": role, "principal": idem, "grants": grants})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{key}");
+            key["value"].as_str().expect("show-once value").to_owned()
+        }
+    };
+    let agent = issue(
+        "agent",
+        "writer",
+        json!([
+            {"workarea_node_id": crew, "role": "writer"},
+            {"workarea_node_id": crew, "role": "reader"},
+        ]),
+    )
+    .await;
+    let writer = issue(
+        "writer",
+        "writer",
+        json!([{"workarea_node_id": crew, "role": "writer"}]),
+    )
+    .await;
+    let unscoped = issue("unscoped", "reader", json!([])).await;
+
+    // Listed, and omitted workarea means the key's journalled default: the
+    // same answer as naming it, from one ring call.
+    let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
+    assert!(
+        listed["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|t| t["name"] == "oml_workarea_info"),
+        "{listed}"
+    );
+    let info = call_tool(&router, &agent, 2, "oml_workarea_info", json!({})).await;
+    assert_eq!(info["isError"], false, "{info}");
+    let view = &info["structuredContent"];
+    assert_eq!(
+        view,
+        &json!({
+            "id": crew,
+            "path": "universe.metals-crew",
+            "status": "development",
+            "crew": {"name": "metals-crew"},
+            "parent": root,
+            "children": [],
+            "edges": [],
+            "my_effective_verbs": [
+                "recall", "read", "graph_read", "events_tail",
+                "remember", "learn", "attach", "supersede",
+            ],
+            "permission_epoch": view["permission_epoch"],
+        })
+    );
+    assert!(view["permission_epoch"].is_u64(), "{view}");
+    let named = call_tool(
+        &router,
+        &agent,
+        3,
+        "oml_workarea_info",
+        json!({"workarea": crew}),
+    )
+    .await;
+    assert_eq!(&named["structuredContent"], view);
+
+    // A key with no default is refused by name; a node the key cannot read
+    // is absence, as on the ring; an unknown argument is validation.
+    for (id, token, args, code) in [
+        (4, &unscoped, json!({}), "request.workarea_unresolved"),
+        (5, &writer, json!({}), "access.not_found"),
+        (6, &agent, json!({"workarea": root}), "access.not_found"),
+        (
+            7,
+            &agent,
+            json!({"workarea_id": crew}),
+            "request.validation",
+        ),
+    ] {
+        let refused = call_tool(&router, token, id, "oml_workarea_info", args).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], code,
+            "{refused}"
+        );
+    }
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_not_it_has_a_default()
+ {
+    let (router, db) = fresh_router().await;
+    let (status, boot) = send(
+        &router,
+        "POST",
+        "/v2/bootstrap/claim",
+        None,
+        None,
+        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{boot}");
+    let bootstrap_admin = boot["value"].as_str().expect("admin key").to_owned();
+    // A second admin key: admin admits no grant role, so it has no grants
+    // and no default (roles-and-keys.md issuance order step 6).
+    let (status, second) = send(
+        &router,
+        "POST",
+        "/v2/keys",
+        Some(&bootstrap_admin),
+        Some("second-admin"),
+        Some(&json!({"role": "admin", "principal": "bob-admin", "grants": []})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    assert!(second["default_workarea_id"].is_null(), "{second}");
+    let second_admin = second["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+
+    // Step 1 of the refusal order needs no node, so it answers before the
+    // default resolves: both admin keys get the same code, and neither is
+    // told about its default workarea.
+    for (id, token) in [(1, &bootstrap_admin), (2, &second_admin)] {
+        let refused = call_tool(&router, token, id, "oml_workarea_info", json!({})).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], "access.verb_ceiling",
+            "{refused}"
+        );
+    }
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_my_work_pages_with_a_client_held_cursor() {
+    let (router, db) = fresh_router().await;
+    let (writer, _, reader, crew) = crew(&router).await;
+    let mut written = Vec::new();
+    for n in 1..=3_u64 {
+        let held = call_tool(
+            &router,
+            &writer,
+            n,
+            "oml_remember",
+            json!({
+                "claim_key": format!("supplier-quote-am-774{n}"),
+                "text": format!("Supplier Accra Metals quoted 41{n} USD/t."),
+                "idempotency_key": format!("crew-procure/run-1/step-{n}"),
+            }),
+        )
+        .await;
+        assert_eq!(held["isError"], false, "{held}");
+        written.push(held["structuredContent"]["artifact_id"].clone());
+    }
+    written.reverse();
+
+    // The first page, newest first, and a cursor the client holds.
+    let first = call_tool(&router, &writer, 4, "oml_my_work", json!({"limit": 2})).await;
+    assert_eq!(first["isError"], false, "{first}");
+    let page = &first["structuredContent"];
+    let items = page["items"].as_array().expect("items");
+    assert_eq!(
+        items
+            .iter()
+            .map(|i| i["artifact_id"].clone())
+            .collect::<Vec<_>>(),
+        written[..2]
+    );
+    // Claim items without text, from the ring's memory summary (ADR-0025 d12).
+    let mut fields: Vec<&str> = items[0]
+        .as_object()
+        .expect("item")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        vec![
+            "artifact_id",
+            "claim_key",
+            "created_at",
+            "held_expires_at",
+            "kind",
+            "promoted_at",
+            "replaces",
+            "retirement",
+            "state",
+            "tip",
+            "tokens",
+            "version",
+            "workarea",
+            "workarea_path",
+        ]
+    );
+    assert_eq!(items[0]["state"], "held");
+    assert_eq!(items[0]["tip"], false);
+    assert_eq!(items[0]["workarea"], crew.to_string());
+    assert_eq!(items[0]["workarea_path"], "universe.metals-crew");
+    assert_eq!(items[0]["tokens"], 10);
+    let cursor = page["next_cursor"]
+        .as_str()
+        .expect("a next page")
+        .to_owned();
+
+    // The cursor resumes where the page ended; the last page holds none.
+    let second = call_tool(
+        &router,
+        &writer,
+        5,
+        "oml_my_work",
+        json!({"limit": 2, "cursor": cursor}),
+    )
+    .await;
+    assert_eq!(second["isError"], false, "{second}");
+    let items = second["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(
+        items
+            .iter()
+            .map(|i| i["artifact_id"].clone())
+            .collect::<Vec<_>>(),
+        written[2..]
+    );
+    assert_eq!(second["structuredContent"]["next_cursor"], Value::Null);
+
+    // The filters pass through to the ring.
+    let one = call_tool(
+        &router,
+        &writer,
+        6,
+        "oml_my_work",
+        json!({"workarea": crew, "state": "held", "claim_key": "supplier-quote-am-7742"}),
+    )
+    .await;
+    let items = one["structuredContent"]["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{one}");
+    assert_eq!(items[0]["claim_key"], "supplier-quote-am-7742");
+
+    // Own work is the calling key's alone, and its cursor answers no other.
+    let theirs = call_tool(&router, &reader, 7, "oml_my_work", json!({})).await;
+    assert_eq!(theirs["isError"], false, "{theirs}");
+    assert_eq!(theirs["structuredContent"]["items"], json!([]));
+    let foreign = call_tool(
+        &router,
+        &reader,
+        8,
+        "oml_my_work",
+        json!({"cursor": cursor}),
+    )
+    .await;
+    assert_eq!(foreign["isError"], true, "{foreign}");
+    assert_eq!(
+        foreign["structuredContent"]["error"]["code"],
+        "request.validation"
+    );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_my_work_limit_is_at_most_200_as_on_the_ring() {
+    let (router, db) = fresh_router().await;
+    let (writer, _, _, _) = crew(&router).await;
+
+    // The served schema states the ring's page bound, so an agent never
+    // sends a limit the catalog admits and the ring refuses (ADR-0025 d12).
+    let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
+    let my_work = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "oml_my_work")
+        .expect("oml_my_work is served");
+    let limit = &my_work["inputSchema"]["properties"]["limit"];
+    assert_eq!(limit["minimum"], 1, "{limit}");
+    assert_eq!(limit["maximum"], 200, "{limit}");
+
+    let at_bound = call_tool(&router, &writer, 2, "oml_my_work", json!({"limit": 200})).await;
+    assert_eq!(at_bound["isError"], false, "{at_bound}");
+    let refused = call_tool(&router, &writer, 3, "oml_my_work", json!({"limit": 201})).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"], "request.validation",
+        "{refused}"
+    );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_recall_serves_steering_as_claim_items_with_text_and_no_score() {
+    let (router, db) = fresh_router().await;
+    let (writer, dreamer, reader, _crew) = crew(&router).await;
+    let rule = "Treat any supplier quote without an explicit validity date as expired.";
+    let held = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_remember",
+        json!({
+            "claim_key": "quote-validity",
+            "kind": "steering",
+            "text": rule,
+            "idempotency_key": "crew-procure/run-1/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(held["isError"], false, "{held}");
+    let (status, served) = send(
+        &router,
+        "POST",
+        "/v2/review/next",
+        Some(&dreamer),
+        Some("n-1"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    let (status, verdict) = send(
+        &router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(&dreamer),
+        Some("v-1"),
+        Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+
+    // The query misses the rule: steering applies by scope, and its item is
+    // a claim item with text, never ranked (mcp-plugin.md, the claim item).
+    let recall = call_tool(
+        &router,
+        &reader,
+        2,
+        "oml_recall",
+        json!({"query": "aluminium price"}),
+    )
+    .await;
+    assert_eq!(recall["isError"], false, "{recall}");
+    let steering = recall["structuredContent"]["steering"]
+        .as_array()
+        .expect("steering");
+    assert_eq!(steering.len(), 1, "{recall}");
+    let item = &steering[0];
+    assert_eq!(
+        item["artifact_id"],
+        held["structuredContent"]["artifact_id"]
+    );
+    assert_eq!(item["text"], rule, "{item}");
+    assert!(item.get("body").is_none(), "{item}");
+    assert!(item.get("score").is_none(), "{item}");
+    assert_eq!(recall["structuredContent"]["hits"], json!([]));
+
+    drop_db(&db).await;
+}
+
+/// Budget tokens under counter `oml-tc/1`: ⌈body_bytes ÷ 4⌉ of the NFC
+/// text, its byte length for the ASCII texts below (retrieval.md, token
+/// budgets; ADR-0025 d6).
+fn tokens(text: &str) -> u64 {
+    u64::try_from(text.len().div_ceil(4)).expect("a short text")
+}
+
+/// The dreamer approves the next `n` rows review serves it, whatever their
+/// order, over the review ring — never over MCP.
+async fn approve(router: &Router, dreamer: &str, n: usize) {
+    for i in 0..n {
+        approve_as(router, dreamer, &i.to_string()).await;
+    }
+}
+
+/// The dreamer approves the one row review serves it next, under
+/// idempotency keys tagged `tag`, over the review ring.
+async fn approve_as(router: &Router, dreamer: &str, tag: &str) {
+    let (status, served) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Some(dreamer),
+        Some(&format!("next-{tag}")),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    let (status, verdict) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(dreamer),
+        Some(&format!("verdict-{tag}")),
+        Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    assert_eq!(verdict["state"], "promoted", "{verdict}");
+}
+
+/// The agent remembers each `(claim_key, kind, text)` held, in order.
+async fn remember_all(router: &Router, agent: &str, rows: &[(&str, &str, &str)]) {
+    for (n, (claim_key, kind, text)) in (1_u64..).zip(rows) {
+        let held = call_tool(
+            router,
+            agent,
+            100 + n,
+            "oml_remember",
+            json!({
+                "claim_key": claim_key,
+                "kind": kind,
+                "text": text,
+                "idempotency_key": format!("crew-procure/run-1/step-{n}"),
+            }),
+        )
+        .await;
+        assert_eq!(held["isError"], false, "{held}");
+        assert_eq!(held["structuredContent"]["state"], "held", "{held}");
+    }
+}
+
+/// The sorted member names of a JSON object.
+fn fields(item: &Value) -> Vec<&str> {
+    let mut names: Vec<&str> = item
+        .as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+const STEERING: &str = "Treat any supplier quote without an explicit validity date as expired.";
+const QUOTE: &str =
+    "Accra Metals aluminium price is 412 USD/t for Q1-2027 delivery, quote AM-7741.";
+const ALLOY: &str =
+    "Tema Alloys aluminium price is 409 USD/t for Q1-2027 delivery, valid until 2026-12-15.";
+
+#[tokio::test]
+async fn oml_recall_takes_include_own_held_and_max_tokens_from_the_catalog_schema() {
+    let (router, db) = fresh_router().await;
+    let (agent, _, reader, _) = agent_crew(&router).await;
+
+    // tools/list advertises both inputs and the ring's k and max_tokens
+    // maxima, the latter the largest integer RFC 8785 digests exactly
+    // (retrieval.md token budgets; ADR-0025 d7, d12).
+    let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
+    let recall = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "oml_recall")
+        .expect("oml_recall is served");
+    let properties = &recall["inputSchema"]["properties"];
+    assert_eq!(properties["include_own_held"]["type"], "boolean");
+    assert_eq!(properties["include_own_held"]["default"], false);
+    assert_eq!(properties["max_tokens"]["type"], "integer");
+    assert_eq!(properties["max_tokens"]["minimum"], 1);
+    assert_eq!(properties["max_tokens"]["maximum"], MAX_TOKENS);
+    assert_eq!(properties["k"]["maximum"], 100);
+
+    remember_all(
+        &router,
+        &agent,
+        &[("supplier-quote-am-7741", "memory", QUOTE)],
+    )
+    .await;
+
+    // include_own_held: the author's held row joins the hits, flagged held;
+    // without it the recall serves promoted rows only, and no other key sees
+    // the row whatever it sends (ADR-0025 d4).
+    let own = call_tool(
+        &router,
+        &agent,
+        2,
+        "oml_recall",
+        json!({"query": "aluminium price", "include_own_held": true}),
+    )
+    .await;
+    assert_eq!(own["isError"], false, "{own}");
+    let hits = own["structuredContent"]["hits"].as_array().expect("hits");
+    assert_eq!(hits.len(), 1, "{own}");
+    assert_eq!(hits[0]["state"], "held", "{own}");
+    assert_eq!(hits[0]["tip"], false, "{own}");
+    assert_eq!(hits[0]["text"], QUOTE, "{own}");
+    let promoted_only = call_tool(
+        &router,
+        &agent,
+        3,
+        "oml_recall",
+        json!({"query": "aluminium price", "include_own_held": false}),
+    )
+    .await;
+    assert_eq!(promoted_only["isError"], false, "{promoted_only}");
+    assert_eq!(promoted_only["structuredContent"]["hits"], json!([]));
+    let theirs = call_tool(
+        &router,
+        &reader,
+        4,
+        "oml_recall",
+        json!({"query": "aluminium price", "include_own_held": true}),
+    )
+    .await;
+    assert_eq!(theirs["isError"], false, "{theirs}");
+    assert_eq!(theirs["structuredContent"]["hits"], json!([]));
+
+    // max_tokens reaches the ring's budget cut: the held row does not fit.
+    let budgeted = call_tool(
+        &router,
+        &agent,
+        5,
+        "oml_recall",
+        json!({"query": "aluminium price", "include_own_held": true, "max_tokens": 1}),
+    )
+    .await;
+    assert_eq!(budgeted["isError"], false, "{budgeted}");
+    assert_eq!(budgeted["structuredContent"]["hits"], json!([]));
+    assert_eq!(budgeted["structuredContent"]["budget"]["hits_omitted"], 1);
+    assert_eq!(
+        budgeted["structuredContent"]["budget"]["next_hit_tokens"],
+        tokens(QUOTE)
+    );
+
+    // Out of range is the ring's typed refusal, as on the HTTP API.
+    for (id, args) in [
+        (6, json!({"query": "aluminium price", "max_tokens": 0})),
+        (7, json!({"query": "aluminium price", "k": 101})),
+        (
+            8,
+            json!({"query": "aluminium price", "max_tokens": MAX_TOKENS + 1}),
+        ),
+    ] {
+        let refused = call_tool(&router, &agent, id, "oml_recall", args).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"], "request.validation",
+            "{refused}"
+        );
+    }
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_recall_steering_items_carry_text_and_tokens_not_body() {
+    let (router, db) = fresh_router().await;
+    let (agent, dreamer, _, crew) = agent_crew(&router).await;
+    remember_all(
+        &router,
+        &agent,
+        &[
+            ("quote-validity", "steering", STEERING),
+            ("supplier-quote-am-7741", "memory", QUOTE),
+        ],
+    )
+    .await;
+    approve(&router, &dreamer, 2).await;
+
+    let recall = call_tool(
+        &router,
+        &agent,
+        1,
+        "oml_recall",
+        json!({"query": "aluminium price"}),
+    )
+    .await;
+    assert_eq!(recall["isError"], false, "{recall}");
+    let result = &recall["structuredContent"];
+    let steering = result["steering"].as_array().expect("steering");
+    let hits = result["hits"].as_array().expect("hits");
+    assert_eq!(steering.len(), 1, "{recall}");
+    assert_eq!(hits.len(), 1, "{recall}");
+
+    // One claim-item shape: the base fields plus text, and a score on hits
+    // only — never the ring's body (mcp-plugin.md, the claim item; ADR-0025
+    // d12).
+    let base = [
+        "artifact_id",
+        "claim_key",
+        "created_at",
+        "kind",
+        "promoted_at",
+        "replaces",
+        "retirement",
+        "state",
+        "text",
+        "tip",
+        "tokens",
+        "version",
+        "workarea",
+        "workarea_path",
+    ];
+    assert_eq!(fields(&steering[0]), base, "{recall}");
+    let mut with_score = base.to_vec();
+    with_score.push("score");
+    with_score.sort_unstable();
+    assert_eq!(fields(&hits[0]), with_score, "{recall}");
+    assert!(hits[0]["score"].is_number(), "{recall}");
+
+    for (item, kind, claim_key, text) in [
+        (&steering[0], "steering", "quote-validity", STEERING),
+        (&hits[0], "memory", "supplier-quote-am-7741", QUOTE),
+    ] {
+        assert_eq!(item["kind"], kind, "{item}");
+        assert_eq!(item["claim_key"], claim_key, "{item}");
+        assert_eq!(item["text"], text, "{item}");
+        assert_eq!(item["tokens"], tokens(text), "{item}");
+        assert_eq!(item["version"], 1, "{item}");
+        assert_eq!(item["state"], "promoted", "{item}");
+        assert_eq!(item["tip"], true, "{item}");
+        assert_eq!(item["retirement"], false, "{item}");
+        assert_eq!(item["replaces"], Value::Null, "{item}");
+        assert_eq!(item["workarea"], crew.to_string(), "{item}");
+        assert_eq!(item["workarea_path"], "universe.metals-crew", "{item}");
+        assert!(item["created_at"].is_string(), "{item}");
+        assert!(item["promoted_at"].is_string(), "{item}");
+    }
+    assert!(result.get("budget").is_none(), "no max_tokens, no budget");
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_recall_under_max_tokens_returns_the_budget_object() {
+    let (router, db) = fresh_router().await;
+    let (agent, dreamer, _, _) = agent_crew(&router).await;
+    remember_all(
+        &router,
+        &agent,
+        &[
+            ("quote-validity", "steering", STEERING),
+            ("supplier-quote-am-7741", "memory", QUOTE),
+            ("supplier-quote-ta-0912", "memory", ALLOY),
+        ],
+    )
+    .await;
+    approve(&router, &dreamer, 3).await;
+    let text_of = |item: &Value| {
+        [QUOTE, ALLOY]
+            .into_iter()
+            .find(|text| item["text"] == *text)
+            .expect("one of the two memories")
+    };
+
+    let open = call_tool(
+        &router,
+        &agent,
+        1,
+        "oml_recall",
+        json!({"query": "aluminium price"}),
+    )
+    .await;
+    assert_eq!(open["isError"], false, "{open}");
+    let ranked = open["structuredContent"]["hits"]
+        .as_array()
+        .expect("hits")
+        .clone();
+    assert_eq!(ranked.len(), 2, "{open}");
+    assert!(
+        open["structuredContent"].get("budget").is_none(),
+        "no max_tokens, no budget: {open}"
+    );
+
+    // A budget that fits the steering and the first hit: steering whole and
+    // first, the longest rank prefix of hits, and the cut reported in the
+    // ring's budget object (retrieval.md, token budgets; ADR-0025 d7).
+    let first = tokens(text_of(&ranked[0]));
+    let max_tokens = tokens(STEERING) + first;
+    let budgeted = call_tool(
+        &router,
+        &agent,
+        2,
+        "oml_recall",
+        json!({"query": "aluminium price", "max_tokens": max_tokens}),
+    )
+    .await;
+    assert_eq!(budgeted["isError"], false, "{budgeted}");
+    let result = &budgeted["structuredContent"];
+    assert_eq!(result["steering"][0]["text"], STEERING, "{budgeted}");
+    let hits = result["hits"].as_array().expect("hits");
+    assert_eq!(hits.len(), 1, "{budgeted}");
+    assert_eq!(hits[0]["artifact_id"], ranked[0]["artifact_id"]);
+    assert_eq!(
+        result["budget"],
+        json!({
+            "max_tokens": max_tokens,
+            "counter": "oml-tc/1",
+            "steering_tokens": tokens(STEERING),
+            "used_tokens": max_tokens,
+            "truncated": true,
+            "hits_omitted": 1,
+            "next_hit_tokens": tokens(text_of(&ranked[1])),
+        })
+    );
+
+    drop_db(&db).await;
+}
+
+/// The refusal a tool answers when its arguments are not its input schema,
+/// as distinct from any refusal the ring answers to well-typed arguments.
+fn outside_the_input_schema(result: &Value) -> bool {
+    result["isError"] == true
+        && result["structuredContent"]["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with(ARGUMENTS_OUTSIDE_THE_SCHEMA))
+}
+
+/// A value of the type `schema` declares: the first enum member, an
+/// integer's minimum, one item of an array and every property of an object,
+/// so a closed nested argument is held to the catalog too.
+fn type_valid(schema: &Value, tag: &str) -> Value {
+    if let Some(first) = schema["enum"]
+        .as_array()
+        .and_then(|members| members.first())
+    {
+        return first.clone();
+    }
+    match schema["type"].as_str() {
+        Some("string") => json!(tag),
+        Some("integer") => json!(schema["minimum"].as_u64().unwrap_or(1)),
+        Some("boolean") => json!(true),
+        Some("array") => json!([type_valid(&schema["items"], tag)]),
+        Some("object") => Value::Object(
+            schema["properties"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(name, property)| (name.clone(), type_valid(property, tag)))
+                .collect(),
+        ),
+        other => panic!("no type-valid value for a schema of type {other:?}: {schema}"),
+    }
+}
+
+#[tokio::test]
+async fn every_advertised_input_property_is_accepted() {
+    let (router, db) = fresh_router().await;
+    let (agent, _, _, _) = agent_crew(&router).await;
+
+    // tools/list is the served subset of mcp-tools.json, so the server must
+    // never advertise a field its argument struct refuses (ADR-0025 d12).
+    let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
+    let mut id = 1;
+    for tool in listed["result"]["tools"].as_array().expect("tools") {
+        let name = tool["name"].as_str().expect("name");
+        let schema = &tool["inputSchema"];
+        let properties = schema["properties"].as_object().expect("properties");
+        let required = |id: u64| -> serde_json::Map<String, Value> {
+            schema["required"]
+                .as_array()
+                .expect("required")
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|p| {
+                    (
+                        p.to_owned(),
+                        type_valid(&properties[p], &format!("{p}-{id}")),
+                    )
+                })
+                .collect()
+        };
+        for (property, declared) in properties {
+            id += 1;
+            let mut args = required(id);
+            args.insert(
+                property.clone(),
+                type_valid(declared, &format!("{property}-{id}")),
+            );
+            let result = call_tool(&router, &agent, id, name, Value::Object(args)).await;
+            assert!(
+                !outside_the_input_schema(&result),
+                "{name} advertises {property} and refuses it: {result}"
+            );
+        }
+        // The control: a property the schema does not declare is refused as
+        // outside it, so the assertion above can fail.
+        id += 1;
+        let mut args = required(id);
+        args.insert("undeclared".to_owned(), json!(true));
+        let result = call_tool(&router, &agent, id, name, Value::Object(args)).await;
+        assert!(outside_the_input_schema(&result), "{name}: {result}");
+    }
 
     drop_db(&db).await;
 }

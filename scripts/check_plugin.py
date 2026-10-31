@@ -6,6 +6,8 @@ class of disagreement found:
 - the marketplace lists the plugin at a directory that has a manifest;
 - the plugin's version is the workspace version (Cargo.toml), so a release tag
   names one version for the image, the binaries and the plugin;
+- .mcp.json declares exactly one server, `oml`: one key does the agent's whole
+  loop (docs/api/mcp-plugin.md, "Wiring it into your agent"; ADR-0025);
 - every MCP entry targets the server's /mcp endpoint with a bearer key;
 - the skill and the plugin README name exactly the tools the server serves
   (SERVED_TOOLS in crates/transports/oml-transport-http/src/mcp.rs), and every
@@ -44,6 +46,8 @@ def main() -> int:
         )
 
     servers = json.loads((plugin_dir / ".mcp.json").read_text())["mcpServers"]
+    if list(servers) != ["oml"]:
+        errors.append(f".mcp.json declares {sorted(servers)}, not exactly the one server oml")
     for name, server in servers.items():
         if server.get("type") != "http" or not server.get("url", "").endswith("/mcp"):
             errors.append(f".mcp.json {name}: not an http entry ending in /mcp")

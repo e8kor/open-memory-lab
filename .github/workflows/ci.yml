@@ -2,8 +2,9 @@ name: CI
 
 # The merge gates of docs/engineering/ci-and-toolchain.md for the code, plus
 # the two end-to-end paths a user takes: the release binaries (the PoC demo
-# and the quickstart) and the docker profile (docker-compose.yml). Docs keep
-# their own gate in docs-checks.yml.
+# and the quickstart) and the docker profile (docker-compose.yml), and the
+# release image built and run on each of its platforms. Docs keep their own
+# gate in docs-checks.yml.
 
 on:
   pull_request:
@@ -92,7 +93,8 @@ jobs:
             grep -q 'enr_' "$state/stdout" 2>/dev/null && break
             sleep 0.2
           done
-          export OML_ENROLLMENT_TOKEN="$(grep -o 'enr_[0-9a-f]\{48\}' "$state/stdout" | head -1)"
+          OML_ENROLLMENT_TOKEN="$(grep -o 'enr_[0-9a-f]\{48\}' "$state/stdout" | head -1)"
+          export OML_ENROLLMENT_TOKEN
           OML_CLI=./target/release/oml OML_CLI_CREDENTIALS="$state/credentials" \
             bash scripts/quickstart.sh || { tail -n 50 "$state/stderr"; exit 1; }
 
@@ -111,6 +113,45 @@ jobs:
       - name: Stop
         if: always()
         run: docker compose down -v
+
+  image:
+    name: release image (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The release workflow's native runners (release.yml, job image).
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: matrix.platform == 'linux/amd64'
+        with:
+          python-version: "3.12"
+      - name: release.yml builds, merges and signs both platforms
+        if: matrix.platform == 'linux/amd64'
+        run: |
+          pip install pyyaml
+          python scripts/check_release.py
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: oml:ci
+      - name: The image's oml prints the workspace version
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          want="oml $(python3 -c 'import tomllib;print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')"
+          got="$(docker run --rm --platform "$PLATFORM" --entrypoint /usr/local/bin/oml oml:ci --version)"
+          echo "$PLATFORM: $got"
+          [ "$got" = "$want" ] || { echo "expected '$want'" >&2; exit 1; }
 
   deny:
     name: cargo deny

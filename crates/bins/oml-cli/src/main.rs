@@ -11,14 +11,13 @@
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
-use ed25519_dalek::VerifyingKey;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use oml_cli::client::{CallOpts, CliError, Client};
 use oml_cli::creds::{self, Credentials};
-use oml_cli::verify::{TailEvent, parse_verifying_key, verify_chain};
+use oml_cli::verify::parse_verifying_key;
 
 #[derive(Parser)]
 #[command(
@@ -56,6 +55,11 @@ enum Command {
     Keys {
         #[command(subcommand)]
         command: KeysCommand,
+    },
+    /// Global per-key denials: deny-wins across all of a key's grants.
+    Deny {
+        #[command(subcommand)]
+        command: DenyCommand,
     },
     /// Workarea tree verbs.
     Workareas {
@@ -119,7 +123,8 @@ struct KeysIssueArgs {
     /// agent | human | service
     #[arg(long, default_value = "agent")]
     held_by: String,
-    /// Workarea node the provider ring targets when a request names none.
+    /// Workarea node the provider ring targets when a request names none;
+    /// some grant must cover it. Omitted, the first grant's node.
     #[arg(long)]
     default_workarea: Option<Uuid>,
     /// Grant as <workarea-node-id>:<role>; repeatable.
@@ -130,6 +135,21 @@ struct KeysIssueArgs {
     principal: Option<String>,
     #[arg(long)]
     label: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum DenyCommand {
+    /// Create or extend the key's global deny object over a subtree. Distinct
+    /// from a per-grant deny; journalled as key.denied.
+    Set {
+        /// The key the denial binds.
+        key_id: Uuid,
+        /// The workarea node id whose subtree the key no longer reaches.
+        subtree: Uuid,
+        /// Why; the server accepts it and journals no reason.
+        #[arg(long)]
+        reason: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -208,15 +228,14 @@ struct SupersedeArgs {
 
 #[derive(Subcommand)]
 enum AuditCommand {
-    /// Pull the events tail and verify the chain per chain-format.md.
+    /// Verify the chain per chain-format.md from the chain export; refused
+    /// while the server serves none (the events tail is a filtered feed).
     VerifyChain(VerifyChainArgs),
 }
 
 #[derive(Args)]
 struct VerifyChainArgs {
-    /// Run the full-history verification from genesis. The PoC tail always
-    /// serves from seq 1, so this names the intent; both modes verify all
-    /// served events.
+    /// Run the full-history verification from genesis.
     #[arg(long)]
     genesis: bool,
     /// A deployment signing public key: 64 hex chars (the 32 raw ed25519
@@ -393,6 +412,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    key id : {}", field(&response, "key_id"));
                 println!("    key    : {}", field(&response, "value"));
                 println!("    role   : {}", field(&response, "role"));
+                println!("    default: {}", field(&response, "default_workarea_id"));
                 if let Some(grants) = response["grants"].as_array() {
                     for g in grants {
                         println!(
@@ -404,6 +424,34 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 }
                 println!();
                 println!("store this value now; the server keeps only its hash.");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Deny {
+            command:
+                DenyCommand::Set {
+                    key_id,
+                    subtree,
+                    reason,
+                },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let mut body = json!({ "workarea_node_id": subtree });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
+            let (_, response) =
+                client.post(&format!("/v2/keys/{key_id}/denials"), &body, &write_opts())?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "denial journalled — key {key_id} no longer reaches {} (epoch {})",
+                    field(&response, "workarea_node_id"),
+                    response["epoch"]
+                );
+                println!("  denial id : {}", field(&response, "denial_id"));
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -625,14 +673,18 @@ fn print_json(v: &Value) {
 // oml audit verify-chain
 // ---------------------------------------------------------------------------
 
-const EVENTS_PAGE: usize = 200; // the server's api.page_limit_max
-
+/// Live verification reads the chain export (`kind: chain`), the one
+/// surface that serves the whole per-tenant chain: the events tail is a
+/// filtered feed whose omitted events and nulled identities break
+/// recomputation (http-api.md events tail; ADR-0025 d15). This server serves
+/// no chain export yet, so after the local checks the verb refuses by name
+/// instead of reporting breaks it did not find.
 fn run_verify_chain(
     cli: &Cli,
     stored: &Credentials,
     args: &VerifyChainArgs,
 ) -> Result<ExitCode, CliError> {
-    let client = resolve(cli, stored)?;
+    resolve(cli, stored)?;
     let tenant = args
         .tenant
         .map(|t| t.to_string())
@@ -650,87 +702,15 @@ fn run_verify_chain(
              (chain-format.md, \"How the public key reaches an export recipient\")",
         ));
     }
-    let keys: Vec<VerifyingKey> = args
-        .signing_keys
-        .iter()
-        .map(|s| parse_verifying_key(s).map_err(CliError::Local))
-        .collect::<Result<_, _>>()?;
-
-    // Pull the whole tail, seq ascending (GET /v2/events pages by after_seq).
-    let mut events: Vec<TailEvent> = Vec::new();
-    let mut head_seq = 0_u64;
-    loop {
-        let after = events.last().map_or(0, |e| e.seq);
-        let (_, page) = client.get(&format!("/v2/events?after_seq={after}&limit={EVENTS_PAGE}"))?;
-        head_seq = page["head_seq"].as_u64().unwrap_or(head_seq);
-        let items = page["items"].as_array().cloned().unwrap_or_default();
-        let n = items.len();
-        for item in &items {
-            events.push(TailEvent::from_value(item).map_err(CliError::Local)?);
-        }
-        if n < EVENTS_PAGE {
-            break;
-        }
+    for key in &args.signing_keys {
+        parse_verifying_key(key).map_err(CliError::Local)?;
     }
-
-    let report = verify_chain(&tenant, &events, head_seq, &keys);
-    if cli.json {
-        print_json(&json!({
-            "tenant_id": report.tenant_id,
-            "events": report.events,
-            "head_seq": report.head_seq,
-            "head_hash": format!("sha256:{}", report.head_hash),
-            "verified": report.verified(),
-            "breaks": report.breaks,
-            "notes": report.notes,
-            "signing_keys": report
-                .key_events
-                .iter()
-                .map(|(fp, n)| json!({ "fingerprint": fp, "events_verified": n }))
-                .collect::<Vec<_>>(),
-        }));
-    } else {
-        let mode = if args.genesis {
-            "from genesis (full history)"
-        } else {
-            "from genesis"
-        };
-        println!("verifying tenant {tenant} {mode}…");
-        println!(
-            "  signing key set ({} key(s), fingerprints to confirm out of band):",
-            report.key_events.len()
-        );
-        for (fp, n) in &report.key_events {
-            println!("    {fp} — verified {n} event(s)");
-        }
-        for note in &report.notes {
-            println!("  note: {note}");
-        }
-        if report.verified() {
-            println!(
-                "  seq 1..{}: prev_hash links ok, sha-256 hashes ok, ed25519 signatures ok",
-                report.events
-            );
-            println!(
-                "chain verified. head: seq {}, hash sha256:{}",
-                report.head_seq, report.head_hash
-            );
-        } else {
-            for b in &report.breaks {
-                println!("  BREAK: {b}");
-            }
-            println!(
-                "chain verification FAILED — {} break(s) over {} event(s).",
-                report.breaks.len(),
-                report.events
-            );
-        }
-    }
-    Ok(if report.verified() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    })
+    let mode = if args.genesis { " from genesis" } else { "" };
+    Err(CliError::local(format!(
+        "live verification of tenant {tenant}{mode} reads the chain export (kind: chain), which \
+         this server does not serve yet; the events tail is a filtered feed, not a verification \
+         surface (http-api.md events tail)"
+    )))
 }
 
 // ---------------------------------------------------------------------------

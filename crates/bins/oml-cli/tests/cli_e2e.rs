@@ -1,9 +1,8 @@
 //! End to end: the real lead composition served over TCP (phase-4 harness
 //! pattern: throwaway database, `lead_state`, one router) driven only through
 //! the `oml` binary — bootstrap → issue → submit → review → approve → recall
-//! → verify-chain green. A journal cannot be tampered with over HTTP
-//! (append-only), so the tamper case runs the same binary against a stub
-//! server replaying a hand-corrupted events document.
+//! → verify-chain refused by name while no chain export is served (the
+//! verification vectors live in `vectors.rs`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -172,14 +171,12 @@ async fn full_ceremony_through_the_cli() {
             ],
         );
         assert_eq!(code, 0, "issue {role}: {log}");
-        response["value"]
-            .as_str()
-            .expect("show-once value")
-            .to_owned()
+        let field = |name: &str| response[name].as_str().expect(name).to_owned();
+        (field("value"), field("key_id"))
     };
-    let writer = issue("writer", "crew/agent-1");
-    let dreamer = issue("dreamer", "crew/reviewer-1");
-    let reader = issue("reader", "crew/recall-1");
+    let (writer, writer_id) = issue("writer", "crew/agent-1");
+    let (dreamer, _) = issue("dreamer", "crew/reviewer-1");
+    let (reader, _) = issue("reader", "crew/recall-1");
 
     // The two-key rule travels through the CLI as a typed refusal.
     let (code, envelope, log) = oml(
@@ -248,10 +245,10 @@ async fn full_ceremony_through_the_cli() {
         "recall finds the promoted claim: {recall}"
     );
 
-    // -- verify-chain: green under the deployment key, broken under another --
-    // The events tail is reader-scope (roles never nest), so the auditor's
-    // verbs run under the reader key.
-    let (code, report, log) = oml(
+    // -- verify-chain: the chain export is the one verification surface -----
+    // The events tail is a filtered feed (ADR-0025 d15), so live
+    // verification refuses by name while the server serves no chain export.
+    let (code, _, log) = oml(
         &server,
         &creds,
         Some(&reader),
@@ -263,28 +260,9 @@ async fn full_ceremony_through_the_cli() {
             &pubkey_hex,
         ],
     );
-    assert_eq!(code, 0, "verify-chain: {log}");
-    assert_eq!(report["verified"], true, "{log}");
-    assert_eq!(report["tenant_id"].as_str(), Some(tenant_id.as_str()));
-    assert!(report["events"].as_u64().expect("events") >= 6, "{log}");
-    assert_eq!(
-        report["signing_keys"][0]["events_verified"], report["events"],
-        "every event verified under the one deployment key: {log}"
-    );
-
-    let foreign = hex::encode(
-        SigningKey::from_bytes(&[9_u8; 32])
-            .verifying_key()
-            .to_bytes(),
-    );
-    let (code, report, log) = oml(
-        &server,
-        &creds,
-        Some(&reader),
-        &["audit", "verify-chain", "--signing-key", &foreign],
-    );
-    assert_eq!(code, 1, "a foreign key set fails verification: {log}");
-    assert_eq!(report["verified"], false, "{log}");
+    assert_eq!(code, 2, "verify-chain: {log}");
+    assert!(log.contains("chain export"), "{log}");
+    assert!(log.contains(tenant_id.as_str()), "{log}");
 
     // Without a key set the verifier refuses locally (exit 2): the chain
     // cannot vouch for its own key (chain-format.md key authentication).
@@ -301,46 +279,25 @@ async fn full_ceremony_through_the_cli() {
     let (code, _, log) = oml(&server, &creds, None, &["tenants", "create", "aurora"]);
     assert_eq!(code, 2, "operator tier out of slice: {log}");
 
-    // -- the tamper case: a stub replays a corrupted events document ---------
-    // Pull the genuine tail, corrupt one signed field, serve it verbatim.
-    let client = oml_cli::client::Client::new(server.clone(), Some(reader.clone()));
-    let (_, mut doc) = client
-        .get("/v2/events?after_seq=0&limit=200")
-        .expect("tail fetch");
-    doc["items"][2]["principal"] = Value::String("forged/principal".to_owned());
-    let stub_router = axum::Router::new().route(
-        "/v2/events",
-        axum::routing::get(move || {
-            let doc = doc.clone();
-            async move { axum::Json(doc) }
-        }),
-    );
-    let stub_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("stub bind");
-    let stub_addr = stub_listener.local_addr().expect("stub addr");
-    let stub_task = tokio::spawn(async move {
-        axum::serve(stub_listener, stub_router)
-            .await
-            .expect("stub serve");
-    });
-    let (code, report, log) = oml(
-        &format!("http://{stub_addr}"),
+    // -- deny set: a global per-key denial wins over the key's grant ----------
+    let (code, denial, log) = oml(
+        &server,
         &creds,
-        Some(&reader),
-        &["audit", "verify-chain", "--signing-key", &pubkey_hex],
+        None,
+        &["deny", "set", &writer_id, root, "--reason", "incident 44"],
     );
-    assert_eq!(code, 1, "a corrupted tail fails verification: {log}");
-    assert_eq!(report["verified"], false, "{log}");
-    let breaks = report["breaks"].as_array().expect("breaks");
-    assert!(
-        breaks
-            .iter()
-            .any(|b| b.as_str().unwrap_or("").starts_with("step 3")),
-        "the forged principal breaks the signature: {report}"
+    assert_eq!(code, 0, "deny set: {log}");
+    assert_eq!(denial["workarea_node_id"].as_str(), Some(root), "{log}");
+    assert!(denial["epoch"].as_u64().is_some(), "{log}");
+    let (code, envelope, log) = oml(
+        &server,
+        &creds,
+        Some(&writer),
+        &["submit", "--claim", "written after the denial"],
     );
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(envelope["error"]["code"], "access.not_found", "{log}");
 
-    stub_task.abort();
     server_task.abort();
     let _ = std::fs::remove_dir_all(&creds_dir);
     drop_db(&db_name).await;

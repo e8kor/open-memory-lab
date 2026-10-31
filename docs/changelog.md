@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design covers, and what each revision changed
+answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design cover, and what each revision changed
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design covers, and what ea
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.1.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.2.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -22,9 +22,173 @@ implementation milestone where it changes what the repository holds.
   contract — paths, request or response shapes, the error taxonomy, idempotency or pagination
   semantics — bumps the version in `docs/api/openapi.yaml`, and this page records the bump
   alongside the change that forced it.
-- **The repo is tagged `spec-vX.Y` at each published revision**, starting with `spec-v0.1` at
-  implementation start, so an implementation can state exactly which revision of the design it
-  was built against.
+- **The repo is tagged `spec-vX.Y` at each published revision whose records are accepted**,
+  starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
+  revision of the design it was built against; a revision carrying a `proposed` record is
+  tagged when that record is accepted.
+
+## 0.2.0-design
+
+### 2026-10-31 — The agent-only memory surface (implementation)
+
+An implementation milestone; no decision changes. The code now serves what
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md), accepted on 2026-10-31 with this build,
+decides for FR-10 and FR-11:
+
+- **Eight of the twelve tools.** The [agent plugin](api/mcp-plugin.md)'s catalog holds twelve
+  tools, and `tools/list` serves eight: `oml_remember`, `oml_learn`, `oml_recall`, `oml_get`,
+  `oml_supersede`, `oml_my_work`, `oml_workarea_info` and `oml_events_tail`. `oml_attach`,
+  `oml_relate_propose`, `oml_graph` and `oml_vocab` are named and answer not built (d12).
+- **One key.** Grant admissibility per key role, the four-step refusal order and effective access
+  computed on every verb, so a writer-role key with `wa:writer` and `wa:reader` grants remembers
+  and recalls (d1); issuance that carries grants and denies and discloses the value only after
+  the last `grant.issued` commits, and `POST /v2/keys/{key_id}/denials` (d2); "own" as the
+  authoring key (d3).
+- **Reading back, budgets and order.** `include_own_held` on recall (d4); the budget token under
+  counter `oml-tc/1` and the `max_tokens` cut with its `budget` object (d6, d7); applicable
+  steering ahead of the hits and a total hit order (d8); the ids served and the whole-request
+  digest that the read log will record, computed on every recall (d9).
+- **Versions.** Each claim version stores its ordinal, kind, NFC `body_bytes` and the version it
+  replaces, and a never-promoted rejection releases its `claim_key` (d6, d18); the tip moves only
+  at ratification, as one `lifecycle.supersede`, the author's retire-proposal is a supersession
+  carrying `retirement: true`, a supersede replays from its stored receipt, and a dreamer's edit
+  is a proposal (d10, d11). Migration `0005_claim_versions.sql` removes the PoC's `superseded`
+  status.
+- **Listings.** The own-work listing on `GET /v1/memories` (d13), the workarea read on
+  `GET /v2/workareas/{workarea_id}` (d14), and the events tail's per-family visibility with a
+  bounded scan answering `next_after_seq` (d15).
+- **The one-key plugin.** `plugins/oml/.mcp.json` declares the `oml` server alone, and
+  `scripts/check_plugin.py` fails if a second server appears; `OML_RECALL_KEY` is gone.
+  `scripts/quickstart.sh` issues one agent key and a dreamer key; it remembers, lists its own work
+  and recalls its own held row on the agent key, records an approving verdict with the dreamer
+  key, and recalls the promoted row on the agent key.
+- **The scenario.** `crates/bins/oml-server-lead/tests/agent_only_memory.rs` runs in
+  `cargo test --workspace`. No CI run has carried it yet, so FR-10 and FR-11 stay open on the
+  [roadmap](product/roadmap.md) until one passes; their rows then cite that run (ADR-0018 d3).
+- **The multi-arch image** is recorded in the release-image entry below.
+- **Bounds the ring already enforced, now declared.** Within 0.2.0-design,
+  `RecallRequest.max_tokens` and the budget object's echo of it declare a maximum of 2⁵³ − 1
+  ([retrieval](architecture/retrieval.md#token-budgets), d7, d9), and in
+  [mcp-tools.json](api/mcp-tools.json) `oml_recall`'s `max_tokens` and `oml_my_work`'s `limit`
+  declare the ring's maxima, 2⁵³ − 1 and 200. The served `oml_recall` entry now describes
+  full-text search, and `_meta.pending_design` names the hybrid search mode and the read log that
+  it does not serve yet (d12).
+- **Still unbuilt**, each stated in the README or a code comment: the designed `held_fts` (own
+  held recall reads through the author-predicated `recall_own_held` port method instead, d5); the
+  read log (d9); held-item expiry (`held_expires_at` is null); workarea edges (`edges` is `[]`);
+  grant add and revoke, and denial lift (d2); issuance idempotency; key rotation (`rotated_from`
+  is null) and expiry enforcement (an expiry on issuance is refused with `request.validation`,
+  d16); `api.cursor_ttl`, held as the code constant `CURSOR_TTL_SECS`, 3600 s, until settings
+  are built; the operator tier; the `in_progress` idempotency claim
+  ([http-api.md](api/http-api.md#idempotency)): the record is written in the commit's own
+  transaction, so a concurrent identical request answers the first attempt's receipt as a replay,
+  or, for a submit that read the `claim_key` after that attempt committed,
+  `submission.claim_key_conflict`, and never `idempotency.in_progress` (`IdempotencyPut` in
+  `crates/oml-app/src/ports.rs`); the chain export (`POST /v2/exports` with `kind: "chain"`,
+  [http-api.md](api/http-api.md#evidence-export)), and with it live `oml audit verify-chain`,
+  which refuses a live run by name since d15 made the events tail a filtered feed, not a
+  verification surface — the evidence export of M4 on the
+  [critical path](product/critical-path.md) owns it; and set-wise hydration of served rows: each
+  served row's readable `derives_from` ancestors, its `replaces` target and its workarea path are
+  read one row at a time, against ADR-0024 d4, at a cost that is unmeasured (FR-7, FR-25).
+
+### 2026-10-30 — `/readyz` names the build that answered (implementation)
+
+A page edit; no decision changes. [Health](api/http-api.md#health) now declares a `build` object
+on every `/readyz` response, ready or not: version, commit, commit time, build time, compiler,
+target and profile, each `unknown` when nothing could supply it. The `Ready` schema in
+[openapi.yaml](api/openapi.yaml) gains the `Build` schema. The image build has no git metadata,
+so the release workflow passes the commit and its time as build arguments, and
+`scripts/check_release.py` refuses a release workflow that does not. `SOURCE_DATE_EPOCH`, when
+set, fixes the reported build time so a pinned build stays reproducible. The stated cost: an
+unauthenticated probe now discloses the exact build.
+
+### 2026-10-30 — The release image for linux/amd64 and linux/arm64 (implementation)
+
+An implementation milestone; no decision changes. `.github/workflows/release.yml` now builds the
+image as [CI and toolchain](engineering/ci-and-toolchain.md) decides: one leg per platform on a
+native runner (`ubuntu-24.04`, `ubuntu-24.04-arm`), each pushed by digest with its own SBOM and
+provenance, then a merge job that assembles one index with `docker buildx imagetools create`,
+asserts both platforms are in it, and signs the index digest with `cosign sign --recursive`. The
+binary tarballs stay `x86_64-linux`, and the release notes say so. `ci.yml` gains an `image` job
+that builds the image for both platforms on every pull request and runs its `oml --version` on
+each, and `scripts/check_release.py` fails the pull request if `release.yml` stops building both
+platforms, assembling the index or signing its digest. No tag has run the new pipeline yet; the
+`v0.1.0` image is `linux/amd64` alone.
+
+### 2026-10-30 — the agent-only memory surface (ADR-0025)
+
+[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) decides the surface FR-10 and FR-11
+need and the access model it rests on. It amends ADR-0001 (d5), ADR-0008 (d4, d6), ADR-0010
+(d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2), ADR-0018 (d4) and ADR-0022
+(d4, d6), and each of those records' Status lines carries the back-pointer. Proposed on
+2026-10-30; accepted by the maintainer on 2026-10-31, with the build that implements it, and
+tagged `spec-v0.2`.
+
+- **Decided:** grant admissibility per key role and one four-step refusal order, so one
+  writer-role key with writer and reader grants remembers and recalls; issuance that carries
+  grants and denies and discloses the value only after the last grant commits; "own" as the
+  authoring key; `include_own_held` on recall, with held text matched only through an
+  author-fenced index; the budget token (counter `oml-tc/1`) and the `max_tokens` cut with a
+  `budget` object; applicable steering and a total hit order; a recall logs the ids served and a
+  digest of the whole request; supersession moves the tip only at ratification, by a
+  compare-and-set bound to the successor's workarea and `claim_key`, as one `lifecycle.supersede`,
+  with the authors of rival held successors kept off each other's review; the author's
+  retire-proposal as a supersession carrying `retirement: true`, open to the same keys as any
+  supersession; distinct version ordinals, so competing held successors coexist and the tip
+  compare-and-set decides between them; own read on the target version; a self-signed version
+  never replacing a reviewed tip (d17); the `claim_key` release after a never-promoted rejection
+  and the refusal of a reopen that would collide (d18); `simulation.write` journalling
+  `body_bytes`, `replaces` and `retirement` like every submission event; own simulation rows read
+  only inside the simulation's audience; `oml_get` and `oml_supersede` and one claim-item shape;
+  the own-work listing across every workarea the key wrote to; the workarea read with the caller's
+  children, effective verbs and permission epoch; per-family visibility on the events tail with a
+  bounded scan and `next_after_seq`, where a `lifecycle.*` event reaches readers only while the
+  version's latest move between held and promoted is a promotion, reaches its author in any case,
+  and names no reviewer, admin or claim workarea the key holds nothing on; a request digest over
+  method, route, path parameters and body, with supersede's idempotency record scoped to the key
+  alone, looked up before the target's readability so a committed supersession always replays, and
+  claimed only once the target is known readable, every target-dependent refusal ordered after
+  that; a `held_by: service` key refused every review-class verb; `derives_from` and `replaces`
+  served only as far as the caller can read; a successor's kind changing only within its class,
+  and nothing but its kind inherited from the target; a row-count check on every `held_fts`
+  removal; effective access computed on every request with no cache, so a revocation applies to
+  the key's next request served by the lead, and on follower-served reads after replication lag
+  (proposing to amend ADR-0008 d4 and d6); request bodies that refuse unknown fields.
+- **`info.version` 0.1.0-design → 0.2.0-design**, because `/v1` request and response shapes
+  change. No operation, error code, event type or claim state is added: the taxonomy and the
+  operation set are unchanged. The MCP catalog goes from ten tools to twelve.
+- **Roadmap:** FR-30 (the budget-token count against model tokenizers, unmeasured), FR-31 (the
+  `claim_key` collision, the version ordinal, the tenant-wide journal positions and the lineage
+  read's redacted ids as residual existence and count signals), FR-32 (a service key's grant
+  confers every verb of its role, not only the one act its job needs) and RS-17 (revising one's
+  own claim before its review) are opened. FR-10's exit criterion is reworded to the
+  retire-proposal ADR-0025 d11 decides, a supersession of the claim rather than a verb of its
+  own. FR-10 and FR-11 stay open until the agent-only-memory scenario passes in CI.
+- **The release image** is decided as one index for `linux/amd64` and `linux/arm64`, signed on the
+  index digest; a page edit, no decision change.
+- **Pages touched:** the [decision register](adr/index.md) (register row; D4, D6, D7, D9, D11,
+  D12, D13 and D14 cells), `mkdocs.yml`, [llms.txt](llms.txt), [openapi.yaml](api/openapi.yaml),
+  [HTTP API](api/http-api.md), [errors](api/errors.md), [the agent plugin](api/mcp-plugin.md),
+  [mcp-tools.json](api/mcp-tools.json) (the two new tools, `oml_my_work`, `oml_workarea_info` and
+  `_meta`, with `_meta.pending_design` naming what the served `oml_recall` and `oml_events_tail`
+  entries still lack; those entries gain only what the build already serves — the `k` maximum,
+  the `after_seq` default, and no `scope` on the tail),
+  [retrieval](architecture/retrieval.md), [roles and keys](architecture/roles-and-keys.md),
+  [workareas](architecture/workareas.md), [admission](architecture/admission.md),
+  [audit and lineage](architecture/audit-and-lineage.md),
+  [event catalog](data/event-catalog.md), [Postgres schema](data/postgres-schema.md),
+  [roadmap](product/roadmap.md), [CLI reference](cli/reference.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md), [upgrades](operations/upgrades.md),
+  [security](architecture/security.md), [configuration](operations/configuration.md)
+  (`auth.epoch_cache_bound` removed with the effective-access cache it bounded, which ADR-0025
+  rejects),
+  [commitments](product/commitments.md), [compliance](product/compliance.md),
+  [concepts](concepts.md), [the overview](index.md) and this page; outside `docs/`, `CONTRIBUTING.md`, `README.md` and
+  `plugins/oml/README.md` (version and tool counts).
+- **Not built.** Nothing above is implemented by this entry; the PoC's divergences are named in
+  ADR-0025's Context, and the code lands in later changes, each with its own entry. A
+  `spec-v0.2` tag follows the maintainer's acceptance.
 
 ## 0.1.0-design
 

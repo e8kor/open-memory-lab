@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0008-workarea-algebra
 tier: engineering
-status: accepted design
+status: accepted design · amended by ADR-0025
 answers: why workareas are one algebra — per-tenant universe tree, node-id grants, deny semantics, edges — rather than several separate objects
 -->
 
 # ADR-0008 — Workarea algebra: per-tenant universe tree, node-id grants, deny semantics, edges
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
 
 ## Context
 

@@ -5,8 +5,9 @@ name: Release
 # equal to the workspace version, ships:
 #   - oml-X.Y.Z-x86_64-linux.tar.gz (oml-server-lead + oml), its CycloneDX SBOM
 #     and a SHA-256 sum, each signed keyless with cosign;
-#   - ghcr.io/e8kor/open-memory-lab:X.Y.Z (and :latest), signed by digest, with
-#     buildx SBOM and provenance attestations;
+#   - ghcr.io/e8kor/open-memory-lab:X.Y.Z (and :latest), one image index for
+#     linux/amd64 and linux/arm64, each built on a native runner with buildx SBOM
+#     and provenance attestations, the index signed by digest;
 #   - the `oml` agent plugin, whose marketplace is this repository at the tag.
 # The verification command the release notes carry is the one that page
 # states; this file's path is the identity it pins.
@@ -82,18 +83,89 @@ jobs:
           path: dist/
 
   image:
-    name: container image
+    name: container image, ${{ matrix.platform }}
     needs: version
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Each platform on a native runner. Should ubuntu-24.04-arm not serve
+        # this repository, give the arm64 leg runner ubuntu-24.04: the QEMU
+        # step then emulates it (docs/engineering/ci-and-toolchain.md).
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: X64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: ARM64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: QEMU, only on a runner not native to the platform
+        if: runner.arch != matrix.arch
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+      # The image build has no .git, so the commit /readyz reports comes in
+      # as build arguments (Dockerfile; docs/api/http-api.md "Health").
+      - id: commit
+        run: echo "time=$(TZ=UTC git show -s --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)" >> "$GITHUB_OUTPUT"
+      # Pushed by digest, untagged: the merge job tags the index, never a leg.
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            OML_BUILD_COMMIT=${{ github.sha }}
+            OML_BUILD_COMMIT_TIME=${{ steps.commit.outputs.time }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          sbom: true
+          provenance: mode=max
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: image index, signed
+    needs: [version, image]
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
       id-token: write
-      attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.index.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -108,29 +180,37 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
-      - id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          sbom: true
-          provenance: mode=max
+      - name: Assemble the index from the per-platform digests
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # shellcheck disable=SC2046 # one -t per tag, one source per digest
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+      - id: index
+        name: Assert both platforms are in the index
+        run: |
+          DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq -r .digest)"
+          docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" \
+            | jq -e '[.manifests[].platform|select(.os=="linux")|.architecture]|(index("amd64")!=null and index("arm64")!=null)'
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - uses: sigstore/cosign-installer@v3
-      - name: Sign the image by digest
-        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+      # One signature on the index digest, and one on each platform image in it,
+      # so the cosign verify of the release notes covers both architectures.
+      - name: Sign the index by digest
+        env:
+          DIGEST: ${{ steps.index.outputs.digest }}
+        run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
   publish:
     name: GitHub release
-    needs: [version, binaries, image]
+    needs: [version, binaries, merge]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      DIGEST: ${{ needs.image.outputs.digest }}
+      DIGEST: ${{ needs.merge.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -155,11 +235,14 @@ jobs:
               claude plugin marketplace add ${{ github.repository }}
               claude plugin install oml@open-memory-lab
 
-          Image: \`${IMAGE}:${VERSION}\` (\`${IMAGE}@${DIGEST}\`)
+          Image: \`${IMAGE}:${VERSION}\` (\`${IMAGE}@${DIGEST}\`), one index for
+          linux/amd64 and linux/arm64. The binary tarball is x86_64-linux only; on arm64,
+          run the image.
 
           ## Verify
 
-          Every artifact here and the image are signed keyless by this release workflow:
+          Every artifact here and the image are signed keyless by this release workflow;
+          the image's signature is on the index digest, and each platform image is signed too:
 
               cosign verify \\
                 --certificate-oidc-issuer https://token.actions.githubusercontent.com \\

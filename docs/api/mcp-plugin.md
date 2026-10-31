@@ -2,7 +2,7 @@
 id: api/mcp-plugin
 tier: engineering
 status: design draft for review · decided, not built
-answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API
+answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape
 -->
 
 # The agent plugin: MCP over streamable HTTP
@@ -26,9 +26,15 @@ The machine-readable form of this catalog is
 [mcp-tools.json](mcp-tools.json) — the exact `tools/list` result payload:
 every tool's name, description and input schema. It is normative for the
 wire shape in the same relationship [http-api.md](http-api.md) has to
-[openapi.yaml](openapi.yaml): this page and that file describe the same ten
-tools, and a divergence between them is a documentation bug, not an
-ambiguity to interpret.
+[openapi.yaml](openapi.yaml): this page and that file describe the same twelve
+tools, and a divergence between them that `_meta.pending_design` does not
+list is a documentation bug, not an ambiguity to interpret. One ordering rule keeps the two honest while the
+build catches up: `tools/list` serves the subset of that file the server
+builds, so a served tool's entry changes only in the same change as the code
+that serves it — the server never advertises a field it refuses. Whatever
+this page decides for a served tool that its entry does not carry yet is
+stated here ahead of the file and listed under `_meta.pending_design` in
+[mcp-tools.json](mcp-tools.json).
 
 ## Transport: streamable HTTP, stateless
 
@@ -100,11 +106,14 @@ with spec revision, fetch date and verified client support.
 ## The verb ceiling: what this surface can never do (R1)
 
 **No promote, sign, demote, delete or admin verb exists on this surface.**
-Not refused — absent. The `tools/list` result is the entire surface, and it
-contains ten read-and-propose tools (nine at ADR-0014's writing; the tenth,
-[`oml_vocab`](#oml_vocab), is owned as a count change in ADR-0014's terms — the
-one non-zero default cost the vocabulary capability adds, ~100 tokens in every
-`tools/list`). There is no tool whose success changes
+Not refused — absent. The `tools/list` result is the entire surface, and the
+catalog holds twelve read-and-propose tools (nine at ADR-0014's writing; the
+tenth, [`oml_vocab`](#oml_vocab), is owned as a count change in ADR-0014's
+terms — the one non-zero default cost the vocabulary capability adds, ~100
+tokens in every `tools/list`; the eleventh and twelfth,
+[`oml_get`](#oml_get) and [`oml_supersede`](#oml_supersede), are owned as a
+count change by [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
+d12). There is no tool whose success changes
 what *other* keys can read, except by entering the admission pipeline as a
 held submission that an independent reviewer must ratify
 ([admission](../architecture/admission.md), R3).
@@ -186,8 +195,10 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
 | Tool | One line | Role class |
 |---|---|---|
 | [`oml_remember`](#oml_remember) | Submit a memory — held on arrival | writer |
-| [`oml_recall`](#oml_recall) | Search promoted memories in a subtree; steering first | reader |
+| [`oml_recall`](#oml_recall) | Search promoted memories in a subtree, optionally with the caller's own held rows and a budget; steering first | reader |
 | [`oml_learn`](#oml_learn) | Submit a derived fact with declared lineage — held on arrival | writer |
+| [`oml_get`](#oml_get) | Read one claim version by id | reader, or the calling key for its own rows |
+| [`oml_supersede`](#oml_supersede) | Propose a new version of a claim, or its retirement — held on arrival | writer (own claims); dreamer (propose) otherwise |
 | [`oml_attach`](#oml_attach) | Open or inspect a resumable upload session | writer |
 | [`oml_relate_propose`](#oml_relate_propose) | Propose a claim↔claim or workarea↔workarea edge | dreamer (propose) |
 | [`oml_my_work`](#oml_my_work) | Status of the caller's own submissions | any content role (own work only) |
@@ -195,6 +206,40 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
 | [`oml_graph`](#oml_graph) | Scoped claims-and-edges read; serialize, don't compute | reader |
 | [`oml_events_tail`](#oml_events_tail) | Poll journal events in scope, from a client-held cursor | reader |
 | [`oml_vocab`](#oml_vocab) | Resolve vocabulary terms: suggest, get, hierarchy, mappings — read-only | reader |
+
+## The claim item
+
+One shape describes a claim version wherever a tool returns one — recall's
+steering items and hits, `oml_get`, and `oml_my_work`'s items — so the three
+are interchangeable to an agent
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d12). Every field
+comes from the ring's `MemorySummary` and `Memory`
+([openapi.yaml](openapi.yaml)); the facade renames `body` to `text` and adds
+nothing else.
+
+| Field | Meaning |
+|---|---|
+| `artifact_id` | This version's id; each version of a claim has its own |
+| `claim_key` | The claim the version belongs to |
+| `version` | Its ordinal within the `claim_key` |
+| `kind` | `memory`, `derived_fact`, `steering`, or a vocabulary kind |
+| `state` | `held`, `promoted`, `demoted`, `rejected`, `erased` |
+| `tip` | Whether it is the claim's served tip for the calling key, audience-scoped: for a key in a simulation's audience the overlay tip, which shadows the default tip, and for every other key the default tip ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); a superseded version is `promoted` with `tip: false` |
+| `retirement` | True on a retirement version ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)) |
+| `replaces` | `{artifact_id, version}` of the version a supersession replaces; null for version 1, and null when the calling key cannot read the replaced version, under the same test as `derives_from` ([http-api](http-api.md#get-get-v1memoriesartifact_id)) |
+| `workarea` | The workarea node id; null when the calling key holds no role on the node, which only an own row an admin moved there can show ([naming a node](../architecture/roles-and-keys.md#own)) |
+| `workarea_path` | The derived path of that node; null wherever `workarea` is |
+| `tokens` | Budget tokens of the body under counter `oml-tc/1` — not any model's count ([retrieval](../architecture/retrieval.md#token-budgets)) |
+| `created_at` | When the version was written |
+| `promoted_at` | When it was ratified; null otherwise |
+
+Per tool, the item adds: `text` in [`oml_recall`](#oml_recall) and
+[`oml_get`](#oml_get); `score` on recall hits only; `held_expires_at` in
+[`oml_my_work`](#oml_my_work); `derives_from` and `attachments` in
+[`oml_get`](#oml_get). `derives_from` lists only the ancestors the calling
+key can read, as on the ring
+([http-api](http-api.md#get-get-v1memoriesartifact_id)). Recall steering
+items carry `text` and `tokens` like every other item, never a score.
 
 ---
 
@@ -279,11 +324,12 @@ review*, never *published*. (Rides `POST /v1/memories` — the provider ring.)
 }
 ```
 
-`claim_key` groups the versions of one claim; the caller supplies it, unique
-per workarea over non-erased claims (`submission.claim_key_conflict` on
-collision — [http-api.md](http-api.md)). Proposing a *new version* of an
-existing claim — supersession of the caller's own claim — is a writer verb on
-the [HTTP API](http-api.md) and is not in this v1 tool catalog.
+`claim_key` groups the versions of one claim; the caller supplies it, and
+when a new claim collides with an existing version of it
+(`submission.claim_key_conflict`) is declared on
+[audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
+Proposing a *new version* of an existing claim, or its retirement, is
+[`oml_supersede`](#oml_supersede).
 
 **Refusals** — writing without writer effective access on the node; writing
 into a `validated` (frozen) workarea or directly into `universe`; an unknown
@@ -304,11 +350,13 @@ an idempotency-key reuse with a different request; a banned author or source
 
 ## `oml_recall`
 
-Search promoted memories within a workarea subtree. FTS and vector search are
+Search promoted memories within a workarea subtree — and, on request, the
+caller's own held rows — under an optional budget. FTS and vector search are
 served from the Postgres serving tier, never the lake
 ([retrieval](../architecture/retrieval.md), D12). Every recall is logged to
-the read log: key, workarea, query digest, returned ids, timestamp. (Rides
-`POST /v1/memories/recall` — the provider ring.)
+the read log: key, workarea, the request digest, the ids served after
+truncation, timestamp ([retrieval](../architecture/retrieval.md#the-read-log)).
+(Rides `POST /v1/memories/recall` — the provider ring.)
 
 **Who may call:** keys with reader effective access on the scope.
 
@@ -318,7 +366,9 @@ the read log: key, workarea, query digest, returned ids, timestamp. (Rides
 {
   "query": "current aluminium quote Accra Metals validity",
   "scope": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
-  "k": 8
+  "k": 8,
+  "include_own_held": true,
+  "max_tokens": 500
 }
 ```
 
@@ -328,7 +378,17 @@ the key's grants. Either way the search covers that node's subtree intersected
 with the key's effective read access. Subtree scoping rides the derived-path
 filter column of the serving indexes
 ([retrieval](../architecture/retrieval.md#the-serving-tier)); hybrid
-FTS + vector is the only search mode.
+FTS + vector is the only search mode. `k` is at most 100, as on the ring.
+
+- `include_own_held` — **optional**, default `false`: the calling key's own
+  held rows that match join the hits, ranked in the same order and flagged
+  `state: held`; they count against `k` and the budget
+  ([retrieval](../architecture/retrieval.md#own-held-rows-in-recall)).
+- `max_tokens` — **optional**: a budget in budget tokens (counter `oml-tc/1`,
+  not a model's count), at most 2⁵³ − 1, as on the ring. Steering is never
+  cut; the hits served are the longest rank prefix that fits; the cut is
+  reported in `budget`
+  ([retrieval](../architecture/retrieval.md#token-budgets)).
 
 **Output** — the steering-first contract, visible in the shape itself:
 
@@ -337,9 +397,19 @@ FTS + vector is the only search mode.
   "steering": [
     {
       "artifact_id": "art_01JB2V8K3M6P9R2T5W8Z1CF4HQ",
+      "claim_key": "quote-validity-steering",
+      "version": 1,
       "kind": "steering",
-      "text": "Prefer quotes with an explicit validity date; treat undated quotes as expired.",
-      "workarea_path": "universe.procurement"
+      "state": "promoted",
+      "tip": true,
+      "retirement": false,
+      "replaces": null,
+      "workarea": "wa_01JB2WQ8S1U3W5Y7A9C2E4G6JL",
+      "workarea_path": "universe.procurement",
+      "tokens": 20,
+      "created_at": "2026-10-02T09:20:41Z",
+      "promoted_at": "2026-10-02T11:05:12Z",
+      "text": "Prefer quotes with an explicit validity date; treat undated quotes as expired."
     }
   ],
   "hits": [
@@ -347,29 +417,64 @@ FTS + vector is the only search mode.
       "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
       "claim_key": "supplier-quote-am-7741",
       "version": 1,
+      "kind": "memory",
       "state": "promoted",
-      "score": 0.83,
-      "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.",
+      "tip": true,
+      "retirement": false,
+      "replaces": null,
+      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
       "workarea_path": "universe.procurement.metals-crew",
+      "tokens": 26,
+      "created_at": "2026-10-27T13:58:20Z",
       "promoted_at": "2026-10-27T14:11:08Z",
-      "attachments": [
-        { "sha256": "9f2c41aa…", "media_type": "application/pdf", "size_bytes": 184233 }
-      ]
+      "score": 0.83,
+      "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
+    },
+    {
+      "artifact_id": "art_01JB2YN4P6R8TA1CW3EY5G7J9L",
+      "claim_key": "supplier-quote-am-7741",
+      "version": 2,
+      "kind": "memory",
+      "state": "held",
+      "tip": false,
+      "retirement": false,
+      "replaces": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "version": 1 },
+      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "workarea_path": "universe.procurement.metals-crew",
+      "tokens": 30,
+      "created_at": "2026-10-29T15:40:02Z",
+      "promoted_at": null,
+      "score": 0.79,
+      "text": "Supplier Accra Metals revised the quote to 408 USD/t for Q1-2027 delivery, valid until 2026-12-01. Quote ref AM-7741-r2."
     }
-  ]
+  ],
+  "budget": {
+    "max_tokens": 500,
+    "counter": "oml-tc/1",
+    "steering_tokens": 20,
+    "used_tokens": 76,
+    "truncated": false,
+    "hits_omitted": 0,
+    "next_hit_tokens": null
+  }
 }
 ```
 
 The contract (D12, declared in
 [retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)):
 **steering rows precede hits and are never ranked** — they carry no score and
-no position among the hits, however well or badly they match the query. Hits
-are promoted rows only; the caller's own held rows do not appear here
-(use [`oml_my_work`](#oml_my_work)). Recall quality and latency are
-unmeasured — [FR-4](../product/roadmap.md).
+no position among the hits, however well or badly they match the query, and a
+budget never cuts them. Hits are promoted served tips plus, with
+`include_own_held`, the caller's own held rows — here the caller's held
+version 2, listed beside the promoted version 1 it would replace; the two are
+never merged. Every item is a [claim item](#the-claim-item) with `text` and
+`tokens`; `budget` is present if and only if `max_tokens` was sent. Recall
+quality and latency are unmeasured — [FR-4](../product/roadmap.md).
 
 **Refusals** — scope outside the key's read access (same error as a
-nonexistent node, fail closed). Example:
+nonexistent node, fail closed); `max_tokens` with `include_bodies: false` on
+the ring, or any field the schema does not declare (`request.validation`).
+Example:
 
 ```json
 {
@@ -451,6 +556,161 @@ pass-through fields as on [`oml_remember`](#oml_remember). Example:
     "code": "access.not_found",
     "rule": "lineage targets must be readable by the submitting key (fail closed)",
     "message": "derives_from[1] names no artifact readable by this key",
+    "retryable": false
+  }
+}
+```
+
+## `oml_get`
+
+Read one claim version by id: the caller's own rows in any state, anyone
+else's promoted versions within read access. It is how an agent reads back
+what it wrote before review, and how it follows a `replaces` or
+`derives_from` pointer. (Rides `GET /v1/memories/{artifact_id}` — the
+provider ring.)
+
+**Who may call:** keys with reader effective access on the row's workarea; any
+tenant key except operator for its [own](../architecture/roles-and-keys.md#own)
+rows, with no grant needed (global denials still mask).
+
+**Input**
+
+```json
+{ "artifact_id": "art_01JB2YN4P6R8TA1CW3EY5G7J9L" }
+```
+
+**Output** — the [claim item](#the-claim-item) with `text`, `derives_from`
+and `attachments`:
+
+```json
+{
+  "artifact_id": "art_01JB2YN4P6R8TA1CW3EY5G7J9L",
+  "claim_key": "supplier-quote-am-7741",
+  "version": 2,
+  "kind": "memory",
+  "state": "held",
+  "tip": false,
+  "retirement": false,
+  "replaces": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "version": 1 },
+  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "workarea_path": "universe.procurement.metals-crew",
+  "tokens": 30,
+  "created_at": "2026-10-29T15:40:02Z",
+  "promoted_at": null,
+  "text": "Supplier Accra Metals revised the quote to 408 USD/t for Q1-2027 delivery, valid until 2026-12-01. Quote ref AM-7741-r2.",
+  "derives_from": ["art_01JB2XF2R7M9W4K6T8Y1QZ3VH5"],
+  "attachments": []
+}
+```
+
+Superseded versions, and every version of a retired claim, stay readable as
+history (`state: promoted`, `tip: false`). `derives_from` names only the
+ancestors this key can read, and `replaces` is null when the key cannot read
+the replaced version: a promoted version derived from its author's held row
+names that row in neither field. The lineage read on the HTTP API does name
+it, as a redacted bare id, so a reader learns that it exists and its id,
+never its content ([FR-31](../product/roadmap.md)).
+
+**Refusals** — `access.not_found` for anything the key may not read, a held
+row of another key included: unknown and unreadable are indistinguishable;
+`lifecycle.erased` for an erased version this key could read before its
+erasure, and `access.not_found` for any other erased version
+([errors](errors.md)).
+
+## `oml_supersede`
+
+Propose a new version of a claim, or with `retirement: true` propose retiring
+it. The new version is a submission like any other — **held on arrival**,
+scanned, served to a reviewer with the version it replaces — and the old
+version stays the served tip, in every reader's recall, until a non-author
+ratifies the new one
+([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
+Success here means *accepted for review*, never *in force*. (Rides
+`POST /v1/memories/{artifact_id}/supersede` — the provider ring.)
+
+**Who may call:** the supersede rule of
+[roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order),
+retirement included; no proposer is then its reviewer (R2).
+
+**Input**
+
+```json
+{
+  "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
+  "text": "Supplier Accra Metals revised the quote to 408 USD/t for Q1-2027 delivery, valid until 2026-12-01. Quote ref AM-7741-r2.",
+  "reason": "supplier issued a revised quote",
+  "idempotency_key": "crew-procure/run-4417/step-3"
+}
+```
+
+- `artifact_id` — the claim's current served tip; the new version lands in
+  that claim's workarea. A held version cannot be superseded
+  ([RS-17](../product/roadmap.md)), and a target of a vocabulary kind
+  (`term`, `term_mapping`, `vocab_release`) is refused on this tool with
+  `request.validation`; supersede it on the HTTP API.
+- `retirement` — **optional**, default `false`. `true` proposes retiring the
+  claim, and `text` then states why; what a retired claim serves is declared
+  on [audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip),
+  and the refusals on [the HTTP API](http-api.md#supersede-post-v1memoriesartifact_idsupersede).
+- `kind`, `derives_from`, `reason` — **optional** pass-through to the
+  supersede body; the target is in `derives_from` implicitly, and every named
+  id must be readable by the key. Omitted, `kind` is the target's; which kind
+  changes a successor may make is declared on
+  [audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
+  On this tool `kind` is limited to `memory`, `derived_fact` and `steering`,
+  and the tool carries none of the vocabulary fields, which is why a
+  vocabulary target is refused.
+- The tool takes no `attachments` or `terms`, and the successor inherits
+  neither from the target: only `kind` carries over, so a supersession made
+  here leaves the new version with no attachments and no CURIE annotations
+  ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)).
+- `simulation_id` / `simulated_time` — **optional** pass-through, exactly as
+  on [`oml_learn`](#oml_learn): required when the target or `derives_from`
+  touches a simulation row (`submission.simulation_id_required` otherwise),
+  and honored only for keys in that simulation's audience. A tainted
+  successor, once ratified, becomes the audience's overlay tip and never the
+  default tip
+  ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
+- `idempotency_key` — scoped to the calling key alone, whatever the target's
+  workarea; a retry returns the stored response and writes once, even after
+  the target stops being readable (D13,
+  [http-api](http-api.md#idempotency)).
+
+**Output**
+
+```json
+{
+  "artifact_id": "art_01JB2YN4P6R8TA1CW3EY5G7J9L",
+  "claim_key": "supplier-quote-am-7741",
+  "version": 2,
+  "state": "held",
+  "retirement": false,
+  "replaces": { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "version": 1 },
+  "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+  "idempotent_replay": false
+}
+```
+
+**Refusals** — `access.author_only` when a writer key targets a version
+another key authored — including a claim the key started whose tip another
+key's ratified version now holds; `access.not_found` for a target the key
+cannot read; `submission.tip_conflict` when the target is not the current tip, with
+`details.current_tip` when the key can read it — one hop to retry against;
+`workarea.frozen` on a `validated` workarea; `request.validation` for a
+`kind` that differs from the target's with `retirement: true`, a `term` on
+retirement, or a target of a vocabulary kind; `submission.simulation_id_required`
+when the target or `derives_from` touches a simulation row and no
+`simulation_id` is sent. Every refusal that depends on
+the target comes only after the target is known to be readable, in the order
+of the supersede rule. Example:
+
+```json
+{
+  "error": {
+    "code": "submission.tip_conflict",
+    "rule": "supersession targets the current served tip; the tip moves only at ratification",
+    "message": "art_01JB2XF2R7M9… is no longer the tip of supplier-quote-am-7741",
+    "details": { "current_tip": { "artifact_id": "art_01JB2Z3E5G7J9L2N4Q6S8UWA1C", "version": 3 } },
     "retryable": false
   }
 }
@@ -598,10 +858,11 @@ the closed set for workarea edges. Example:
 ## `oml_my_work`
 
 The caller's own submissions and where each stands: held, promoted, demoted,
-rejected, erased. This is the only view a writer has of its held rows — held content is
-invisible to everyone but its author and its reviewers until ratified (R3) —
-and the honest answer to "did my memory make it". (Rides the own-work
-listing, `GET /v1/memories?own=true` — the provider ring.)
+rejected, erased. It is the one view of its held rows a key has without a
+reader grant — held content is invisible to everyone but its author and its
+reviewers until ratified (R3) — and the honest answer to "did my memory make
+it". (Rides the own-work listing, `GET /v1/memories?own=true` — the provider
+ring.)
 
 **Who may call:** any reader, writer, dreamer or admin key; the result is
 scoped to the calling key's own submissions by construction. Operator keys
@@ -617,7 +878,14 @@ are refused — the operator never writes, reads or reviews content.
 }
 ```
 
-Both filters optional; omit them for everything the key wrote, newest first.
+Every filter is optional. `workarea` is a subtree filter; omitted, the listing
+covers every workarea the key wrote to, minus its globally denied subtrees.
+It must name a node the key holds some role on, else `access.not_found`,
+indistinguishable from a node that does not exist
+([http-api.md](http-api.md#search-get-v1memories)).
+`claim_key` lists the versions of one claim. Omit them all for everything the
+key wrote, newest first ([http-api.md](http-api.md#search-get-v1memories)).
+`limit` is at most 200, as on the ring.
 
 **Output**
 
@@ -630,7 +898,14 @@ Both filters optional; omit them for everything the key wrote, newest first.
       "version": 1,
       "kind": "derived_fact",
       "state": "held",
-      "submitted_at": "2026-10-29T16:02:51Z",
+      "tip": false,
+      "retirement": false,
+      "replaces": null,
+      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "workarea_path": "universe.procurement.metals-crew",
+      "tokens": 36,
+      "created_at": "2026-10-29T16:02:51Z",
+      "promoted_at": null,
       "held_expires_at": "2026-11-05T16:02:51Z"
     },
     {
@@ -639,18 +914,27 @@ Both filters optional; omit them for everything the key wrote, newest first.
       "version": 1,
       "kind": "memory",
       "state": "promoted",
-      "submitted_at": "2026-10-27T13:58:20Z",
-      "promoted_at": "2026-10-27T14:11:08Z"
+      "tip": true,
+      "retirement": false,
+      "replaces": null,
+      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "workarea_path": "universe.procurement.metals-crew",
+      "tokens": 26,
+      "created_at": "2026-10-27T13:58:20Z",
+      "promoted_at": "2026-10-27T14:11:08Z",
+      "held_expires_at": null
     }
   ],
   "next_cursor": null
 }
 ```
 
-`held_expires_at` reflects the workarea's review policy object (held-item
-expiry, [admission](../architecture/admission.md#review-policy-objects)): the
-gate fails closed, so an item nobody reviews in time does not silently
-promote. The tool returns no reviewer identity and no verdict reasoning —
+Items are [claim items](#the-claim-item) without `text`. `held_expires_at`
+reflects the workarea's review policy object (held-item expiry,
+[admission](../architecture/admission.md#review-policy-objects)): the gate
+fails closed, so an item nobody reviews in time does not silently promote. It
+comes from the ring's memory summary, never from the facade (ADR-0014 d1), and
+a build without held-item expiry answers null. The tool returns no reviewer identity and no verdict reasoning —
 the decision trail belongs to the evidence export, an admin surface.
 
 **Refusals** — an operator key:
@@ -671,7 +955,7 @@ the decision trail belongs to the evidence export, an admin surface.
 One workarea as the calling key is allowed to see it: identity, derived path,
 status, crew record, immediate structure, and — the part an agent actually
 needs before writing — the verbs this key's effective access carries there.
-(Rides `GET /v2/workareas/{id}` and its sibling reads — the lab ring.)
+(Rides `GET /v2/workareas/{id}`, one call — the lab ring.)
 
 **Who may call:** keys with reader effective access on the node.
 
@@ -681,8 +965,10 @@ needs before writing — the verbs this key's effective access carries there.
 { "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
 ```
 
-`workarea` is **optional**: omitted, the tool describes the key's default
-workarea (ADR-0022 d4).
+`workarea` is **optional**: omitted, the facade takes the key's journalled
+default workarea from the authenticated key record (ADR-0022 d4) and makes the
+same one call; a key with no default is refused with
+`request.workarea_unresolved`.
 
 **Output**
 
@@ -701,10 +987,16 @@ workarea (ADR-0022 d4).
     { "id": "wa_01JB2Y5R7T9V2X4Z6BD8FH1KM3", "path_leaf": "q1-2027", "status": "development" }
   ],
   "edges": [
-    { "label": "continues", "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX", "state": "ratified" }
+    {
+      "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
+      "from": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND",
+      "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX",
+      "label": "continues",
+      "state": "ratified"
+    }
   ],
-  "my_effective_verbs": ["recall", "read", "graph_read", "remember", "learn", "attach"],
-  "permission_epoch": 41
+  "my_effective_verbs": ["recall", "read", "graph_read", "events_tail", "remember", "learn", "attach", "supersede"],
+  "permission_epoch": 815
 }
 ```
 
@@ -714,8 +1006,16 @@ workarea (ADR-0022 d4).
 entirely ([the status ladder](../architecture/workareas.md#the-status-ladder-d8)).
 The crew record is recorded, not operated — OML stores it and journals its
 changes; the crew is managed elsewhere. `my_effective_verbs` is a derived
-answer, reproducible from journalled grants at the stated permission epoch;
-children and edges outside the key's read scope are absent, not marked.
+answer — the union, over the grant roles effective on the node, of the
+[effective-verbs table](../architecture/roles-and-keys.md#effective-verbs) —
+reproducible from journalled grants at the stated permission epoch
+([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)).
+It states the access conferred, not what this server build serves;
+`tools/list` states that. Children are ordered by `path_leaf` ascending in
+byte order, then `id`; edges, in either direction, by `edge_id` ascending,
+and an edge's `edge_id` is the one [`oml_events_tail`](#oml_events_tail)
+reports. Children and edges outside the key's read scope are absent, not
+marked.
 
 **Refusals** — a node outside read scope, same `access.not_found` error as
 [`oml_recall`](#oml_recall), fail closed.
@@ -787,10 +1087,14 @@ losing the stored sequence means re-reading, never a gap the server must
 repair. (Rides `GET /v2/events` — the lab ring.)
 
 **Who may call:** keys with reader effective access; `scope` is optional
-(omitted, the key's default workarea — ADR-0022 d4), and the tail is filtered to
-events whose subject the key could read. R3 applies to the stream exactly as
-to reads: another writer's held submission does not appear here before
-promotion — the tail cannot be used to watch the review queue from outside.
+(omitted, the key's journalled default workarea — ADR-0022 d4 — and a key with
+none is refused with `request.workarea_unresolved`), and the tail is filtered
+to the events the key may see under the per-family visibility rule declared on
+[http-api.md](http-api.md#events-tail). R3 applies to the stream exactly as to
+reads: another writer's held submission never appears here — a key sees only
+its own `submission.*` and `simulation.write` events — and no review or key-administration event
+appears at all, so the tail cannot be used to watch the review queue from
+outside.
 
 **Input**
 
@@ -802,8 +1106,9 @@ promotion — the tail cannot be used to watch the review queue from outside.
 }
 ```
 
-Omit `after_seq` to start from the newest events (the response says where
-you are); event types and payload shapes are owned by the
+Omit `after_seq` to start from the beginning (0), as on the ring; an agent
+that wants to start from now passes the `head_seq` of a first call. Event
+types and payload shapes are owned by the
 [event catalog](../data/event-catalog.md).
 
 **Output**
@@ -822,24 +1127,49 @@ you are); event types and payload shapes are owned by the
       "seq": 423,
       "event_type": "workarea.relate_ratified",
       "at": "2026-10-29T16:52:30Z",
-      "subject": { "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P" }
+      "subject": { "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P", "from": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND", "to": "wa_01JB2V0B2D4F6H8K1M3P5R7TVX" },
+      "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND"
     }
   ],
   "head_seq": 431,
-  "idle": false
+  "next_after_seq": 431,
+  "idle": true
 }
 ```
 
-Sequence numbers are the per-tenant journal sequence (D1): gaps in a filtered
-tail are normal — they are the events this key may not see — and order is
-the chain's order, so two agents tailing the same scope see the same events
-in the same order. The cost of poll-over-push is stated above under
+`next_after_seq` is the resume point declared on
+[http-api.md](http-api.md#events-tail); pass it back verbatim as `after_seq`.
+`idle` is true when it has reached `head_seq`. Each event carries `subject` —
+`{artifact_id, claim_key, version}` for `lifecycle.*`, `submission.*` and
+`simulation.write` (for `lifecycle.supersede` the new version, for
+`lifecycle.tip_override` the version that becomes the tip), `{edge_id, from,
+to}` for `workarea.relate_*`, `{workarea_id}` for every other `workarea.*` —
+and `workarea`, always present, naming the in-scope workarea: the subject's
+workarea; for `workarea.relate_*`, the edge's `from` endpoint when it lies
+within the scope's subtree, else its `to` endpoint; for `lifecycle.reassign`,
+`to_workarea_id` when `re_enters_held` is false and that workarea satisfies a
+clause that makes the event visible (the reader clause, with reader on it
+within the scope's subtree, or the author clause, with it within the scope's
+subtree minus global denials), else
+`from_workarea_id`. Any node the
+[naming rule](../architecture/roles-and-keys.md#own) withholds from the key is
+null, so an author-only event on a version an admin moved where the key holds
+nothing carries `workarea: null`. Hashes, signatures, payloads and every
+identity are dropped. Sequence numbers are the per-tenant journal sequence (D1): gaps in a
+filtered tail are normal — they are the events this key may not see — and
+order is the chain's order, so two keys with equal access see the same
+`lifecycle.*` and `workarea.*` events in the same order; each additionally
+sees only its own `submission.*` and `simulation.write` events and, under the
+author clause, the `lifecycle.*` events of its own versions. `seq` and `head_seq` count every
+event in the tenant's journal, so the gaps tell a key how many events it
+cannot see occurred, and when — a count, never content
+([FR-31](../product/roadmap.md)). The cost of poll-over-push is stated above under
 [transport](#transport-streamable-http-stateless): reaction latency is the
 polling interval, by design in v1.
 
-**Refusals** — scope outside read access (`access.not_found`); a malformed or
-foreign `after_seq` value is a typed `request.validation` refusal, never a
-silent restart from zero.
+**Refusals** — scope outside read access (`access.not_found`); a malformed
+`after_seq`, or one beyond `head_seq`, is a typed `request.validation`
+refusal, never a silent restart from zero.
 
 ## `oml_vocab`
 
@@ -940,11 +1270,16 @@ Operational notes:
   [CLI](../cli/reference.md)); attribution, review independence and the
   collusion statistics depend on it. Keep the key in the environment, never
   in the config file you commit.
-- **Role fits the job.** A recalling agent gets a key with reader grants; a
-  writing agent, writer grants (plus reader scope where it must also recall);
-  a proposing agent, dreamer(propose). A reviewing crew member does not use
-  this plugin for its verdicts — verdicts live on the
-  [HTTP API](http-api.md) behind the serve ceremony.
+- **One key does the agent's whole loop.** An agent that writes and recalls
+  holds one writer-role key with a writer grant and a reader grant on its
+  workarea, and that workarea as its default
+  ([grant admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)):
+  it remembers, recalls with its own held rows, reads back, supersedes,
+  proposes retirement, lists its own work and tails its events through the
+  one `oml` entry above. A recall-only agent gets a reader key; a proposing
+  agent, dreamer(propose). A reviewing crew member does not use this plugin
+  for its verdicts — verdicts live on the [HTTP API](http-api.md) behind the
+  serve ceremony.
 - **Retry with intent.** Put a stable `idempotency_key` on every
   `oml_remember`/`oml_learn` your harness might retry; retries then cost
   nothing and duplicate nothing.
@@ -961,4 +1296,8 @@ This surface is owned by ADR-0014 ([decision register](../adr/index.md)): one
 versioned JSON HTTP API with MCP as a stateless streamable-HTTP facade, and
 idempotency records. The two-ring split each tool rides, and the
 token-derived target workarea that made the `workarea` arguments optional,
-are [ADR-0022](../adr/ADR-0022-two-ring-api.md)'s.
+are [ADR-0022](../adr/ADR-0022-two-ring-api.md)'s. `oml_get`,
+`oml_supersede`, the claim item, own held rows and budgets on recall, the
+own-work and workarea reads, and the events-tail visibility rule are
+the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
+which would amend ADR-0014 d2.

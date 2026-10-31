@@ -121,9 +121,12 @@ step "create a child workarea under the root ($ROOT_WA)" 0 \
     "$OML" --json workareas create "$ROOT_WA" poc-metals
 WA="$(jqf .id)"
 
-step "issue a writer key (held by an agent)" 0 \
+# Each key carries only grant roles its key role admits (the admissibility
+# table, ADR-0025 d1): writer admits reader and writer, dreamer admits reader
+# and dreamer, reader admits reader.
+step "issue the agent's writer key with a writer and a reader grant (one key writes and recalls)" 0 \
     "$OML" --json keys issue --role writer --held-by agent \
-    --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:writer"
+    --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:writer" --grant "$WA:reader"
 WRITER="$(jqf .value)"
 
 step "issue a dreamer key (held by a human reviewer)" 0 \
@@ -131,7 +134,7 @@ step "issue a dreamer key (held by a human reviewer)" 0 \
     --principal crew/maya --default-workarea "$WA" --grant "$WA:dreamer"
 DREAMER="$(jqf .value)"
 
-step "issue a reader key (recall and the audit tail are reader-scope; roles never nest)" 0 \
+step "issue a reader key for a second identity that only reads (a reader key admits reader grants only)" 0 \
     "$OML" --json keys issue --role reader --held-by service \
     --principal crew/recall-bot --default-workarea "$WA" --grant "$WA:reader"
 READER="$(jqf .value)"
@@ -162,6 +165,10 @@ step "recall after promotion: the claim is served" 0 \
 [ "$(jqf '.hits | length')" -ge 1 ] || fail "promoted row missing from recall"
 jqf '.hits[0].memory.artifact_id' | grep -q "$ARTIFACT" || fail "recall hit is not the promoted artifact"
 
+step "recall after promotion with the agent's own writer key (its reader grant serves recall)" 0 \
+    "$OML" --key "$WRITER" --json recall --query "Accra Metals"
+jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the writer key's reader grant did not serve recall"
+
 # --- R2: the reviewer is never the author ------------------------------------
 step "issue a dreamer key to the AUTHOR's principal (crew/agent-blue also reviews?)" 0 \
     "$OML" --json keys issue --role dreamer --held-by agent \
@@ -178,18 +185,33 @@ step "supersede the promoted tip with the writer key (successor enters held)" 0 
     --claim "Supplier Accra Metals revised the Q1-2027 quote to 399 USD/t."
 SUCCESSOR="$(jqf .artifact_id)"
 [ "$(jqf .state)" = "held" ] || fail "successor is not held"
+[ "$(jqf .replaces.artifact_id)" = "$ARTIFACT" ] || fail "the successor does not name the version it replaces"
+
+step "recall before ratification still serves the old tip (the tip moves only at ratification)" 0 \
+    "$OML" --key "$READER" --json recall --query "Accra Metals"
+jq -r '.hits[].memory.body' "$OUT" | grep -q "412 USD/t" || fail "the old tip left recall before ratification"
+jq -r '.hits[].memory.body' "$OUT" | grep -q "399 USD/t" && fail "the held successor reached recall unreviewed"
 
 step "the successor rides the same review gate: dreamer approves it" 0 \
     "$OML" --key "$DREAMER" --json review verdict --memory "$SUCCESSOR" --approve
 [ "$(jqf .state)" = "promoted" ] || fail "successor did not promote"
 
-step "recall now serves the successor (the old tip is superseded)" 0 \
+step "recall now serves the ratified successor (the replaced version is history)" 0 \
     "$OML" --key "$READER" --json recall --query "Accra Metals"
 jq -r '.hits[].memory.body' "$OUT" | grep -q "399 USD/t" || fail "successor body missing from recall"
+jq -r '.hits[].memory.body' "$OUT" | grep -q "412 USD/t" && fail "the replaced version is still a recall hit"
 
-# --- evidence: verify the signed hash chain from genesis ---------------------
-step "audit verify-chain --genesis (reader key; the signing key set is operator input)" 0 \
-    "$OML" --key "$READER" audit verify-chain --genesis --signing-key "$PUBKEY"
+# --- evidence: the chain export is the one verification surface -------------
+# The events tail is a filtered feed (ADR-0025 d15), so live verification
+# reads the chain export, which this build does not serve: the verb refuses
+# by name (exit 2) rather than report breaks it did not find.
+echo
+echo "=== audit verify-chain --genesis: refused by name while no chain export is served"
+"$OML" --key "$READER" audit verify-chain --genesis --signing-key "$PUBKEY" 2>"$DEMO_DIR/verify.stderr"
+code=$?
+cat "$DEMO_DIR/verify.stderr"
+[ "$code" -eq 2 ] || fail "verify-chain exited $code, expected the local refusal 2"
+grep -q "chain export" "$DEMO_DIR/verify.stderr" || fail "verify-chain did not name the chain export"
 
 step "oml doctor" 0 \
     "$OML" --key "$READER" doctor
