@@ -37,6 +37,7 @@ use uuid::Uuid;
 use oml_app::App;
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
+use oml_app::domain::name::Name;
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
@@ -830,9 +831,10 @@ where
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
             ));
         }
+        let name = creation_name("name", &req.name)?;
         let created = retry_chain(|| {
             st.app
-                .create_workarea(&token, &req.name, Some(req.parent_id), req.crew.clone())
+                .create_workarea(&token, &name, Some(req.parent_id), req.crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -962,6 +964,12 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let req: BootstrapClaimBody = parse_json(headers, body)?;
+        // Syntax first, the token after: a refused name reveals nothing and
+        // consumes no token.
+        let tenant_name = creation_name(
+            "tenant_name",
+            req.tenant_name.as_deref().unwrap_or("default"),
+        )?;
         let taken = {
             let mut guard = st
                 .enrollment
@@ -974,7 +982,7 @@ where
             }
         };
         let boot = BootstrapRequest {
-            tenant_name: req.tenant_name.unwrap_or_else(|| "default".to_owned()),
+            tenant_name,
             admin_principal: req
                 .admin_principal
                 .unwrap_or_else(|| "bootstrap/admin".to_owned()),
@@ -1157,6 +1165,17 @@ struct BootstrapClaimBody {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// A name a creation sends, under the creation grammar: one it refuses is
+/// `request.validation` naming the field, at parse, never coerced into a
+/// name it resembles (http-api.md names and ids; errors.md; ADR-0026 d2,
+/// d3).
+fn creation_name(field: &'static str, value: &str) -> Result<Name, ApiError> {
+    Name::parse(value).map_err(|refusal| {
+        ApiError::validation(format!("{field} {value:?}: {refusal}"))
+            .with_details(json!({ "field": field }))
+    })
+}
 
 async fn healthz() -> Response {
     let rid = new_request_id();
@@ -1563,7 +1582,7 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
         "status": w.status(),
         "children": info.children.iter().map(|c| json!({
             "id": c.workarea_id,
-            "path_leaf": c.name,
+            "path_leaf": c.name.as_str(),
             "status": c.status(),
         })).collect::<Vec<_>>(),
         // No workarea edge can exist in this build (ADR-0025 d14).

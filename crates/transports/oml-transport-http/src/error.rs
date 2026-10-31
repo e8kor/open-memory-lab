@@ -387,6 +387,20 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::unavailable("idempotency record contention")
         }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
+        // The unique index refused a creation's name; nothing was
+        // journalled (errors.md `name.taken`; ADR-0026 d5).
+        AppError::Store(StoreError::NameTaken { kind, name }) => ApiError::new(
+            StatusCode::CONFLICT,
+            "name.taken",
+            "A name is a unique, immutable key in its namespace and is never released, so it \
+             means one row for as long as the deployment exists (ADR-0026 d1, d10).",
+            format!(
+                "the {} name {} is already taken in its namespace",
+                kind.as_str(),
+                name.as_str()
+            ),
+        )
+        .with_details(json!({ "kind": kind.as_str(), "name": name.as_str() })),
         // A stale or foreign pagination cursor (errors.md request.validation).
         AppError::Cursor(e) => ApiError::validation(e.to_string()),
         AppError::StoredResponse(e) => ApiError::internal(e),

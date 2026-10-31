@@ -11,6 +11,7 @@
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
 use oml_app::domain::access::{Grant, KeyDenial};
+use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, VerifyError, verify_chain,
@@ -21,8 +22,9 @@ use oml_app::ports::{
     StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
-    ClaimKeyState, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate, WorkareaRecord,
+    ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
+    ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
+    WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
@@ -138,6 +140,37 @@ impl PgStore {
 
 fn backend<E: std::fmt::Display>(e: E) -> StoreError {
     StoreError::Backend(e.to_string())
+}
+
+/// A creation's insert as the store answers it: a refusal by `constraint`,
+/// the unique index on the kind's name, is the name the creation lost,
+/// [`StoreError::NameTaken`]; the index is the authority `name.taken`
+/// reports, a lost race included (postgres-schema.md names and tenants;
+/// ADR-0026 d5). Any other failure is the backend's.
+fn name_taken_or_backend(
+    e: sqlx::Error,
+    constraint: &str,
+    kind: NamedKind,
+    name: &Name,
+) -> StoreError {
+    match &e {
+        sqlx::Error::Database(db) if db.constraint() == Some(constraint) => StoreError::NameTaken {
+            kind,
+            name: name.clone(),
+        },
+        _ => backend(e),
+    }
+}
+
+/// A `name` column as the port's name: the `oml_name` domain checks the
+/// reference grammar, so a stored name reads back under it, the derived
+/// form included (ADR-0026 d2). NULL on a row that predates names.
+fn stored_name(row: &PgRow, column: &str) -> Result<Option<Name>, StoreError> {
+    let name: Option<String> = row.try_get(column).map_err(backend)?;
+    name.as_deref()
+        .map(Name::parse_reference)
+        .transpose()
+        .map_err(backend)
 }
 
 /// Stable advisory-lock key for a tenant's chain head: the first eight bytes
@@ -297,19 +330,29 @@ fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
 
 /// The workarea columns every workarea read selects (unqualified: the
 /// recursive walks select them from their CTE).
-const WORKAREA_COLUMNS: &str = "id, tenant_id, parent_id, name, crew";
+const WORKAREA_COLUMNS: &str = "id, tenant_id, parent_id, name, crew, crew_id";
 
+/// A workarea row as the port's record. A row with no name yet predates
+/// names and is served to no one: the lead names every such row before it
+/// serves (ADR-0026 d11), so one found here fails closed.
 fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
+    let workarea_id: Uuid = row.try_get("id").map_err(backend)?;
     let crew: Option<Value> = row.try_get("crew").map_err(backend)?;
     Ok(WorkareaRecord {
-        workarea_id: row.try_get("id").map_err(backend)?,
+        workarea_id,
         tenant_id: row.try_get("tenant_id").map_err(backend)?,
         parent_id: row.try_get("parent_id").map_err(backend)?,
-        name: row.try_get("name").map_err(backend)?,
+        name: stored_name(row, "name")?.ok_or_else(|| {
+            StoreError::Backend(format!(
+                "workarea {workarea_id} has no name: the lead names every row that predates \
+                 names before it serves (ADR-0026 d11)"
+            ))
+        })?,
         crew: crew
             .map(serde_json::from_value)
             .transpose()
             .map_err(backend)?,
+        crew_id: row.try_get("crew_id").map_err(backend)?,
     })
 }
 
@@ -574,11 +617,14 @@ async fn apply_fold(
     match fold {
         // The tenants row is upserted before the journal insert (FK order);
         // a verdict short of the policy's k is journalled, metadata unchanged.
-        MetadataFold::TenantGenesis | MetadataFold::VerdictRecorded { .. } => {}
+        MetadataFold::TenantGenesis { .. } | MetadataFold::VerdictRecorded { .. } => {}
         MetadataFold::WorkareaCreated(w) => {
             // No status transition is built, so the status stored is the one
             // the workarea read serves: the universe root's permanent
-            // 'committed', every other node's 'development'.
+            // 'committed', every other node's 'development'. The path is the
+            // parent's with this node's name appended, the root's its name
+            // alone (ADR-0026 d7); a parent the lead has not named yet has
+            // no path, and neither does its child until the naming fold.
             let crew = w
                 .crew
                 .as_ref()
@@ -586,18 +632,42 @@ async fn apply_fold(
                 .transpose()
                 .map_err(backend)?;
             sqlx::query(
-                "INSERT INTO workareas (id, tenant_id, parent_id, name, status, crew) \
-                 VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status, crew, \
+                 crew_id) VALUES ($1, $2, $3, $4, \
+                 CASE WHEN $3::uuid IS NULL THEN text2ltree($4) \
+                      ELSE (SELECT p.path FROM workareas p \
+                             WHERE p.tenant_id = $2 AND p.id = $3) || text2ltree($4) END, \
+                 $5, $6, $7)",
             )
             .bind(w.workarea_id)
             .bind(w.tenant_id)
             .bind(w.parent_id)
-            .bind(&w.name)
+            .bind(w.name.as_str())
             .bind(w.status())
             .bind(crew)
+            .bind(w.crew_id)
             .execute(&mut **tx)
             .await
-            .map_err(backend)?;
+            .map_err(|e| {
+                name_taken_or_backend(e, "workareas_tenant_id_name", NamedKind::Workarea, &w.name)
+            })?;
+        }
+        MetadataFold::CrewCreated(c) => {
+            sqlx::query(
+                "INSERT INTO crews (id, tenant_id, name, charter_uri, external_manager, \
+                 created_at) VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz)",
+            )
+            .bind(c.crew_id)
+            .bind(c.tenant_id)
+            .bind(c.name.as_str())
+            .bind(c.charter_uri.as_deref())
+            .bind(c.external_manager.as_deref())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| {
+                name_taken_or_backend(e, "crews_tenant_id_name", NamedKind::Crew, &c.name)
+            })?;
         }
         MetadataFold::KeyIssued(k) => {
             let hash = key_hash_bytes(&k.key_hash).ok_or_else(|| {
@@ -608,8 +678,8 @@ async fn apply_fold(
             })?;
             sqlx::query(
                 "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
-                 default_workarea_id, issued_by, issued_seq) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                 default_workarea_id, issued_by, issued_seq, name, crew_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
             )
             .bind(k.key_id)
             .bind(k.tenant_id)
@@ -620,9 +690,16 @@ async fn apply_fold(
             .bind(k.default_workarea)
             .bind(k.issued_by)
             .bind(seq)
+            .bind(k.name.as_ref().map(Name::as_str))
+            .bind(k.crew_id)
             .execute(&mut **tx)
             .await
-            .map_err(backend)?;
+            .map_err(|e| match &k.name {
+                Some(name) => {
+                    name_taken_or_backend(e, "api_keys_tenant_id_name", NamedKind::Key, name)
+                }
+                None => backend(e),
+            })?;
         }
         // The schema's role CHECK and its foreign keys refuse a grant or
         // denial on a key or node the tenant does not hold; the error aborts
@@ -731,19 +808,16 @@ async fn append_event(
     }
 
     // The tenants row must exist before the journal FK: genesis creates
-    // it (idempotently — the rig also reuses this fold as a no-op).
-    if matches!(req.fold, MetadataFold::TenantGenesis) {
-        let name = env
-            .payload
-            .get("tenant_name")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+    // it, named. A tenant that has its row keeps it, name included (the rig
+    // also reuses this fold as a no-op); a name another tenant holds is
+    // refused by `tenants_name` (ADR-0026 d1).
+    if let MetadataFold::TenantGenesis { name } = &req.fold {
         sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
             .bind(tenant_id)
-            .bind(name)
+            .bind(name.as_str())
             .execute(&mut **tx)
             .await
-            .map_err(backend)?;
+            .map_err(|e| name_taken_or_backend(e, "tenants_name", NamedKind::Tenant, name))?;
     }
 
     let seq = i64::try_from(env.seq).map_err(backend)?;
@@ -1401,7 +1475,7 @@ impl JournalStore for PgStore {
             .map_err(backend)?;
         let row = sqlx::query(
             "SELECT id, tenant_id, role, principal, held_by, default_workarea_id, issued_by, \
-             hash FROM api_keys WHERE hash = $1 AND revoked_at IS NULL",
+             hash, name, crew_id FROM api_keys WHERE hash = $1 AND revoked_at IS NULL",
         )
         .bind(&hash)
         .fetch_optional(&mut *tx)
@@ -1428,6 +1502,8 @@ impl JournalStore for PgStore {
             default_workarea: row.try_get("default_workarea_id").map_err(backend)?,
             issued_by: row.try_get("issued_by").map_err(backend)?,
             key_hash: format!("sha256:{}", hex::encode(stored_hash)),
+            name: stored_name(&row, "name")?,
+            crew_id: row.try_get("crew_id").map_err(backend)?,
         }))
     }
 
@@ -1511,6 +1587,61 @@ impl JournalStore for PgStore {
         }))
     }
 
+    async fn resolve_name(
+        &self,
+        tenant_id: Uuid,
+        kind: NamedKind,
+        name: &Name,
+    ) -> Result<Option<Uuid>, StoreError> {
+        // One lookup on the kind's unique name index, in the tenant's
+        // namespace; a revoked key's row stays, so its name resolves
+        // (ADR-0026 d10). Tenant names are the deployment's.
+        let sql = match kind {
+            NamedKind::Workarea => "SELECT id FROM workareas WHERE tenant_id = $1 AND name = $2",
+            NamedKind::Crew => "SELECT id FROM crews WHERE tenant_id = $1 AND name = $2",
+            NamedKind::Key => "SELECT id FROM api_keys WHERE tenant_id = $1 AND name = $2",
+            NamedKind::Tenant => return Ok(None),
+        };
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let id: Option<Uuid> = sqlx::query_scalar(sql)
+            .bind(tenant_id)
+            .bind(name.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(id)
+    }
+
+    async fn crew(&self, tenant_id: Uuid, crew_id: Uuid) -> Result<Option<CrewRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(
+            "SELECT id, tenant_id, name, charter_uri, external_manager FROM crews \
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(crew_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        // Every crew record is created named (ADR-0026 d8, d11).
+        let name = stored_name(&row, "name")?
+            .ok_or_else(|| StoreError::Backend(format!("crew {crew_id} has no name")))?;
+        Ok(Some(CrewRecord {
+            crew_id: row.try_get("id").map_err(backend)?,
+            tenant_id: row.try_get("tenant_id").map_err(backend)?,
+            name,
+            charter_uri: row.try_get("charter_uri").map_err(backend)?,
+            external_manager: row.try_get("external_manager").map_err(backend)?,
+        }))
+    }
+
     async fn workarea(
         &self,
         tenant_id: Uuid,
@@ -1536,7 +1667,8 @@ impl JournalStore for PgStore {
                  SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
-                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, up.depth + 1 \
+                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, w.crew_id, \
+                        up.depth + 1 \
                    FROM workareas w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKAREA_COLUMNS} FROM up ORDER BY depth ASC"
@@ -1567,7 +1699,8 @@ impl JournalStore for PgStore {
                  SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
-                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, down.depth + 1 \
+                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, w.crew_id, \
+                        down.depth + 1 \
                    FROM workareas w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKAREA_COLUMNS} FROM down ORDER BY depth ASC, id ASC"

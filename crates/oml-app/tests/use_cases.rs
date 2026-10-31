@@ -6,6 +6,7 @@
 use oml_app::App;
 use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
+use oml_app::domain::name::Name;
 use oml_app::domain::{
     HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types, sha256_digest_string,
 };
@@ -48,7 +49,7 @@ async fn journal(store: &MemStore, tenant: Uuid) -> Vec<SignedEnvelope> {
 
 async fn bootstrap(app: &TestApp) -> BootstrapResult {
     app.bootstrap_tenant(&BootstrapRequest {
-        tenant_name: "acme".to_owned(),
+        tenant_name: Name::parse("acme").expect("a name"),
         admin_principal: "alice-admin".to_owned(),
     })
     .await
@@ -57,7 +58,8 @@ async fn bootstrap(app: &TestApp) -> BootstrapResult {
 
 /// A workarea under `parent`, created by the admin.
 async fn workarea(app: &TestApp, admin: &str, name: &str, parent: Uuid) -> Uuid {
-    app.create_workarea(admin, name, Some(parent), None)
+    let name = Name::parse(name).expect("a fixture name the creation grammar admits");
+    app.create_workarea(admin, &name, Some(parent), None)
         .await
         .expect("create workarea")
         .workarea
@@ -2238,7 +2240,7 @@ async fn workarea_info_lists_only_readable_children() {
     let admin = &boot.admin_key.value;
     let beta = workarea(&app, admin, "beta", crew).await;
     let sealed = workarea(&app, admin, "sealed", crew).await;
-    let zulu = workarea(&app, admin, "Zulu", crew).await;
+    let a_zulu = workarea(&app, admin, "a-zulu", crew).await;
     let alpha = workarea(&app, admin, "alpha", crew).await;
     let quarantine = workarea(&app, admin, "quarantine", crew).await;
     let reader = issue_with(
@@ -2259,7 +2261,8 @@ async fn workarea_info_lists_only_readable_children() {
 
     // A child its grant's own deny masks and a child a global denial covers
     // are absent, not marked; the rest are ordered by path_leaf in byte
-    // order, so "Zulu" sorts before "alpha".
+    // order, so "a-zulu" sorts before "alpha", where a collation that skips
+    // the hyphen would put it after.
     let info = app
         .workarea_info(&reader.value, Some(crew))
         .await
@@ -2270,7 +2273,7 @@ async fn workarea_info_lists_only_readable_children() {
             .map(|c| (c.workarea_id, c.name.as_str(), c.status()))
             .collect::<Vec<_>>(),
         vec![
-            (zulu, "Zulu", "development"),
+            (a_zulu, "a-zulu", "development"),
             (alpha, "alpha", "development"),
             (beta, "beta", "development"),
         ]
@@ -2453,7 +2456,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     let created = app
         .create_workarea(
             admin,
-            "metals",
+            &Name::parse("metals").expect("a name"),
             Some(boot.root_workarea_id),
             Some(crew.clone()),
         )

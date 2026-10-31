@@ -17,6 +17,8 @@ pub mod event_types {
     pub const TENANT_CREATED: &str = "tenant.created";
     /// New workarea node under an existing parent.
     pub const WORKAREA_CREATE: &str = "workarea.create";
+    /// A named crew record, created by an admin (ADR-0026 d8).
+    pub const CREW_CREATED: &str = "crew.created";
     /// Key issuance without its value (show-once ceremony).
     pub const KEY_ISSUED: &str = "key.issued";
     /// One grant on an issued key; its seq is the grant's epoch (ADR-0025 d2).

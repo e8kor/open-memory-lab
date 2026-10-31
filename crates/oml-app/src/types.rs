@@ -2,6 +2,7 @@
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
+use oml_domain::name::Name;
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
     SignedEnvelope, TransitionError, VerdictError, VerifyError,
@@ -35,6 +36,16 @@ pub struct KeyRecord {
     pub issued_by: Option<Uuid>,
     /// `sha256:<hex>` of the full key string, prefix included.
     pub key_hash: String,
+    /// The key's name: unique in its tenant, operator keys sharing the
+    /// provider's one namespace, and never released, a revoked key's
+    /// included (roles-and-keys.md key names; ADR-0026 d1, d9, d10). `None`
+    /// on a key issued before names, until the lead names it (ADR-0026 d11),
+    /// and on every key this build issues, since issuance does not take a
+    /// `name` yet.
+    pub name: Option<Name>,
+    /// The crew record named at issuance, fixed for the key's life; `None`
+    /// for a key with no crew (ADR-0026 d8).
+    pub crew_id: Option<Uuid>,
 }
 
 /// A stored grant row: the domain grant and its epoch, the journal seq of
@@ -102,9 +113,27 @@ pub struct WorkareaRecord {
     pub workarea_id: Uuid,
     pub tenant_id: Uuid,
     pub parent_id: Option<Uuid>,
-    pub name: String,
-    /// `None` when the create named no crew.
+    /// Unique in the tenant across the whole tree and never changed; the
+    /// root's is `universe` (ADR-0026 d1, d6).
+    pub name: Name,
+    /// The crew object the create recorded; `None` when it named no crew.
     pub crew: Option<Crew>,
+    /// The crew record the workarea names; `None` when it names none
+    /// (ADR-0026 d8).
+    pub crew_id: Option<Uuid>,
+}
+
+/// A crew record: named, recorded and not operated — OML never contacts the
+/// external manager (workareas.md crews; postgres-schema.md `crews`;
+/// ADR-0026 d8). The name never changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrewRecord {
+    pub crew_id: Uuid,
+    pub tenant_id: Uuid,
+    /// Unique in the tenant (ADR-0026 d1).
+    pub name: Name,
+    pub charter_uri: Option<String>,
+    pub external_manager: Option<String>,
 }
 
 impl WorkareaRecord {
@@ -252,7 +281,8 @@ impl MemoryRecord {
 
 #[derive(Debug, Clone)]
 pub struct BootstrapRequest {
-    pub tenant_name: String,
+    /// The tenant's name, unique in the deployment (ADR-0026 d1).
+    pub tenant_name: Name,
     pub admin_principal: String,
 }
 

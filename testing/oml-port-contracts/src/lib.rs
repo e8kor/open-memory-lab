@@ -13,6 +13,7 @@
 use core::future::Future;
 
 use oml_app::domain::access::{Grant, KeyDenial};
+use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
     event_types, key_fingerprint, next_envelope, sha256_digest_string, sign, verify_chain,
@@ -24,8 +25,8 @@ use oml_app::ports::{
     Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
-    ClaimKeyState, Crew, DenialRecord, GrantRecord, KeyAccess, KeyRecord, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, RecallCandidate, WorkareaRecord,
+    ClaimKeyState, Crew, CrewRecord, DenialRecord, GrantRecord, KeyAccess, KeyRecord,
+    ListingFilter, ListingPosition, ListingScope, MemoryRecord, RecallCandidate, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -46,6 +47,9 @@ pub fn test_signing_key() -> SigningKey {
 /// timestamps, seals through the domain, remembers the head.
 pub struct ChainRig {
     pub tenant_id: Uuid,
+    /// The name the rig's genesis gives its tenant, unique per seed, so
+    /// rigs share one store as tenants share one deployment (ADR-0026 d1).
+    pub tenant_name: Name,
     key: SigningKey,
     head: Option<SignedEnvelope>,
     n: u64,
@@ -56,6 +60,7 @@ impl ChainRig {
     pub fn new(tenant_seed: u64) -> Self {
         Self {
             tenant_id: Uuid::from_u128(0xA000_0000 + u128::from(tenant_seed)),
+            tenant_name: name(&format!("rig-{tenant_seed}")),
             key: test_signing_key(),
             head: None,
             n: 0,
@@ -163,7 +168,10 @@ impl ChainRig {
         self.commit(
             store,
             event_types::WORKAREA_CREATE,
-            json!({ "workarea_id": workarea.workarea_id.to_string(), "name": workarea.name }),
+            json!({
+                "workarea_id": workarea.workarea_id.to_string(),
+                "name": workarea.name.as_str(),
+            }),
             MetadataFold::WorkareaCreated(workarea),
             None,
         )
@@ -239,36 +247,59 @@ impl ChainRig {
         .await
     }
 
-    /// Commit one event whose fold changes no row, to move the head.
+    /// Commit one event whose fold changes no row, to move the head: the
+    /// genesis fold of a tenant that already has its row.
     pub async fn filler<S: JournalStore>(&mut self, store: &S) -> CommitReceipt {
+        let fold = self.genesis_fold();
         self.commit(
             store,
             event_types::SUBMISSION_REMEMBER,
             json!({ "body_digest": "sha256:00" }),
-            MetadataFold::TenantGenesis,
+            fold,
             None,
         )
         .await
         .expect("filler commit")
     }
 
-    /// Genesis plus `extra` empty-payload events.
-    pub async fn seed_chain<S: JournalStore>(&mut self, store: &S, extra: u64) {
+    /// The genesis fold of this rig's tenant, under its name.
+    #[must_use]
+    pub fn genesis_fold(&self) -> MetadataFold {
+        MetadataFold::TenantGenesis {
+            name: self.tenant_name.clone(),
+        }
+    }
+
+    /// Commit one `crew.created` folding `crew`.
+    pub async fn create_crew<S: JournalStore>(
+        &mut self,
+        store: &S,
+        crew: CrewRecord,
+    ) -> Result<CommitReceipt, StoreError> {
         self.commit(
             store,
-            event_types::TENANT_GENESIS,
-            json!({ "tenant_name": "contract" }),
-            MetadataFold::TenantGenesis,
+            event_types::CREW_CREATED,
+            json!({ "crew_id": crew.crew_id.to_string(), "name": crew.name.as_str() }),
+            MetadataFold::CrewCreated(crew),
             None,
         )
         .await
-        .expect("genesis commit");
+    }
+
+    /// Genesis plus `extra` empty-payload events.
+    pub async fn seed_chain<S: JournalStore>(&mut self, store: &S, extra: u64) {
+        let fold = self.genesis_fold();
+        let payload = json!({ "tenant_name": self.tenant_name.as_str() });
+        self.commit(store, event_types::TENANT_GENESIS, payload, fold, None)
+            .await
+            .expect("genesis commit");
         for _ in 0..extra {
+            let fold = self.genesis_fold();
             self.commit(
                 store,
                 event_types::SUBMISSION_REMEMBER,
                 json!({ "body_digest": "sha256:00" }),
-                MetadataFold::TenantGenesis,
+                fold,
                 None,
             )
             .await
@@ -388,20 +419,40 @@ async fn reject<S: JournalStore>(
     .await
 }
 
+/// A fixture name; one the creation grammar refuses fails the fixture
+/// (ADR-0026 d2).
+#[must_use]
+pub fn name(value: &str) -> Name {
+    Name::parse(value).expect("a fixture name the creation grammar admits")
+}
+
 /// A fixture workarea node with no crew.
 #[must_use]
 pub fn workarea_record(
     tenant_id: Uuid,
     workarea_id: Uuid,
     parent_id: Option<Uuid>,
-    name: &str,
+    workarea_name: &str,
 ) -> WorkareaRecord {
     WorkareaRecord {
         workarea_id,
         tenant_id,
         parent_id,
-        name: name.to_owned(),
+        name: name(workarea_name),
         crew: None,
+        crew_id: None,
+    }
+}
+
+/// A fixture crew record with no charter and no external manager.
+#[must_use]
+pub fn crew_record(tenant_id: Uuid, crew_id: Uuid, crew_name: &str) -> CrewRecord {
+    CrewRecord {
+        crew_id,
+        tenant_id,
+        name: name(crew_name),
+        charter_uri: None,
+        external_manager: None,
     }
 }
 
@@ -418,6 +469,8 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         default_workarea: None,
         issued_by,
         key_hash: sha256_digest_string(key_id.as_bytes()),
+        name: None,
+        crew_id: None,
     }
 }
 
@@ -460,7 +513,9 @@ async fn commit_raw<S: JournalStore>(
     store
         .commit(CommitRequest {
             event,
-            fold: MetadataFold::TenantGenesis,
+            fold: MetadataFold::TenantGenesis {
+                name: name("conflict"),
+            },
             outbox: OutboxRow {
                 event_id: Uuid::from_u128(999),
                 topic: "x".to_owned(),
@@ -1326,7 +1381,8 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
 }
 
 /// Key rows fold in with their event and resolve by value hash — one
-/// lookup, never by value (roles-and-keys.md hash at rest).
+/// lookup, never by value — name included (roles-and-keys.md hash at rest;
+/// ADR-0026 d9).
 pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(7);
     rig.seed_chain(store, 0).await;
@@ -1339,6 +1395,8 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         default_workarea: None,
         issued_by: None,
         key_hash: "sha256:feed".to_owned(),
+        name: Some(name("wanda-laptop")),
+        crew_id: None,
     };
     rig.commit(
         store,
@@ -1430,11 +1488,12 @@ pub async fn journal_idempotency_roundtrip<S: JournalStore>(store: &S) {
         request_digest: "sha256:aa".to_owned(),
         response: json!({ "state": "held" }),
     };
+    let fold = rig.genesis_fold();
     rig.commit(
         store,
         event_types::SUBMISSION_REMEMBER,
         json!({}),
-        MetadataFold::TenantGenesis,
+        fold,
         Some(IdempotencyPut {
             scope: scope.clone(),
             record: record.clone(),
@@ -2010,11 +2069,10 @@ pub async fn workarea_subtree_lists_every_descendant_once<S: JournalStore>(store
 }
 
 /// The children of a node are its immediate children only, ordered by name
-/// in byte order, then id — the order the workarea read serves them in
-/// (ADR-0025 d14; openapi.yaml `WorkareaView.children`).
-pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes_then_id<S: JournalStore>(
-    store: &S,
-) {
+/// in byte order — the order the workarea read serves them in (ADR-0025
+/// d14; openapi.yaml `WorkareaView.children`). Names are unique in the
+/// tenant, so no two children tie (ADR-0026 d1).
+pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(16);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
@@ -2022,19 +2080,13 @@ pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes_then_id<S
     let id = |n: u128| Uuid::from_u128(0xB60 + n);
     rig.create_workarea(store, workarea_record(t, parent, None, "universe"))
         .await;
-    // Byte order puts "Zeta" before "alpha" and "étude" after "beta",
-    // where a linguistic collation would not; two "alpha" tie on id.
-    for (n, name) in [
-        (1, "alpha"),
-        (2, "Zeta"),
-        (3, "étude"),
-        (4, "beta"),
-        (0, "alpha"),
-    ] {
+    // Byte order puts "a-z" before "ab", where a linguistic collation that
+    // skips the hyphen would put it after; the ids run against the names.
+    for (n, name) in [(4, "a-z"), (3, "ab"), (2, "beta"), (1, "q9"), (0, "qa")] {
         rig.create_workarea(store, workarea_record(t, id(n), Some(parent), name))
             .await;
     }
-    rig.create_workarea(store, workarea_record(t, id(5), Some(id(1)), "aaa"))
+    rig.create_workarea(store, workarea_record(t, id(5), Some(id(3)), "aaa"))
         .await;
 
     let children = store.workarea_children(t, parent).await.expect("children");
@@ -2044,17 +2096,17 @@ pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes_then_id<S
             .map(|w| (w.name.as_str(), w.workarea_id))
             .collect::<Vec<_>>(),
         vec![
-            ("Zeta", id(2)),
-            ("alpha", id(0)),
-            ("alpha", id(1)),
-            ("beta", id(4)),
-            ("étude", id(3)),
+            ("a-z", id(4)),
+            ("ab", id(3)),
+            ("beta", id(2)),
+            ("q9", id(1)),
+            ("qa", id(0)),
         ],
-        "immediate children only, by name bytes then id"
+        "immediate children only, by name bytes"
     );
     assert!(
         store
-            .workarea_children(t, id(3))
+            .workarea_children(t, id(2))
             .await
             .expect("children")
             .is_empty(),
@@ -2480,6 +2532,7 @@ pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_ve
     assert_eq!(read(rival.memory_id).await.status, MemoryStatus::Held);
 
     // A second link that does not extend the first refuses the first too.
+    let filler_fold = rig.genesis_fold();
     let request = |event: SignedEnvelope| CommitRequest {
         outbox: OutboxRow {
             event_id: event.envelope.event_id,
@@ -2487,7 +2540,7 @@ pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_ve
             payload: json!({ "seq": event.envelope.seq }),
         },
         event,
-        fold: MetadataFold::TenantGenesis,
+        fold: filler_fold.clone(),
         idempotency: None,
     };
     let filler = || json!({ "body_digest": "sha256:00" });
@@ -2974,6 +3027,406 @@ pub async fn a_listing_pages_newest_first_and_resumes_strictly_after_its_positio
     assert!(page(own, None, 0).await.is_empty(), "limit bounds the page");
 }
 
+// ---------------------------------------------------------------------------
+// Names and crew records (ADR-0026)
+// ---------------------------------------------------------------------------
+
+/// What `resolve_name` answers for `value` of `kind` in `tenant_id`.
+async fn resolved<S: JournalStore>(
+    store: &S,
+    tenant_id: Uuid,
+    kind: NamedKind,
+    value: &str,
+) -> Option<Uuid> {
+    store
+        .resolve_name(tenant_id, kind, &name(value))
+        .await
+        .expect("resolve")
+}
+
+/// A workarea's name is unique in its tenant across the whole tree: a
+/// second node of that name, under any parent, is refused with `NameTaken`
+/// and commits nothing, its event included, while another tenant's node
+/// takes the same name (postgres-schema.md `workareas`; ADR-0026 d1, d5).
+pub async fn two_workareas_in_one_tenant_cannot_share_a_name<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(30);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0xB300), None, "universe");
+    let metals = workarea_record(
+        t,
+        Uuid::from_u128(0xB301),
+        Some(universe.workarea_id),
+        "metals-crew",
+    );
+    rig.create_workarea(store, universe.clone()).await;
+    rig.create_workarea(store, metals.clone()).await;
+    let head = store.chain_head(t).await.expect("head");
+
+    let twin = Uuid::from_u128(0xB302);
+    for parent in [universe.workarea_id, metals.workarea_id] {
+        let refused = rig
+            .commit(
+                store,
+                event_types::WORKAREA_CREATE,
+                json!({ "workarea_id": twin.to_string(), "name": "metals-crew" }),
+                MetadataFold::WorkareaCreated(workarea_record(
+                    t,
+                    twin,
+                    Some(parent),
+                    "metals-crew",
+                )),
+                None,
+            )
+            .await;
+        assert_eq!(
+            refused,
+            Err(StoreError::NameTaken {
+                kind: NamedKind::Workarea,
+                name: name("metals-crew"),
+            }),
+            "one flat namespace across the whole tree"
+        );
+    }
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "a refused creation journals nothing"
+    );
+    assert_eq!(store.workarea(t, twin).await.expect("read"), None);
+
+    let mut other = ChainRig::new(31);
+    other.seed_chain(store, 0).await;
+    let o = other.tenant_id;
+    let root = workarea_record(o, Uuid::from_u128(0xB310), None, "universe");
+    let theirs = workarea_record(
+        o,
+        Uuid::from_u128(0xB311),
+        Some(root.workarea_id),
+        "metals-crew",
+    );
+    other.create_workarea(store, root).await;
+    other.create_workarea(store, theirs.clone()).await;
+    assert_eq!(
+        store.workarea(o, theirs.workarea_id).await.expect("read"),
+        Some(theirs),
+        "another tenant's namespace is its own"
+    );
+}
+
+/// A tenant's name is unique in the deployment: a second tenant's genesis
+/// under it is refused with `NameTaken` and commits nothing, and the genesis
+/// fold of a tenant that has its row changes nothing (postgres-schema.md
+/// `tenants`; ADR-0026 d1).
+pub async fn a_second_tenant_cannot_take_a_tenants_name<S: JournalStore>(store: &S) {
+    let mut first = ChainRig::new(37);
+    first.seed_chain(store, 1).await;
+    let mut second = ChainRig::new(38);
+    let refused = second
+        .commit(
+            store,
+            event_types::TENANT_GENESIS,
+            json!({ "tenant_name": first.tenant_name.as_str() }),
+            first.genesis_fold(),
+            None,
+        )
+        .await;
+    assert_eq!(
+        refused,
+        Err(StoreError::NameTaken {
+            kind: NamedKind::Tenant,
+            name: first.tenant_name.clone(),
+        })
+    );
+    assert_eq!(
+        store.chain_head(second.tenant_id).await.expect("head"),
+        None,
+        "the refused genesis journals nothing"
+    );
+    second.seed_chain(store, 0).await;
+}
+
+/// A name resolves to the id of the row of its kind that holds it in the
+/// caller's tenant — a workarea, a crew, a key — and to nothing in another
+/// tenant, for another kind, or where no row holds it; a tenant's own name
+/// is in the deployment's namespace and resolves in no tenant's
+/// (http-api.md names and ids; ADR-0026 d1, d4).
+pub async fn a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing_in_another_tenant<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut a = ChainRig::new(32);
+    a.seed_chain(store, 0).await;
+    let mut b = ChainRig::new(33);
+    b.seed_chain(store, 0).await;
+    let (ta, tb) = (a.tenant_id, b.tenant_id);
+    let universe = workarea_record(ta, Uuid::from_u128(0xB320), None, "universe");
+    let metals = workarea_record(
+        ta,
+        Uuid::from_u128(0xB321),
+        Some(universe.workarea_id),
+        "metals",
+    );
+    a.create_workarea(store, universe.clone()).await;
+    a.create_workarea(store, metals.clone()).await;
+    let redline = crew_record(ta, Uuid::from_u128(0xC320), "redline");
+    a.create_crew(store, redline.clone()).await.expect("crew");
+    let laptop = KeyRecord {
+        name: Some(name("claude-laptop")),
+        ..key_record(ta, Uuid::from_u128(0xD320), Role::Writer, None)
+    };
+    a.issue_key(store, laptop.clone()).await;
+    let their_root = Uuid::from_u128(0xB330);
+    b.create_workarea(store, workarea_record(tb, their_root, None, "universe"))
+        .await;
+
+    for (kind, value, id) in [
+        (NamedKind::Workarea, "universe", universe.workarea_id),
+        (NamedKind::Workarea, "metals", metals.workarea_id),
+        (NamedKind::Crew, "redline", redline.crew_id),
+        (NamedKind::Key, "claude-laptop", laptop.key_id),
+    ] {
+        assert_eq!(
+            resolved(store, ta, kind, value).await,
+            Some(id),
+            "{value} resolves to its row's id"
+        );
+    }
+    assert_eq!(
+        resolved(store, tb, NamedKind::Workarea, "universe").await,
+        Some(their_root),
+        "each tenant resolves its own row of a name both hold"
+    );
+    for (kind, value) in [
+        (NamedKind::Workarea, "metals"),
+        (NamedKind::Crew, "redline"),
+        (NamedKind::Key, "claude-laptop"),
+    ] {
+        assert_eq!(
+            resolved(store, tb, kind, value).await,
+            None,
+            "{value} resolves to nothing in another tenant"
+        );
+    }
+    for (kind, value) in [
+        (NamedKind::Crew, "metals"),
+        (NamedKind::Key, "redline"),
+        (NamedKind::Workarea, "claude-laptop"),
+        (NamedKind::Workarea, "nowhere"),
+    ] {
+        assert_eq!(
+            resolved(store, ta, kind, value).await,
+            None,
+            "{value} names no {} of the tenant",
+            kind.as_str()
+        );
+    }
+    assert_eq!(
+        store
+            .resolve_name(ta, NamedKind::Tenant, &a.tenant_name)
+            .await
+            .expect("resolve"),
+        None,
+        "a tenant name resolves in no tenant's namespace"
+    );
+}
+
+/// A revoked key keeps its name: the name still resolves to the key's id,
+/// and no other key of the tenant may take it, since a name is never
+/// released; a reissued key takes a new name (roles-and-keys.md key names;
+/// ADR-0026 d9, d10).
+pub async fn a_revoked_keys_name_still_resolves<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(34);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let laptop = KeyRecord {
+        name: Some(name("claude-laptop")),
+        ..key_record(t, Uuid::from_u128(0xD340), Role::Writer, None)
+    };
+    rig.issue_key(store, laptop.clone()).await;
+    rig.revoke_key(store, laptop.key_id).await.expect("revoke");
+    assert_eq!(
+        store.key_by_hash(&laptop.key_hash).await.expect("lookup"),
+        None,
+        "a revoked key authenticates nothing"
+    );
+    assert_eq!(
+        resolved(store, t, NamedKind::Key, "claude-laptop").await,
+        Some(laptop.key_id),
+        "its name still addresses it"
+    );
+
+    let head = store.chain_head(t).await.expect("head");
+    let reissued = KeyRecord {
+        name: Some(name("claude-laptop")),
+        ..key_record(t, Uuid::from_u128(0xD341), Role::Writer, None)
+    };
+    let refused = rig
+        .commit(
+            store,
+            event_types::KEY_ISSUED,
+            json!({ "key_id": reissued.key_id.to_string(), "value_disclosed": false }),
+            MetadataFold::KeyIssued(reissued.clone()),
+            None,
+        )
+        .await;
+    assert_eq!(
+        refused,
+        Err(StoreError::NameTaken {
+            kind: NamedKind::Key,
+            name: name("claude-laptop"),
+        }),
+        "the name is never released"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        store.key_by_hash(&reissued.key_hash).await.expect("lookup"),
+        None
+    );
+
+    let renamed = KeyRecord {
+        name: Some(name("claude-laptop-2")),
+        ..reissued
+    };
+    rig.issue_key(store, renamed.clone()).await;
+    assert_eq!(
+        store.key_by_hash(&renamed.key_hash).await.expect("lookup"),
+        Some(renamed.clone())
+    );
+    assert_eq!(
+        resolved(store, t, NamedKind::Key, "claude-laptop-2").await,
+        Some(renamed.key_id)
+    );
+}
+
+/// A crew record folds in with `crew.created` and reads back whole, its
+/// name unique in its tenant; a workarea or a key that names it reads back
+/// with its `crew_id`; and a row naming another tenant's crew, or a crew no
+/// tenant holds, is refused and commits nothing — the reference names the
+/// tenant with the id, since PostgreSQL runs a foreign-key check without
+/// row-level security (postgres-schema.md `crews`; ADR-0026 d8).
+pub async fn a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it<S: JournalStore>(
+    store: &S,
+) {
+    let mut a = ChainRig::new(35);
+    a.seed_chain(store, 0).await;
+    let mut b = ChainRig::new(36);
+    b.seed_chain(store, 0).await;
+    let (ta, tb) = (a.tenant_id, b.tenant_id);
+    let redline = CrewRecord {
+        charter_uri: Some("https://crews.example.com/redline/charter.md".to_owned()),
+        external_manager: Some("crewd.example.com".to_owned()),
+        ..crew_record(ta, Uuid::from_u128(0xC350), "redline")
+    };
+    a.create_crew(store, redline.clone()).await.expect("crew");
+    assert_eq!(
+        store.crew(ta, redline.crew_id).await.expect("read"),
+        Some(redline.clone())
+    );
+    assert_eq!(
+        store.crew(tb, redline.crew_id).await.expect("read"),
+        None,
+        "another tenant does not hold it"
+    );
+    assert_eq!(
+        store.crew(ta, Uuid::from_u128(0xC3FF)).await.expect("read"),
+        None
+    );
+
+    let head = store.chain_head(ta).await.expect("head");
+    assert_eq!(
+        a.create_crew(store, crew_record(ta, Uuid::from_u128(0xC351), "redline"))
+            .await,
+        Err(StoreError::NameTaken {
+            kind: NamedKind::Crew,
+            name: name("redline"),
+        })
+    );
+    assert_eq!(store.chain_head(ta).await.expect("head"), head);
+    let theirs = crew_record(tb, Uuid::from_u128(0xC360), "redline");
+    b.create_crew(store, theirs.clone())
+        .await
+        .expect("another tenant's crew takes the name");
+
+    let universe = workarea_record(ta, Uuid::from_u128(0xB350), None, "universe");
+    a.create_workarea(store, universe.clone()).await;
+    let procurement = WorkareaRecord {
+        crew_id: Some(redline.crew_id),
+        ..workarea_record(
+            ta,
+            Uuid::from_u128(0xB351),
+            Some(universe.workarea_id),
+            "procurement",
+        )
+    };
+    a.create_workarea(store, procurement.clone()).await;
+    assert_eq!(
+        store
+            .workarea(ta, procurement.workarea_id)
+            .await
+            .expect("read"),
+        Some(procurement)
+    );
+    let member = KeyRecord {
+        crew_id: Some(redline.crew_id),
+        ..key_record(ta, Uuid::from_u128(0xD350), Role::Writer, None)
+    };
+    a.issue_key(store, member.clone()).await;
+    assert_eq!(
+        store.key_by_hash(&member.key_hash).await.expect("lookup"),
+        Some(member)
+    );
+
+    let head = store.chain_head(ta).await.expect("head");
+    for crew_id in [theirs.crew_id, Uuid::from_u128(0xC3FF)] {
+        let stray = WorkareaRecord {
+            crew_id: Some(crew_id),
+            ..workarea_record(
+                ta,
+                Uuid::from_u128(0xB352),
+                Some(universe.workarea_id),
+                "stray",
+            )
+        };
+        let refused = a
+            .commit(
+                store,
+                event_types::WORKAREA_CREATE,
+                json!({ "workarea_id": stray.workarea_id.to_string() }),
+                MetadataFold::WorkareaCreated(stray),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "{refused:?}"
+        );
+        let stray_key = KeyRecord {
+            crew_id: Some(crew_id),
+            ..key_record(ta, Uuid::from_u128(0xD351), Role::Writer, None)
+        };
+        let refused = a
+            .commit(
+                store,
+                event_types::KEY_ISSUED,
+                json!({ "key_id": stray_key.key_id.to_string() }),
+                MetadataFold::KeyIssued(stray_key),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        store.chain_head(ta).await.expect("head"),
+        head,
+        "a row naming a crew its tenant does not hold commits nothing"
+    );
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
@@ -3006,7 +3459,7 @@ where
     workarea_ancestry_walks_parent_ids_to_the_root(&new_store().await).await;
     an_ancestry_that_leaves_the_tenant_is_refused(&new_store().await).await;
     workarea_subtree_lists_every_descendant_once(&new_store().await).await;
-    workarea_children_are_immediate_and_ordered_by_name_bytes_then_id(&new_store().await).await;
+    workarea_children_are_immediate_and_ordered_by_name_bytes(&new_store().await).await;
     crew_round_trips_through_workarea_created(&new_store().await).await;
     kind_version_and_body_bytes_round_trip_through_memory_held(&new_store().await).await;
     promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
@@ -3021,6 +3474,14 @@ where
         .await;
     a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(&new_store().await).await;
     a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await).await;
+    two_workareas_in_one_tenant_cannot_share_a_name(&new_store().await).await;
+    a_second_tenant_cannot_take_a_tenants_name(&new_store().await).await;
+    a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing_in_another_tenant(
+        &new_store().await,
+    )
+    .await;
+    a_revoked_keys_name_still_resolves(&new_store().await).await;
+    a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it(&new_store().await).await;
 }
 
 // ---------------------------------------------------------------------------

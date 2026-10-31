@@ -18,6 +18,7 @@ use oml_domain::access::{
     tail_visible,
 };
 use oml_domain::budget::{budget_tokens, cut, hit_order};
+use oml_domain::name::{Name, UNIVERSE};
 use oml_domain::{
     ChainHead, Envelope, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
@@ -633,6 +634,9 @@ where
             default_workarea,
             issued_by,
             key_hash: sha256_digest_string(value.as_bytes()),
+            // Issuance takes neither yet (ADR-0026 d8, d9).
+            name: None,
+            crew_id: None,
         };
         (record, value)
     }
@@ -743,19 +747,22 @@ where
             event_types::TENANT_GENESIS,
             "operator",
             None,
-            json!({ "tenant_name": req.tenant_name }),
+            json!({ "tenant_name": req.tenant_name.as_str() }),
         )?;
         let mut prev = genesis.clone();
-        self.commit(genesis, MetadataFold::TenantGenesis, None)
-            .await?;
+        let fold = MetadataFold::TenantGenesis {
+            name: req.tenant_name.clone(),
+        };
+        self.commit(genesis, fold, None).await?;
 
         let root_workarea_id = self.ids.new_id();
         let workarea = WorkareaRecord {
             workarea_id: root_workarea_id,
             tenant_id,
             parent_id: None,
-            name: "universe".to_owned(),
+            name: Name::parse(UNIVERSE).expect("universe is a name (ADR-0026 d6)"),
             crew: None,
+            crew_id: None,
         };
         let event = self.seal(
             Some(&prev),
@@ -766,7 +773,7 @@ where
             json!({
                 "workarea_id": root_workarea_id.to_string(),
                 "parent_id": Value::Null,
-                "name": workarea.name,
+                "name": workarea.name.as_str(),
                 "status": workarea.status(),
                 "crew": Value::Null,
                 "prefix": Value::Null,
@@ -999,11 +1006,12 @@ where
     /// stores it, so the workarea read serves it from the store (event-
     /// catalog.md `workarea.create`; ADR-0025 d14). The answer carries the
     /// node's path derived from the parent's stored ancestry, as the read
-    /// derives it.
+    /// derives it. A name the tenant already holds, `universe` included, is
+    /// the store's `NameTaken`, and nothing is journalled (ADR-0026 d5, d6).
     pub async fn create_workarea(
         &self,
         api_key: &str,
-        name: &str,
+        name: &Name,
         parent_id: Option<Uuid>,
         crew: Option<Crew>,
     ) -> Result<CreatedWorkarea, AppError> {
@@ -1021,8 +1029,9 @@ where
             workarea_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
             parent_id,
-            name: name.to_owned(),
+            name: name.clone(),
             crew,
+            crew_id: None,
         };
         let prev = self.head_event(key.tenant_id).await?;
         let event = self.seal(
@@ -1034,7 +1043,7 @@ where
             json!({
                 "workarea_id": workarea.workarea_id.to_string(),
                 "parent_id": parent_id.map(|p| p.to_string()),
-                "name": workarea.name,
+                "name": workarea.name.as_str(),
                 "status": workarea.status(),
                 "crew": workarea.crew,
                 "prefix": Value::Null,

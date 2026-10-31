@@ -13,6 +13,7 @@ use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use uuid::Uuid;
 
 use oml_domain::budget::{hit_order, steering_order};
+use oml_domain::name::{Name, NamedKind};
 use oml_domain::{ChainHead, EventTime, MemoryKind, MemoryStatus, Role};
 
 use crate::ports::{
@@ -21,8 +22,9 @@ use crate::ports::{
     ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use crate::types::{
-    ClaimKeyState, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, RecallCandidate, WorkareaRecord,
+    ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
+    ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
+    WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -90,6 +92,9 @@ struct TenantState {
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
     workareas: BTreeMap<Uuid, WorkareaRecord>,
+    crews: BTreeMap<Uuid, CrewRecord>,
+    /// Every key the tenant was issued, revoked ones included, so their
+    /// names stay held (ADR-0026 d10).
     keys_by_hash: BTreeMap<String, KeyRecord>,
     /// Per key id, in commit order — which is epoch order.
     access: BTreeMap<Uuid, KeyAccess>,
@@ -108,6 +113,10 @@ struct TenantState {
 #[derive(Debug, Default, Clone)]
 pub struct MemStore {
     tenants: Arc<Mutex<BTreeMap<Uuid, Arc<Mutex<TenantState>>>>>,
+    /// The deployment's tenant namespace: each tenant's name, as `tenants`
+    /// holds it (postgres-schema.md names and tenants). Locked after a
+    /// tenant's own lock, never before it.
+    tenant_names: Arc<Mutex<BTreeMap<Uuid, Name>>>,
     /// The event type whose next commit is refused, with the refusal, then
     /// forgotten.
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
@@ -194,6 +203,50 @@ fn require_held(state: &TenantState, key_id: Uuid, node: Uuid) -> Result<(), Sto
     Ok(())
 }
 
+/// A name its kind already holds in the namespace is refused, as the
+/// unique indexes refuse it (postgres-schema.md names and tenants; ADR-0026
+/// d5).
+fn require_free_name<'a>(
+    mut held: impl Iterator<Item = &'a Name>,
+    kind: NamedKind,
+    name: &Name,
+) -> Result<(), StoreError> {
+    if held.any(|h| h == name) {
+        return Err(StoreError::NameTaken {
+            kind,
+            name: name.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// A crew a row names must be its own tenant's, as the tenant-scoped
+/// foreign keys onto `crews` require (postgres-schema.md `crews`).
+fn require_crew(state: &TenantState, crew_id: Option<Uuid>) -> Result<(), StoreError> {
+    match crew_id {
+        Some(crew_id) if !state.crews.contains_key(&crew_id) => Err(StoreError::Backend(format!(
+            "crew {crew_id} is not held by this tenant"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Names the tenant at its genesis, as the `tenants` row does: a tenant
+/// that has its row keeps it, name included, and a name another tenant
+/// holds is refused (postgres-schema.md names and tenants; ADR-0026 d1).
+fn name_tenant(
+    names: &mut BTreeMap<Uuid, Name>,
+    tenant_id: Uuid,
+    name: &Name,
+) -> Result<(), StoreError> {
+    if names.contains_key(&tenant_id) {
+        return Ok(());
+    }
+    require_free_name(names.values(), NamedKind::Tenant, name)?;
+    names.insert(tenant_id, name.clone());
+    Ok(())
+}
+
 /// A second live version of `memory`'s ordinal under its `claim_key` in its
 /// workarea is refused, as `memories_claim_version` refuses it.
 fn require_free_ordinal(state: &TenantState, memory: &MemoryRecord) -> Result<(), StoreError> {
@@ -222,11 +275,34 @@ fn apply_fold(
     at: &EventTime,
 ) -> Result<(), StoreError> {
     match fold {
-        MetadataFold::TenantGenesis | MetadataFold::VerdictRecorded { .. } => {}
+        // The tenant's name is the deployment's, applied by the commit.
+        MetadataFold::TenantGenesis { .. } | MetadataFold::VerdictRecorded { .. } => {}
         MetadataFold::WorkareaCreated(workarea) => {
+            require_free_name(
+                state.workareas.values().map(|w| &w.name),
+                NamedKind::Workarea,
+                &workarea.name,
+            )?;
+            require_crew(state, workarea.crew_id)?;
             state.workareas.insert(workarea.workarea_id, workarea);
         }
+        MetadataFold::CrewCreated(crew) => {
+            require_free_name(
+                state.crews.values().map(|c| &c.name),
+                NamedKind::Crew,
+                &crew.name,
+            )?;
+            state.crews.insert(crew.crew_id, crew);
+        }
         MetadataFold::KeyIssued(key) => {
+            if let Some(name) = &key.name {
+                require_free_name(
+                    state.keys_by_hash.values().filter_map(|k| k.name.as_ref()),
+                    NamedKind::Key,
+                    name,
+                )?;
+            }
+            require_crew(state, key.crew_id)?;
             state.access.insert(
                 key.key_id,
                 KeyAccess {
@@ -396,6 +472,13 @@ impl JournalStore for MemStore {
                 return Err(error);
             }
         }
+        let genesis_names: Vec<Name> = reqs
+            .iter()
+            .filter_map(|r| match &r.fold {
+                MetadataFold::TenantGenesis { name } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         let mut reqs = reqs.into_iter();
         let Some(first) = reqs.next() else {
             return Err(StoreError::Backend(
@@ -418,6 +501,14 @@ impl JournalStore for MemStore {
                 ));
             }
             receipt = append(&mut staged, req)?;
+        }
+        if !genesis_names.is_empty() {
+            let mut names = self.tenant_names.lock().expect("tenant names lock");
+            let mut staged_names = names.clone();
+            for name in &genesis_names {
+                name_tenant(&mut staged_names, tenant_id, name)?;
+            }
+            *names = staged_names;
         }
         *state = staged;
         Ok(receipt)
@@ -800,6 +891,51 @@ impl JournalStore for MemStore {
         };
         let state = tenant.lock().expect("tenant lock");
         Ok(state.access.get(&key_id).cloned())
+    }
+
+    async fn resolve_name(
+        &self,
+        tenant_id: Uuid,
+        kind: NamedKind,
+        name: &Name,
+    ) -> Result<Option<Uuid>, StoreError> {
+        // This store keeps operator keys under the provider tenant; their
+        // names are the provider's namespace, which no tenant read consults
+        // (ADR-0026 d4).
+        if tenant_id == PROVIDER_TENANT {
+            return Ok(None);
+        }
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(match kind {
+            NamedKind::Workarea => state
+                .workareas
+                .values()
+                .find(|w| &w.name == name)
+                .map(|w| w.workarea_id),
+            NamedKind::Crew => state
+                .crews
+                .values()
+                .find(|c| &c.name == name)
+                .map(|c| c.crew_id),
+            NamedKind::Key => state
+                .keys_by_hash
+                .values()
+                .find(|k| k.name.as_ref() == Some(name))
+                .map(|k| k.key_id),
+            // A tenant's name is in the deployment's namespace.
+            NamedKind::Tenant => None,
+        })
+    }
+
+    async fn crew(&self, tenant_id: Uuid, crew_id: Uuid) -> Result<Option<CrewRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.crews.get(&crew_id).cloned())
     }
 
     async fn workarea(

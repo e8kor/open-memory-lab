@@ -1111,6 +1111,59 @@ async fn workarea_unresolved_is_422() {
 }
 
 // ---------------------------------------------------------------------------
+// Names at creation (ADR-0026 d2, d5, d6)
+// ---------------------------------------------------------------------------
+
+/// A workarea name the creation grammar refuses — an uppercase letter, an
+/// underscore, the derived form — is `request.validation` naming the field,
+/// and a name the tenant already holds, the root's `universe` included, is
+/// `409 name.taken` with its kind and name; neither journals anything
+/// (errors.md; http-api.md names and ids; ADR-0026 d2, d5, d6).
+#[tokio::test]
+async fn a_workarea_name_the_creation_grammar_refuses_is_request_validation_and_a_taken_one_is_name_taken()
+ {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let head = head_seq(&rig, tenant).await;
+    let create = |n: usize, name: &str| {
+        Call::auth(&admin)
+            .idem(&format!("names-{n}"))
+            .body(json!({ "parent_id": crew, "name": name }))
+    };
+
+    for (n, value) in [
+        "Metals-Crew",
+        "metals_crew",
+        "wa-0190f2a47c3e4b1d9a6fe2d8c51b3a07",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (status, _, body) = send(router, "POST", "/v2/workareas", create(n, value)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{value}: {body}");
+        assert_envelope(&body, "request.validation");
+        assert_eq!(body["error"]["details"]["field"], "name", "{body}");
+    }
+    for (n, value) in ["universe", "metals-crew"].into_iter().enumerate() {
+        let (status, _, body) = send(router, "POST", "/v2/workareas", create(10 + n, value)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{value}: {body}");
+        assert_envelope(&body, "name.taken");
+        assert_eq!(
+            body["error"]["details"],
+            json!({ "kind": "workarea", "name": value }),
+            "{body}"
+        );
+    }
+    assert_eq!(
+        head_seq(&rig, tenant).await,
+        head,
+        "no refused creation journals anything"
+    );
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
 // Issuance with grants and denials (ADR-0025 d2, d16)
 // ---------------------------------------------------------------------------
 
