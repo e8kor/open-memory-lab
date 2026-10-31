@@ -3,7 +3,8 @@
 #
 # Boots ./target/release/oml-server-lead on a fresh `oml_poc` database and
 # drives every ceremony through ./target/release/oml (the lab client speaks
-# only the public HTTP API, ADR-0015): bootstrap claim → workarea → keys →
+# only the public HTTP API, ADR-0015), naming the workarea by its name
+# wherever an id would go (ADR-0026 d4): bootstrap claim → workarea → keys →
 # submit → (recall withholds the held row) → review + approve → recall hit →
 # the R2 reviewer-is-author refusal → supersede → verify-chain → doctor →
 # graceful shutdown.
@@ -111,32 +112,37 @@ step "bootstrap claim (single-use token -> first admin key, credentials stored 0
     "$OML" --server "$SERVER_URL" --json bootstrap claim alice-admin \
     --token "$TOKEN" --tenant-name poc-demo --principal platform/alice
 TENANT="$(jqf .tenant_id)"
-ROOT_WA="$(jqf .root_workarea_id)"
 
 step "a second claim is refused — the token is consumed (typed refusal, exit 1)" 1 \
     "$OML" --server "$SERVER_URL" --json bootstrap claim second-admin --token "$TOKEN"
 
 # --- workarea and the crew's keys (admin credentials from the stored file) ---
-step "create a child workarea under the root ($ROOT_WA)" 0 \
-    "$OML" --json workareas create "$ROOT_WA" poc-metals
+# Every workarea below goes by its name, the root as `universe` (ADR-0026 d6),
+# and the server resolves each one to the id the grants bind to.
+step "create a child workarea under the root, both by name" 0 \
+    "$OML" --json workareas create universe poc-metals
 WA="$(jqf .id)"
+[ "$(jqf .path)" = "universe.poc-metals" ] || fail "the workarea's derived path is not universe.poc-metals"
 
 # Each key carries only grant roles its key role admits (the admissibility
 # table, ADR-0025 d1): writer admits reader and writer, dreamer admits reader
 # and dreamer, reader admits reader.
 step "issue the agent's writer key with a writer and a reader grant (one key writes and recalls)" 0 \
-    "$OML" --json keys issue agent-blue --role writer --held-by agent \
-    --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:writer" --grant "$WA:reader"
+    "$OML" --json keys issue agent-blue --role writer --held-by agent --principal crew/agent-blue \
+    --default-workarea poc-metals --grant poc-metals:writer --grant poc-metals:reader
 WRITER="$(jqf .value)"
+[ "$(jqf .default_workarea_id)" = "$WA" ] || fail "the name poc-metals did not resolve to the workarea's id"
+[ "$(jqf '[.grants[].workarea_node_id] | unique | join(",")')" = "$WA" ] \
+    || fail "the grants named poc-metals do not bind to the workarea's id"
 
 step "issue a dreamer key (held by a human reviewer)" 0 \
     "$OML" --json keys issue maya --role dreamer --held-by human \
-    --principal crew/maya --default-workarea "$WA" --grant "$WA:dreamer"
+    --principal crew/maya --default-workarea poc-metals --grant poc-metals:dreamer
 DREAMER="$(jqf .value)"
 
 step "issue a reader key for a second identity that only reads (a reader key admits reader grants only)" 0 \
     "$OML" --json keys issue recall-bot --role reader --held-by service \
-    --principal crew/recall-bot --default-workarea "$WA" --grant "$WA:reader"
+    --principal crew/recall-bot --default-workarea poc-metals --grant poc-metals:reader
 READER="$(jqf .value)"
 
 # --- submit: held on arrival, invisible to recall ----------------------------
@@ -172,7 +178,7 @@ jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the writer key's
 # --- R2: the reviewer is never the author ------------------------------------
 step "issue a dreamer key to the AUTHOR's principal (crew/agent-blue also reviews?)" 0 \
     "$OML" --json keys issue agent-blue-reviewer --role dreamer --held-by agent \
-    --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:dreamer"
+    --principal crew/agent-blue --default-workarea poc-metals --grant poc-metals:dreamer
 AUTHOR_DREAMER="$(jqf .value)"
 
 step "verdict with the author's key is refused — R2 against the lineage closure (exit 1)" 1 \
