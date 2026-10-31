@@ -29,6 +29,56 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-31 — A Helm chart for the current build's one lead (ADR-0033)
+
+[ADR-0033](adr/ADR-0033-interim-helm-chart.md), proposed on 2026-10-31, decides what a Helm
+chart holds while the build has one server binary, and this change builds it. Numbers 0030 to
+0032 are taken by records on other branches. It amends ADR-0016 (d4) and ADR-0023 (d16) for this
+chart only; their Status lines gain the back-pointer when the record is accepted.
+
+- **Decided and built:** `deploy/helm/oml`, the first revision of the one chart ADR-0016 d2
+  names, holding `oml-server-lead` alone (d1): one replica under `Recreate` in place of the lead
+  lease, with the chain lock as the fence (d2); the keyring on a ReadWriteOnce claim mounted at
+  `/var/lib/oml/keyring`, kept by `helm uninstall` and reattachable through
+  `keyring.existingClaim` (d3); uid and gid 999, the image's `oml` user, with `fsGroup: 999` under
+  `fsGroupChangePolicy: OnRootMismatch`, because the default policy turns the 0600 keyring into
+  0660 and the lead refuses it (d4); `runAsNonRoot`, a read-only root filesystem, every capability
+  dropped, seccomp `RuntimeDefault`, no service account token, resources as comments, and an
+  optional NetworkPolicy (d5); `OML_POSTGRES__URL` from an existing Secret's key, never a value
+  (d6); startup and liveness probes on `/healthz` and readiness on `/readyz` (d7); the Ingress
+  off by default, and install notes that give the claim of the enrollment token through
+  `kubectl port-forward` before any Ingress, and warn when an install enables one (d8);
+  `version` = `appVersion` = the workspace version, the image
+  `ghcr.io/e8kor/open-memory-lab:<appVersion>`, pinned by `image.digest` when set (d9); and the
+  release and CI jobs (d10).
+- **Checks:** `scripts/check_chart.py` runs `helm lint --strict` and `helm template` on the
+  default values, `ci/kind-values.yaml` and the optional features, and fails on a version
+  mismatch, a duplicated mapping key, or the loss of any property d2–d8 decide, NOTES.txt's
+  included; with `--image-user` it also requires the pod's ids to be the built image's.
+  `scripts/check_release.py` now also fails if `release.yml` stops checking the chart's version
+  against the tag, packaging it, signing it with `cosign sign-blob` or uploading the archive and
+  its bundle to the release. `ci.yml` gains job `chart`: kind, `pgvector/pgvector:pg17` in the
+  cluster, the image built from the checkout and loaded, `helm install`, the claim through
+  port-forward, `scripts/quickstart.sh`, then a restart that must keep the public key, answer
+  `/readyz` 200 and print no token, and an uninstall that must leave the keyring claim and a
+  reinstall that must load the same key. `release.yml` gains jobs `chart` and `chart-release`; its
+  other jobs are unchanged.
+- **Not run here:** the kind job and the release jobs. This change ran `helm lint`,
+  `helm template`, a strict Kubernetes schema validation of the rendered objects, both checkers
+  and `actionlint` locally, and the quickstart against the installed lead the way the kind job
+  drives it; the pull request's CI run is the kind job's first, and the first tag after it is the
+  release jobs' first. d4's fsGroup behaviour is read from the kubelet's source and the
+  Kubernetes documentation, not observed on a cluster.
+- **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
+  stays `0.2.0-design`. The chart is at the workspace version, 0.2.2, and moves with it.
+- **Pages touched:** [ADR-0033](adr/ADR-0033-interim-helm-chart.md), the
+  [decision register](adr/index.md) (row and the D15 cell), `mkdocs.yml`, [llms.txt](llms.txt),
+  [deployment](operations/deployment.md) (the interim chart's section and the keyring backup
+  row), [CI and toolchain](engineering/ci-and-toolchain.md) (the chart gate and the release
+  artifact) and this page; outside `docs/`, `deploy/helm/oml/`, `deploy/k8s/README.md`,
+  `scripts/check_chart.py`, `scripts/check_release.py`, `.github/workflows/ci.yml` and
+  `.github/workflows/release.yml`.
+
 ### 2026-10-31 — Python and TypeScript clients generated from openapi.yaml (implementation, FR-12)
 
 [Client SDKs](engineering/sdks.md), a new engineering page, decides how the client half of
