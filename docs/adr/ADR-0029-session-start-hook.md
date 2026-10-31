@@ -115,7 +115,8 @@ accepts it.
   not pointed this agent at a server. A key value that holds whitespace or a character outside
   printable ASCII is refused before anything is sent, with a stderr line that names the variable
   and never the value. Every occurrence of the key value in what the hook prints, stored text and
-  stderr lines alike, is replaced by `[OML_API_KEY]`, before any line is flattened.
+  stderr lines alike, is replaced by `[OML_API_KEY]` before any field or line is flattened or
+  cut, since a cut through the value would leave a part of it no later pass matches.
 
     An admin key must never feed an agent's context: the agent's session would read under a key
     above the agent ceiling (R1), whatever that key's grants reach, and the read log would
@@ -179,8 +180,8 @@ accepts it.
     toward the budget (d2): a context past Claude Code's cap reaches Claude as its first 2,000
     characters, and those then still carry the frame and the request to record. For the same
     reason each claim key and the workarea path are printed in at most 120 characters, the last
-    one `…` when cut; the cost is that two keys that share their first 119 characters read alike,
-    and `oml_my_work` lists them whole.
+    one `…` when cut, after the key value in them is redacted (d4); the cost is that two keys that
+    share their first 119 characters read alike, and `oml_my_work` lists them whole.
 
     Neither request names the key's default workarea, so the header names the path of the newest
     own submission that carries one, which is that workarea unless the submission named another;

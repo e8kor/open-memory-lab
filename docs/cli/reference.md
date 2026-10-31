@@ -356,7 +356,7 @@ shows it ([FR-33](../product/roadmap.md)).
 The verb never uses `--server`, `--key`, `OML_CLI_SERVER` or `OML_CLI_KEY`, and never reads the
 stored credentials, so an admin key never feeds an agent's context. It prints no key value: every
 occurrence of the `OML_API_KEY` value in what it prints, stored text included, is replaced by
-`[OML_API_KEY]`.
+`[OML_API_KEY]`, in each stored field before that field is flattened or cut.
 
 **The query** is the last component of the stdin `cwd`, split at every character that is not a
 letter or a digit and joined by single spaces: `/home/op/src/open-memory-lab` recalls with

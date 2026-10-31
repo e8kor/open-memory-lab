@@ -2035,6 +2035,93 @@ async fn the_hook_shows_another_keys_held_memory_never() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_path() {
+    let crew = Crew::start().await;
+    let windows = |text: &str| {
+        let key: Vec<char> = crew.agent.chars().collect();
+        key.windows(20)
+            .map(|w| w.iter().collect::<String>())
+            .find(|w| text.contains(w.as_str()))
+    };
+
+    // A claim key in which the key value straddles the 120-character cut:
+    // cut first, its first 46 characters would be printed.
+    let claim_key = format!("{}{}-tail", "k".repeat(73), crew.agent);
+    assert_eq!(claim_key.chars().count(), 125);
+    crew.submit(
+        &crew.agent,
+        "memory",
+        &claim_key,
+        "Metals lot D: 40 tonnes, Tema, Sunday.",
+    );
+    let stdin = session("startup", "/home/op/src/metals");
+    let (code, stdout, stderr) = crew.hook(&[], &stdin);
+    assert_eq!(code, 0, "{stderr}");
+    let context = context_of(&stdout);
+    assert_eq!(windows(&context), None, "no part of the key: {context}");
+    let redacted = format!("{}[OML_API_KEY]-tail", "k".repeat(73));
+    assert_eq!(
+        section(&context, SUBMISSIONS),
+        [format!("- [held] {redacted} v1")],
+        "redacted first, the key is 91 characters and nothing is cut"
+    );
+    assert_eq!(
+        section(&context, "Memories matching \"metals\":"),
+        [format!(
+            "- [held] {redacted}: Metals lot D: 40 tonnes, Tema, Sunday."
+        )]
+    );
+
+    // A workarea path in which the key value straddles the cut, reached
+    // through a child of the agent's workarea that its newest row names.
+    let name = format!("{}{}-{}", "w".repeat(80), crew.agent, "t".repeat(40));
+    let (code, child, log) = crew
+        .lab
+        .json(None, &["workareas", "create", &crew.wa, &name]);
+    assert_eq!(code, 0, "workareas create: {log}");
+    let child_path = child["path"].as_str().expect("child path").to_owned();
+    let key_at = child_path
+        .find(crew.agent.as_str())
+        .expect("the key in the path");
+    assert!(
+        key_at < 119 && key_at + crew.agent.len() > 119,
+        "the key straddles the cut: {child_path}"
+    );
+    let (code, accepted, log) = crew.lab.json(
+        Some(&crew.agent),
+        &[
+            "submit",
+            "--claim",
+            "Metals lot E: 40 tonnes, Tema, Saturday.",
+            "--claim-key",
+            "metals-lot-e",
+            "--workarea",
+            child["id"].as_str().expect("child id"),
+        ],
+    );
+    assert_eq!(code, 0, "submit into the child: {log}");
+    assert_eq!(accepted["state"], "held", "{log}");
+    let (code, stdout, stderr) = crew.hook(&[], &stdin);
+    assert_eq!(code, 0, "{stderr}");
+    let context = context_of(&stdout);
+    assert_eq!(windows(&context), None, "no part of the key: {context}");
+    let shown = child_path.replace(crew.agent.as_str(), "[OML_API_KEY]");
+    assert_eq!(
+        context.lines().next(),
+        Some(
+            format!(
+                "OML memory for this session, from {}, workarea {}….",
+                crew.lab.server,
+                shown.chars().take(119).collect::<String>()
+            )
+            .as_str()
+        ),
+        "the path is redacted, then cut after the redaction"
+    );
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() {
     // Neither a claim key nor the path counts toward the budget, so each is
     // cut where it is printed, and the record line comes before them all.
