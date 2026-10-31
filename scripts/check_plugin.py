@@ -1,5 +1,6 @@
-"""The agent plugin agrees with the server it connects to, and the admin plugin
-issues keys only the way ADR-0028 d3 allows.
+"""The agent plugin agrees with the server it connects to, its SessionStart hook
+is guarded the way ADR-0029 d7 decides, and the admin plugin issues keys only
+the way ADR-0028 d3 allows.
 
 Run by .github/workflows/ci.yml (job plugin). Checks, failing on the first
 class of disagreement found:
@@ -13,6 +14,11 @@ class of disagreement found:
 - the skill and the plugin README name exactly the tools the server serves
   (SERVED_TOOLS in crates/transports/oml-transport-http/src/mcp.rs), and every
   served tool is declared in docs/api/mcp-tools.json;
+- plugins/oml/hooks/hooks.json exists and parses, and its SessionStart hooks
+  are exactly one command, which, run under /bin/sh, exits 0 with no output
+  when no `oml` is on PATH, and otherwise runs `oml` with exactly the
+  arguments `hook session-start` and exits 0 even when that `oml` fails
+  (docs/cli/reference.md, "oml hook session-start"; ADR-0029 d7);
 - the marketplace lists oml-admin at a directory that has a manifest, at the
   workspace version;
 - oml-admin has no .mcp.json, so it adds no tool to any tool list;
@@ -23,12 +29,15 @@ class of disagreement found:
 
 import json
 import re
+import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ADMIN_SKILL = "skills/issue-agent-key/SKILL.md"
+HOOKS = "hooks/hooks.json"
 # A fenced block, indented or not, and an inline code span outside one.
 FENCE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
 SPAN = re.compile(r"`([^`\n]+)`")
@@ -87,8 +96,70 @@ def main() -> int:
                 f"{doc.relative_to(ROOT)} names tools the server does not serve: {sorted(unbuilt_mentioned)}"
             )
 
+    check_hooks(plugin_dir, errors)
     check_admin(entries, workspace_version, errors)
     return report(errors)
+
+
+def check_hooks(plugin_dir: Path, errors: list[str]) -> None:
+    """The one SessionStart command runs `oml hook session-start` only when `oml`
+    is on PATH, and a missing or failing `oml` exits 0, so a user without the
+    CLI, or with a CLI older than the verb, sees no hook error (ADR-0029 d7)."""
+    path = plugin_dir / HOOKS
+    shown = path.relative_to(ROOT)
+    if not path.is_file():
+        errors.append(f"{shown} is missing: the oml plugin's SessionStart hook (ADR-0029 d7)")
+        return
+    try:
+        hooks = json.loads(path.read_text())["hooks"]
+        groups = hooks.get("SessionStart", [])
+        entries = [h for group in groups for h in group["hooks"]]
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+        errors.append(f"{shown} does not parse as a hooks file ({type(e).__name__}: {e})")
+        return
+    if len(entries) != 1 or entries[0].get("type") != "command":
+        types = [h.get("type") for h in entries]
+        errors.append(f"{shown}: SessionStart holds the hooks {types}, not exactly one command")
+        return
+    command = entries[0].get("command", "")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        no_oml = Path(tmp) / "no-oml"
+        no_oml.mkdir()
+        run = sh(command, no_oml)
+        if (run.returncode, run.stdout, run.stderr) != (0, "", ""):
+            errors.append(
+                f"{shown}: with no oml on PATH the command exits {run.returncode} "
+                f"(stdout {run.stdout!r}, stderr {run.stderr!r}), not 0 in silence: {command}"
+            )
+
+        # A stand-in `oml` that records its arguments and fails, as a CLI
+        # older than the verb does.
+        stand_in = Path(tmp) / "stand-in"
+        stand_in.mkdir()
+        argv = Path(tmp) / "argv"
+        oml = stand_in / "oml"
+        oml.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{argv}'\nexit 2\n")
+        oml.chmod(0o755)
+        run = sh(command, stand_in)
+        ran = argv.read_text().splitlines() if argv.exists() else None
+        if ran != ["hook", "session-start"]:
+            errors.append(f"{shown}: the command runs oml with {ran}, not `hook session-start`: {command}")
+        if run.returncode != 0:
+            errors.append(f"{shown}: a failing oml makes the command exit {run.returncode}, not 0: {command}")
+
+
+def sh(command: str, path: Path) -> subprocess.CompletedProcess:
+    """`command` under /bin/sh with `path` as the whole PATH and no stdin."""
+    return subprocess.run(
+        ["/bin/sh", "-c", command],
+        env={"PATH": str(path)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
 
 
 def check_admin(entries: dict, workspace_version: str, errors: list[str]) -> None:
@@ -134,7 +205,10 @@ def report(errors: list[str]) -> int:
     for e in errors:
         print(f"plugin check: {e}", file=sys.stderr)
     if not errors:
-        print("plugin check: the oml plugin agrees with the server, and oml-admin issues keys only with --out")
+        print(
+            "plugin check: the oml plugin agrees with the server, its SessionStart hook is guarded, "
+            "and oml-admin issues keys only with --out"
+        )
     return 1 if errors else 0
 
 
