@@ -105,11 +105,12 @@ unauthenticated probe now discloses the exact build.
 
 ### 2026-10-30 — The key tool: `oml keys issue-agent`, the default reader grant, the `oml-admin` plugin (ADR-0028)
 
-[ADR-0028](adr/ADR-0028-agent-key-issuance.md) (proposed) decides, and this change builds, the
+[ADR-0028](adr/ADR-0028-agent-key-issuance.md), accepted by the maintainer on 2026-10-31 with
+release v0.2.1, decides, and this change builds, the
 key tool the maintainer chose to ship in v0.2.1, before names. Its three decisions were drafted as
 d12–d14 of the proposed ADR-0026 (names are keys), which with the proposed ADR-0027 sits on its
-own branch; this record takes the next number after both. It proposes amending ADR-0015 (d1), whose
-Status line gains the back-pointer when ADR-0028 is accepted.
+own branch; this record takes the next number after both. It amends ADR-0015 (d1), whose Status line
+carries the back-pointer.
 
 - **Decided and built:** `oml keys issue-agent --principal <principal> --workarea <workarea-id>`,
   one `POST /v2/keys` for a writer key with writer and reader grants on the workarea and that

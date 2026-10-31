@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0028-agent-key-issuance
 tier: engineering
-status: proposed
+status: accepted design
 answers: how the CLI issues the one key the agent plugin needs in one call and prints the lines the plugin reads, how --out keeps the key value off the terminal, why the issuing verbs add a reader grant beside a writer grant unless --write-only, and how the oml-admin plugin runs the issuance without the value entering a transcript
 -->
 
 # ADR-0028 — The CLI issues an agent's key in one call with its reader grant by default, and an admin skill runs it without the key value entering a transcript
 
-**Status:** proposed · 2026-10-30
+**Status:** accepted design · 2026-10-31
 
 **Amends:** ADR-0015 (d1)
 
