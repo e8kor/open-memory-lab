@@ -1643,6 +1643,69 @@ async fn the_hook_writes_at_most_one_short_line_to_stderr_whatever_the_server_an
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_prints_nothing_and_exits_0_when_an_answer_is_not_its_shape() {
+    let listing =
+        || axum::routing::get(|| async { axum::Json(json!({ "items": [], "next_cursor": null })) });
+    let cases = [
+        (
+            "a listing without items",
+            axum::Router::new().route(
+                "/v1/memories",
+                axum::routing::get(|| async { axum::Json(json!({})) }),
+            ),
+            1,
+        ),
+        (
+            "a recall without steering",
+            axum::Router::new().route("/v1/memories", listing()).route(
+                "/v1/memories/recall",
+                axum::routing::post(|| async {
+                    axum::Json(json!({ "hits": [], "query_digest": "sha256:00" }))
+                }),
+            ),
+            2,
+        ),
+        (
+            "a recall without hits",
+            axum::Router::new().route("/v1/memories", listing()).route(
+                "/v1/memories/recall",
+                axum::routing::post(|| async {
+                    axum::Json(json!({ "steering": [], "query_digest": "sha256:00" }))
+                }),
+            ),
+            2,
+        ),
+    ];
+    for (case, router, requests) in cases {
+        let seen: Recorder = Arc::new(Mutex::new(Vec::new()));
+        let (url, task) =
+            serve_stub(router.layer(middleware::from_fn_with_state(seen.clone(), record))).await;
+        let (code, stdout, stderr) = hook(
+            &[
+                ("OML_URL", &url),
+                (
+                    "OML_API_KEY",
+                    "oml_shapelesshook0123456789abcdefghijklmnopq",
+                ),
+            ],
+            &session("startup", "/home/op/src/metals"),
+        );
+        task.abort();
+        assert_eq!(code, 0, "{case}: {stderr}");
+        assert!(stdout.is_empty(), "{case}: no context: {stdout}");
+        assert!(
+            stderr.contains("not its shape"),
+            "{case}: the reason is named: {stderr}"
+        );
+        assert_eq!(
+            seen.lock().expect("recorder lock").len(),
+            requests,
+            "{case}: the recall is sent only after a readable listing"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_prints_nothing_and_exits_0_when_the_server_refuses() {
     let crew = Crew::start().await;
     let stdin = session("startup", "/home/op/src/metals");
