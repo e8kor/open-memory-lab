@@ -748,9 +748,10 @@ connection, `open` is therefore refused before any session is created, so no
 session counts against the key's upload quota, with `oauth.attach_refused`
 ([errors](errors.md#oauth-connections),
 [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11);
-`status` answers as it would to the key, which has no session to show. Claude's
-hosted apps therefore cannot attach files, and a connection's writes carry no
-attachments.
+`status` answers as it would to the key, which has no session to show. No
+file's bytes travel through an upload session under a connection; the proposed
+ADR-0035, on another branch, gives a connection small text files inline on
+`oml_remember` instead.
 
 **Who may call:** keys with writer effective access (the session binds to a
 workarea only when a submission references it).
@@ -1314,8 +1315,8 @@ must set `oauth.issuer` ([configuration](../operations/configuration.md)).
    [HTTP API](http-api.md#connections-oauth-for-hosted-mcp-clients).
 4. The connector is then usable from every Claude app signed in to that account,
    the mobile apps included. claude.ai holds only tokens bound to that one key;
-   no key value exists to paste. The one tool it cannot use is `oml_attach`
-   `open`, so it attaches no files ([`oml_attach`](#oml_attach)).
+   no key value exists to paste. The one call it cannot make is `oml_attach`
+   `open`, so it opens no upload session ([`oml_attach`](#oml_attach)).
 
 `oml keys disconnect <key-id> <connection-id>` ends the connection, and revoking
 the key ends it too. A code that lapsed before use is replaced with

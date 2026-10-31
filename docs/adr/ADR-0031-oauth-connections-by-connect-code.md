@@ -382,10 +382,11 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 
     The cost: one agent identity cannot act both from claude.ai and from a header-configured
     client such as Claude Code; each gets its own key and principal, which is what one key per
-    agent identity already asks for. A code that lapses before use needs a new one (d8). And a
-    connection cannot attach a file: `oml_attach` `open` is refused under a connection (d11),
-    because an upload's parts travel on `/v1` under a key value, which a connector key does not
-    have, so a connection's writes carry no attachments.
+    agent identity already asks for. A code that lapses before use needs a new one (d8). And no
+    file's bytes travel through an upload session under a connection: `oml_attach` `open` is
+    refused there (d11), because an upload's parts travel on `/v1` under a key value, which a
+    connector key does not have. The proposed ADR-0035, on another branch, gives a connection
+    small text files inline on `oml_remember` instead.
 
 - **d8 — The connect code is twelve Crockford base32 symbols, shown once, stored only as a
   digest, journalled by id, spent by its first correct entry, and alive ten minutes by
@@ -815,7 +816,7 @@ lead; a second error shape on one listener; one more lookup per `/mcp` call for 
 lost refresh answer ends a connection; a person who cancels or lets a code lapse needs a new one
 from the admin; a bearer client refused at `/mcp` now sees a sign-in pointer; a person who enters a
 code on a link someone else started connects the sender's client, and only the page's warning
-stands in the way; a connection cannot attach a file (d11); a replayed issuance or rotation returns
+stands in the way; a connection opens no upload session (d11); a replayed issuance or rotation returns
 no value (d7); a restart or takeover of the lead ends every page in progress (d9); a flood of slow
 document hosts can stall document clients the cache holds no copy of (d5). The page also ends
 ADR-0015's claim that the threat model never answers for a
@@ -859,7 +860,7 @@ D9, D13 and D14 cells of the D-register name it, `llms.txt` names it, and one
 | **d7 — Print the key value beside the code** | A second, unneeded credential for the same key, resting on a terminal. |
 | **d7 — Codes for bearer keys too** | One key would act through two credential paths, and the key id on a journal event could no longer say which acted without changing the signed envelope. |
 | **d7 — Rotate a connector key into a successor** | Rotation prints a successor's value, which would make it a bearer key with the connector key's grants; a successor without a value would need a new code anyway, which `oml keys connect-code` already mints. |
-| **d7 — Several live connections per key** | Several clients would share one identity, against one key per agent. |
+| **d7 — Several open connections per key** | Several clients would share one identity, against one key per agent. |
 | **d7 — Connect codes for admin keys** | `/mcp` serves no admin verb, so the connection could do nothing an admin key exists for, and the page would show an admin identity. |
 | **d8 — The code's digest in the journal** | The journal is kept forever and exported; a 60-bit digest there is a brute-force target that outlives the code by years. |
 | **d8 — A link that carries the code** | A secret in a URL lands in history, logs and referrers. |
