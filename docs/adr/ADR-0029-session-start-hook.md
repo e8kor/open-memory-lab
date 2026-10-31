@@ -94,7 +94,7 @@ accepts it.
   takes the last component of the stdin `cwd`, splits it at every character that is not a letter
   or a digit, and joins the words with single spaces: `/home/op/src/open-memory-lab` recalls with
   `open memory lab`. With no `cwd`, or a name with no word in it, the query is empty, and the
-  recall serves the steering and no hit.
+  recall serves the steering and no hit. The `cwd` is redacted as in d4 before its words are taken.
 
     The SessionStart stdin carries no prompt; the directory's name is the one text it carries
     that names the work, and memories about a project usually name the project. Splitting the

@@ -362,7 +362,7 @@ occurrence of the `OML_API_KEY` value in what it prints, stored text included, i
 letter or a digit and joined by single spaces: `/home/op/src/open-memory-lab` recalls with
 `open memory lab`. With no `cwd`, or a name with no word in it, the query is empty, and the recall
 serves the steering and no hit. The steering in force comes back whatever the query; a hit, in
-the PoC, names every word of it.
+the PoC, names every word of it. The `cwd` is redacted before its words are taken.
 
 **It fails open.** Each of these ends with no stdout and exit `0`, and at most one stderr line
 naming the reason in at most 200 characters, with the key value redacted: `OML_SESSION_CONTEXT=off`; a refused variable
