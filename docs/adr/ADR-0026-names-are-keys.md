@@ -422,8 +422,9 @@ record decides is design; nothing below is built.
 - `/v1` changes on the request side only, and only additively: `X-OML-Workarea` and the listing's
   `workarea_id` accept names. Example ids of the four kinds in the OpenAPI document, the agent
   plugin and the reviewer-crews pages are rewritten to UUID text so that no example contradicts
-  d3; the other example ids are untouched. `info.version` stays `0.2.0-design`: this record lands
-  in the same unreleased revision as ADR-0025, whose bump to `0.2.0-design` covers it.
+  d3; the other example ids are untouched. `info.version` moves from `0.2.0-design` to
+  `0.3.0-design`: ADR-0025's revision was published and tagged `spec-v0.2` at its acceptance, so a
+  `/v1` change opens the next revision, tagged `spec-v0.3` when this record is accepted.
 - `mcp-tools.json` changes the descriptions of the unserved tools that take a workarea; the served
   `oml_remember`, `oml_learn`, `oml_recall`, `oml_my_work`, `oml_workarea_info` and
   `oml_events_tail` keep their entries until the code that serves names lands, and

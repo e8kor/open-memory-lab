@@ -94,7 +94,7 @@ will fail the pull request.
 
 ## Spec versioning and tags
 
-The specification carries its own version, currently **0.2.0-design** (matching
+The specification carries its own version, currently **0.3.0-design** (matching
 `info.version` in [docs/api/openapi.yaml](docs/api/openapi.yaml)). The conventions:
 
 - **`spec-v0.1`** is tagged when implementation starts, freezing the design the build is held

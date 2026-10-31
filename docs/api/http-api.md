@@ -99,7 +99,7 @@ not built, like everything on this page.
 
 **Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
-(currently `0.2.0-design`), from which moment the covenant — and this section's definition of
+(currently `0.3.0-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization

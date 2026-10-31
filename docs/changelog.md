@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design cover, and what each revision changed
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design and 0.3.0-design cover, and what each revision changed
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design and 0.2.0-design co
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.2.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.3.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -27,7 +27,7 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## 0.2.0-design
+## 0.3.0-design
 
 ### 2026-10-30 — names as keys (ADR-0026)
 
@@ -64,9 +64,10 @@ each of those records' Status lines gains the back-pointer when ADR-0026 is acce
   the `oml_name` domain, the `tenants` and `crews` tables and the `name` columns with their unique
   indexes. Example ids of the four kinds are rewritten to UUID text on the OpenAPI document, the
   agent plugin and the reviewer-crews pages; the other example ids are untouched.
-- **`info.version` stays `0.2.0-design`.** `/v1` changes on the request side only, additively
-  (`X-OML-Workarea` and the listing's `workarea_id` accept names), and this record lands in the
-  same unreleased revision as ADR-0025, whose bump covers it.
+- **`info.version` 0.2.0-design → 0.3.0-design**, because `/v1` changes on the request side,
+  additively: `X-OML-Workarea` and the listing's `workarea_id` accept names. The 0.2.0-design
+  revision was tagged `spec-v0.2` when ADR-0025 was accepted, so this record cannot share its
+  bump; `spec-v0.3` is cut when ADR-0026 is accepted.
 - **Pages touched:** [ADR-0026](adr/ADR-0026-names-are-keys.md), the
   [decision register](adr/index.md) (row and the D7, D9, D13 and D14 cells),
   [workareas](architecture/workareas.md), [roles and keys](architecture/roles-and-keys.md),
@@ -77,9 +78,13 @@ each of those records' Status lines gains the back-pointer when ADR-0026 is acce
   [event catalog](data/event-catalog.md), [CLI reference](cli/reference.md),
   [CLI sessions](cli/sessions.md), [deployment](operations/deployment.md) and
   [runbooks](operations/runbooks.md) (the CLI invocations whose arguments changed),
-  [llms.txt](llms.txt), this changelog, `mkdocs.yml` and `CONTRIBUTING.md` (the vocabulary row).
+  [llms.txt](llms.txt), this changelog, `mkdocs.yml` and `CONTRIBUTING.md` (the vocabulary row);
+  the spec version also on the [home page](index.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md).
 - **Roadmap:** no row opens or closes. Name resolution's request-path cost is unmeasured and is
   tracked against FR-25.
+
+## 0.2.0-design
 
 ### 2026-10-31 — The agent-only memory surface (implementation)
 
