@@ -171,3 +171,164 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/check_plugin.py
+
+  chart:
+    # The Helm chart (deploy/helm/oml; docs/adr/ADR-0033-interim-helm-chart.md
+    # d10): rendered and checked, then installed on kind against Postgres in
+    # the cluster, claimed through port-forward before anything else reaches
+    # it, driven by the quickstart, then restarted, uninstalled and
+    # reinstalled to show the keyring claim keeps the signing key.
+    name: kubernetes chart (kind, helm install, quickstart)
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/e8kor/open-memory-lab
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.22.1
+      - name: The chart renders the lead ADR-0033 decides
+        run: |
+          pip install pyyaml
+          python scripts/check_chart.py
+      - name: Build the image from the checkout
+        run: |
+          version="$(python3 -c 'import tomllib;print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          docker build --tag "$IMAGE:$version" .
+      - name: The pod runs as the image's own user
+        run: |
+          user="$(docker run --rm --entrypoint id "$IMAGE:$VERSION" -u):$(docker run --rm --entrypoint id "$IMAGE:$VERSION" -g)"
+          python scripts/check_chart.py --image-user "$user"
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: oml
+      - name: Load the image into kind
+        run: kind load docker-image "$IMAGE:$VERSION" --name oml
+      - name: Postgres in the cluster (the deployment pin)
+        run: |
+          kubectl create namespace oml
+          kubectl --namespace oml apply -f - <<'EOF'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: postgres
+          spec:
+            replicas: 1
+            selector:
+              matchLabels: {app: postgres}
+            template:
+              metadata:
+                labels: {app: postgres}
+              spec:
+                containers:
+                  - name: postgres
+                    image: pgvector/pgvector:pg17
+                    env:
+                      - {name: POSTGRES_USER, value: oml}
+                      - {name: POSTGRES_PASSWORD, value: oml_dev_only}
+                      - {name: POSTGRES_DB, value: oml}
+                    ports:
+                      - containerPort: 5432
+                    readinessProbe:
+                      exec:
+                        command: [pg_isready, -U, oml, -d, oml]
+                      periodSeconds: 2
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: postgres
+          spec:
+            selector: {app: postgres}
+            ports:
+              - port: 5432
+          EOF
+          kubectl --namespace oml rollout status deployment/postgres --timeout=300s
+          kubectl --namespace oml create secret generic oml-postgres \
+            --from-literal=OML_POSTGRES__URL=postgres://oml:oml_dev_only@postgres:5432/oml
+      - name: helm install, then wait for readiness
+        run: |
+          helm install oml deploy/helm/oml --namespace oml \
+            --values deploy/helm/oml/ci/kind-values.yaml --wait --timeout 5m
+          kubectl --namespace oml rollout status deployment/oml-server-lead --timeout=300s
+      - name: Claim the enrollment token through port-forward, then the quickstart
+        run: |
+          docker create --name oml-cli "$IMAGE:$VERSION" >/dev/null
+          docker cp oml-cli:/usr/local/bin/oml "$RUNNER_TEMP/oml"
+          docker rm oml-cli >/dev/null
+          token="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
+          [ -n "$token" ] || { echo "no enrollment token in the lead's log" >&2; exit 1; }
+          kubectl --namespace oml port-forward service/oml-server 8080:8080 >"$RUNNER_TEMP/port-forward.log" 2>&1 &
+          forward=$!
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8080/readyz >/dev/null 2>&1 && break
+            sleep 1
+          done
+          OML_URL=http://127.0.0.1:8080 OML_CLI="$RUNNER_TEMP/oml" \
+          OML_CLI_CREDENTIALS="$RUNNER_TEMP/credentials" OML_ENROLLMENT_TOKEN="$token" \
+            bash scripts/quickstart.sh
+          kill "$forward"
+      - name: A restarted lead keeps its signing key and prints no new token
+        run: |
+          public_key() {
+            kubectl --namespace oml logs deployment/oml-server-lead \
+              | sed 's/\x1b\[[0-9;]*m//g' | grep -o 'public_key=[0-9a-f]*' | tail -1
+          }
+          before="$(public_key)"
+          kubectl --namespace oml rollout restart deployment/oml-server-lead
+          kubectl --namespace oml rollout status deployment/oml-server-lead --timeout=300s
+          after="$(public_key)"
+          echo "before the restart: $before"
+          echo "after the restart:  $after"
+          if [ -z "$before" ] || [ "$before" != "$after" ]; then
+            echo "the restarted lead loaded a different signing key" >&2
+            exit 1
+          fi
+          if kubectl --namespace oml logs deployment/oml-server-lead | grep -q 'enr_'; then
+            echo "the claimed deployment printed a new enrollment token" >&2
+            exit 1
+          fi
+          kubectl --namespace oml port-forward service/oml-server 8080:8080 >"$RUNNER_TEMP/port-forward-2.log" 2>&1 &
+          forward=$!
+          code=""
+          for _ in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/readyz || true)"
+            [ "$code" = 200 ] && break
+            sleep 1
+          done
+          kill "$forward"
+          [ "$code" = 200 ] || { echo "/readyz answered '$code' after the restart" >&2; exit 1; }
+      - name: helm uninstall keeps the keyring claim, and a reinstall takes it back
+        run: |
+          public_key() {
+            kubectl --namespace oml logs deployment/oml-server-lead \
+              | sed 's/\x1b\[[0-9;]*m//g' | grep -o 'public_key=[0-9a-f]*' | tail -1
+          }
+          before="$(public_key)"
+          helm uninstall oml --namespace oml --wait --timeout 5m
+          kubectl --namespace oml get persistentvolumeclaim oml-keyring
+          helm install oml deploy/helm/oml --namespace oml \
+            --values deploy/helm/oml/ci/kind-values.yaml --wait --timeout 5m
+          after="$(public_key)"
+          echo "before the reinstall: $before"
+          echo "after the reinstall:  $after"
+          if [ -z "$before" ] || [ "$before" != "$after" ]; then
+            echo "the reinstalled lead loaded a different signing key" >&2
+            exit 1
+          fi
+          if kubectl --namespace oml logs deployment/oml-server-lead | grep -q 'enr_'; then
+            echo "the reinstalled lead printed a new enrollment token" >&2
+            exit 1
+          fi
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl --namespace oml get all,pvc -o wide || true
+          kubectl --namespace oml describe pods || true
+          kubectl --namespace oml logs deployment/oml-server-lead --previous || true
+          kubectl --namespace oml logs deployment/oml-server-lead || true
+          cat "$RUNNER_TEMP"/port-forward*.log || true
