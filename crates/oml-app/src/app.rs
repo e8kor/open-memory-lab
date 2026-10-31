@@ -1790,13 +1790,21 @@ where
     /// else sees promoted rows, replaced versions included, with reader
     /// effective access on the row's workarea; anything else is absence,
     /// indistinguishable from no row. `derives_from` names only the
-    /// ancestors the caller can read (http-api.md; ADR-0025 d3).
+    /// ancestors the caller can read (http-api.md; ADR-0025 d3). An
+    /// operator key never reads content and is refused by its role before
+    /// any lookup (step 1 of the refusal order; ADR-0025 d1).
     pub async fn get_memory(
         &self,
         api_key: &str,
         memory_id: Uuid,
     ) -> Result<ServedMemory, AppError> {
         let caller = self.authenticate(api_key).await?;
+        if caller.key.role == Role::Operator {
+            return Err(AppError::VerbCeiling {
+                role: caller.key.role,
+                verb: "get",
+            });
+        }
         let memory = self
             .journal
             .memory(caller.key.tenant_id, memory_id)
