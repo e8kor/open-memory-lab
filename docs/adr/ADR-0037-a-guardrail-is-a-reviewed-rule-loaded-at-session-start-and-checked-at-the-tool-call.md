@@ -9,7 +9,7 @@ answers: what a guardrail is and how it differs from steering; which severities 
 
 **Status:** proposed · 2026-10-31
 
-**Amends:** ADR-0008 (d4), ADR-0012 (d3, d5), ADR-0013 (d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0025 (d12), ADR-0029 (d7)
+**Amends:** ADR-0001 (d5), ADR-0008 (d4), ADR-0012 (d3, d5), ADR-0013 (d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0025 (d11, d12), ADR-0029 (d7)
 
 ## Context
 
@@ -59,8 +59,8 @@ catalogues the other claim kinds these hook points could carry. Proposed, not bu
 - **d2 — Severity is `never`, `must` or `should`, and it carries inheritance.** The words follow
   RFC 2119: `must` is "an absolute requirement", `never` is its MUST NOT, and `should` is the
   reviewed default ([RFC 2119](https://www.rfc-editor.org/rfc/rfc2119), fetched 2026-10-31).
-  `never` and `must` guardrails are *required*: every descendant scope loads them whatever its
-  reader's setting (d4), as developers can exclude other CLAUDE.md files "but not this one", the
+  `never` and `must` guardrails are *required*: every descendant scope loads them under either
+  reach (d4), as developers can exclude other CLAUDE.md files "but not this one", the
   managed one, and Cursor team rules can be made "required for all team members". `should`
   guardrails are *optional*: a `workarea` setting drops an ancestor's. Severity is a clear,
   signed field of the submission, reviewed with the body and never inherited by a successor
@@ -70,26 +70,23 @@ catalogues the other claim kinds these hook points could carry. Proposed, not bu
   inside an in-progress workarea of proposed ADR-0030 included, whose held reads cover `memory`
   and `derived_fact` only and keep steering promoted only (its d8). The read (d5) lists the
   caller's own held guardrails in its chain by `claim_key` and version, under "held, not in
-  force", at most five lines, never by body. A `self_signed` guardrail (ADR-0001 d5) applies
-  only at its own workarea, as steering does, and is printed in its own sub-list, "self-signed
-  in this development workarea, never reviewed"; its rule is checked there, since a rule only
-  denies or asks (d8).
+  force", at most five lines, never by body. No guardrail is self-signed (d10).
 
 - **d4 — Applicable guardrails at scope node N are ADR-0025 d8's applicable set for kind
   `guardrail`, addressed downward, narrowed by `reach`, and ordered by severity first.**
     - **Downward addressing.** A promoted guardrail at W is served to every key with reader
       effective access at N, for every N in W's subtree, whether or not the key reads W. Such a
-      key reads those rows and nothing else of W, whose id it already learns
-      ([roles and keys](../architecture/roles-and-keys.md)). This amends ADR-0008 d4 for one
-      kind: otherwise an agent key reading its crew's workarea never sees its organisation's
+      key reads those rows through `GET /v1/guardrails` and the MCP prompt (d11) alone; get,
+      the listings and the events tail keep ADR-0008 d4's access, so it reads nothing else of W,
+      whose id it already learns ([roles and keys](../architecture/roles-and-keys.md)). This
+      amends ADR-0008 d4 for one kind: otherwise an agent key reading its crew's workarea never sees its organisation's
       rules, and a reader grant on the ancestor would expose the ancestor's memories. The cost:
       an ancestor's guardrail and provenance reach every reader below it, as its serve says (d10).
     - **Reach.** `reach=ancestors`, the default, serves the whole chain, as Claude Code, Codex,
       AGENTS.md, Gemini CLI and Windsurf walk from the root down. `reach=workarea` serves N's own
-      guardrails and its ancestors' required ones. The plugin sets it from `OML_GUARDRAILS`:
-      `ancestors` (default), `workarea` or `off`. `off` loads none and prints one line naming
-      how many required guardrails apply and were left out; any other value is read as
-      `ancestors` and named in a `systemMessage`, since a typo must not switch rules off.
+      guardrails and its ancestors' required ones. The plugin sets it from `OML_GUARDRAILS`,
+      `ancestors` (default) or `workarea`; any other value, `off` included, is read as
+      `ancestors` and named in a `systemMessage`, since no setting drops a required guardrail.
     - **Order.** Severity (`never`, `must`, `should`), then depth from the root, `promoted_at`
       and `artifact_id`, all stored and reviewed attributes, never the query (R3).
     - **Conflicts.** All applicable guardrails apply. Rows that share a `claim_key` along the
@@ -103,18 +100,19 @@ catalogues the other claim kinds these hook points could carry. Proposed, not bu
   default workarea or `X-OML-Workarea` ([ADR-0022](ADR-0022-two-ring-api.md) d4), with
   `reach`. The answer: `{scope, reach, set_digest, over_cap, guardrails: [{artifact_id,
   claim_key, version, workarea_path, depth, severity, body, rule, tokens, promoted_at, verdicts:
-  [{reviewer_key_name, held_by, at}], self_signed, conflict}], own_held: [{claim_key, version}]}`.
-  `set_digest` is SHA-256 over the RFC 8785 form of the served ids, versions, severities and the
-  digests of each body and rule. Recall never serves kind `guardrail`, in steering or in hits,
+  [{reviewer_key_name, held_by, at}], conflict}], own_held: [{claim_key, version}]}`.
+  `set_digest` is the server's digest of the served ids and versions, opaque to clients, which
+  only compare it (d11). Recall never serves kind `guardrail`, in steering or in hits,
   so an `oml_recall` mid-session does not repeat the set. The read is logged as recall is
   (ADR-0025 d9): the served ids and a digest of `{reach, scope}`. The cost: reviewer key names
   reach every reader in scope.
 
 - **d6 — `oml hook guardrails` is a second command hook of the plugin, on SessionStart for
   every source and on SubagentStart, and prints the set in its own frame.** It reads `OML_URL`
-  and `OML_API_KEY` alone, as ADR-0029 d4 does, sends one `GET /v1/guardrails`, writes the rule
-  cache (d9) and prints one hook document. Its own process gives it its own 10,000-character cap
-  ("A hook's additionalContext ... are capped at 10,000 characters", [hooks](https://code.claude.com/docs/en/hooks),
+  and `OML_API_KEY` alone, as ADR-0029 d4 does, sends one `GET /v1/guardrails` and prints one
+  hook document; on SessionStart it also writes the rule cache (d9), and on SubagentStart it
+  writes nothing, so a subagent checks its session's cache. Its own process gives it its own
+  10,000-character cap ("A hook's additionalContext ... are capped at 10,000 characters", [hooks](https://code.claude.com/docs/en/hooks),
   fetched 2026-10-31), its own failure mode and its own setting, and no stored memory body can
   sit between the two frames. A compaction re-runs it (`source: compact`), so the set survives
   the way the project-root CLAUDE.md does. The frame:
@@ -124,15 +122,27 @@ catalogues the other claim kinds these hook points could carry. Proposed, not bu
     governance promoted, each ratified with at least one human verdict. These are instructions: follow
     never and must lines as binding and should lines as the reviewed default. Lines marked "checked" are
     also checked before matching tool calls; every other line is text only.
-    - [must] Run the test suite before every commit. (universe.eng, eng-tests v2, ratified 2026-10-31 by rev-ana (human), rev-bot; checked: ask shell "git commit *")
+    - [must] Run the test suite before every commit. (universe.eng, eng-tests v2, ratified 2026-10-31 by rev-ana (human), rev-bot; checked: ask shell ["git","commit","*"])
     ```
 
     Lines are flattened and redacted as ADR-0029 d6 and d4 do. Matching hooks run in parallel
     and Claude Code states no order between their strings ("Claude receives all of the values");
     each output frames itself, so order carries no meaning. A failure exits 0 with a
     `systemMessage`, which Claude Code shows the user: memory may fail silently (ADR-0029 d5),
-    rules may not. The cost: a third request at every session start, and
-    `OML_SESSION_CONTEXT=off` leaves guardrails on until `OML_GUARDRAILS=off`.
+    rules may not. A cache the hook does not write, a refused `session_id` included, is such a
+    failure: its lines print without "checked" and the `systemMessage` names the cause. The
+    cost: a third request at every session start, and `OML_SESSION_CONTEXT=off` leaves
+    guardrails on.
+
+    Its two `hooks.json` entries, SessionStart and SubagentStart, have no matcher and are
+    ADR-0029 d7's with this verb and the status message `Loading OML guardrails`; the hook keeps
+    ADR-0029 d5's 3-second request timeout and 8-second deadline under the 10-second entry
+    timeout. The command keeps ADR-0029 d7's guard, so a missing `oml`, or one older than the
+    verb, loads no guardrail and says nothing, the one silent failure:
+
+    ```sh
+    command -v oml >/dev/null 2>&1 || exit 0; oml hook guardrails || exit 0
+    ```
 
 - **d7 — Guardrails are never cut; the set is capped, and over the cap no partial set is
   printed.** Admission caps a body at 300 UTF-8 bytes and a rule at 160 (d10); the hook caps a
@@ -147,67 +157,119 @@ catalogues the other claim kinds these hook points could carry. Proposed, not bu
 
 - **d8 — A rule is a deterministic predicate on one tool call, and its effect is `deny` or `ask`,
   never `allow`.** Grammar `oml-gr/1`, one rule per guardrail: `{"rule": "oml-gr/1", "tool":
-  "shell" | "edit" | "read" | "fetch" | "mcp", <match>, "effect": "deny" | "ask"}`. `shell`
-  matches `command`, a list of word globs, against every segment of the command split at `;`,
-  `&`, `&&`, `||`, `|` and newlines, words split by POSIX quoting without expansion; `edit` and
-  `read` match `path`, a glob over the tool's path argument, a relative glob resolved against the
-  session's `cwd` and `..` lexically; `fetch` matches `host`, exact or `*.` suffix; `mcp` matches
-  `name`, a glob over the tool name. Globs are `*`, `**` and `?`; no regular expression, so no
-  match can run away. `should` takes `ask` only. A guardrail can only narrow what the harness
-  does, so a poisoned rule can at worst stop work, never widen it ("An allow rule can't carve an
-  exception out of a deny rule", [permissions](https://code.claude.com/docs/en/permissions)).
-  Rules union across the chain and deny wins over ask. Like Claude Code's own deny rules, a
-  pattern does not see `sh -c`, aliases or another path to the same program.
+  "shell" | "edit" | "read" | "fetch" | "mcp", <match>, "effect": "deny" | "ask"}`. Each class
+  reads these Claude Code tools and arguments ([hooks](https://code.claude.com/docs/en/hooks),
+  fetched 2026-10-31):
+
+    | `tool` | Claude Code tools | matched against |
+    |---|---|---|
+    | `shell` | `Bash` | `command` |
+    | `edit` | `Write`, and every tool whose name ends in `Edit` | `file_path`; for `NotebookEdit` the field is *unverified* |
+    | `read` | `Read`, `Grep`, `Glob` | `file_path` for `Read`; `path` for `Grep` and `Glob`, the input's `cwd` when absent |
+    | `fetch` | `WebFetch` | the host of `url` |
+    | `mcp` | every tool named `mcp__*` | the tool name |
+
+    A `PowerShell` call, which POSIX quoting does not tokenise, answers `ask` whenever a `shell`
+    rule is cached, and a mapped call that lacks its argument answers `ask` whenever a rule of
+    its class is cached; every other tool, `WebSearch` and `Agent` included, is matched by no
+    rule.
+
+    - **`shell`** matches `command`, a list of word globs. The command is tokenised by POSIX
+      quoting without expansion first, and then split into segments at unquoted `;`, `&`, `&&`,
+      `||`, `|` and newlines only. A command that does not tokenise, or that holds command or
+      process substitution, a subshell, a brace group or a here-document, answers `ask` whenever
+      a `shell` rule is cached and is matched no further. The list matches a segment's words in
+      order from its first word: each glob matches one word, and a final `*` word matches zero
+      or more words, so `["git","push","*"]` matches `git push` and `git push origin main`.
+    - **`edit` and `read`** match `path`, a glob. The tool's path and a relative glob are both
+      made absolute against the hook input's `cwd` and normalised lexically (`.`, `..`,
+      repeated `/`), with symlinks unresolved; `*` and `?` stop at `/` and `**` does not, and
+      each matches a leading `.`.
+    - **`fetch`** matches `host`, exact or `*.` suffix, against the
+      [WHATWG URL](https://url.spec.whatwg.org/) host of `url`, lower-cased, without a trailing
+      dot.
+    - **`mcp`** matches `name`, a glob over the tool name.
+
+    In a word or a name, `*` matches any run of characters and `?` one. Every glob is matched by
+    a non-backtracking algorithm in O(pattern × input) time, so no match runs away. `should`
+    takes `ask` only. A guardrail can only narrow what the harness does, so a poisoned rule can
+    at worst stop work, never widen it ("An allow rule can't carve an exception out of a deny
+    rule", [permissions](https://code.claude.com/docs/en/permissions)). Rules union across the
+    chain and deny wins over ask. Like Claude Code's own deny rules, a pattern does not see
+    `sh -c`, aliases or another path to the same program; nor does it see a leading assignment,
+    `env` or `sudo`, an option before a subcommand (`git -C . push`), a symlink, or a search
+    over a parent directory. Each is a named bypass.
 
 - **d9 — `oml hook pre-tool-use` checks the cached rules before each matching tool call, with no
-  network call; a known rule it cannot check fails closed.** `oml hook guardrails` writes the
-  served rules, `set_digest`, scope and server origin to
+  network call; a known rule it cannot check fails closed.** On SessionStart `oml hook
+  guardrails` writes the served rules, each with its guardrail's `artifact_id` and body, to
   `$XDG_STATE_HOME/oml/guardrails/<session_id>.json` (default `~/.local/state`), directory 0700,
-  file 0600, by write-and-rename, refusing a `session_id` outside `[A-Za-z0-9-]`, and an empty
-  set under `off`. On PreToolUse it matches the call against that file and prints
-  `permissionDecision` `"deny"` or `"ask"` with a `permissionDecisionReason` naming the
-  guardrail's `artifact_id` and body, or nothing; never `allow`, and no tool argument leaves the
-  machine. A built-in rule asks before any `edit` of, or `shell` segment naming, the cache
-  directory. The entry matches the rule-bearing tools with a 5-second timeout and
-  `onFailure: "block"` (Claude Code 2.1.295 and later), since a stalled hook lets a call through.
-    - **Fail modes.** A cache that does not parse, whose digest does not match its rules, or
-      that names an unknown grammar denies every call it is sent, with the cause and the fix
-      (restart the session) as reason. A session with no cache file uses the newest file for the
-      same origin and scope node, marked stale in the reason; with none, it decides nothing,
-      because it knows no rule, and the start hook already told the user. Text-only guardrails
-      fail open, as ADR-0029 d5 does.
+  file 0600, by write-and-rename, refusing a `session_id` outside `[A-Za-z0-9-]` (d6), and
+  removes every file there older than 30 days, a design constant, not a measurement. The cache
+  is a client copy class outside erasure, as the export is (d11, FR-54). On PreToolUse the check
+  matches the call against that file and prints `permissionDecision` `"deny"` or `"ask"` with a
+  `permissionDecisionReason` naming the guardrail's `artifact_id` and body, or nothing; never
+  `allow`, and no tool argument leaves the machine. A built-in rule asks before any `edit` under
+  the cache directory and any `shell` segment with a word that contains `oml/guardrails`, since
+  words are not expanded.
+
+    The entry's matcher is `^(Bash|PowerShell|Write|.*Edit|Read|Grep|Glob|WebFetch|mcp__.*)$`,
+    d8's tools, anchored because Claude Code tests such a matcher as an unanchored JavaScript
+    regular expression; its timeout is 5 seconds, with `onFailure: "block"` (Claude Code 2.1.295
+    and later), since a stalled hook lets a call through; its status message is `Checking OML
+    guardrails`; and its command is
+
+    ```sh
+    command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-tool-use --help >/dev/null 2>&1 || exit 0; oml hook pre-tool-use
+    ```
+
+    The probe covers the CLI the plugin outran (ADR-0029 d7): an older `oml` answers the unknown
+    subcommand with exit 2, which a PreToolUse hook reads as "blocks the tool call", so with no
+    probe every call would be blocked. A missing or older `oml` checks nothing, and the verb has
+    no `|| exit 0`, so any failure of the verb itself blocks the call. The cost: a second process
+    per matching call.
+
+    - **Fail modes.** A cache that does not parse or that names an unknown grammar denies every
+      call it is sent, with the cause and the fix (restart the session) as reason. A session
+      with no cache file decides nothing, because it knows no rule, and the start hook already
+      told the user. Text-only guardrails fail open, as ADR-0029 d5 does.
     - **What this is, plainly.** A text-only guardrail is an instruction to a model and not a
       guarantee. A checked rule is "harness-enforced where installed": with neither managed
       settings nor a Team or Enterprise login, a Claude Code mod can let through a call a
       PreToolUse hook blocked, and a process running as the user can rewrite or remove the
-      cache. The cost of this design: a guardrail promoted, demoted or retired
-      mid-session reaches the cache only at the next session start or compaction.
+      cache. The cost of this design: a guardrail promoted, demoted or retired mid-session
+      reaches the cache only at the next session start or compaction, and a session neither
+      restarted nor compacted for 30 days loses its cache to the next start.
 
 - **d10 — Writing a guardrail is `oml_remember` with `kind: "guardrail"`; ratifying it takes a
   human verdict that no policy removes.** `severity` is required and `rule` optional on kind
-  `guardrail`, both refused on every other kind (`request.validation`); a supersession re-sends
-  both. A simulation write of kind `guardrail` is refused, since a rule binds agents beyond any
+  `guardrail`, both refused on every other kind and on a retirement (`request.validation`); a
+  supersession re-sends both. A `guardrail` target admits only kind `guardrail`, and no other
+  kind's target admits it (amends ADR-0025 d11). A simulation write of kind `guardrail` is refused, since a rule binds agents beyond any
   audience. Any writer on the node may propose one, agent or person, as the steering row of the
   [role table](../architecture/roles-and-keys.md) allows; no crew owns guardrails. The scan adds
   two veto classes under a new `ruleset_vN`: `guardrail.rule_unparsable` (a rule outside
   `oml-gr/1`, an `allow`, a `should` that denies) and `guardrail.too_long` (d7's byte caps).
   Every version of kind `guardrail`, retirements included, ratifies only with at least one
   verdict from a key attested `held_by: human` through the CLI, whatever the workarea's policy
-  names, beside its `k` (amends ADR-0012 d3). The serve of a held guardrail adds the guardrails
-  applicable at its workarea, every row sharing its `claim_key` up and down the chain, and the
+  names, beside its `k` (amends ADR-0012 d3). Self-sign is never admitted for kind
+  `guardrail`, whatever the tenant's policy: in a `development` workarea such a version waits for
+  these verdicts, as ADR-0025 d17 makes a reviewed tip's successor wait (amends ADR-0001 d5).
+  The serve of a held guardrail adds the guardrails applicable at its workarea and the
   sentence "every key that reads this workarea or any node below it will read this rule" (amends
   ADR-0012 d5). The cost: a tenant with no human-attested reviewer key has no guardrails, and
   `oml doctor`'s review-availability warning names the held ones.
 
 - **d11 — Harnesses without these hooks get an export and an MCP prompt, each text only.**
-    - **`oml guardrails export --format agents-md | claude-md | cursor-rules --out <path>
-      [--reach] [--check]`** reads `GET /v1/guardrails` under the key it is given (an admin key
-      reads no content, [ADR-0026](ADR-0026-names-are-keys.md), and is refused) and writes promoted
-      guardrails only: `claude-md` a whole file for `.claude/rules/` with no `paths`
-      frontmatter, which Claude Code loads "unconditionally"; `cursor-rules` a whole `.mdc` file,
-      its frontmatter fields unverified; and `agents-md` the text between one pair of
-      `<!-- oml:guardrails -->` markers in the named file, refusing any other count of markers. Each starts with a header naming
-      the origin, scope path, reach, count and `set_digest`, and "text, not enforcement; do not
+    - **`oml guardrails export --format agents-md | claude-md --out <path> [--reach]
+      [--check]`** reads `GET /v1/guardrails` under the key it is given (an admin key reads no
+      content, [ADR-0026](ADR-0026-names-are-keys.md), and is refused), refuses a scope node
+      inside an in-progress subtree (proposed ADR-0030 d4), whose promoted rows reach no reader
+      outside before its commit, and writes promoted guardrails only: `claude-md` a whole file
+      for `.claude/rules/` with no `paths` frontmatter, which Claude Code loads
+      "unconditionally", and `agents-md` the text between one pair of `<!-- oml:guardrails -->`
+      markers in the named file, refusing any other count of markers. Each starts with a header
+      naming the origin, scope path, reach, count and `set_digest`, and "text, not enforcement; do not
       edit". `--check` exits 1 when the live digest differs. The costs: the file is a copy no
       erasure or demotion reaches (R4's inventory, FR-54), it is read by everyone who reads the
       repository rather than by OML's readers, and it is stale until re-exported.
@@ -216,10 +278,10 @@ catalogues the other claim kinds these hook points could carry. Proposed, not bu
       fetched 2026-10-31), so it reaches Claude's apps when a person invokes it, never on its own
       (amends ADR-0014 d2: the facade gains the prompts capability; the catalog stays twelve
       tools, amending ADR-0025 d12 by one prompt).
-    - **Other harnesses.** Codex, Gemini CLI, Cursor and Copilot CLI each have a start-of-session
-      context string and a tool-call deny, under other names; no adapter for them is built here
-      (FR-53), and their status is tabled on
-      [session claims](../engineering/session-claims.md#hook-points-by-harness).
+    - **Other harnesses.** Codex, Gemini CLI, Cursor and Copilot CLI document hook points of
+      their own, tabled with what is verified on
+      [session claims](../engineering/session-claims.md#hook-points-by-harness); no adapter for
+      them is built here (FR-53).
 
 - **d12 — A change freeze is a guardrail with ADR-0036's validity interval, once that record is
   accepted.** Until then a freeze ends by a reviewed retirement. On acceptance of both, kind
@@ -256,29 +318,32 @@ catalogues the other claim kinds these hook points could carry. Proposed, not bu
     | guardrail rule | a guardrail's optional `oml-gr/1` predicate on one tool call, effect `deny` or `ask`, checked by the local hook | "allow rule" |
     | severity | `never`, `must` or `should` on a guardrail; `never` and `must` are required at every descendant | "priority" |
 
-- **d15 — The build follows v0.3.1 in five steps, each closed by its tests.**
+- **d15 — The build starts on main after v0.3.0, in five steps, each closed by its tests; S5's
+  d12 waits for ADR-0036 S1 and S3.**
 
     | Step | Lands | Check, tests named as sentences |
     |---|---|---|
-    | S1 | d2, d10, d14: kind, severity, rule, scan classes, the human floor, the serve | `a_guardrail_without_a_severity_is_refused`, `a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unparsable`, `a_body_over_300_bytes_is_vetoed_as_guardrail_too_long`, `a_guardrail_ratifies_only_with_a_human_verdict_whatever_the_policy_names`, `a_simulation_write_of_kind_guardrail_is_refused`, `the_serve_of_a_guardrail_carries_the_set_it_joins` |
-    | S2 | d3, d4, d5: the read | `a_held_guardrail_is_never_served_as_a_rule_even_inside_an_in_progress_workarea`, `recall_never_serves_kind_guardrail`, `an_ancestor_guardrail_reaches_a_key_that_reads_only_the_descendant`, `reach_workarea_keeps_ancestor_never_and_must_rows_and_drops_should_rows`, `a_self_signed_guardrail_applies_only_at_its_own_workarea`, `the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id`, `a_weaker_restatement_under_one_claim_key_is_served_as_a_conflict`, `a_set_over_twelve_is_served_whole_with_over_cap_true`, `the_read_logs_the_served_ids_and_its_digest` |
-    | S3 | d6, d7: `oml hook guardrails` and its `hooks.json` entries | `every_line_names_its_workarea_claim_key_version_and_reviewers`, `over_the_cap_no_guardrail_line_is_printed_and_the_user_is_told`, `a_compact_source_prints_the_whole_set_again`, `oml_guardrails_off_names_the_required_guardrails_left_out`, `an_unknown_oml_guardrails_value_loads_ancestors`, `the_key_value_is_redacted_in_every_line`; `check_plugin.py` holds the SessionStart, SubagentStart and PreToolUse entries |
-    | S4 | d8, d9: `oml hook pre-tool-use` | `a_matching_deny_rule_answers_deny_with_the_guardrail_id_and_body`, `deny_wins_over_ask`, `no_input_ever_answers_allow`, `the_check_sends_no_request`, `an_unreadable_cache_denies_every_call`, `a_missing_cache_uses_the_newest_for_the_same_origin_and_scope`, `an_edit_of_the_cache_directory_asks`, `a_shell_segment_after_a_control_operator_is_matched` |
-    | S5 | d11: export and the MCP prompt; d12 after ADR-0036 S1 and S3 | `export_writes_promoted_guardrails_only`, `the_header_carries_origin_scope_reach_and_set_digest`, `check_exits_one_when_the_set_changed`, `agents_md_refuses_a_file_without_exactly_one_marker_pair`, `the_prompt_renders_the_hook_text`, `a_freeze_applies_only_inside_its_interval` |
+    | S1 | d2, d10, d14: kind, severity, rule, scan classes, the human floor, the serve | `a_guardrail_without_a_severity_is_refused`, `a_guardrail_target_admits_only_kind_guardrail`, `a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unparsable`, `a_body_over_300_bytes_is_vetoed_as_guardrail_too_long`, `a_guardrail_ratifies_only_with_a_human_verdict_whatever_the_policy_names`, `a_guardrail_is_never_self_signed_whatever_the_tenant_policy`, `a_simulation_write_of_kind_guardrail_is_refused`, `the_serve_of_a_guardrail_carries_the_set_it_joins` |
+    | S2 | d3, d4, d5: the read | `a_held_guardrail_is_never_served_as_a_rule_even_inside_an_in_progress_workarea`, `recall_never_serves_kind_guardrail`, `an_ancestor_guardrail_reaches_a_key_that_reads_only_the_descendant`, `that_key_gets_no_ancestor_row_by_id_listing_or_event`, `reach_workarea_keeps_ancestor_never_and_must_rows_and_drops_should_rows`, `the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id`, `a_weaker_restatement_under_one_claim_key_is_served_as_a_conflict`, `a_set_over_twelve_is_served_whole_with_over_cap_true`, `the_read_logs_the_served_ids_and_its_digest` |
+    | S3 | d6, d7: `oml hook guardrails` and its SessionStart and SubagentStart entries | `every_line_names_its_workarea_claim_key_version_and_reviewers`, `over_the_cap_no_guardrail_line_is_printed_and_the_user_is_told`, `a_compact_source_prints_the_whole_set_again`, `oml_guardrails_off_or_any_unknown_value_loads_ancestors`, `the_key_value_is_redacted_in_every_line`; `check_plugin.py` holds both entries as ADR-0029 d7 holds its own |
+    | S4 | d8, d9: the rule cache, `oml hook pre-tool-use` and its PreToolUse entry | `a_matching_deny_rule_answers_deny_with_the_guardrail_id_and_body`, `deny_wins_over_ask`, `no_input_ever_answers_allow`, `the_check_sends_no_request`, `an_unreadable_cache_denies_every_call`, `a_session_with_no_cache_decides_nothing`, `a_cache_not_written_prints_no_line_as_checked_and_names_the_cause`, `a_subagent_start_writes_no_cache`, `a_cache_file_older_than_thirty_days_is_removed_at_start`, `an_edit_of_the_cache_directory_or_a_shell_word_naming_it_asks`, `each_mapped_tool_is_matched_on_its_argument_and_no_other_tool_by_any_rule`, `a_shell_segment_after_a_control_operator_is_matched`, `a_quoted_operator_splits_no_segment`, `a_command_that_does_not_tokenise_or_holds_a_substitution_asks`, `a_final_star_word_matches_zero_or_more_words_from_the_first_word_on`, `a_path_and_its_glob_are_normalised_against_the_input_cwd`, `a_star_stops_at_a_slash_and_a_double_star_does_not`, `a_fetch_host_is_the_whatwg_host_lower_cased_without_a_trailing_dot`, `a_glob_of_many_stars_matches_a_long_command_in_linear_time`; `check_plugin.py` holds the PreToolUse matcher equal to d8's tools, the timeout, `onFailure` and the status message, and runs the command under `/bin/sh` with no `oml`, with a stand-in older `oml` and with one whose verb fails: the first two exit 0 with no output, the third exits non-zero |
+    | S5 | d11: export and the MCP prompt; d12 | `export_writes_promoted_guardrails_only`, `export_refuses_a_scope_inside_an_in_progress_subtree`, `the_header_carries_origin_scope_reach_and_set_digest`, `check_exits_one_when_the_set_changed`, `agents_md_refuses_a_file_without_exactly_one_marker_pair`, `the_prompt_renders_the_hook_text`, `a_freeze_applies_only_inside_its_interval` |
 
 ## Consequences
 
 - **Pages on acceptance**: retrieval (d5), admission (d10), roles and keys (d4), the CLI
   reference (`oml hook guardrails`, `oml hook pre-tool-use`, `oml guardrails show` and `export`),
-  the agent plugin and its README, the event catalog and Postgres schema (d14), the test
+  audit and lineage (the erasure inventory gains the rule cache and the export as client copy
+  classes, d9, d11), the agent plugin and its README, the event catalog and Postgres schema (d14), the test
   strategy, and the D11, D12, D13 and D14 cells of the [register](index.md).
 - **Costs**, each stated in its decision: a third request per session start (d6), rules fixed
   for the session and bypassable on the client (d9), reviewer names to every reader (d5), no
-  guardrail without a human reviewer (d10), exports outside erasure (d11).
+  guardrail without a human reviewer (d10), the rule cache and exports outside erasure (d9,
+  d11).
 - **Roadmap rows, each proposed**: [FR-50](../product/roadmap.md) (this record built), FR-51
   (Claude Code runs both hooks and honours the deny, unverified), FR-52 (how far text guardrails
   change what agents do, and whether a per-turn reminder helps, unmeasured), FR-53 (adapters for
-  the other harnesses), FR-54 (exported files as a copy outside erasure). The other claim kinds
+  the other harnesses), FR-54 (exported files and the rule cache as copies outside erasure). The other claim kinds
   are catalogued, proposed and not decided, on [session claims](../engineering/session-claims.md),
   with FR-55 to FR-59.
 - **Process.** With the proposal: this file, a register row, a nav entry, `llms.txt`, one
@@ -299,12 +364,15 @@ catalogues the other claim kinds these hook points could carry. Proposed, not bu
 | **d2 — A separate `inherit: required` mark** | Two fields that can disagree; an optional `never` or a required `should` has no reading. |
 | **d4 — Applicability bounded by reader access at the ancestor, as steering is** | An agent key with reader on its crew's workarea would never load its organisation's rules, and a reader grant on the ancestor would expose its memories. |
 | **d4 — Closest wins, as AGENTS.md does** | A descendant could loosen an ancestor's rule by restating it. |
+| **d4 — An `off` value for `OML_GUARDRAILS`** | One variable, which a committed project settings file can set for everyone who opens the repository, would drop every required guardrail and every checked rule. |
 | **d5 — A guardrail segment in every recall** | Each `oml_recall` would repeat up to 9,600 characters, and the cap and provenance differ from steering's. |
 | **d5 — An `oml_guardrails` MCP tool** | The model would choose when to read its own rules; the hooks deliver them at start, compaction and subagent start. |
 | **d6 — A first section of `oml hook session-start`** | One 10,000-character cap shared with never-cut steering, over which Claude gets a 2,000-character preview; and one fail-silent mode for rules a user must know did not load. |
-| **d6 — A per-turn reminder at UserPromptSubmit** | The set does not change within a session; its effect is unmeasured (FR-52), and Copilot CLI drops that hook's output. |
+| **d6 — A per-turn reminder at UserPromptSubmit** | The set does not change within a session; its effect is unmeasured (FR-52). |
 | **d8 — Regular expressions, or an `allow` effect** | The first can run away and differs across engines; the second lets a stored claim widen what an agent may do. |
 | **d9 — Fetch the set on every tool call** | A request per tool call, the tool's arguments sent to the server, and a down server stops all work. |
+| **d9 — An `exit 0` fallback after the check, as ADR-0029 d7 has** | A crash of the verb would allow the call, so `onFailure: "block"` would cover a timeout alone. |
+| **d9 — With no cache, the newest cache of another session** | The check makes no request, so it cannot know the key's scope node, and another session's file may come from another reach or key. |
 | **d9 — Fail closed with no cache at all** | With no cache the hook knows no rule; denying everything would stop every user whose server was down at session start. |
 | **d10 — A guardrail crew or a curator profile owning guardrails** | A new profile in the grant algebra for a kind whose control is the human verdict, and a crew that writes and reviews its own rules works against R2. |
 | **d11 — Render rules into Claude Code `permissions.deny` or managed settings** | Writing harness settings is an admin act on the user's machine, not the agent key's (R1); left to the catalogue, unbuilt. |
