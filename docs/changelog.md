@@ -34,22 +34,26 @@ implementation milestone where it changes what the repository holds.
 [ADR-0035](adr/ADR-0035-a-deliverable-is-the-last-claim-in-its-chain.md), proposed on
 2026-10-31, designs how agents store finished work in workareas: a claim of kind `deliverable`
 whose files ride `oml_remember` and `oml_supersede` as upload sessions or inline text, are named by
-a file manifest, are served as descriptors, and are reviewed like every claim. Its number follows those that
-records on other branches hold. It binds nothing before its acceptance, and no accepted record
-changes until then.
+a file manifest, are served as descriptors, and are reviewed like every claim, and where every
+file and lake table is stored: one object-store port whose backend one URL setting picks, the
+local filesystem by default. Its number follows those that records on other branches hold. It
+binds nothing before its acceptance, and no accepted record changes until then. The maintainer
+confirmed d2's departure from the brief on 2026-10-31.
 
 - **Proposed, not built:** kind `deliverable` (d1); the file manifest and
   `submission.file_manifest_invalid` (d2); download-only attachment fetch naming its version (d3);
   the two attachment forms and `oml attach put` (d4); descriptors, counter `oml-tc/2` and
   `include_text` (d5); the forms described per key and selected by the harness (d6); several
-  deliverables in one workarea (d7); declared lineage and the descendants read (d8); the
-  object-store and KMS ports with one DEK per stored object, and their copy classes (d9); two
-  vocabulary rows (d10); the build order after iteration 3 (d11).
-- **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-40 to FR-42 on
-  the roadmap, each marked proposed. No contract page changes, so `info.version` stays
-  `0.2.0-design`.
-- **Amends, on acceptance:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4) and ADR-0025
-  (d4, d6, d8, d11, d12, d14); their Status lines gain the back-pointer then.
+  deliverables in one workarea (d7); declared lineage and the descendants read (d8); one DEK per
+  stored object, the `bound` session state, the object's frame format, its lifecycle and expiry,
+  and their copy classes (d9); one `object_store` port for files and the lake, `storage.url` with
+  the local filesystem by default, the conformance suite against the filesystem and MinIO, and
+  `oml storage copy` (d10); two vocabulary rows (d11); the build order after iteration 3 (d12).
+- **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-40 to FR-43
+  and FR-46 on the roadmap, each marked proposed (FR-44 and FR-45 are used on another branch). No
+  contract page changes, so `info.version` stays `0.2.0-design`.
+- **Amends, on acceptance:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4), ADR-0023 (d3,
+  d8) and ADR-0025 (d4, d6, d8, d11, d12, d14); their Status lines gain the back-pointer then.
 
 ### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
 
