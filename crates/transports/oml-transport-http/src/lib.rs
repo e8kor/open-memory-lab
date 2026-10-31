@@ -964,22 +964,26 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let req: BootstrapClaimBody = parse_json(headers, body)?;
-        // Syntax first, the token after: a refused name reveals nothing and
-        // consumes no token.
-        let tenant_name = creation_name(
-            "tenant_name",
-            req.tenant_name.as_deref().unwrap_or("default"),
-        )?;
-        let taken = {
+        // The token first (`auth.invalid`), the name after, so only the
+        // holder of the valid token learns anything about a name (ADR-0026
+        // d5; http-api.md bootstrap). The name is checked while the lock
+        // still holds the token: a refused name consumes no token and
+        // journals nothing, and no concurrent claim sees it consumed.
+        let (taken, tenant_name) = {
             let mut guard = st
                 .enrollment
                 .lock()
                 .map_err(|_| ApiError::internal("enrollment token lock poisoned"))?;
             match guard.as_deref() {
-                Some(t) if t == req.enrollment_token => guard.take(),
+                Some(t) if t == req.enrollment_token => {}
                 Some(_) => return Err(ApiError::auth_invalid("unknown")),
                 None => return Err(ApiError::auth_invalid("consumed")),
             }
+            let tenant_name = creation_name(
+                "tenant_name",
+                req.tenant_name.as_deref().unwrap_or("default"),
+            )?;
+            (guard.take(), tenant_name)
         };
         let boot = BootstrapRequest {
             tenant_name,

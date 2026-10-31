@@ -1163,6 +1163,48 @@ async fn a_workarea_name_the_creation_grammar_refuses_is_request_validation_and_
     drop_db(&rig.db_name).await;
 }
 
+/// The bootstrap claim checks the enrollment token before the name: a name
+/// the creation grammar refuses is `auth.invalid` under an unknown or a
+/// consumed token, and `request.validation` naming the field only under the
+/// valid one, whose refusal consumes no token and journals nothing, so the
+/// holder claims again with a valid name (http-api.md bootstrap; errors.md
+/// `name.taken`; ADR-0026 d5).
+#[tokio::test]
+async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_consumes_no_token() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let claim = |token: &str| {
+        Call::default().body(json!({
+            "enrollment_token": token,
+            "tenant_name": "Test_Tenant",
+        }))
+    };
+
+    let (status, _, body) = send(router, "POST", "/v2/bootstrap/claim", claim("enr_wrong")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.invalid");
+    assert_eq!(body["error"]["details"]["reason"], "unknown", "{body}");
+
+    let (status, _, body) = send(router, "POST", "/v2/bootstrap/claim", claim(ENROLLMENT)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+    assert_eq!(body["error"]["details"]["field"], "tenant_name", "{body}");
+    assert!(
+        enumerate_tenants(rig.store.pool())
+            .await
+            .expect("tenants")
+            .is_empty(),
+        "the refused claim journals nothing"
+    );
+
+    bootstrap(router).await;
+    let (status, _, body) = send(router, "POST", "/v2/bootstrap/claim", claim(ENROLLMENT)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.invalid");
+    assert_eq!(body["error"]["details"]["reason"], "consumed", "{body}");
+    drop_db(&rig.db_name).await;
+}
+
 // ---------------------------------------------------------------------------
 // Issuance with grants and denials (ADR-0025 d2, d16)
 // ---------------------------------------------------------------------------
