@@ -33,10 +33,11 @@ implementation milestone where it changes what the repository holds.
 
 [ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), proposed on 2026-10-31,
 records what the maintainer decided that day on M0 spike 3's findings: `FORCE ROW LEVEL SECURITY`
-fences table reads only, an owner/serving role split keeps planner statistics and DDL from every
+fences table reads only, an owner/serving role split keeps the `pg_stats` view and DDL from every
 workload, and `_sqlx_migrations` is ADR-0007 d2's one named exemption, reachable by the owner
-alone. It decides the two roles and their privileges, the lead's boot under `postgres.owner_url`
-and `postgres.url`, the startup refusal `postgres.role_split` when one URL serves both, the
+alone. EXPLAIN's row estimate, which no split closes, stays the spike's open finding. It decides
+the two roles and their privileges, the lead's boot under `postgres.owner_url` and
+`postgres.url`, the startup refusal `postgres.role_split` when one URL serves both, the
 one-time split of a single-role install with the live host's entry marked not run, the checks,
 the `rls-spike` change and the build order after iteration 3. Numbers 0026, 0027 and 0030 to 0033
 are taken by records on other branches. It amends ADR-0007 (d2), whose Status line gains the
