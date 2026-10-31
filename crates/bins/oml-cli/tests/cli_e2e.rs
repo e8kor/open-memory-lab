@@ -3,8 +3,8 @@
 //! the `oml` binary — bootstrap → issue → submit → review → approve → recall
 //! → verify-chain refused by name while no chain export is served (the
 //! verification vectors live in `vectors.rs`).
-//! The key-tool cases (ADR-0028) run the lead behind a recorder, so a test
-//! can name exactly the requests a verb sent.
+//! The key-tool cases (ADR-0028) and the names cases (ADR-0026) run the lead
+//! behind a recorder, so a test can name exactly the requests a verb sent.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1070,5 +1070,429 @@ async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_i
         .expect("get of the key's own held row");
     assert_eq!(status, 200);
     assert_eq!(row["state"], "held", "{row}");
+    lab.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// Names in every argument (ADR-0026; cli/reference.md conventions)
+// ---------------------------------------------------------------------------
+
+/// The second export line's single-quoted key value.
+fn exported_value(stdout: &str) -> String {
+    stdout
+        .lines()
+        .nth(1)
+        .and_then(|l| l.strip_prefix("export OML_API_KEY='"))
+        .and_then(|l| l.strip_suffix('\''))
+        .expect("the second line exports the key value")
+        .to_owned()
+}
+
+/// `oml keys issue-agent <key-name>` sends the name as the issuance's
+/// `name` and its `--workarea` and `--crew` as the operator spelled them,
+/// and the key it issues answers to that name on `oml keys show`
+/// (cli/reference.md `oml keys issue-agent`, `oml keys show`; ADR-0026 d4,
+/// d9, d12).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
+    let lab = Lab::start().await;
+    let wa = lab.workarea("metals");
+    let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
+    assert_eq!(code, 0, "crews create: {log}");
+    lab.take_requests();
+
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "claude-laptop",
+        "--principal",
+        "claude/laptop",
+        "--workarea",
+        "metals",
+        "--crew",
+        "metals-crew",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/keys"]);
+    assert_eq!(
+        seen[0].body,
+        json!({
+            "role": "writer",
+            "name": "claude-laptop",
+            "held_by": "agent",
+            "principal": "claude/laptop",
+            "default_workarea_id": "metals",
+            "crew": "metals-crew",
+            "grants": [grant("metals", "writer"), grant("metals", "reader")],
+        }),
+        "every reference goes as spelled; the CLI resolves nothing"
+    );
+
+    let (code, shown, log) = lab.json(None, &["keys", "show", "claude-laptop"]);
+    assert_eq!(code, 0, "keys show by name: {log}");
+    assert_eq!(shown["name"], "claude-laptop", "{log}");
+    assert_eq!(shown["principal"], "claude/laptop", "{log}");
+    assert_eq!(shown["crew_id"], crew["crew_id"], "{log}");
+    assert_eq!(
+        shown["default_workarea_id"].as_str(),
+        Some(wa.as_str()),
+        "{log}"
+    );
+    let key_id = shown["key_id"].as_str().expect("key id");
+    assert!(
+        stderr.contains("claude-laptop") && stderr.contains(key_id),
+        "stderr names the key it issued by name and id: {stderr}"
+    );
+    let (code, by_id, log) = lab.json(None, &["keys", "show", key_id]);
+    assert_eq!(code, 0, "keys show by id: {log}");
+    assert_eq!(by_id, shown, "the name answers what the id does");
+
+    // The exported value is the key that answers to the name.
+    let value = exported_value(&stdout);
+    let (code, accepted, log) = lab.json(
+        Some(&value),
+        &["submit", "--claim", "The named key remembers."],
+    );
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(accepted["workarea_id"].as_str(), Some(wa.as_str()), "{log}");
+    lab.stop().await;
+}
+
+/// A `--grant <workarea>:<role>` takes the workarea's id or its name, the
+/// CLI sends it as spelled, and the server issues the one grant either way
+/// (cli/reference.md `oml keys issue`; ADR-0026 d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
+    let lab = Lab::start().await;
+    let wa = lab.workarea("metals");
+    lab.take_requests();
+
+    let by_id = lab.issue(
+        "agent-by-id",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+            "--default-workarea",
+            &wa,
+        ],
+    );
+    let by_name = lab.issue(
+        "agent-by-name",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-2",
+            "--grant",
+            "metals:writer",
+            "--default-workarea",
+            "metals",
+        ],
+    );
+
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/keys", "POST /v2/keys"]);
+    assert_eq!(
+        seen[1].body["grants"],
+        json!([grant("metals", "writer"), grant("metals", "reader")]),
+        "the name goes as spelled, with its reader grant beside it"
+    );
+    assert_eq!(seen[1].body["default_workarea_id"], "metals");
+    assert_eq!(
+        granted(&by_id),
+        [
+            (wa.clone(), "writer".to_owned()),
+            (wa.clone(), "reader".to_owned())
+        ]
+    );
+    assert_eq!(granted(&by_name), granted(&by_id));
+    assert_eq!(by_name["default_workarea_id"], by_id["default_workarea_id"]);
+    lab.stop().await;
+}
+
+/// `oml crews create <name>` creates a crew record, and `oml crews show`,
+/// `update` and `list` answer it by its name exactly as by its id
+/// (cli/reference.md `oml crews`; ADR-0026 d4, d8).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crews_create_and_show_by_name() {
+    let lab = Lab::start().await;
+    lab.take_requests();
+
+    let (code, created, log) = lab.json(
+        None,
+        &[
+            "crews",
+            "create",
+            "metals-crew",
+            "--charter-uri",
+            "https://crews.example.com/metals/charter.md",
+            "--external-manager",
+            "crewd.example.com",
+        ],
+    );
+    assert_eq!(code, 0, "crews create: {log}");
+    assert_eq!(created["name"], "metals-crew", "{log}");
+    assert_eq!(
+        created["charter_uri"],
+        "https://crews.example.com/metals/charter.md"
+    );
+    assert_eq!(created["external_manager"], "crewd.example.com");
+    let crew_id = created["crew_id"].as_str().expect("crew id").to_owned();
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/crews"]);
+    assert_eq!(
+        seen[0].body,
+        json!({
+            "name": "metals-crew",
+            "charter_uri": "https://crews.example.com/metals/charter.md",
+            "external_manager": "crewd.example.com",
+        })
+    );
+
+    let (code, by_name, log) = lab.json(None, &["crews", "show", "metals-crew"]);
+    assert_eq!(code, 0, "crews show by name: {log}");
+    assert_eq!(by_name, created);
+    let (code, by_id, log) = lab.json(None, &["crews", "show", &crew_id]);
+    assert_eq!(code, 0, "crews show by id: {log}");
+    assert_eq!(by_id, created);
+    let (code, stdout, stderr) = lab.text(&["crews", "show", "metals-crew"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("metals-crew") && stdout.contains(&crew_id),
+        "the human layout names the crew by name and id: {stdout}"
+    );
+
+    let (code, updated, log) = lab.json(
+        None,
+        &[
+            "crews",
+            "update",
+            "metals-crew",
+            "--external-manager",
+            "crewd.example.org",
+        ],
+    );
+    assert_eq!(code, 0, "crews update by name: {log}");
+    assert_eq!(updated["crew_id"], created["crew_id"], "{log}");
+    assert_eq!(updated["name"], "metals-crew", "the name never changes");
+    assert_eq!(updated["external_manager"], "crewd.example.org");
+    assert_eq!(updated["charter_uri"], created["charter_uri"]);
+
+    let (code, listed, log) = lab.json(None, &["crews", "list"]);
+    assert_eq!(code, 0, "crews list: {log}");
+    assert_eq!(listed["items"], json!([updated]), "{log}");
+
+    // A taken name is the server's refusal, typed.
+    let (code, envelope, log) = lab.json(None, &["crews", "create", "metals-crew"]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(envelope["error"]["code"], "name.taken", "{log}");
+
+    // An update names at least one field, or nothing is sent.
+    lab.take_requests();
+    let (code, _, log) = lab.json(None, &["crews", "update", "metals-crew"]);
+    assert_eq!(code, 2, "a local refusal: {log}");
+    assert!(lab.take_requests().is_empty(), "nothing was sent: {log}");
+    lab.stop().await;
+}
+
+/// Under the admin context `oml bootstrap claim` stores, `oml workareas
+/// tree` lists the tenant tree from `universe` down, or from a `--root`
+/// given by name, with each node's name, path, status and crew, and `oml
+/// workareas show` reads one node by name, while recall under the same key
+/// still answers `access.verb_ceiling` (cli/reference.md `oml workareas`;
+/// ADR-0026 d4, d8, d15).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
+    let lab = Lab::start().await;
+    let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
+    assert_eq!(code, 0, "crews create: {log}");
+    let create = |args: &[&str]| {
+        let mut all = vec!["workareas", "create"];
+        all.extend_from_slice(args);
+        let (code, created, log) = lab.json(None, &all);
+        assert_eq!(code, 0, "workareas create {args:?}: {log}");
+        created
+    };
+    let procurement = create(&["universe", "procurement"]);
+    assert_eq!(procurement["path"], "universe.procurement");
+    let metals = create(&["procurement", "metals", "--crew", "metals-crew"]);
+    assert_eq!(metals["path"], "universe.procurement.metals");
+    assert_eq!(metals["crew"], crew, "the crew record named by its name");
+    let q1 = create(&["metals", "q1-2027"]);
+    create(&["universe", "research"]);
+    lab.take_requests();
+
+    let (code, tree, log) = lab.json(None, &["workareas", "tree"]);
+    assert_eq!(code, 0, "workareas tree: {log}");
+    let nodes = tree["items"].as_array().expect("items");
+    let column = |name: &str| -> Vec<&str> {
+        nodes
+            .iter()
+            .map(|n| n[name].as_str().expect(name))
+            .collect()
+    };
+    assert_eq!(
+        column("path"),
+        [
+            "universe",
+            "universe.procurement",
+            "universe.procurement.metals",
+            "universe.procurement.metals.q1-2027",
+            "universe.research",
+        ],
+        "{log}"
+    );
+    assert_eq!(
+        column("name"),
+        ["universe", "procurement", "metals", "q1-2027", "research"]
+    );
+    assert_eq!(
+        column("status"),
+        [
+            "committed",
+            "development",
+            "development",
+            "development",
+            "development"
+        ]
+    );
+    assert_eq!(nodes[2]["crew"], crew, "each node carries its crew record");
+    assert!(
+        nodes[1].get("crew").is_none(),
+        "a node with no crew carries none"
+    );
+    let seen = lab.take_requests();
+    assert_eq!(
+        routes(&seen)[0],
+        "GET /v2/workareas/universe",
+        "the root goes by its name"
+    );
+    assert!(
+        routes(&seen)
+            .iter()
+            .all(|r| r.starts_with("GET /v2/workareas/")),
+        "the tree is workarea reads and nothing else: {:?}",
+        routes(&seen)
+    );
+
+    let (code, subtree, log) = lab.json(None, &["workareas", "tree", "--root", "metals"]);
+    assert_eq!(code, 0, "workareas tree --root by name: {log}");
+    let paths: Vec<&str> = subtree["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|n| n["path"].as_str().expect("path"))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "universe.procurement.metals",
+            "universe.procurement.metals.q1-2027"
+        ]
+    );
+
+    let (code, stdout, stderr) = lab.text(&["workareas", "tree"]);
+    assert_eq!(code, 0, "{stderr}");
+    for path in column("path") {
+        assert!(stdout.contains(path), "{path} is listed: {stdout}");
+    }
+    assert!(
+        stdout.contains("metals-crew"),
+        "the crew is shown: {stdout}"
+    );
+
+    let (code, shown, log) = lab.json(None, &["workareas", "show", "metals"]);
+    assert_eq!(code, 0, "workareas show by name: {log}");
+    assert_eq!(shown["id"], metals["id"], "{log}");
+    assert_eq!(shown["crew"], crew, "{log}");
+    assert_eq!(
+        shown["my_effective_verbs"],
+        json!([]),
+        "admin holds no grant verb"
+    );
+    assert_eq!(
+        shown["children"],
+        json!([{ "id": q1["id"], "path_leaf": "q1-2027", "status": "development" }])
+    );
+
+    // Structure, never content: the admin context still recalls nothing.
+    let (code, envelope, log) = lab.json(None, &["recall", "--query", "anything"]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(envelope["error"]["code"], "access.verb_ceiling", "{log}");
+    lab.stop().await;
+}
+
+/// A reference that is neither an id nor a name reaches the server as
+/// typed, one path segment however it is spelled, a dot or an escape
+/// included, and is refused there as `request.validation`: the CLI
+/// classifies nothing but the three spellings a path cannot carry as one
+/// segment (cli/reference.md conventions; ADR-0026 d3, d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reference_that_is_neither_an_id_nor_a_name_is_refused_by_the_server_as_request_validation()
+ {
+    let lab = Lab::start().await;
+    for bad in [
+        "Metals",
+        "universe.procurement",
+        "a/b",
+        "x?y=1",
+        "...",
+        "%2e",
+        "%2e%2e",
+    ] {
+        let (code, envelope, log) = lab.json(None, &["workareas", "show", bad]);
+        assert_eq!(code, 1, "{bad:?}: {log}");
+        assert_eq!(
+            envelope["error"]["code"], "request.validation",
+            "{bad:?}: {log}"
+        );
+    }
+    lab.stop().await;
+}
+
+/// A reference spelled ``, `.` or `..` is refused before anything is sent,
+/// exit 2, on every verb that puts a reference in a path: a URL path cannot
+/// carry it as one segment, the empty value leaving none and the URL parser
+/// removing the other two as dot segments, so it would reach another route
+/// or none, and no id or name is spelled so (cli/reference.md conventions;
+/// ADR-0026 d2, d3, d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reference_spelled_empty_dot_or_dot_dot_is_refused_before_anything_is_sent() {
+    let lab = Lab::start().await;
+    lab.take_requests();
+    for bad in ["", ".", ".."] {
+        for args in [
+            vec!["keys", "show", bad],
+            vec!["deny", "set", bad, "universe"],
+            vec!["workareas", "show", bad],
+            vec!["workareas", "tree", "--root", bad],
+            vec!["crews", "show", bad],
+            vec![
+                "crews",
+                "update",
+                bad,
+                "--charter-uri",
+                "https://example.org/c",
+            ],
+        ] {
+            let (code, stdout, stderr) = lab.text(&args);
+            assert_eq!(code, 2, "{args:?}: {stdout}{stderr}");
+            assert!(
+                stderr.contains(&format!("{bad:?}")) && stderr.contains("one URL path segment"),
+                "{args:?}: the value and the reason are named: {stderr}"
+            );
+            assert!(stdout.is_empty(), "{args:?}: {stdout}");
+            assert_eq!(
+                routes(&lab.take_requests()),
+                Vec::<String>::new(),
+                "{args:?}: nothing was sent"
+            );
+        }
+    }
     lab.stop().await;
 }

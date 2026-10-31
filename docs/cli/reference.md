@@ -42,7 +42,14 @@ Every verb below is designed, not built; no transcript or flag on this page has 
   default; there `--dry-run` is an explicit opt-in preview, not the default.
 - **Names or ids.** Every argument that names a workarea, crew, key or tenant takes its id or its
   [name](../api/http-api.md#names-and-ids), and the server resolves it; the CLI resolves nothing
-  itself. Every grant, act and journal event binds to the **id**
+  itself. It sends each such argument as typed, one percent-encoded segment where the route
+  takes it in its path, so a value that is neither an id nor a name is the server's
+  `request.validation`. The one exception is checked before anything is sent: an argument a path
+  carries that is empty, `.` or `..` is refused (exit `2`), because no URL path carries it as
+  one segment — the empty value leaves none, and the URL Standard removes the other two as
+  [dot segments](https://url.spec.whatwg.org/#single-dot-path-segment), an escaped `%2e`
+  included — and no id or name is spelled so ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d2,
+  d3). Every grant, act and journal event binds to the **id**
   ([workareas](../architecture/workareas.md)); the CLI prints each row's name beside its id
   where the response carries both, and `--json` prints the response body unchanged: ids in id
   fields, and `name` on each workarea, crew, key and tenant object the body carries. A derived
@@ -111,7 +118,10 @@ CLI's issuance default ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d2). `
 same workarea with the same deny masks, unless the request already names that reader grant or
 `--write-only` is passed. Neither verb takes a per-grant deny mask yet, so today both grants are
 sent without one; the copy keeps the added grant from ever reading a subtree its writer grant is
-denied. The default is the CLI's alone: `POST /v2/keys` takes exactly the grants it is sent
+denied. The CLI resolves no [name](../api/http-api.md#names-and-ids), so it compares workareas as
+spelled: the added reader grant names the workarea exactly as its writer grant does, and a reader
+grant that names the workarea by its id does not count for a writer grant that names it by its
+name. The default is the CLI's alone: `POST /v2/keys` takes exactly the grants it is sent
 ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)), so the
 added grant is an ordinary grant in the request body, journalled as its own `grant.issued` and
 echoed in the `201` like any other; without `--json`, `oml keys issue` names each grant it adds on
@@ -123,7 +133,7 @@ exactly the grant it names.
 | Verb | Does |
 |---|---|
 | `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. |
-| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea_id` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file and neither line carries it ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions, proposed and not built: the shipped verb, [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's, takes `--principal` and `--workarea <workarea-id>`, and its key has no name until names land. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). |
+| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea_id` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file and neither line carries it ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). |
 | `oml keys revoke <key>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
 | `oml keys rotate <key> <new-key-name> [--grace <duration>]` | Mint a successor key named `<new-key-name>` — new key id and name, since both keys are live through the grace window, linked by `rotated_from`, grants and crew reproduced from the journalled records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `oml keys list [--role …] [--expiring <duration>]` | Key names, ids, roles, principals, labels, expiries. Never values. |
@@ -158,12 +168,13 @@ No key value reaches stdout, stderr or the terminal; the second line reads it fr
 the operator's shell runs it. A refused issuance removes the empty file the CLI created. If the
 value cannot be written once the key is issued, the value is lost: the CLI removes the partial
 file, names the key's name and id on stderr, says to revoke it, and exits `2`; until key
-revocation is built, `oml deny set <key-id> <root workarea id>` keeps the key from every workarea.
+revocation is built, `oml deny set <key> universe` keeps the key from every workarea.
 With or without `--out`, if no usable answer comes back once the request may have reached the
 server (the exchange fails after connecting, a `5xx` arrives without the typed envelope, or the
 `201` body cannot be read or parsed), the CLI cannot tell whether the key exists: it removes the
 empty file, shows none of the body, names the key name and the principal, says a key may have
-been issued with its value lost, and exits `2`; it never reports that case as a refusal. A path
+been issued with its value lost, and exits `2`; it never reports that case as a refusal, and
+`oml keys show <key-name>` then answers whether the key exists. A path
 containing a quote or a newline is refused (exit `2`) before anything is sent, so the printed line
 is always safe to run, and `--out` with `--json` is refused (exit `2`), because the `201` body
 carries the value. The file is the one place the
@@ -206,7 +217,7 @@ them into `propose` and `ratify` run under different keys.
 | Verb | Does |
 |---|---|
 | `oml workareas create <parent> <name> [--crew <crew>] [--prefix <PREFIX>]` | Create a child workarea named `<name>` — unique in the tenant (`name.taken`; `universe` is the root's) — in `development`. Refused under a `validated` parent. `--crew` names an existing [crew record](#oml-crews-crew-records). `--prefix` registers a vocabulary workarea ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the prefix is tenant-unique and **permanent** — the command states this and confirms before acting — and requires `--crew` (a vocabulary needs a named curator crew). |
-| `oml workareas tree [--root <workarea>] [--status]` | The tenant tree from `universe` down, with status and crew per node. |
+| `oml workareas tree [--root <workarea>] [--status]` | The tenant tree from `universe` down, or from `--root`, with status and crew per node. The verb as built takes `--root` and not `--status`, and, while the server serves no `GET /v2/workareas/{id}/tree`, reads the tree as one workarea read per node, from the root down; `--json` then prints those reads, each as the server served it, as the `items` of one document. Under a key with reader effective access, a node it cannot read is absent, and so is everything below it. |
 | `oml workareas show <workarea>` | One node, by id or name: name, id, path (derived), status, crew record, edges, policy snapshot in force. |
 | `oml workareas crew set <workarea> --crew <crew>` | Journalled crew-metadata update: point the workarea at another crew record. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
 | `oml workareas relate propose <a> <b> --label <relates_to\|continues\|derived_from\|mirrors>` | Propose an edge. Requires dreamer(propose) on ≥1 endpoint and reader on both. |
@@ -227,7 +238,7 @@ throughout; no agent role reaches these verbs.
 |---|---|
 | `oml crews create <name> [--charter-uri <uri>] [--external-manager <text>]` | Create a crew record (`crew.created`). The name is unique in the tenant (`name.taken`) and never changes. |
 | `oml crews update <crew> [--charter-uri <uri>] [--external-manager <text>]` | Journalled crew-record update (`crew.updated`), at least one flag; the name is not updatable. |
-| `oml crews list` | Crew records: name, id, charter URI, external manager. |
+| `oml crews list` | Crew records: name, id, charter URI, external manager. Reads every page; `--json` prints their items as one page. |
 | `oml crews show <crew>` | One crew record, by id or name. |
 
 ## `oml review` — the review ceremony
