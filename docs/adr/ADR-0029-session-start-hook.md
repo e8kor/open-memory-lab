@@ -172,7 +172,8 @@ accepts it.
     own submission that carries one, which is that workarea unless the submission named another;
     with none, it says "this key's default workarea" and that `oml_workarea_info` names it. Every
     entry is one line, its whitespace collapsed, so a stored body cannot forge a section header or
-    the framing line. The verb takes `--json` like every verb and prints the same document, since
+    the framing line; the cost is that a multi-line body, a list or a code block, reaches Claude
+    flattened, its structure lost, and `oml_get` serves it whole. The verb takes `--json` like every verb and prints the same document, since
     its stdout is already the one JSON document its reader parses. The exact text is declared on
     the [CLI reference](../cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
 
@@ -194,13 +195,22 @@ accepts it.
     stand-in `oml` that fails it must run it with exactly the arguments `hook session-start` and
     still exit 0.
 
-- **d8 — The plugin README tells the user to add `mcp__plugin_oml_oml` to `permissions.allow`.**
-  A plugin cannot pre-allow its tools for the user: of the settings a plugin ships, Claude Code
-  applies only `agent` and `subagentStatusLine`
+- **d8 — The plugin README gives the user two `permissions.allow` rules: the five read tools,
+  which keeps the question on every write, and `mcp__plugin_oml_oml`, which allows every tool,
+  with its cost stated beside it.** A plugin cannot pre-allow its tools for the user: of the
+  settings a plugin ships, Claude Code applies only `agent` and `subagentStatusLine`
   ([plugins reference](https://code.claude.com/docs/en/plugins-reference), fetched 2026-10-31).
-  The context of d6 asks Claude to call `oml_remember`, so without the rule every call asks the
-  user first. The rule allows every tool of the plugin's one server; each tool stays inside the
-  agent ceiling (R1), and every write is still held until a different identity reviews it.
+  The narrower rule names `mcp__plugin_oml_oml__oml_recall`, `__oml_get`, `__oml_my_work`,
+  `__oml_workarea_info` and `__oml_events_tail`: reads run without a question, and every write
+  still asks. The broader rule allows every tool of the plugin's one server, the writes too.
+
+    The context of d6 asks Claude to call `oml_remember`, so without a rule every call asks the
+    user first. The cost of the broader rule is the user's sight of the writes: Claude calls
+    `oml_remember`, `oml_learn` and `oml_supersede`, which can propose retiring a claim, without
+    showing the call, so whatever the session chooses to record leaves for the server unseen, and
+    what it chooses is shaped by the stored text d6 injects, which other writers can influence.
+    Each tool stays inside the agent ceiling (R1), and every write is still held until a different
+    identity reviews it, so nothing is shared before that review.
 
 ## Consequences
 
@@ -262,4 +272,5 @@ accepts it.
 | **d7 — An unguarded command** | Every user with the plugin and no CLI would see a hook error at every session start. |
 | **d7 — Exec form with `args`** | Without a shell there is no test for the binary, so a missing `oml` is a hook error. |
 | **d8 — A `settings.json` in the plugin that allows the tools** | Claude Code drops every plugin setting but `agent` and `subagentStatusLine` at load. |
+| **d8 — Offer only the rule that allows every tool** | The user would trade away the sight of every write to stop the question on reads, without being told; the read-only rule stops that question alone. |
 | **d8 — A skill that tells Claude to add the rule** | A permission is the user's decision about their own settings; the plugin states it and leaves it to them. |
