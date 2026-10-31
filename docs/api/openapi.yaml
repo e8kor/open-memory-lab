@@ -2402,9 +2402,17 @@ paths:
                 checks:
                   postgres: ok
                   fork_check: ok
+                build:
+                  version: 0.2.0
+                  commit: 779e7e4c1f0d8a5b2e6c9f3a7d1b4e8c2a5f9d03
+                  commit_time: '2026-10-30T21:52:41Z'
+                  build_time: '2026-10-30T22:40:12Z'
+                  rustc: rustc 1.99.1 (4c7d2e1a9 2026-09-17)
+                  target: x86_64-unknown-linux-gnu
+                  profile: release
               schema: { $ref: '#/components/schemas/Ready' }
         '503':
-          description: Not ready, with per-check detail.
+          description: Not ready, with per-check detail and the build that answered.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Ready' }
@@ -3596,10 +3604,26 @@ components:
 
     Ready:
       type: object
-      required: [status, checks]
+      required: [status, checks, build]
       properties:
         status: { type: string, enum: [ok, unavailable] }
         checks:
           type: object
           additionalProperties: { type: string }
           description: Per-check detail, e.g. postgres, fork_check.
+        build: { $ref: '#/components/schemas/Build' }
+    Build:
+      type: object
+      description: >-
+        The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a
+        field nothing could supply is the string unknown.
+      required: [version, commit, commit_time, build_time, rustc, target, profile]
+      additionalProperties: false
+      properties:
+        version: { type: string, description: The workspace version the binary was built at. }
+        commit: { type: string, description: The full 40-hex commit, or unknown. }
+        commit_time: { type: string, description: The commit's committer time, or unknown. }
+        build_time: { type: string, description: When the build captured these fields; SOURCE_DATE_EPOCH fixes it when set. }
+        rustc: { type: string, description: The compiler's rustc -V line. }
+        target: { type: string, description: The target triple. }
+        profile: { type: string, enum: [release, debug, unknown] }

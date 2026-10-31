@@ -118,12 +118,19 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+      # The image build has no .git, so the commit /readyz reports comes in
+      # as build arguments (Dockerfile; docs/api/http-api.md "Health").
+      - id: commit
+        run: echo "time=$(TZ=UTC git show -s --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)" >> "$GITHUB_OUTPUT"
       # Pushed by digest, untagged: the merge job tags the index, never a leg.
       - id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          build-args: |
+            OML_BUILD_COMMIT=${{ github.sha }}
+            OML_BUILD_COMMIT_TIME=${{ steps.commit.outputs.time }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           sbom: true

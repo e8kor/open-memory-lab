@@ -18,7 +18,7 @@ use oml_app::ports::{
     AdmissionEnvelope, Clock, IdGen, KeyringError, KeyringStore, ScanOutcome, Scanner, Signer,
 };
 use oml_pg::{ForkCheckError, PgStore};
-use oml_transport_http::{ApiState, DbPing, time::system_event_time};
+use oml_transport_http::{ApiState, BuildInfo, DbPing, time::system_event_time};
 
 // ---------------------------------------------------------------------------
 // Configuration: defaults < file < environment (configuration.md)
@@ -387,6 +387,21 @@ pub fn lead_state(
         fork_check_ok,
         enrollment_token,
     )
+    .with_build(build_info())
+}
+
+/// This binary's build, as `build.rs` captured it (http-api.md "Health").
+#[must_use]
+pub fn build_info() -> BuildInfo {
+    BuildInfo {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        commit: env!("OML_BUILD_COMMIT").to_owned(),
+        commit_time: env!("OML_BUILD_COMMIT_TIME").to_owned(),
+        build_time: env!("OML_BUILD_TIME").to_owned(),
+        rustc: env!("OML_BUILD_RUSTC").to_owned(),
+        target: env!("OML_BUILD_TARGET").to_owned(),
+        profile: env!("OML_BUILD_PROFILE").to_owned(),
+    }
 }
 
 #[cfg(test)]

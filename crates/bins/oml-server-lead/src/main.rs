@@ -35,6 +35,8 @@ async fn run() -> Result<(), String> {
     let config_path = config_path_arg()?;
     let config = Config::load(config_path.as_deref(), &|name| std::env::var(name).ok())?;
     tracing::info!(listen = %config.listen, "oml-server-lead starting (standalone profile: always the lead of a cluster of one, ADR-0023 d16)");
+    let build = oml_server_lead::build_info();
+    tracing::info!(version = %build.version, commit = %build.commit, commit_time = %build.commit_time, build_time = %build.build_time, rustc = %build.rustc, target = %build.target, profile = %build.profile, "build");
 
     let store = PgStore::connect(&config.postgres_url)
         .await
