@@ -85,9 +85,9 @@ navigation that confers zero access, proposed and ratified like other governed c
 Every workarea sits on a one-way **status ladder**:
 
 - **development** — review runs as everywhere; tenant policy may additionally permit marked
-  `self_signed` rows, the first of the constitution's two bounded relaxations — readable only
-  inside that workarea, never promoted beyond it. An admin may instead create a development
-  workarea in-progress, the second (below).
+  `self_signed` rows, the constitution's bounded self-signing relaxation — readable only inside
+  that workarea, never promoted beyond it. Under the proposed ADR-0030 an admin may instead
+  create a development workarea in-progress, a second relaxation (below).
 - **committed** — full non-author review; the working state of a governed crew space.
 - **validated (frozen)** — no new writes, no promotions into it, no new children; it keeps
   serving reads, and the only mutations it admits are journalled demote, erasure, and
@@ -101,12 +101,12 @@ node means a frozen subtree.
 
 An **in-progress workarea** is a `development` workarea an admin created with that mark, for one
 project or iteration; the mark is set only at creation. Inside its subtree every write is still
-held and reviewed by a non-author, and never self-signed, but the crew's readers recall the held
+held and reviewed by a non-author, and never self-signed, but its readers recall the held
 claims at once, ranked with the reviewed ones and marked `reviewed: false` — unless a reader grant
 of theirs carries `unreviewed: block`. Readers outside the subtree see nothing of it until its
-**commit**: its move to `committed`, ratified by a second identity and refused while anything in
-it is still held. At the commit every reviewed claim in it becomes visible outside at once
-([workareas](architecture/workareas.md#in-progress-workareas)).
+**commit**: its move to `committed`, proposed and ratified by two admin keys of different
+principals and refused while anything in it is still held. At the commit every reviewed claim in
+it becomes visible outside at once ([workareas](architecture/workareas.md#in-progress-workareas)).
 
 ```mermaid
 flowchart TD
@@ -298,4 +298,4 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | The overlay tip | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
 | The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](architecture/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
 | The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
-| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add, and the row and "held" wording the proposed [ADR-0030](adr/ADR-0030-in-progress-workareas.md) d13 adds |
+| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 add, and the three rows and the "held" wording the proposed [ADR-0030](adr/ADR-0030-in-progress-workareas.md) d13 adds |

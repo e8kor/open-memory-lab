@@ -117,11 +117,10 @@ One rule holds across every workarea status: effective access decides who may *w
 never grant resolution. A `development` workarea may, by journalled tenant policy, permit
 marked `self_signed` rows — the self-signing relaxation, scoped in
 [ADR-0001](../adr/ADR-0001-the-constitution.md); such rows never promote beyond that workarea.
-The constitution's second bounded relaxation, the
-[in-progress workarea](workareas.md#in-progress-workareas), changes who may read a held claim and
-when its workarea contributes, never this pipeline: every claim inside one is promoted only by
-non-author verdicts, and no workarea inside one admits self-signing
-([ADR-0030](../adr/ADR-0030-in-progress-workareas.md)).
+The proposed [ADR-0030](../adr/ADR-0030-in-progress-workareas.md) would add a second bounded
+relaxation, the [in-progress workarea](workareas.md#in-progress-workareas), which changes who may
+read a held claim and when its workarea contributes, never this pipeline: every claim inside one
+is promoted only by non-author verdicts, and no ratification inside one is self-signed.
 Simulation writes pass this same pipeline with their audience as the reviewer pool
 ([simulations](simulations.md)).
 

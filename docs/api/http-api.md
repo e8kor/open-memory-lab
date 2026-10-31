@@ -318,9 +318,16 @@ grants. A key with neither is refused with `request.workarea_unresolved` (422).
 - Submitting with `derives_from` requires writer effective access on the target and no other
   role, even when the lineage names another author's claim — declaring an ancestor is
   attribution, not an edit of it. Every `derives_from` ancestor must still be readable by the
-  key — promoted within its reader effective access, or its own row in any state — else
-  `access.not_found`, indistinguishable from a nonexistent id
-  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3).
+  key — promoted within its reader effective access, or its own row in any state, or, for a
+  submission whose resolved workarea lies inside the same
+  [in-progress workarea](../architecture/workareas.md#in-progress-workareas)'s subtree, a held
+  claim there the [permission matrix](../architecture/roles-and-keys.md#permission-matrix) lets
+  it read — else `access.not_found`, indistinguishable from a nonexistent id
+  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3). A readable ancestor inside an
+  in-progress subtree, held or promoted, named by a submission whose resolved workarea lies
+  outside that subtree is refused with `workarea.in_progress_refused`, after the readability
+  check ([refusal matrix](../architecture/workareas.md#refusal-matrix),
+  [ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d2).
   The declaration has review consequences, not authorization ones: every named ancestor expands
   the row's reviewer-exclusion set (R2 over the lineage closure), and a false lineage is grounds
   for rejection at review ([ADR-0012](../adr/ADR-0012-admission-and-review.md)).
@@ -592,8 +599,8 @@ Reads require reader effective access on the node; nodes outside scope are absen
 | `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update; allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
 | `POST /v2/workareas/{id}/edges` | Propose an edge `{to_workarea_id, label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`. Requires dreamer(propose) effective access on at least one endpoint and reader effective access on both (an admin who must act here holds a separate dreamer key — a key never combines admin with dreamer grants, `access.role_exclusive`). → `202`, pending. |
 | `POST /v2/workarea-edges/{edge_id}/ratify` | Ratify under dreamer(review) effective access on **both** endpoints; the proposer is refused (`review.ratifier_is_proposer`, R2 extends to edges). |
-| `POST /v2/workareas/{id}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). An in-progress workarea's move to `committed`, its commit, is refused while any version in its subtree is held (`workarea.held_remaining`, details `{workarea_id}`), and any transition on another node inside an in-progress subtree is refused until that commit (`workarea.in_progress_refused`). → `202`, pending. |
-| `POST /v2/workareas/{id}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot ([workareas.md](../architecture/workareas.md) transition matrix). A commit's ratification is refused with `workarea.held_remaining` under the same test, journalling nothing and leaving the transition pending; a ratified commit journals `in_progress_released: true` and releases the subtree ([workareas.md](../architecture/workareas.md#in-progress-workareas)). |
+| `POST /v2/workareas/{id}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). An in-progress workarea's move to `committed`, its commit, is an admin verb only — a dreamer key proposing it answers `access.verb_ceiling` ([permission matrix](../architecture/roles-and-keys.md#permission-matrix) footnote 7) — and is refused while any version in its subtree is held (`workarea.held_remaining`, details `{workarea_id}`); any transition on another node inside an in-progress subtree is refused until that commit (`workarea.in_progress_refused`). → `202`, pending. |
+| `POST /v2/workareas/{id}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot ([workareas.md](../architecture/workareas.md) transition matrix). An in-progress workarea's commit is ratified only by a second admin of a different principal — a dreamer key answers `access.verb_ceiling` — and its ratification is refused with `workarea.held_remaining` under the same test, journalling nothing and leaving the transition pending; a ratified commit journals `in_progress_released: true` and releases the subtree ([workareas.md](../architecture/workareas.md#in-progress-workareas)). |
 
 ## Claim edges
 
@@ -601,11 +608,17 @@ Claim↔claim connection proposals follow the same propose-then-ratify shape ins
 pipeline ([admission.md](../architecture/admission.md)).
 
 - `GET /v2/claim-edges?workarea_id=…&artifact_id=…` — paginated graph read, pending and ratified,
-  scoped to read access.
+  scoped to read access. Scoped outside an
+  [in-progress workarea](../architecture/workareas.md#in-progress-workareas), it serves no claim
+  and no edge from its subtree; scoped inside, it also serves other keys' held claims where the
+  [permission matrix](../architecture/roles-and-keys.md#permission-matrix) lets the key read
+  them ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d10).
 - `POST /v2/claim-edges` — `{from_artifact_id, to_artifact_id, label}` under dreamer(propose) →
   `202`, pending. The label vocabulary for claim edges is not fixed by the design (the closed
   label set exists for workarea edges only); fixing it is an open detail for the
-  [roadmap](../product/roadmap.md).
+  [roadmap](../product/roadmap.md). An edge with one endpoint inside an in-progress subtree and
+  the other outside it is refused with `workarea.in_progress_refused`, after both endpoints pass
+  the readability check ([refusal matrix](../architecture/workareas.md#refusal-matrix)).
 - `POST /v2/claim-edges/{edge_id}/ratify` — dreamer(review), never the proposer, and refused when
   the ratifying key or principal appears in either endpoint's lineage closure
   (`review.author_in_lineage`).
@@ -660,7 +673,7 @@ commit's `workarea.status_transition`.
 
 | Event family | Who sees it |
 |---|---|
-| `lifecycle.*` | a key for which **(a)** or **(b)** holds, and no other. **(a) Reader clause:** the key has reader access on the subject's workarea, and the subject passes three conditions. *Promoted:* in the journal up to and including the event, the subject version's latest transition between held and promoted is a promotion (`lifecycle.promote` or `lifecycle.supersede`), not a `lifecycle.reassign` with `re_enters_held: true` or a `review.reopen`; a version never promoted fails it; a `lifecycle.reassign` is judged on the journal before it, so the readers it takes a promoted version from see it leave. *Audience:* the subject is not a simulation row or sim-derived version outside the key's audience ([simulations](../architecture/simulations.md)). *Self-signed:* the subject is not `self_signed` unless the tail's `workarea_id` is the subject's own workarea ([retrieval](../architecture/retrieval.md)). **(b) Author clause:** the key's [own](../architecture/roles-and-keys.md#own) key set holds the subject version's authoring key, read from the journal as the version's submission event (`submission.*` or `simulation.write`) says; the subject's workarea lies within the tail's subtree minus the key's global denials; and the subject is not a simulation row or sim-derived version outside the key's audience. **(c) In-progress clause:** the subject is inside an in-progress subtree at the event, the tail's `workarea_id` lies in that subtree, the [permission matrix](../architecture/roles-and-keys.md#permission-matrix) lets the key read the held claims of other keys on the subject's workarea — for a `lifecycle.reassign`, on either listed workarea — and the subject is not a simulation row or sim-derived version outside the key's audience; the promoted condition of (a) does not apply. Every clause is bound by the boundary condition above. So the erase of another author's held or never-promoted version reaches no reader outside an in-progress subtree, and an author sees every `lifecycle.*` event of its own versions in the tail's subtree |
+| `lifecycle.*` | a key for which **(a)** or **(b)** holds, and no other. **(a) Reader clause:** the key has reader access on the subject's workarea, and the subject passes three conditions. *Promoted:* in the journal up to and including the event, the subject version's latest transition between held and promoted is a promotion (`lifecycle.promote` or `lifecycle.supersede`), not a `lifecycle.reassign` with `re_enters_held: true` or a `review.reopen`; a version never promoted fails it; a `lifecycle.reassign` is judged on the journal before it, so the readers it takes a promoted version from see it leave. *Audience:* the subject is not a simulation row or sim-derived version outside the key's audience ([simulations](../architecture/simulations.md)). *Self-signed:* the subject is not `self_signed` unless the tail's `workarea_id` is the subject's own workarea ([retrieval](../architecture/retrieval.md)). **(b) Author clause:** the key's [own](../architecture/roles-and-keys.md#own) key set holds the subject version's authoring key, read from the journal as the version's submission event (`submission.*` or `simulation.write`) says; the subject's workarea lies within the tail's subtree minus the key's global denials; and the subject is not a simulation row or sim-derived version outside the key's audience. **(c) In-progress clause:** the subject is inside an in-progress subtree at the event, judged on the journal up to and including it as the boundary condition is; the tail's `workarea_id` lies in that subtree; on the key's current access, reader is in `effective_roles` of the subject's workarea and no reader grant of the key effective there carries `unreviewed: block` — for a `lifecycle.reassign`, on either listed workarea; and the subject is not a simulation row or sim-derived version outside the key's audience. These are conditions 2 and 3 of the [permission matrix](../architecture/roles-and-keys.md#permission-matrix)'s footnote 6, with its condition 1 judged at the event, so the commit removes nothing from a tail scoped inside; the promoted condition of (a) does not apply. Every clause is bound by the boundary condition above. So the erase of another author's held or never-promoted version reaches no reader outside an in-progress subtree, and an author sees every `lifecycle.*` event of its own versions in the tail's subtree |
 | `workarea.*` | keys with reader access on the subject workarea, per the table below |
 | `submission.*`, `simulation.write` | a key whose [own](../architecture/roles-and-keys.md#own) key set holds the subject version's authoring key, `memories.author_key_id` — for `submission.*` and `simulation.write` the envelope's `api_key_id`, for `lifecycle.*` the `api_key_id` of the subject's submission event, read from the journal — within the tail's subtree minus its global denials, and only while the subject is not a simulation row or sim-derived version outside the key's audience, with no reader grant needed on the event's own workarea: the own-work rule. Besides it, a key for which the in-progress clause (c) above holds. Both are bound by the boundary condition |
 | `review.*`, `claim_edge.*`, `key.*`, `grant.*`, `tenant.*`, `system.*` | no key on this tail; they belong to the [evidence export](#evidence-export) |

@@ -88,7 +88,9 @@ its readers' grants decide, not as any payload field says. Pipeline:
 ```
 
 A writer submits a memory; it is held on arrival, scanned in the same call, and visible to no one
-else until ratified. A supersession is a submission at the claim's next unused version whose
+else until ratified, except, inside an
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas), to the keys the
+[permission matrix](../architecture/roles-and-keys.md#permission-matrix) allows. A supersession is a submission at the claim's next unused version whose
 `derives_from` includes the replaced version: `replaces` is then
 `{"artifact_id": "…", "version": 3}`, naming that version, and `retirement: true` marks a
 proposal to retire the claim

@@ -88,10 +88,15 @@ oml-server**, as journalled acts under the reconciler's own identity. A compromi
 therefore lie in its findings but cannot silently alter data — every repair it causes is a signed
 journal event someone can audit.
 
-**oml-indexer** computes embeddings and FTS entries over promoted rows. It runs under its own
-per-tenant credentials and never the signing key. It necessarily handles plaintext (you cannot
-embed ciphertext); it holds no KMS decrypt grant: promoted plaintext reaches it on the serving
-side of decryption ([retrieval.md](retrieval.md)), keeping oml-server the single decryption locus.
+**oml-indexer** computes embeddings and FTS entries over promoted rows and, inside an
+in-progress subtree, held rows (the proposed
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d9), the held plaintext reaching it from
+oml-server on the serving side of decryption. It runs under its own per-tenant credentials and
+never the signing key. It necessarily handles plaintext (you cannot embed ciphertext); it holds
+no KMS decrypt grant and no quarantine credential: promoted plaintext, and that held plaintext,
+reach it on the serving side of decryption
+([retrieval.md](retrieval.md#the-in-progress-fence)), keeping oml-server the single decryption
+locus.
 Where the embedding model runs is the embedding RS row in the
 [roadmap](../product/roadmap.md); an answer that required an indexer decrypt grant would revise
 this custody map as its own journalled decision.
@@ -107,7 +112,7 @@ Who loads what. "Never" entries are the point of the table.
 | Material | oml-server **lead** | oml-server **follower** | oml-lakewriter | oml-reconciler | oml-indexer | `oml` CLI |
 |---|---|---|---|---|---|---|
 | ed25519 deployment signing key | **loads it — the only process in the deployment that does** ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) | **never** | never | never | never | never |
-| KMS: decrypt (unwrap DEKs) | serving + admission paths | **serving path only** | **never** | **never** | **never** — reads promoted plaintext on the serving side of decryption ([retrieval.md](retrieval.md)) | never |
+| KMS: decrypt (unwrap DEKs) | serving + admission paths | **serving path only** | **never** | **never** | **never** — reads promoted plaintext, and inside an in-progress subtree held plaintext (ADR-0030, proposed), on the serving side of decryption ([retrieval.md](retrieval.md)) | never |
 | KMS: generate-data-key / encrypt | yes (admission — the single encryption locus; lake copies are these same bytes) | **never** — followers admit nothing | **never** — moves admission-produced ciphertext verbatim | never | never | never |
 | Write verbs | executes | **forwards to the lead, executes none** | — | — | — | — |
 | Postgres role | RLS-scoped service role (write) | RLS-scoped **read** role + read-log append | per-tenant `SET`-tenant RLS role, no `BYPASSRLS` | read-only RLS role | per-tenant RLS role | none (talks HTTP) |
@@ -450,10 +455,13 @@ rounded up to a guarantee.
    decryption and misserving, bounded by the follower's credentials — a follower cannot forge a
    chain event, so tamper-evidence survives follower compromise. In the default lead-only
    topology the narrowing is vacuous and the lead admission stands alone.
-4b. **Indexer compromise exposes promoted plaintext.** `oml-indexer` necessarily handles promoted
-   plaintext to embed it; its compromise exposes every promoted body of the tenants it serves,
-   bounded by its per-tenant credentials. Until RS-1 decides where the embedding model runs, the
-   standing commitment is that no promoted plaintext leaves the deployment's trust boundary.
+4b. **Indexer compromise exposes the plaintext it embeds.** `oml-indexer` necessarily handles
+   promoted plaintext to embed it; its compromise exposes every promoted body, and every held body
+   inside an in-progress subtree (the proposed
+   [ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d9), of the tenants it serves, bounded by
+   its per-tenant credentials. Until RS-1 decides where the embedding model runs, the
+   standing commitment is that no plaintext the indexer embeds, promoted or held, leaves the
+   deployment's trust boundary.
 5. **The platform operator is trusted.** A Postgres superuser, a KMS administrator, or whoever
    holds the Kubernetes Secrets can read attribution metadata, destroy or exfiltrate keys, and
    rewrite unprotected state. OML's evidence (signed chains held by tenants via exports) makes

@@ -203,7 +203,9 @@ Three invariants live in transaction logic, not DDL:
   does a successor moved or re-keyed away from its target: the verdict answers
   `submission.tip_conflict`, nothing is journalled, and the successor stays held until a reviewer
   rejects it. The `held_fts` DELETE's affected-row count is asserted in that statement
-  ([row-level security](#row-level-security)). A tainted successor's ratification compares the
+  ([row-level security](#row-level-security)); for a successor inside an in-progress subtree no
+  `held_fts` DELETE runs, and none is asserted (decided, not built; ADR-0030 d9). A tainted
+  successor's ratification compares the
   target under the same predicate, leaves a default-tip target's `is_tip` as it is and sets the
   overlay tip instead ([audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)).
 - A version ordinal is read before `BEGIN`, and a capture that `memories_claim_version` refuses
@@ -568,30 +570,45 @@ CREATE TABLE memories_fts (
     in_progress_root_id uuid REFERENCES workareas (id),
                                     -- decided, not built (ADR-0030 d9): the in-progress
                                     -- workarea whose subtree holds the row, NULL outside one;
-                                    -- inside one, held rows are indexed here from capture on
+                                    -- inside one, held rows are indexed here from capture on.
+                                    -- oml-server chooses it under the chain lock: round trip
+                                    -- two stamps a held row with the root only while that root
+                                    -- is still development, else the row goes to held_fts
     PRIMARY KEY (tenant_id, artifact_id, version)
 );
 CREATE INDEX memories_fts_gin ON memories_fts USING gin (tsv);
 
--- decided, not built (ADR-0030 d9): the in-progress fence, on memories_fts and,
--- identically, on memory_embeddings. A row of a subtree still in progress is
--- served only to a transaction whose oml.in_progress_root names its root:
--- oml-server sets it from the resolved scope node, or, transaction-local, from
--- a removed version's own row; the root's commit releases every row at once.
+-- decided, not built (ADR-0030 d9): the in-progress fence, on memories_fts,
+-- memory_embeddings and every memory_embeddings_t_<tenant> partition, and on a
+-- per-simulation index's rows. A row of a subtree still in progress is served
+-- to, and inserted or updated by, only a transaction whose oml.in_progress_root
+-- names its root. Every such transaction sets it with set_config(..., true),
+-- transaction-local: oml-server for a read, from the resolved scope node's
+-- root; for a capture, reassignment or removal, from the version's root, the
+-- nearest ancestor-or-self with in_progress AND status = 'development', computed
+-- in round trip one's statement; oml-indexer, from the root its work item
+-- carries. The root's commit releases every row at once.
 CREATE POLICY in_progress_fence ON memories_fts AS RESTRICTIVE
     USING (in_progress_root_id IS NULL
+           OR in_progress_root_id = nullif(current_setting('oml.in_progress_root', true), '')::uuid
+           OR NOT EXISTS (SELECT 1 FROM workareas w
+                          WHERE w.id = in_progress_root_id AND w.status = 'development'))
+    WITH CHECK (in_progress_root_id IS NULL
            OR in_progress_root_id = nullif(current_setting('oml.in_progress_root', true), '')::uuid
            OR NOT EXISTS (SELECT 1 FROM workareas w
                           WHERE w.id = in_progress_root_id AND w.status = 'development'));
 
 -- decided, not built (ADR-0025 d5): held text, fenced to its author.
 -- No row inside an in-progress subtree: those are indexed in memories_fts
--- behind the in-progress fence (ADR-0030 d9).
+-- behind the in-progress fence (ADR-0030 d9), and for such a version no
+-- held_fts statement runs and none is checked. Placement is decided under the
+-- chain lock, in round trip two's statement, so a capture serialized after a
+-- commit lands here as an ordinary held row.
 -- A row exists only while its version is held: every transition into held
 -- inserts it (capture, with tsv computed from the NFC plaintext before BEGIN;
 -- reopen, and a reassignment that re-enters held, with tsv computed on the
 -- serving path), every transition out of held removes it, and a reassignment
--- updates workarea_id in its own commit (retrieval, Held text containment).
+-- updates workarea_id in its own transaction (retrieval, Held text containment).
 CREATE TABLE held_fts (
     tenant_id     uuid     NOT NULL,
     memory_id     uuid     PRIMARY KEY,           -- the held version's artifact_id
@@ -609,7 +626,8 @@ CREATE TABLE memory_embeddings (
     embedding     vector  NOT NULL,   -- dimension bound to the embedding model: open RS
     embedder      text    NOT NULL,   -- plugin identity+version that produced the row (ADR-0019)
     in_progress_root_id uuid,         -- as on memories_fts, under the same in_progress_fence
-                                      -- policy (ADR-0030 d9)
+                                      -- policy (ADR-0030 d9); chosen by oml-server and carried
+                                      -- on the indexer's work item, never chosen by the indexer
     PRIMARY KEY (tenant_id, artifact_id, version)
 ) PARTITION BY LIST (tenant_id);
 
@@ -618,6 +636,9 @@ CREATE TABLE memory_embeddings_t_<tenant> PARTITION OF memory_embeddings
     FOR VALUES IN ('<tenant_id>');
 CREATE INDEX ON memory_embeddings_t_<tenant>
     USING hnsw (embedding vector_cosine_ops);
+-- decided, not built (ADR-0030 d9): the in_progress_fence policy above, created on
+-- the parent and on each partition, so a statement that names a partition directly
+-- is fenced too.
 ```
 
 List-partitioning by tenant gives each tenant its own HNSW index (bounded build cost and blast
@@ -628,7 +649,9 @@ roadmap FR rows with exit criteria, and no number is asserted until that measure
 embedding model (and therefore the `vector` dimension and distance operator) is an open RS in the
 [roadmap](../product/roadmap.md). Simulation rows never enter these shared indexes; they are
 indexed per simulation, which keeps the read-path predicate out of the hot index at the cost of
-duplicate index machinery per open simulation.
+duplicate index machinery per open simulation. A per-simulation index row of a version inside an
+in-progress subtree carries `in_progress_root_id` under the same `in_progress_fence` policy
+(decided, not built; ADR-0030 d9).
 
 ## upload_sessions
 
@@ -689,17 +712,23 @@ CREATE POLICY tenant_isolation ON memories
         WITH CHECK (author_key_id = ANY (string_to_array(current_setting('oml.own_key_ids'), ',')::uuid[]));
     ```
 
-    The capture commit runs under the author's own key, so its insert passes the policy. A commit
-    that moves a version into or out of `held` under another key — a promotion, rejection,
-    erasure, reopen or reassignment — sets `oml.own_key_ids`, transaction-local
+    The capture transaction runs under the author's own key, so its insert passes the policy. A
+    transaction that moves a version into or out of `held` under another key — a promotion,
+    rejection, erasure, reopen or reassignment — sets `oml.own_key_ids`, transaction-local
     (`set_config(…, true)`), to the version's author key set inside round trip one's statement,
     beside `pg_advisory_xact_lock` and the chain-head read
     ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1), for the whole transaction; no
     restore is needed, since that transaction reads no other held text. Only `oml-server` sets
     that setting, never a client, so the fence binds every read path without blocking the
     transitions. Because the policy skips a row it does not match without an error, each of
-    those commits checks that its `held_fts` statement affected exactly one row and aborts
-    otherwise ([retrieval](../architecture/retrieval.md#held-text-containment)).
+    those transactions checks that its `held_fts` statement affected exactly one row and aborts
+    otherwise ([retrieval](../architecture/retrieval.md#held-text-containment)). For a version
+    whose workarea lies inside an in-progress subtree (decided, not built; ADR-0030 d9) no
+    `held_fts` statement runs and none is checked: capture, reopen and a reassignment that
+    re-enters held insert no `held_fts` row there, and promotion, rejection, demotion, erasure and
+    reassignment delete or update none. The exactly-one check moves to the `memories_fts`
+    statement under `in_progress_fence`, and the reassignment `UPDATE` there is checked the same
+    way ([retrieval](../architecture/retrieval.md#the-in-progress-fence)).
 
 A `current_setting`-based policy is simple and index-friendly; its cost is that a service bug that
 sets the wrong tenant GUC becomes a cross-tenant read. That risk and its mitigations (one

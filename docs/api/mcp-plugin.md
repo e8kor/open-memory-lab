@@ -121,7 +121,8 @@ held submission that an independent reviewer must ratify
 held submission is readable at once, marked `reviewed: false`, by the keys the
 [permission matrix](../architecture/roles-and-keys.md#permission-matrix)
 allows; it still promotes only by non-author review, and it reaches readers
-outside only at the commit, a two-identity act no tool here can take.
+outside only at the commit, an act of two admin keys that no tool here and no agent key can
+take.
 
 Concretely:
 
@@ -1096,8 +1097,8 @@ logged like any read.
 ```json
 {
   "claims": [
-    { "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "claim_key": "accra-metals-price-anchor", "version": 1, "kind": "derived_fact", "state": "promoted", "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" },
-    { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1, "kind": "memory", "state": "promoted", "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
+    { "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "claim_key": "accra-metals-price-anchor", "version": 1, "kind": "derived_fact", "state": "promoted", "reviewed": true, "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" },
+    { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1, "kind": "memory", "state": "promoted", "reviewed": true, "workarea": "wa_01JB2XCQ4T8Z9K2M5P7R1VH3ND" }
   ],
   "edges": [
     { "kind": "derives_from", "from": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "to": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "state": "declared" },
@@ -1114,7 +1115,14 @@ derivation is invisible to the service and therefore to this tool
 the key's scope are absent; an edge whose far endpoint is unreadable appears
 with the endpoint id only, body-less, so the shape is honest without leaking
 content. The simulation predicate applies: simulation rows and their edges
-are served only inside the audience.
+are served only inside the audience. Each claim carries `reviewed`, as the
+[claim item](#the-claim-item) does. Scoped inside an
+[in-progress workarea](../architecture/workareas.md#in-progress-workareas),
+the graph also serves other keys' held claims where the
+[permission matrix](../architecture/roles-and-keys.md#permission-matrix) lets
+the key read them, each `reviewed: false`; scoped outside one, it serves no
+claim and no edge from its subtree until its commit (the proposed
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d10).
 
 **Refusals** — scope outside read access (`access.not_found`, fail closed);
 a `depth`/`limit` above the served ceiling returns the typed limit error from
@@ -1336,7 +1344,7 @@ Operational notes:
   [`oml_my_work`](#oml_my_work) or [`oml_events_tail`](#oml_events_tail) if
   the agent's plan depends on its memory becoming visible to others. Inside an
   [in-progress workarea](../architecture/workareas.md#in-progress-workareas)
-  the crew's other agents read it at once, marked `reviewed: false`, and
+  other keys whose reader grants allow it read it at once, marked `reviewed: false`, and
   readers outside see the workarea's claims only after its commit.
 - **Start each session from memory.** In Claude Code the `oml` plugin's
   SessionStart hook runs `oml hook session-start` when the CLI is on `PATH`,

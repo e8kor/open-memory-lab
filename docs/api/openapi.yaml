@@ -67,7 +67,7 @@ paths:
       tags: [memories]
       operationId: submitMemory
       summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
-      description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
+      description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state, or, for a submission inside the same in-progress subtree, a held claim there the key may read — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); a readable ancestor inside an in-progress subtree named by a submission outside it is refused with workarea.in_progress_refused (ADR-0030 d2); lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
         - { $ref: '#/components/parameters/XOMLWorkarea' }
@@ -627,7 +627,7 @@ paths:
       tags: [claim-edges]
       operationId: listClaimEdges
       summary: Paginated claim-graph read, pending and ratified, scoped to read access.
-      description: 'Requires: reader effective access.'
+      description: 'Requires: reader effective access. Scoped outside an in-progress workarea, serves no claim and no edge from its subtree until its commit; scoped inside, also serves other keys'' held claims the key may read under the permission matrix (ADR-0030 d10).'
       parameters:
         - { name: workarea_id, in: query, schema: { type: string } }
         - { name: artifact_id, in: query, schema: { type: string } }
@@ -656,7 +656,7 @@ paths:
       tags: [claim-edges]
       operationId: proposeClaimEdge
       summary: Propose a claim-to-claim connection; pending until ratified.
-      description: 'Requires: dreamer(propose). The claim-edge label vocabulary is not fixed by the design (open detail, roadmap).'
+      description: 'Requires: dreamer(propose). The claim-edge label vocabulary is not fixed by the design (open detail, roadmap). An edge with one endpoint inside an in-progress subtree and the other outside it is refused with workarea.in_progress_refused, after both endpoints pass the readability check (ADR-0030 d2).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1079,7 +1079,7 @@ paths:
       tags: [workareas]
       operationId: proposeTransition
       summary: Propose a forward status transition; pending until a second party ratifies.
-      description: 'Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused). An in-progress workarea''s commit, its move to committed, is refused while any version in its subtree is held (workarea.held_remaining, details {workarea_id}); a transition on any other node inside an in-progress subtree is refused until that commit (workarea.in_progress_refused) (ADR-0030 d2, d12).'
+      description: 'Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused). An in-progress workarea''s commit, its move to committed, is an admin verb only (a dreamer key answers access.verb_ceiling) and is refused while any version in its subtree is held (workarea.held_remaining, details {workarea_id}); a transition on any other node inside an in-progress subtree is refused until that commit (workarea.in_progress_refused) (ADR-0030 d2, d12).'
       parameters:
         - { $ref: '#/components/parameters/WorkareaId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1114,7 +1114,7 @@ paths:
       tags: [workareas]
       operationId: ratifyTransition
       summary: Ratify a pending transition; journalled with the policy snapshot.
-      description: 'Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). An in-progress workarea''s commit is refused with workarea.held_remaining while any version in its subtree is held, journalling nothing and leaving the transition pending; a ratified commit releases the subtree in its own commit (ADR-0030 d12).'
+      description: 'Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). An in-progress workarea''s commit is ratified only by a second admin of a different principal (a dreamer key answers access.verb_ceiling), and is refused with workarea.held_remaining while any version in its subtree is held, journalling nothing and leaving the transition pending; a ratified commit releases the subtree in the same transaction (ADR-0030 d12).'
       parameters:
         - { $ref: '#/components/parameters/WorkareaId' }
         - { name: transition_id, in: path, required: true, schema: { type: string } }
@@ -3509,7 +3509,6 @@ components:
               path: { type: string }
               role: { $ref: '#/components/schemas/Role' }
               masked_by: { type: [string, 'null'], description: "The deny (per-grant or global) that produced a hole, when one does." }
-              reads_unreviewed: { type: boolean, description: 'For a reader entry, whether the key may read the held claims of other keys on the node (ADR-0030 d7); false outside every in-progress workarea.' }
 
     BanRequest:
       type: object

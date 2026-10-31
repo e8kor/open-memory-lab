@@ -86,8 +86,8 @@ settings, tenants — a column names the key's role itself.
 | ratify a connection | — | — | ✓ review ³ | — | — |
 | reopen a rejection (non-author) | — | — | ✓ review ³ | — | — |
 | re-enqueue a dead-lettered held item (journalled; [admission.md](admission.md)) | — | — | ✓ | ✓ | — |
-| propose workarea status transition | — | — | ✓ | ✓ | — |
-| ratify status transition (non-proposer) | — | — | ✓ | ✓ | — |
+| propose workarea status transition | — | — | ✓ ⁷ | ✓ | — |
+| ratify status transition (non-proposer) | — | — | ✓ ⁷ | ✓ | — |
 | issue / revoke / rotate keys (issuer ceiling) | — | — | — | ✓ | ✓ ⁴ |
 | create / re-parent workareas | — | — | — | ✓ | — |
 | reassign claims between workareas | — | — | — | ✓ | — |
@@ -140,7 +140,18 @@ another value is a revoked grant and a new one. The workarea read reports the an
 `reads_unreviewed` ([http-api](../api/http-api.md#workareas)); what recall, get, the listings
 and the events tail serve under it is declared in
 [retrieval](retrieval.md#held-claims-inside-an-in-progress-workarea) and on the
-[events tail](../api/http-api.md#events-tail).
+[events tail](../api/http-api.md#events-tail), where condition 1 is judged at the event and
+conditions 2 and 3 on current access. Reading a held claim does not let a key cite it from
+outside its subtree: a `derives_from` target or claim-edge endpoint inside an in-progress subtree
+is admitted only from inside the same subtree, the boundary rule declared in the
+[refusal matrix](workareas.md#refusal-matrix).
+
+⁷ An [in-progress workarea](workareas.md#in-progress-workareas)'s `development` → `committed`
+transition, its commit, is proposed and ratified by admin keys only, two admin principals: a
+dreamer key that proposes or ratifies it answers `access.verb_ceiling`, once the node resolves
+within its reader effective access and before the held test
+([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d12). Every other transition keeps the
+dreamer column's ✓.
 
 Promote, sign and delete appear in no column: promotion is an effect of ratification inside the
 admission pipeline, signing is done by `oml-server` with the deployment key
@@ -155,11 +166,11 @@ beyond it. How a
 `self_signed` version may take a claim's tip is declared in
 [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). The
 exception is declared in [workareas.md](workareas.md) and ADR-0001; it does not change this
-matrix — it changes the review policy a development workarea applies. A second bounded
-relaxation, the [in-progress workarea](workareas.md#in-progress-workareas), relaxes only R3's
+matrix — it changes the review policy a development workarea applies. The proposed
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) would add a second bounded
+relaxation, the [in-progress workarea](workareas.md#in-progress-workareas), relaxing only R3's
 "nothing is readable by others until it is ratified", for the keys footnote 6 names; R2 holds
-there in full, and no workarea inside one admits self-signing
-([ADR-0030](../adr/ADR-0030-in-progress-workareas.md)).
+there in full, and no ratification inside one is self-signed (ADR-0030 d4).
 
 ## Grant admissibility and refusal order
 
@@ -259,7 +270,9 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
     `access.author_only`, and a dreamer may still propose its revision or retirement.
 
 - **dreamer** — status-transition propose and ratify, and dead-letter re-enqueue, on the node;
-  admin keys act on these verbs by their key role.
+  admin keys act on these verbs by their key role. An in-progress workarea's commit is an admin
+  verb only: a dreamer key that proposes or ratifies it answers `access.verb_ceiling`
+  ([footnote 7](#permission-matrix)).
 - **review next and verdict** — dreamer on the row's workarea, in addition to the
   [lineage-closure exclusion](#the-dreamer-split): a row outside dreamer effective access is never
   served, and a verdict on one resolves by the refusal order like every other verb —

@@ -167,6 +167,11 @@ The `experiments` row is the per-grant-masking rule made visible: grant A's
 deny does not defeat grant B. The `run-grid` row is deny-wins: the global deny
 defeats every grant.
 
+A reader grant also carries `unreviewed`, resolved block-wins over the same
+attenuated grants; the rule is declared in the permission matrix
+([roles-and-keys.md footnote 6](roles-and-keys.md#permission-matrix),
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md), proposed).
+
 ### The one write-eligibility rule
 
 Across **all** statuses there is exactly one rule for who may write into a
@@ -182,7 +187,11 @@ access. The distinction matters operationally: grant state answers "who could
 write here if the status allowed it", and status answers "what happens to a
 write here", and the two are never mixed. Audit questions about access are
 answered from grants and epochs alone; audit questions about why a write was
-refused are answered from status and policy snapshots alone.
+refused are answered from status and policy snapshots alone. Under the proposed
+[ADR-0030](../adr/ADR-0030-in-progress-workareas.md) (d12), a read's audience
+inside and at the boundary of an [in-progress subtree](#in-progress-workareas)
+is answered from grants, epochs, the journalled `workarea.create` mark and the
+root's `workarea.status_transition`; neither event joins the permission epoch.
 
 ## Edges
 
@@ -289,10 +298,10 @@ stateDiagram-v2
   the constitution, [ADR-0001](../adr/index.md)). How a `self_signed` version
   may take a claim's tip is declared in
   [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
-  An admin may instead create a `development` workarea
-  [in-progress](#in-progress-workareas): R2 holds there in full, its readers
-  read its held claims at once, and nothing in it is served outside until its
-  commit. The two relaxations never apply to one workarea.
+  Under the proposed ADR-0030 an admin may instead create a `development`
+  workarea [in-progress](#in-progress-workareas): R2 holds there in full, its
+  readers read its held claims at once, and nothing in it is served outside
+  until its commit. Self-signing never applies inside one.
 - **committed** — full non-author review required; promotions allowed. The
   working state of a governed crew space, and the permanent state of the
   universe root.
@@ -304,7 +313,7 @@ stateDiagram-v2
 
 | Transition | Proposed by | Ratified by | Preconditions | Journalled with |
 |---|---|---|---|---|
-| `development` → `committed` | admin or dreamer with effective access on the node | a **second, non-proposing** dreamer or admin (R2 applies to transitions) | — for an ordinary workarea. For an [in-progress workarea](#in-progress-workareas), **no version in its subtree is `held`**, checked at the proposal and again inside the ratification's commit (`workarea.held_remaining`); a node inside an in-progress subtree other than its root makes no transition until that commit (`workarea.in_progress_refused`) | transition event + policy snapshot; an in-progress workarea's commit carries `in_progress_released: true` |
+| `development` → `committed` | admin or dreamer with effective access on the node; for an [in-progress workarea](#in-progress-workareas), **admin only** (a dreamer key answers `access.verb_ceiling`) | a **second, non-proposing** dreamer or admin (R2 applies to transitions); for an in-progress workarea, a second admin of a different principal | — for an ordinary workarea. For an in-progress workarea, **no version in its subtree is `held`**, checked at the proposal and again inside the ratifying transaction (`workarea.held_remaining`); a node inside an in-progress subtree other than its root makes no transition until that commit (`workarea.in_progress_refused`) | transition event + policy snapshot; an in-progress workarea's commit carries `in_progress_released: true` |
 | `committed` → `validated` | admin or dreamer with effective access on the node | a second, non-proposing dreamer or admin | **every child of the node is already `validated`, and no simulation is fenced on the subtree** — a live simulation must be [ended](simulations.md) first, since taint can never enter a `validated` area | transition event + policy snapshot |
 | `committed` → `development` | — | — | **does not exist** | — |
 | `validated` → anything | — | — | **does not exist** | — |
@@ -326,15 +335,16 @@ or any of its descendants, while the in-progress workarea is `development`.
 |---|---|---|---|---|
 | New claim write | admitted (held) | admitted (held) | **refused** | admitted (held; readable at once by the keys the [permission matrix](roles-and-keys.md#permission-matrix) allows) |
 | Promotion of a claim in the area | allowed (policy of the area; `self_signed` only under the constitution's bounded development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md) d5) | allowed (full non-author review) | **refused** (nothing new promotes into it) | allowed (full non-author review; never `self_signed`); readable outside the subtree only after its commit |
-| A review policy that admits self-signing | allowed (journalled tenant policy) | not admitted: R2 and R3 hold unconditionally | not admitted | **refused** (`workarea.in_progress_refused`) |
+| Self-signing (a ratification that sets `self_signed`) | allowed (journalled tenant policy) | not admitted: R2 and R3 hold unconditionally | not admitted | **never**: a ratification inside counts no author-key or author-principal verdict and never sets `self_signed`, whatever tenant policy says, checked inside the ratification beside the R2 lineage check ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d4) |
 | Demote | allowed (journalled) | allowed (journalled) | allowed (journalled) | allowed (journalled) |
 | Erasure (crypto-shred) | allowed (journalled) | allowed (journalled) | allowed (journalled) | allowed (journalled) |
 | Reassignment of a claim **into** the area | allowed (re-enters `held` if destination policy is stricter; see [roles-and-keys.md](roles-and-keys.md)) | allowed (same rule) | **refused** | allowed from a node inside the same subtree; **refused** from outside it (`workarea.in_progress_refused`) |
 | Reassignment of a claim **out of** the area | allowed | allowed | **refused** — not in the closed list of mutations a frozen area admits | allowed to a node inside the same subtree; **refused** to outside it (`workarea.in_progress_refused`) |
+| Lineage or claim edge across the boundary | per the readability rules | per the readability rules | per the readability rules | a `derives_from` target or claim-edge endpoint here, held or promoted, is admitted only for a submission whose workarea, or an edge whose other endpoint, lies inside the same subtree; otherwise **refused** (`workarea.in_progress_refused`), answered after the readability check, so a key that cannot read the target gets `access.not_found` |
 | Create a child workarea under the node | allowed | allowed | **refused** | allowed — the child is inside the subtree; **refused** with `in_progress: true` or a `prefix` (`workarea.in_progress_refused`) |
 | Re-parent a subtree to put this node's subtree elsewhere | allowed (journalled act above) | allowed | **refused** (the node is frozen structure) | the in-progress workarea itself: allowed, the subtree moves whole; any other node, or a move that would bring a node in from outside: **refused** (`workarea.in_progress_refused`) |
 | Crew-metadata update | allowed (journalled) | allowed (journalled) | **allowed** (journalled; freeze covers claims, not metadata) | allowed (journalled) |
-| Status transition forward | → `committed` | → `validated` if all children validated | none exist | the in-progress workarea: → `committed` once nothing in its subtree is held (`workarea.held_remaining`); any other node: none until that commit (`workarea.in_progress_refused`) |
+| Status transition forward | → `committed` | → `validated` if all children validated | none exist | the in-progress workarea: → `committed`, proposed and ratified by admin keys only, once nothing in its subtree is held (`workarea.held_remaining`); any other node: none until that commit (`workarea.in_progress_refused`) |
 | Reads | per effective access | per effective access | per effective access — a frozen area **serves reads**; freezing is not archival | per effective access, plus the held claims of other keys the [permission matrix](roles-and-keys.md#permission-matrix) allows; a read scoped outside the subtree serves nothing from it |
 
 Two composite rules fall out of the table and are restated here because they
@@ -376,29 +386,33 @@ never inside one). The workarea read reports `in_progress`,
 ([HTTP API](../api/http-api.md#workareas)).
 
 **Inside.** Every write is held and reviewed as anywhere else; R2 holds in full,
-and no node inside admits self-signing. A held claim inside is readable at once,
+and no ratification inside is self-signed. A held claim inside is readable at once,
 marked `state: "held"` and `reviewed: false`, by the keys the
 [permission matrix](roles-and-keys.md#permission-matrix) allows. How recall,
-get, the listings and the events tail serve it is declared in
+get, the listings, the graph reads and the events tail serve it is declared in
 [retrieval](retrieval.md#held-claims-inside-an-in-progress-workarea) and on the
 [events tail](../api/http-api.md#events-tail).
 
 **The boundary.** Until the commit, nothing crosses it: the refusal matrix above
 refuses a reassignment or re-parent that would move a claim or a node into or
-out of the subtree, a self-signing policy inside it, and a status transition on
-any node inside it but the in-progress workarea. A read scoped outside — at an
-ancestor, up to `universe` — serves nothing from the subtree, the reading key's
-own rows included, and its counts count nothing from it; the node itself stays
-visible to its readers as structure.
+out of the subtree, a `derives_from` target or claim-edge endpoint inside it
+named from outside it, and a status transition on any node inside it but the
+in-progress workarea. A read scoped outside — at an ancestor, up to `universe` —
+serves nothing from the subtree, the reading key's own rows included, and its
+counts count nothing from it; the node itself stays visible to its readers as
+structure.
 
 **The commit.** The in-progress workarea's `development` → `committed`
 transition is proposed and ratified by two identities like every transition
-([transition matrix](#transition-matrix)), and is refused at the proposal and
-at the ratification while any version in the subtree is `held`, dead-lettered
-ones included (`workarea.held_remaining`, which names the workarea and counts
-nothing). Rejected, demoted and erased versions do not block it. The
-ratification's test is a condition inside its own commit statement, so no held
-version arrives unseen. In that commit:
+([transition matrix](#transition-matrix)), both admin keys of different
+principals, since the commit opens the whole subtree to readers outside; a
+dreamer key that proposes or ratifies it answers `access.verb_ceiling`. It is
+refused at the proposal and at the ratification while any version in the
+subtree is `held`, dead-lettered ones included (`workarea.held_remaining`,
+which names the workarea and counts nothing). Rejected, demoted and erased
+versions do not block it. The ratification's test is a condition inside its
+transaction's one data-modifying statement, under the chain lock, so no held
+version arrives unseen. At the commit:
 
 - the workarea becomes `committed`, and its subtree stops being in progress;
 - every promoted served tip in the subtree becomes readable at scopes outside
@@ -433,4 +447,4 @@ per-request effective access are
 [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1, d14). The
 in-progress workarea is the proposed
 [ADR-0030](../adr/ADR-0030-in-progress-workareas.md)'s, which would amend
-ADR-0001 d3 and d5 and ADR-0009 d1, d3 and d4.
+ADR-0001 d3 and d5, ADR-0008 d4 and d6, and ADR-0009 d1, d2, d3 and d4.

@@ -31,8 +31,10 @@ Open Memory Lab (OML) is an external memory provider for AI agents and crews. Ag
 HTTP, authenticate with scoped API keys, and write memories — text, files, images, PDFs — into
 shared workareas that mirror how their crews are organized. The premise in one line: **every memory
 is a claim under test** — held on arrival, scanned, reviewed by an identity that did not write it,
-and only then visible to anyone else. Nothing an agent writes becomes shared knowledge on its own
-say-so.
+and only then visible to anyone else, except, under a proposed decision, inside a workarea created
+to be in progress, whose readers see it at once, marked as not yet reviewed, while nobody outside
+sees it until that workarea is completed. Nothing an agent writes becomes shared knowledge on its
+own say-so.
 
 That gate is structural, not advisory. The verbs an agent can call cannot approve, delete, or
 rewrite history; review is performed by a different identity; erasure is an explicit, recorded act
