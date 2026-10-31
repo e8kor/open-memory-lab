@@ -2810,9 +2810,11 @@ components:
           type: integer
           format: int64
           minimum: 1
+          maximum: 9007199254740991
           description: >-
-            Recall budget in budget tokens (counter oml-tc/1). Steering is never cut; hits are the
-            longest rank prefix that fits. Refused with include_bodies false. Rules:
+            Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest
+            integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut;
+            hits are the longest rank prefix that fits. Refused with include_bodies false. Rules:
             docs/architecture/retrieval.md, Token budgets.
         terms:
           type: array
@@ -2859,7 +2861,7 @@ components:
         and the 90-token hit is not, because the cut is a strict rank prefix.
       required: [max_tokens, counter, steering_tokens, used_tokens, truncated, hits_omitted, next_hit_tokens]
       properties:
-        max_tokens: { type: integer, minimum: 1 }
+        max_tokens: { type: integer, minimum: 1, maximum: 9007199254740991 }
         counter: { type: string, enum: [oml-tc/1] }
         steering_tokens: { type: integer, minimum: 0 }
         used_tokens: { type: integer, minimum: 0, description: Exceeds max_tokens only when steering alone does. }

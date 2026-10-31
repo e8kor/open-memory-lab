@@ -31,12 +31,9 @@ tools, and a divergence between them that `_meta.pending_design` does not
 list is a documentation bug, not an ambiguity to interpret. One ordering rule keeps the two honest while the
 build catches up: `tools/list` serves the subset of that file the server
 builds, so a served tool's entry changes only in the same change as the code
-that serves it — the server never advertises a field it refuses. Until that
-change lands, every change
-[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) makes to
-[`oml_recall`](#oml_recall) and [`oml_events_tail`](#oml_events_tail) —
-inputs, output shape, visibility and refusals — is decided, not built, stated
-on this page ahead of the file, and listed under `_meta.pending_design` in
+that serves it — the server never advertises a field it refuses. Whatever
+this page decides for a served tool that its entry does not carry yet is
+stated here ahead of the file and listed under `_meta.pending_design` in
 [mcp-tools.json](mcp-tools.json).
 
 ## Transport: streamable HTTP, stateless
@@ -388,8 +385,9 @@ FTS + vector is the only search mode. `k` is at most 100, as on the ring.
   `state: held`; they count against `k` and the budget
   ([retrieval](../architecture/retrieval.md#own-held-rows-in-recall)).
 - `max_tokens` — **optional**: a budget in budget tokens (counter `oml-tc/1`,
-  not a model's count). Steering is never cut; the hits served are the longest
-  rank prefix that fits; the cut is reported in `budget`
+  not a model's count), at most 2⁵³ − 1, as on the ring. Steering is never
+  cut; the hits served are the longest rank prefix that fits; the cut is
+  reported in `budget`
   ([retrieval](../architecture/retrieval.md#token-budgets)).
 
 **Output** — the steering-first contract, visible in the shape itself:
@@ -887,6 +885,7 @@ indistinguishable from a node that does not exist
 ([http-api.md](http-api.md#search-get-v1memories)).
 `claim_key` lists the versions of one claim. Omit them all for everything the
 key wrote, newest first ([http-api.md](http-api.md#search-get-v1memories)).
+`limit` is at most 200, as on the ring.
 
 **Output**
 

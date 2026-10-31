@@ -6,8 +6,7 @@
     "design_spec_version": "0.2.0-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
-      "oml_remember": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_learn": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet."
+      "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet."
     }
   },
   "tools": [
@@ -74,13 +73,13 @@
     },
     {
       "name": "oml_recall",
-      "description": "Search promoted memories within a workarea subtree and, with include_own_held, the calling key's own held rows, flagged state held; steering rows precede hits, are never ranked and are never cut by a max_tokens budget. Every item carries its text and its budget tokens; budget reports the cut when max_tokens was sent. Every recall is logged to the read log. Rides POST /v1/memories/recall.",
+      "description": "Search promoted memories within a workarea subtree and, with include_own_held, the calling key's own held rows, flagged state held; steering rows precede hits, are never ranked and are never cut by a max_tokens budget. Every item carries its text and its budget tokens; budget reports the cut when max_tokens was sent. Rides POST /v1/memories/recall.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
-            "description": "The search text; hybrid FTS + vector is the only search mode."
+            "description": "The search text, matched by full-text search, the only search mode served."
           },
           "scope": {
             "type": "string",
@@ -100,7 +99,8 @@
           "max_tokens": {
             "type": "integer",
             "minimum": 1,
-            "description": "Optional budget in budget tokens (counter oml-tc/1, not a model's count). Steering is never cut; the hits served are the longest rank prefix that fits, and the cut is reported in budget."
+            "maximum": 9007199254740991,
+            "description": "Optional budget in budget tokens (counter oml-tc/1, not a model's count), at most 2^53 - 1 as on the ring. Steering is never cut; the hits served are the longest rank prefix that fits, and the cut is reported in budget."
           }
         },
         "required": ["query"],
@@ -301,7 +301,8 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Page size."
+            "maximum": 200,
+            "description": "Page size, at most 200 as on the ring."
           },
           "cursor": {
             "type": "string",
