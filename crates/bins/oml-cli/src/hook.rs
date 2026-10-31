@@ -37,6 +37,10 @@ const REDACTED: &str = "[OML_API_KEY]";
 /// The characters a claim key or the workarea path is printed in at most,
 /// the last one `…` when cut: neither counts toward the budget (d6).
 const KEY_CAP: usize = 120;
+/// The characters a stderr line's reason is cut to: a body the server sent
+/// without the typed envelope, up to ureq's 10 MiB, is never echoed whole
+/// (d5).
+const LINE_CAP: usize = 200;
 
 /// The hook document for the session, or why there is none: `None` when the
 /// hook is off and says nothing, else the one line for stderr. Neither ever
@@ -77,7 +81,7 @@ pub fn session_start(
         Some(key) => text.replace(key.as_str(), REDACTED),
         None => text.to_owned(),
     };
-    let quiet = |reason: String| Some(one_line(&redact(&reason)));
+    let quiet = |reason: String| Some(cut(one_line(&redact(&reason)), LINE_CAP));
 
     match switch.as_deref() {
         None | Some("on") => {}
@@ -339,16 +343,19 @@ fn key_of(row: &Value) -> String {
     capped(row["claim_key"].as_str().unwrap_or("?"))
 }
 
-/// `text` on one line, at most `KEY_CAP` characters, the last one `…` when
-/// it is cut.
+/// `text` on one line, at most `KEY_CAP` characters.
 fn capped(text: &str) -> String {
-    let line = one_line(text);
-    if line.chars().count() <= KEY_CAP {
+    cut(one_line(text), KEY_CAP)
+}
+
+/// `line` in at most `cap` characters, the last one `…` when it is cut.
+fn cut(line: String, cap: usize) -> String {
+    if line.chars().count() <= cap {
         return line;
     }
-    let mut cut: String = line.chars().take(KEY_CAP - 1).collect();
-    cut.push('…');
-    cut
+    let mut kept: String = line.chars().take(cap - 1).collect();
+    kept.push('…');
+    kept
 }
 
 fn one_line(text: &str) -> String {

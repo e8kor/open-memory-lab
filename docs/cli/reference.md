@@ -365,7 +365,7 @@ serves the steering and no hit. The steering in force comes back whatever the qu
 the PoC, names every word of it.
 
 **It fails open.** Each of these ends with no stdout and exit `0`, and at most one stderr line
-naming the reason, with the key value redacted: `OML_SESSION_CONTEXT=off`; a refused variable
+naming the reason in at most 200 characters, with the key value redacted: `OML_SESSION_CONTEXT=off`; a refused variable
 value above, an `OML_API_KEY` that is not all printable ASCII among them; a missing `OML_URL` or
 `OML_API_KEY`; stdin that is not a JSON object, or whose `source` or `cwd` is not a string; an
 unreachable server; a typed refusal; a request, its TCP connect included, that takes longer than

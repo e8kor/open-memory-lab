@@ -138,9 +138,10 @@ accepts it.
   has a 3-second timeout that covers its TCP connect as well as the exchange, and the whole hook
   gives up after 8 seconds whatever holds it, which also bounds the DNS lookup, since the HTTP
   client gives that lookup no deadline of its own. If the listing fails the recall is not sent,
-  and if the recall fails nothing is printed. One line naming the reason may go to stderr, with the key redacted as in d4; Claude
-  never sees the stderr of a hook that exits 0 ([hooks reference](https://code.claude.com/docs/en/hooks),
-  fetched 2026-10-31).
+  and if the recall fails nothing is printed. One line naming the reason may go to stderr, with
+  the key redacted as in d4 and the reason cut to 200 characters, so a body the server sent
+  without the typed envelope is never echoed whole; Claude never sees the stderr of a hook that
+  exits 0 ([hooks reference](https://code.claude.com/docs/en/hooks), fetched 2026-10-31).
 
     A session must start whether or not OML answers, and a hook error at every session start
     while a server is down would be noise the user cannot act on from the session. All or nothing
