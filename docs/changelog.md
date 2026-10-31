@@ -45,7 +45,9 @@ are taken by records on other branches. It amends no record.
   0 on every failure, `OML_SESSION_CONTEXT=off` included, with a 3-second timeout per request, its
   connect included, an 8-second deadline on the whole verb, and a context printed whole or not at
   all (d5); one SessionStart hook document whose context frames
-  the entries as stored data and asks for the summary's durable facts after a compaction (d6);
+  the entries as stored data, puts the request to record, and after a compaction the request to
+  record the summary's durable facts, right after the frame, and prints claim keys and the path
+  in at most 120 characters (d6);
   `plugins/oml/hooks/hooks.json`, which runs the verb only when `oml` is on `PATH` (d7); and the
   two `permissions.allow` rules in the plugin README, the five read tools and every tool, with the
   cost of the second, writes the user never sees, stated beside it (d8).

@@ -1141,8 +1141,13 @@ struct Crew {
 
 impl Crew {
     async fn start() -> Self {
+        Self::start_in("metals").await
+    }
+
+    /// The crew in a workarea named `name` under the root.
+    async fn start_in(name: &str) -> Self {
         let lab = Lab::start().await;
-        let (code, created, log) = lab.json(None, &["workareas", "create", &lab.root, "metals"]);
+        let (code, created, log) = lab.json(None, &["workareas", "create", &lab.root, name]);
         assert_eq!(code, 0, "workareas create: {log}");
         let wa = created["id"].as_str().expect("workarea id").to_owned();
         let path = created["path"].as_str().expect("workarea path").to_owned();
@@ -1323,16 +1328,16 @@ async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_w
     assert_eq!(
         context,
         format!(
-            "OML memory for this session, from {}, workarea {}.\n{FRAMING}\n\n\
+            "OML memory for this session, from {}, workarea {}.\n{FRAMING}\n{REMEMBER}\n\n\
              Steering in force:\n\
              - metals-crew-sourcing: Quote every supplier price with its source and its date.\n\n\
              {SUBMISSIONS}\n\
              - [held] accra-metals-price-anchor v1\n\
              - [promoted] supplier-quote-am-7741 v1\n\n\
-             Memories matching \"accra metals\":\n{served}\n\n{REMEMBER}",
+             Memories matching \"accra metals\":\n{served}",
             crew.lab.server, crew.path
         ),
-        "steering first, then the agent's work, then the matches, then how to record"
+        "the frame and how to record first, then steering, the agent's work and the matches"
     );
     crew.lab.stop().await;
 }
@@ -1347,11 +1352,10 @@ async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_
         context_of(&stdout),
         format!(
             "OML memory for this session, from {}, in this key's default workarea \
-             (oml_workarea_info names it).\n{FRAMING}\n\n\
+             (oml_workarea_info names it).\n{FRAMING}\n{REMEMBER}\n{COMPACTED}\n\n\
              Steering in force:\n- none\n\n\
              {SUBMISSIONS}\n- none\n\n\
-             Memories matching \"metals\":\n- none\n\n\
-             {REMEMBER}\n{COMPACTED}",
+             Memories matching \"metals\":\n- none",
             crew.lab.server
         )
     );
@@ -1361,7 +1365,7 @@ async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_
         assert_eq!(code, 0, "{source}: {stderr}");
         let context = context_of(&stdout);
         assert!(
-            context.ends_with(REMEMBER) && !context.contains("compacted"),
+            context.lines().nth(2) == Some(REMEMBER) && !context.contains("compacted"),
             "{source}: only a compaction asks for the summary's facts: {context}"
         );
     }
@@ -1930,6 +1934,54 @@ async fn the_hook_shows_another_keys_held_memory_never() {
         "{theirs}"
     );
     assert!(!theirs.contains("accra-metals-price-anchor"), "{theirs}");
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() {
+    // Neither a claim key nor the path counts toward the budget, so each is
+    // cut where it is printed, and the record line comes before them all.
+    let crew = Crew::start_in(&"metals".repeat(30)).await;
+    let claim_key = format!("metals-{}", "k".repeat(300));
+    crew.submit(
+        &crew.agent,
+        "memory",
+        &claim_key,
+        "Metals lot C: 40 tonnes, Tema, Monday.",
+    );
+    let (code, stdout, stderr) = crew.hook(&[], &session("compact", "/home/op/src/metals"));
+    assert_eq!(code, 0, "{stderr}");
+    let context = context_of(&stdout);
+
+    let cut = |text: &str| format!("{}…", text.chars().take(119).collect::<String>());
+    assert!(crew.path.chars().count() > 120, "{}", crew.path);
+    let lines: Vec<&str> = context.lines().collect();
+    assert_eq!(
+        lines[..4],
+        [
+            format!(
+                "OML memory for this session, from {}, workarea {}.",
+                crew.lab.server,
+                cut(&crew.path)
+            )
+            .as_str(),
+            FRAMING,
+            REMEMBER,
+            COMPACTED,
+        ],
+        "the frame, the record line and the compaction line come first"
+    );
+    assert_eq!(
+        section(&context, SUBMISSIONS),
+        [format!("- [held] {} v1", cut(&claim_key))]
+    );
+    assert_eq!(
+        section(&context, "Memories matching \"metals\":"),
+        [format!(
+            "- [held] {}: Metals lot C: 40 tonnes, Tema, Monday.",
+            cut(&claim_key)
+        )]
+    );
     crew.lab.stop().await;
 }
 
