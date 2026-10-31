@@ -2840,12 +2840,12 @@ components:
           type: boolean
           default: true
           description: >-
-            Proposed (ADR-0030 d8). When true, the held versions of other keys (kind memory or
-            derived_fact, never steering or retirement versions) that ADR-0030 d5 lets the key
-            read on the served nodes join the hits, ranked in the same order, with memory.state
-            held and reviewed false; they count against k and max_tokens. Such versions exist only
-            inside an in-progress subtree. False removes them; the field only narrows and is never
-            refused.
+            Proposed (ADR-0030 d8). When true, the held versions of any author, the key's own
+            included (kind memory or derived_fact, never steering or retirement versions), on
+            the served nodes where ADR-0030 d5 admits the key join the hits, ranked in the same
+            order, with memory.state held and reviewed false; they count against k and
+            max_tokens. Such nodes lie only inside an in-progress subtree. False removes them;
+            the field only narrows and is never refused.
         max_tokens:
           type: integer
           format: int64

@@ -60,8 +60,7 @@ take. Proposed, not built.
     in it, by the one journalled act and no row write.
 
 - **d2 — Until the commit nothing crosses a subtree's boundary, and only its root moves up the
-  ladder.** Each case is `workarea.in_progress_refused`, as the `in_progress` module of
-  `oml-domain` on the `feat/in-progress-domain` branch decides it:
+  ladder.** Each case is `workarea.in_progress_refused`:
 
     - a status transition proposed or ratified on a node whose root is another node;
     - a reassignment whose source and destination have different roots;
@@ -96,10 +95,10 @@ take. Proposed, not built.
   marks.** This is the maintainer's reading, declared here once; every other page links here. A
   read at node N may serve a row whose workarea is D only if D has no root, or N has D's root: D
   lies outside every in-progress subtree, or N lies inside D's. A **scoped read** (recall, the
-  scoped listing, the graph reads) serves the **served node set**, the nodes of subtree(N) the
-  key reads today that pass at N, so a read scoped outside leaves every subtree out whole. A
-  **read with no scope** (get by id, the lineage read, the attachment fetch, one event) is at the
-  row's own node, which always passes, and d5 decides who reads a held row. Related rows, a
+  scoped listing, the graph reads, the events tail) serves the **served node set**, the nodes of
+  subtree(N) the key reads today that pass at N, so a read scoped outside leaves every subtree
+  out whole. A **read with no scope** (get by id, the lineage read, the attachment fetch) is at
+  the row's own node, which always passes, and d5 decides who reads a held row. Related rows, a
   lineage closure's and every read's `derives_from` and `replaces`, take the decision at the
   subject's node or the scope node, and a submission reads its `derives_from` targets at its
   resolved workarea. Grants, denials, the simulation predicate
@@ -107,7 +106,7 @@ take. Proposed, not built.
   beside it. The key's own rows obey it too: scoped outside, `include_own_held` and the listing
   serve none from inside, while get and `own=true` still do.
 
-    `oml-domain` holds it as one pure function beside `in_progress_root`, giving the decision for
+    `oml-domain` holds it as one pure function beside `effective_roles`, giving the decision for
     the roots of N and D and the served node set over a list of nodes; every read path in
     `oml-app` calls it. Nothing is stamped on a memory row, so a re-parent updates no row and the
     commit rewrites nothing. This amends ADR-0009 d2: who reads a row is answered from grants,
@@ -186,13 +185,16 @@ take. Proposed, not built.
   fetch of a held version serve the keys d5 admits on its workarea. Scoped outside, each serves
   nothing from inside. This amends ADR-0025 d13 (the scoped listing).
 
-- **d10 — The events tail serves an event iff the key may read its subject.** This is the
-  maintainer's reading, one rule with no clause added: the read is at the subject's own node
-  (d4), so an event is served exactly when get of its subject would serve the key. For a subject
-  inside an in-progress subtree d5 decides; for any other, ADR-0025 d15's clauses are that test,
-  unchanged. A tail's `workarea_id` still filters to its subtree, `workarea.in_progress_marked`
-  maps as `workarea.create` does, and the test runs at the request on the current tree, marks and
-  access. This amends ADR-0025 d15: inside, visibility follows current state.
+- **d10 — The events tail is a scoped read at its `workarea_id` (d4), and inside, get's test
+  decides a `lifecycle.*` event.** This is the maintainer's reading. A `lifecycle.*`,
+  `submission.*` or `simulation.write` event whose subject's workarea, or a listed workarea of a
+  `lifecycle.reassign`, fails d4 at the tail's `workarea_id` is omitted, so a tail scoped outside
+  an in-progress subtree serves none from inside until the commit. The rest follow ADR-0025 d15's
+  family table unchanged, except that a `lifecycle.*` event whose subject is inside is served
+  exactly when get of its subject would serve the key, `410 lifecycle.erased` included, under
+  d15's self-signed condition. `workarea.in_progress_marked` maps as `workarea.create` does, and
+  the test runs at the request on the current tree, marks and access. This amends ADR-0025 d15:
+  inside, a `lifecycle.*` event follows its subject's current state.
 
 - **d11 — The workarea surface gains a create flag, an opt-in verb and the root on the read.**
   `WorkareaCreate.in_progress` (boolean, default `false`); `POST
@@ -259,15 +261,14 @@ take. Proposed, not built.
   until the commit; for `crew/oml`, every promoted claim in it.
 - **The commit waits on review**: one held claim no eligible reviewer can judge holds the whole
   subtree until it is reviewed, dead-lettered and re-enqueued, or erased.
-- **Get and the tail read at the row's node** (d4, d10): a key with reader access on an ancestor
-  can get a promoted claim inside by id, and sees its events on a tail scoped above it, before the
-  commit, and a held one when d5 admits it; recall, the listings and the graph reads scoped
-  outside serve nothing from inside. Inside, the tail follows current state, so a range re-read
-  after a rejection or the commit can omit an event it showed.
+- **Get reads at the row's node** (d4): a key with reader access on an ancestor can get a
+  promoted claim inside by id before the commit, and a held one when d5 admits it; recall, the
+  listings, the graph reads and the tail scoped outside serve nothing from inside. Inside, the
+  tail follows current state (d10), so a range re-read after a rejection or the commit can omit
+  an event it showed.
 - **Two tests run under the chain lock** (d1, d12), one probe per subtree node, unmeasured
   (FR-25), and **a future serving index meets d7's requirements**, which rule out one shared
-  approximate graph filtered after its ceiling. **All of it is unbuilt**: the domain's boundary
-  refusals sit on the unmerged `feat/in-progress-domain` branch, and no use case calls them.
+  approximate graph filtered after its ceiling. **All of it is unbuilt.**
 
 **Process obligations**
 
@@ -315,7 +316,7 @@ take. Proposed, not built.
 | **d7 — Held claims inside scored by text alone, as own held rows are** | Ratification would raise them in every reader's results, so review would reorder results (R3). |
 | **d8 — Refuse `include_unreviewed: true` where a grant blocks** | An agent configured once would fail recalls over a narrowing its grants already make. |
 | **d8 — A separate list of held hits, or held steering in segment 1** | A list needs its own order and budget share (ADR-0025 d4's rejected segment); steering no one reviewed, served first and never cut, is the most privileged place for the least checked text. |
-| **d10 — A third tail clause for in-progress subjects, or outside tails that omit them** | Grafted onto "(a) or (b), and no other", the clause was unreachable; an event is a read at its subject's node, as get is (d4), and two rules for one read would drift. |
+| **d10 — An event read at its subject's own node, as get is, or a third tail clause for in-progress subjects** | The first serves the events of a subtree's claims to a tail scoped above it before the commit (decision 4, `P-R3-BOUNDARY`); grafted onto "(a) or (b), and no other", the second was unreachable. |
 | **d11 — An `in_progress` field, or a `reads_unreviewed` field, on the workarea read** | On the create body `in_progress` asks for the mark, so one name would mean two things; each served claim carries `reviewed` and `include_unreviewed` only narrows, so an agent needs no prior answer. |
 | **d12 — An admin-only commit** | ADR-0009 d3 already takes two identities, and a ceiling that depends on the node would need a new step in the refusal order. |
 | **d12 — Per-claim contribution, held claims left over, or rejecting them at the commit** | The maintainer chose whole-workarea; leftovers would leave unreviewed; an automatic rejection records verdicts no reviewer gave (ADR-0025 d10). |

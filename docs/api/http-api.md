@@ -375,11 +375,12 @@ optional `kinds` filter (hits only), `include_bodies`, and:
 - `include_own_held` (default `false`) — the calling key's own held rows that match join the
   hits, ranked in the same order with `state: held`
   ([retrieval.md — own held rows in recall](../architecture/retrieval.md#own-held-rows-in-recall)).
-- `include_unreviewed` (default `true`), proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d8) — the held versions of other
-  keys that ADR-0030 d5 lets the key read on the served nodes, which exist only inside an
-  in-progress subtree, join the hits, ranked in the same order with `state: held` and
-  `reviewed: false`; `false` removes them. The field only narrows and is never refused, and a
-  recall scoped outside an in-progress subtree serves nothing from inside it (ADR-0030 d4).
+- `include_unreviewed` (default `true`), proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d8) — the held versions of any
+  author, the key's own included, on the served nodes where ADR-0030 d5 admits the key, which
+  lie only inside an in-progress subtree, join the hits, ranked in the same order with
+  `state: held` and `reviewed: false`; `false` removes them. The field only narrows and is
+  never refused, and a recall scoped outside an in-progress subtree serves nothing from inside
+  it (ADR-0030 d4).
 - `max_tokens` — a budget in budget tokens; steering is never cut, and the hits served are the
   longest rank prefix that fits. Refused with `include_bodies: false`
   ([retrieval.md — token budgets](../architecture/retrieval.md#token-budgets)).
@@ -673,11 +674,15 @@ same `lifecycle.*` and `workarea.*` events in the same order; each additionally 
 `submission.*` and `simulation.write` events and, under the author clause, the `lifecycle.*`
 events of its own versions.
 
-**Proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d10), binding only on its acceptance.** An event whose subject
-lies inside an in-progress subtree is served exactly when get of its subject would serve the
-key, ADR-0030 d5 deciding for a held subject, judged at the request on the current tree, marks
-and access; the clauses above stay the test for every other subject, and
-`workarea.in_progress_marked` maps as `workarea.create` does.
+**Proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d10), binding only on its acceptance.** The tail is a scoped
+read under ADR-0030 d4 at its `workarea_id`: a `lifecycle.*`, `submission.*` or
+`simulation.write` event whose subject's workarea, or a listed workarea of a
+`lifecycle.reassign`, lies inside an in-progress subtree the `workarea_id` lies outside is
+omitted until that subtree's commit. The tables above decide the rest, except that a
+`lifecycle.*` event whose subject is inside is served exactly when get of its subject would
+serve the key, `410 lifecycle.erased` included, under the self-signed condition above; the test
+runs at the request on the current tree, marks and access, and `workarea.in_progress_marked`
+maps as `workarea.create` does.
 
 **What a served event names.** A claim-subject workarea id in a served payload —
 `workarea_id`, `from_workarea_id` or `to_workarea_id` — that the
