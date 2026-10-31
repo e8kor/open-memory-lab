@@ -53,7 +53,8 @@ are taken by records on other branches. It amends no record.
   cost of the second, writes the user never sees, stated beside it (d8).
 - **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` runs the verb against the real lead behind a
   request recorder; `scripts/check_plugin.py` now also fails if `plugins/oml/hooks/hooks.json` is
-  missing or does not parse, or if its SessionStart hooks are not exactly one command that runs
+  missing or does not parse, or if its SessionStart hooks are not exactly one command, without a
+  matcher, with a 10-second timeout and the status message `Loading OML memory`, that runs
   `oml hook session-start`, exits 0 with no output when `oml` is not on `PATH`, and exits 0 when
   that `oml` fails.
 - **Not verified here:** that Claude Code runs the hook and adds its context to a session; the
