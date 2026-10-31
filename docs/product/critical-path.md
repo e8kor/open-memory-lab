@@ -165,6 +165,11 @@ agent-only-memory scenario passing: an agent that stores to OML and nothing else
 what it wrote, search it under a token budget, update it, and propose retiring it. Depends on
 M1.
 
+**Progress.** What FR-10 and FR-11 ask for is built, and the agent-only-memory scenario is a
+test in the repository's suite. Neither row has closed: both close when that scenario passes in
+continuous integration, and the [roadmap](roadmap.md) cites that run when they do. FR-12 is not
+built, and it still gates M2.
+
 ## M3 — Derived lakehouse
 
 **Goal.** The derived side exists and its exactly-once claim is verified, not assumed.
