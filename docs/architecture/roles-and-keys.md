@@ -469,7 +469,11 @@ rule below); after that moment no component holds or reproduces it. The journal 
 `key.issued` as issued-without-value; log lines name keys by `key_id` only, never by value or
 hash ([observability](../operations/observability.md) owns the logging rules); journal payloads
 carry key ids, never key material. A key value found anywhere but the issuance terminal and the
-caller's `Authorization` header is a defect.
+caller's `Authorization` header is a defect. The one exception is the file `oml keys issue-agent
+--out` creates for it, the one place a key value may rest outside the show-once response: new,
+owner-only (mode 0600), written once, never overwritten, and the operator's to delete once the key
+is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),
+[ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1).
 
 ## Key lifecycle
 
