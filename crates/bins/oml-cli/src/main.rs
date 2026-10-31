@@ -720,20 +720,34 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
 /// `oml hook session-start`: the hook document on stdout, or nothing, and at
 /// most one line on stderr; exit 0 whatever happened, so a session always
-/// starts (ADR-0029 d5).
+/// starts (ADR-0029 d5). The hook runs on its own thread under
+/// `hook::DEADLINE`: returning from `main` ends the process even while that
+/// thread is stuck where no timeout reaches, as in a DNS lookup.
 fn run_session_start() -> ExitCode {
     use std::io::Write as _;
-    let var = |name: &str| std::env::var(name).ok();
-    // A closed stream is not a reason to exit non-zero: writes are not
-    // unwrapped, as println! would.
-    match hook::session_start(&var, &mut std::io::stdin().lock()) {
-        Ok(document) => {
+    let (done, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let var = |name: &str| std::env::var(name).ok();
+        let _ = done.send(hook::session_start(&var, &mut std::io::stdin().lock()));
+    });
+    let reason = match outcome.recv_timeout(hook::DEADLINE) {
+        Ok(Ok(document)) => {
+            // A closed stream is not a reason to exit non-zero: writes are
+            // not unwrapped, as println! would.
             let _ = writeln!(std::io::stdout(), "{document}");
+            None
         }
-        Err(Some(reason)) => {
-            let _ = writeln!(std::io::stderr(), "oml hook session-start: {reason}");
+        Ok(Err(reason)) => reason,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(format!(
+            "no answer within {} seconds, so no context was loaded",
+            hook::DEADLINE.as_secs()
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Some("the hook stopped before it finished, so no context was loaded".to_owned())
         }
-        Err(None) => {}
+    };
+    if let Some(reason) = reason {
+        let _ = writeln!(std::io::stderr(), "oml hook session-start: {reason}");
     }
     ExitCode::SUCCESS
 }

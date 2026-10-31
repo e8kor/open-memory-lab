@@ -42,8 +42,9 @@ are taken by records on other branches. It amends no record.
   directory's name (d1–d3); `OML_URL` and `OML_API_KEY` alone, never the stored admin credentials
   or `OML_CLI_KEY`, a key value that is not all printable ASCII refused before anything is sent,
   and the key value redacted from everything it prints (d4); no output and exit
-  0 on every failure, `OML_SESSION_CONTEXT=off` included, with a 3-second timeout per request and
-  a context printed whole or not at all (d5); one SessionStart hook document whose context frames
+  0 on every failure, `OML_SESSION_CONTEXT=off` included, with a 3-second timeout per request, its
+  connect included, an 8-second deadline on the whole verb, and a context printed whole or not at
+  all (d5); one SessionStart hook document whose context frames
   the entries as stored data and asks for the summary's durable facts after a compaction (d6);
   `plugins/oml/hooks/hooks.json`, which runs the verb only when `oml` is on `PATH` (d7); and the
   `permissions.allow` rule in the plugin README (d8).
