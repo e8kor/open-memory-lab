@@ -38,10 +38,9 @@ pub struct KeyRecord {
     pub key_hash: String,
     /// The key's name: unique in its tenant, operator keys sharing the
     /// provider's one namespace, and never released, a revoked key's
-    /// included (roles-and-keys.md key names; ADR-0026 d1, d9, d10). `None`
-    /// on a key issued before names, until the lead names it (ADR-0026 d11),
-    /// and on a key issued without one, which the HTTP issuance body cannot
-    /// send yet ([`IssueKeyRequest::name`]).
+    /// included (roles-and-keys.md key names; ADR-0026 d1, d9, d10). Every
+    /// issuance gives one ([`IssueKeyRequest::name`]), so `None` is only a
+    /// key issued before names, until the lead names it (ADR-0026 d11).
     pub name: Option<Name>,
     /// The crew record named at issuance, fixed for the key's life; `None`
     /// for a key with no crew (ADR-0026 d8).
@@ -207,8 +206,8 @@ pub struct TreeNode {
 
 /// The rows of one tenant's chain that have no name yet: the tenant's own
 /// row, workareas and keys. Every row a creation writes is named, so on the
-/// names schema these are the rows that predate names, and keys issued
-/// without one (ADR-0026 d11; postgres-schema.md names and tenants).
+/// names schema these are the rows that predate names (ADR-0026 d9, d11;
+/// postgres-schema.md names and tenants).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UnnamedRows {
     pub tenant: bool,
@@ -355,6 +354,9 @@ impl MemoryRecord {
 pub struct BootstrapRequest {
     /// The tenant's name, unique in the deployment (ADR-0026 d1).
     pub tenant_name: Name,
+    /// The name of the ceremony's admin key, the tenant's first key, which
+    /// the claim names (http-api.md bootstrap; ADR-0026 d9).
+    pub admin_key_name: Name,
     pub admin_principal: String,
 }
 
@@ -374,7 +376,7 @@ pub struct IssuedKey {
     /// zero-grant key.
     pub default_workarea: Option<Uuid>,
     /// The key's name as journalled ([`IssueKeyRequest::name`]).
-    pub name: Option<Name>,
+    pub name: Name,
     /// The crew record named at issuance, fixed for the key's life
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
@@ -397,11 +399,10 @@ pub struct BootstrapResult {
 #[derive(Debug, Clone)]
 pub struct IssueKeyRequest {
     pub role: Role,
-    /// The key's name, distinct from its principal and its label, checked
-    /// after every other check (step 7, `name.taken`; ADR-0026 d5, d9).
-    /// The HTTP issuance body does not carry one yet, so `None` issues the
-    /// key unnamed and journals `name: null`, as every key before names was.
-    pub name: Option<Name>,
+    /// The key's name, required at issuance and distinct from its principal
+    /// and its label; whether it is taken is checked after every other check
+    /// (step 7, `name.taken`; ADR-0026 d5, d9).
+    pub name: Name,
     pub principal: String,
     /// The issuing admin's attestation; `None` journals null and stores the
     /// schema default, `agent`.

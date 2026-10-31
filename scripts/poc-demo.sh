@@ -108,13 +108,13 @@ echo "deployment signing public key (from the boot log, handed out of band): $PU
 
 # --- bootstrap: the one-time claim ------------------------------------------
 step "bootstrap claim (single-use token -> first admin key, credentials stored 0600)" 0 \
-    "$OML" --server "$SERVER_URL" --json bootstrap claim \
+    "$OML" --server "$SERVER_URL" --json bootstrap claim alice-admin \
     --token "$TOKEN" --tenant-name poc-demo --principal platform/alice
 TENANT="$(jqf .tenant_id)"
 ROOT_WA="$(jqf .root_workarea_id)"
 
 step "a second claim is refused — the token is consumed (typed refusal, exit 1)" 1 \
-    "$OML" --server "$SERVER_URL" --json bootstrap claim --token "$TOKEN"
+    "$OML" --server "$SERVER_URL" --json bootstrap claim second-admin --token "$TOKEN"
 
 # --- workarea and the crew's keys (admin credentials from the stored file) ---
 step "create a child workarea under the root ($ROOT_WA)" 0 \
@@ -125,17 +125,17 @@ WA="$(jqf .id)"
 # table, ADR-0025 d1): writer admits reader and writer, dreamer admits reader
 # and dreamer, reader admits reader.
 step "issue the agent's writer key with a writer and a reader grant (one key writes and recalls)" 0 \
-    "$OML" --json keys issue --role writer --held-by agent \
+    "$OML" --json keys issue agent-blue --role writer --held-by agent \
     --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:writer" --grant "$WA:reader"
 WRITER="$(jqf .value)"
 
 step "issue a dreamer key (held by a human reviewer)" 0 \
-    "$OML" --json keys issue --role dreamer --held-by human \
+    "$OML" --json keys issue maya --role dreamer --held-by human \
     --principal crew/maya --default-workarea "$WA" --grant "$WA:dreamer"
 DREAMER="$(jqf .value)"
 
 step "issue a reader key for a second identity that only reads (a reader key admits reader grants only)" 0 \
-    "$OML" --json keys issue --role reader --held-by service \
+    "$OML" --json keys issue recall-bot --role reader --held-by service \
     --principal crew/recall-bot --default-workarea "$WA" --grant "$WA:reader"
 READER="$(jqf .value)"
 
@@ -171,7 +171,7 @@ jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the writer key's
 
 # --- R2: the reviewer is never the author ------------------------------------
 step "issue a dreamer key to the AUTHOR's principal (crew/agent-blue also reviews?)" 0 \
-    "$OML" --json keys issue --role dreamer --held-by agent \
+    "$OML" --json keys issue agent-blue-reviewer --role dreamer --held-by agent \
     --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:dreamer"
 AUTHOR_DREAMER="$(jqf .value)"
 

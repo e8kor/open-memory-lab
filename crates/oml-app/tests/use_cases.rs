@@ -22,6 +22,7 @@ use oml_app::types::{
     SubmitRequest, SupersedeRequest, Verdict, VersionRef,
 };
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
 /// The committed test key seed (docs/data/chain-format.md test vector key).
@@ -61,6 +62,7 @@ fn hashes(events: &[SignedEnvelope]) -> Vec<Sha256Hash> {
 async fn bootstrap(app: &TestApp) -> BootstrapResult {
     app.bootstrap_tenant(&BootstrapRequest {
         tenant_name: Name::parse("acme").expect("a name"),
+        admin_key_name: Name::parse("root-admin").expect("a name"),
         admin_principal: "alice-admin".to_owned(),
     })
     .await
@@ -102,10 +104,20 @@ fn by_name(value: &str) -> Reference {
     Reference::parse(value).expect("a name in a reference")
 }
 
+/// A key name no other fixture key holds: every issuance takes one
+/// (ADR-0026 d9).
+fn fresh_key_name() -> Name {
+    static ISSUED: AtomicU64 = AtomicU64::new(0);
+    name(&format!(
+        "test-key-{}",
+        ISSUED.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
 fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRequest {
     IssueKeyRequest {
         role,
-        name: None,
+        name: fresh_key_name(),
         principal: principal.to_owned(),
         held_by: Some(HeldBy::Agent),
         default_workarea: None,
@@ -2090,9 +2102,9 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
             "value_disclosed": false,
             "held_by": "agent",
             "default_workarea_id": crew.to_string(),
-            // Sent no name and no crew, it journals both as null
+            // The name the issuance gave, and, sent no crew, a null crew
             // (event-catalog.md `key.issued`; ADR-0026 d8, d9).
-            "name": null,
+            "name": issued.name.as_str(),
             "crew_id": null,
         })
     );
@@ -4768,6 +4780,62 @@ async fn bootstrap_names_the_root_universe() {
     assert_eq!(info.path, "universe");
 }
 
+/// The ceremony's admin key takes the name the claim gives it: `key.issued`
+/// journals it, the name resolves to the key, and a tenant this build
+/// bootstrapped and issues keys in holds no row without a name, so the
+/// naming of rows that predate names finds nothing there and journals
+/// nothing (ADR-0026 d9, d11; event-catalog.md `key.issued`).
+#[tokio::test]
+async fn bootstrap_names_its_admin_key_and_no_key_this_build_issues_is_left_for_the_naming() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    assert_eq!(boot.admin_key.name, name("root-admin"));
+    let events = journal(&store, boot.tenant_id).await;
+    let key_issued = events
+        .iter()
+        .find(|e| e.envelope.event_type == event_types::KEY_ISSUED)
+        .expect("the ceremony's key.issued");
+    assert_eq!(key_issued.envelope.payload["name"], "root-admin");
+    assert_eq!(
+        store
+            .resolve_name(boot.tenant_id, NamedKind::Key, &name("root-admin"))
+            .await
+            .expect("resolve"),
+        Some(boot.admin_key.key_id)
+    );
+    let writer = issue(
+        &app,
+        &boot.admin_key.value,
+        Role::Writer,
+        "crew/agent-7",
+        crew,
+    )
+    .await;
+    let stored = store
+        .key(boot.tenant_id, writer.key_id)
+        .await
+        .expect("read")
+        .expect("the key row");
+    assert_eq!(stored.name, Some(writer.name));
+
+    assert!(
+        store
+            .unnamed_rows(boot.tenant_id)
+            .await
+            .expect("read")
+            .is_empty()
+    );
+    let head = journal(&store, boot.tenant_id).await.len();
+    assert!(
+        app.name_rows_that_predate_names(&[boot.tenant_id])
+            .await
+            .expect("the naming reads the chain")
+            .is_empty()
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
 /// Key issuance takes the key's name and an optional crew, by id or name;
 /// `key.issued` journals the name and the crew record's id, never the name
 /// it was sent as, and the key's crew is fixed for its life (ADR-0026 d8,
@@ -4783,7 +4851,7 @@ async fn issuing_a_key_with_a_crew_name_journals_the_crews_id() {
         .issue_key(
             admin,
             &IssueKeyRequest {
-                name: Some(name("claude-laptop")),
+                name: name("claude-laptop"),
                 crew: Some(by_name("metals-crew")),
                 ..issue_req(
                     Role::Writer,
@@ -4795,7 +4863,7 @@ async fn issuing_a_key_with_a_crew_name_journals_the_crews_id() {
         .await
         .expect("issue");
     assert_eq!(issued.crew_id, Some(crew.crew_id));
-    assert_eq!(issued.name, Some(name("claude-laptop")));
+    assert_eq!(issued.name, name("claude-laptop"));
 
     let events = journal(&store, boot.tenant_id).await;
     let key_issued = events
@@ -4832,7 +4900,7 @@ async fn issuing_a_key_with_a_crew_name_journals_the_crews_id() {
             .issue_key(
                 admin,
                 &IssueKeyRequest {
-                    name: Some(name("claude-desktop")),
+                    name: name("claude-desktop"),
                     crew: Some(crew_ref),
                     ..issue_req(
                         Role::Writer,
@@ -4851,7 +4919,7 @@ async fn issuing_a_key_with_a_crew_name_journals_the_crews_id() {
         .issue_key(
             admin,
             &IssueKeyRequest {
-                name: Some(name("claude-laptop")),
+                name: name("claude-laptop"),
                 ..issue_req(
                     Role::Writer,
                     "claude/other",
@@ -5471,7 +5539,7 @@ async fn a_global_denial_on_an_admin_key_is_refused_naming_key_id() {
         .issue_key(
             admin,
             &IssueKeyRequest {
-                name: Some(name("second-admin")),
+                name: name("second-admin"),
                 ..issue_req(Role::Admin, "bob-admin", Vec::new())
             },
         )

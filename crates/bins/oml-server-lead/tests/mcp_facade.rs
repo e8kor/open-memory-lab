@@ -167,7 +167,7 @@ async fn crew_with_writer_grants(
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -200,7 +200,7 @@ async fn crew_with_writer_grants(
             "/v2/keys",
             Some(&admin),
             Some(&format!("issue-{role}")),
-            Some(&json!({"role": role, "principal": principal, "grants": grants})),
+            Some(&json!({"role": role, "name": role, "principal": principal, "grants": grants})),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{key}");
@@ -1137,7 +1137,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -1169,7 +1169,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
                 "/v2/keys",
                 Some(admin),
                 Some(idem),
-                Some(&json!({"role": role, "principal": idem, "grants": grants})),
+                Some(&json!({"role": role, "name": idem, "principal": idem, "grants": grants})),
             )
             .await;
             assert_eq!(status, StatusCode::CREATED, "{key}");
@@ -1267,7 +1267,7 @@ async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_defa
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -1280,7 +1280,9 @@ async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_defa
         "/v2/keys",
         Some(&bootstrap_admin),
         Some("second-admin"),
-        Some(&json!({"role": "admin", "principal": "bob-admin", "grants": []})),
+        Some(
+            &json!({"role": "admin", "name": "bob-admin", "principal": "bob-admin", "grants": []}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{second}");

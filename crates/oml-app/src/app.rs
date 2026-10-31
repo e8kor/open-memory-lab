@@ -914,7 +914,7 @@ where
             default_workarea,
             issued_by,
             key_hash: sha256_digest_string(value.as_bytes()),
-            name: req.name.clone(),
+            name: Some(req.name.clone()),
             crew_id,
         };
         (record, value)
@@ -1064,11 +1064,11 @@ where
         self.commit(event, MetadataFold::WorkareaCreated(workarea), None)
             .await?;
 
-        // The ceremony's admin key takes no name yet: the claim body does
-        // not carry one (ADR-0026 d9, d12).
+        // The ceremony's admin key takes the name the claim gives it
+        // (ADR-0026 d9).
         let issue = IssueKeyRequest {
             role: Role::Admin,
-            name: None,
+            name: req.admin_key_name.clone(),
             principal: req.admin_principal.clone(),
             held_by: Some(HeldBy::Human),
             default_workarea: Some(root_workarea_id.into()),
@@ -1099,7 +1099,7 @@ where
                 principal: issue.principal,
                 held_by: issue.held_by,
                 default_workarea: Some(root_workarea_id),
-                name: None,
+                name: issue.name,
                 crew_id: None,
                 access: KeyAccess {
                     issued_seq: receipt.seq,

@@ -733,6 +733,10 @@ where
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
         let req: KeyIssueBody = parse_json(headers, body)?;
+        // Every issuance names its key, under the creation grammar, checked
+        // with the rest of the body before step 0 of the issuance order
+        // (roles-and-keys.md issuance order; ADR-0026 d5, d9).
+        let name = required_creation_name("name", req.name.as_deref())?;
         // Issued keys do not expire yet: a requested expiry is refused by
         // name, since minting the key without it would leave the key its
         // access past the issuer's date (ADR-0025 d2, d16).
@@ -774,10 +778,10 @@ where
             .clone()
             .or_else(|| req.label.clone())
             .unwrap_or_else(|| "unnamed".to_owned());
-        // The body takes neither a name nor a crew yet (ADR-0026 d8, d9).
+        // The body takes no crew yet (ADR-0026 d8).
         let issue = IssueKeyRequest {
             role,
-            name: None,
+            name,
             principal,
             held_by,
             default_workarea: req.default_workarea_id.map(Reference::Id),
@@ -1005,12 +1009,12 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let req: BootstrapClaimBody = parse_json(headers, body)?;
-        // The token first (`auth.invalid`), the name after, so only the
+        // The token first (`auth.invalid`), the names after, so only the
         // holder of the valid token learns anything about a name (ADR-0026
-        // d5; http-api.md bootstrap). The name is checked while the lock
+        // d5; http-api.md bootstrap). The names are checked while the lock
         // still holds the token: a refused name consumes no token and
         // journals nothing, and no concurrent claim sees it consumed.
-        let (taken, tenant_name) = {
+        let (taken, admin_key_name, tenant_name) = {
             let mut guard = st
                 .enrollment
                 .lock()
@@ -1020,14 +1024,17 @@ where
                 Some(_) => return Err(ApiError::auth_invalid("unknown")),
                 None => return Err(ApiError::auth_invalid("consumed")),
             }
+            // The claim names the key it mints (ADR-0026 d9).
+            let admin_key_name = required_creation_name("name", req.name.as_deref())?;
             let tenant_name = creation_name(
                 "tenant_name",
                 req.tenant_name.as_deref().unwrap_or("default"),
             )?;
-            (guard.take(), tenant_name)
+            (guard.take(), admin_key_name, tenant_name)
         };
         let boot = BootstrapRequest {
             tenant_name,
+            admin_key_name,
             admin_principal: req
                 .admin_principal
                 .unwrap_or_else(|| "bootstrap/admin".to_owned()),
@@ -1163,6 +1170,10 @@ struct GrantBody {
 #[serde(deny_unknown_fields)]
 struct KeyIssueBody {
     role: String,
+    /// Required, and optional here only so that an absent name is refused
+    /// with `details.field: name`, which serde's missing-field refusal does
+    /// not carry (ADR-0026 d9).
+    name: Option<String>,
     #[serde(default)]
     grants: Vec<GrantBody>,
     label: Option<String>,
@@ -1201,6 +1212,10 @@ struct WorkareaCreateBody {
 #[derive(Deserialize)]
 struct BootstrapClaimBody {
     enrollment_token: String,
+    /// The key's name: required, and checked after the token, so optional
+    /// here for the same reason as `KeyIssueBody`'s (ADR-0026 d5, d9).
+    #[serde(default)]
+    name: Option<String>,
     // PoC extensions: the standalone ceremony names its tenant here.
     #[serde(default)]
     tenant_name: Option<String>,
@@ -1221,6 +1236,18 @@ fn creation_name(field: &'static str, value: &str) -> Result<Name, ApiError> {
         ApiError::validation(format!("{field} {value:?}: {refusal}"))
             .with_details(json!({ "field": field }))
     })
+}
+
+/// A name a creation must send: absent, `request.validation` naming the
+/// field; present, [`creation_name`]'s (ADR-0026 d9).
+fn required_creation_name(field: &'static str, value: Option<&str>) -> Result<Name, ApiError> {
+    let value = value.ok_or_else(|| {
+        ApiError::validation(format!(
+            "{field} is required: every creation names its row (ADR-0026 d1)"
+        ))
+        .with_details(json!({ "field": field }))
+    })?;
+    creation_name(field, value)
 }
 
 async fn healthz() -> Response {
@@ -1394,6 +1421,7 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         .collect();
     json!({
         "key_id": issued.key_id,
+        "name": issued.name.as_str(),
         "role": issued.role.as_str(),
         "principal": issued.principal,
         "default_workarea_id": issued.default_workarea,

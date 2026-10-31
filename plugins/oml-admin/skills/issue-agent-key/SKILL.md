@@ -27,6 +27,9 @@ follows from that.
 ## Steps
 
 1. Ask the operator for anything they have not given:
+    - the **key name**, for example `agent-7-laptop`: lowercase letters, digits and hyphens, a
+      letter first. It is unique in the tenant and never released, so a reissued key takes a new
+      one (`agent-7-laptop-2`). It is not the principal: never derive one from the other.
     - the **principal** the key acts as, for example `crew/agent-7`. Give each agent its own:
       review independence and the reciprocal-approval statistics key on it.
     - the **workarea id**, the UUID of the workarea the agent will write and recall in.
@@ -48,7 +51,7 @@ follows from that.
 4. Run the issuance, adding `--held-by human` or `--write-only` only if the operator asked:
 
     ```sh
-    oml keys issue-agent --principal crew/agent-7 --workarea <workarea-id> --out "$HOME/.config/oml/keys/crew-agent-7"
+    oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workarea <workarea-id> --out "$HOME/.config/oml/keys/crew-agent-7"
     ```
 
     On success stdout holds two `export` lines and stderr names the key id, its grants and its

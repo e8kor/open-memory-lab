@@ -132,6 +132,7 @@ async fn full_ceremony_through_the_cli() {
         &[
             "bootstrap",
             "claim",
+            "root-admin",
             "--token",
             ENROLLMENT,
             "--tenant-name",
@@ -161,7 +162,7 @@ async fn full_ceremony_through_the_cli() {
         &server,
         &creds,
         None,
-        &["bootstrap", "claim", "--token", ENROLLMENT],
+        &["bootstrap", "claim", "second-admin", "--token", ENROLLMENT],
     );
     assert_eq!(code, 1, "consumed token is a typed refusal: {log}");
     assert_eq!(envelope["error"]["code"], "auth.invalid", "{log}");
@@ -175,6 +176,7 @@ async fn full_ceremony_through_the_cli() {
             &[
                 "keys",
                 "issue",
+                &principal.replace('/', "-"),
                 "--role",
                 role,
                 "--grant",
@@ -199,6 +201,7 @@ async fn full_ceremony_through_the_cli() {
         &[
             "keys",
             "issue",
+            "bad-admin",
             "--role",
             "admin",
             "--grant",
@@ -403,6 +406,7 @@ impl Lab {
             &[
                 "bootstrap",
                 "claim",
+                "root-admin",
                 "--token",
                 ENROLLMENT,
                 "--principal",
@@ -443,9 +447,10 @@ impl Lab {
         created["id"].as_str().expect("workarea id").to_owned()
     }
 
-    /// `oml keys issue <args>` under the admin credentials; the `201` body.
-    fn issue(&self, args: &[&str]) -> Value {
-        let mut all = vec!["keys", "issue"];
+    /// `oml keys issue <key-name> <args>` under the admin credentials; the
+    /// `201` body.
+    fn issue(&self, key_name: &str, args: &[&str]) -> Value {
+        let mut all = vec!["keys", "issue", key_name];
         all.extend_from_slice(args);
         let (code, issued, log) = self.json(None, &all);
         assert_eq!(code, 0, "keys issue: {log}");
@@ -519,14 +524,17 @@ async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_worka
     let wa = lab.workarea("metals");
     lab.take_requests();
 
-    let issued = lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-1",
-        "--grant",
-        &format!("{wa}:writer"),
-    ]);
+    let issued = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    );
 
     let seen = lab.take_requests();
     assert_eq!(routes(&seen), ["POST /v2/keys"]);
@@ -545,21 +553,55 @@ async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_worka
     lab.stop().await;
 }
 
+/// `oml bootstrap claim <key-name>` and `oml keys issue <key-name>` send the
+/// positional name as the body's `name`, and the key is issued under it
+/// (cli/reference.md `oml bootstrap claim`, `oml keys issue`; ADR-0026 d9,
+/// d12).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_claim_and_keys_issue_send_their_positional_key_name_as_the_bodys_name() {
+    let lab = Lab::start().await;
+    let claim = lab.take_requests();
+    assert_eq!(routes(&claim), ["POST /v2/bootstrap/claim"]);
+    assert_eq!(claim[0].body["name"], "root-admin");
+    let wa = lab.workarea("metals");
+    lab.take_requests();
+
+    let issued = lab.issue(
+        "claude-laptop",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "claude/laptop",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    );
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/keys"]);
+    assert_eq!(seen[0].body["name"], "claude-laptop");
+    assert_eq!(issued["name"], "claude-laptop", "the 201 answers the name");
+    lab.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keys_issue_with_write_only_sends_only_the_writer_grant() {
     let lab = Lab::start().await;
     let wa = lab.workarea("metals");
     lab.take_requests();
 
-    let issued = lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-1",
-        "--grant",
-        &format!("{wa}:writer"),
-        "--write-only",
-    ]);
+    let issued = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+            "--write-only",
+        ],
+    );
 
     let seen = lab.take_requests();
     assert_eq!(routes(&seen), ["POST /v2/keys"]);
@@ -577,6 +619,7 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
     let (code, _, stderr) = lab.text(&[
         "keys",
         "issue-agent",
+        "agent-7",
         "--principal",
         "crew/agent-7",
         "--workarea",
@@ -590,6 +633,7 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
         seen[0].body,
         json!({
             "role": "writer",
+            "name": "agent-7",
             "held_by": "agent",
             "principal": "crew/agent-7",
             "default_workarea_id": wa,
@@ -607,6 +651,7 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
     let (code, stdout, stderr) = lab.text(&[
         "keys",
         "issue-agent",
+        "agent-7",
         "--principal",
         "crew/agent-7",
         "--workarea",
@@ -658,6 +703,7 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
     let (code, stdout, stderr) = lab.text(&[
         "keys",
         "issue-agent",
+        "agent-7",
         "--principal",
         "crew/agent-7",
         "--workarea",
@@ -707,6 +753,7 @@ async fn issue_agent_out_refuses_an_existing_file_and_sends_nothing() {
     let (code, stdout, stderr) = lab.text(&[
         "keys",
         "issue-agent",
+        "agent-7",
         "--principal",
         "crew/agent-7",
         "--workarea",
@@ -741,6 +788,7 @@ async fn issue_agent_out_with_json_is_refused() {
         &[
             "keys",
             "issue-agent",
+            "agent-7",
             "--principal",
             "crew/agent-7",
             "--workarea",
@@ -767,6 +815,7 @@ async fn issue_agent_out_refuses_a_path_with_a_quote_or_a_newline_and_sends_noth
         let (code, stdout, stderr) = lab.text(&[
             "keys",
             "issue-agent",
+            "agent-7",
             "--principal",
             "crew/agent-7",
             "--workarea",
@@ -808,6 +857,7 @@ fn issue_agent_to_stub(server: &str, dir: &Path, path: &Path) -> (i32, String, S
         &[
             "keys",
             "issue-agent",
+            "agent-7",
             "--principal",
             "crew/agent-7",
             "--workarea",
@@ -895,27 +945,33 @@ async fn issue_agent_says_a_key_may_have_been_issued_when_the_connection_closes_
 async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its_workarea() {
     let lab = Lab::start().await;
     let wa = lab.workarea("metals");
-    let writer = lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-1",
-        "--grant",
-        &format!("{wa}:writer"),
-    ])["value"]
+    let writer = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    )["value"]
         .as_str()
         .expect("writer value")
         .to_owned();
-    let dreamer = lab.issue(&[
-        "--role",
-        "dreamer",
-        "--held-by",
-        "human",
-        "--principal",
-        "crew/reviewer-1",
-        "--grant",
-        &format!("{wa}:dreamer"),
-    ])["value"]
+    let dreamer = lab.issue(
+        "crew-reviewer-1",
+        &[
+            "--role",
+            "dreamer",
+            "--held-by",
+            "human",
+            "--principal",
+            "crew/reviewer-1",
+            "--grant",
+            &format!("{wa}:dreamer"),
+        ],
+    )["value"]
         .as_str()
         .expect("dreamer value")
         .to_owned();
@@ -963,15 +1019,18 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
 async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_its_own_held_row() {
     let lab = Lab::start().await;
     let wa = lab.workarea("metals");
-    let writer = lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-1",
-        "--grant",
-        &format!("{wa}:writer"),
-        "--write-only",
-    ])["value"]
+    let writer = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+            "--write-only",
+        ],
+    )["value"]
         .as_str()
         .expect("writer value")
         .to_owned();

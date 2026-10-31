@@ -65,21 +65,21 @@ if [ -z "$TOKEN" ] && [ -n "$IN_COMPOSE" ]; then
 fi
 [ -n "$TOKEN" ] || fail "no enrollment token: set OML_ENROLLMENT_TOKEN to the token the server printed at first boot"
 
-boot="$(oml bootstrap claim --token "$TOKEN" --tenant-name quickstart --principal platform/admin)" \
+boot="$(oml bootstrap claim quickstart-admin --token "$TOKEN" --tenant-name quickstart --principal platform/admin)" \
     || fail "bootstrap claim refused (already claimed? the token is single-use): $boot"
 root="$(jq -r .root_workarea_id <<<"$boot")"
 workarea="$(oml workareas create "$root" "$WORKAREA_NAME" | jq -r .id)"
 
-issue() { # role held_by principal grant_role...
-    local role="$1" held_by="$2" principal="$3" grant
+issue() { # key_name role held_by principal grant_role...
+    local key_name="$1" role="$2" held_by="$3" principal="$4" grant
     local grants=()
-    shift 3
+    shift 4
     for grant in "$@"; do grants+=(--grant "$workarea:$grant"); done
-    oml keys issue --role "$role" --held-by "$held_by" --principal "$principal" \
+    oml keys issue "$key_name" --role "$role" --held-by "$held_by" --principal "$principal" \
         --default-workarea "$workarea" "${grants[@]}" | jq -r .value
 }
-agent="$(issue writer agent crew/agent writer reader)"
-dreamer="$(issue dreamer human crew/reviewer dreamer)"
+agent="$(issue quickstart-agent writer agent crew/agent writer reader)"
+dreamer="$(issue quickstart-reviewer dreamer human crew/reviewer dreamer)"
 
 rpc() { # id method params
     curl -fsS "$OML_URL/mcp" \

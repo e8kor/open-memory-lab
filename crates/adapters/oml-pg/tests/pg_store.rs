@@ -1679,11 +1679,10 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
 }
 
 /// The store reports, per table, the rows that predate names: after 0006 a
-/// PoC tenant row and each of its workarea rows has none, while a tenant
-/// created since, with its `universe` root, a workarea and a key, reports
-/// nothing, its key's missing name included, since the HTTP issuance body
-/// carries no name yet (ADR-0026 d9, d11; http-api.md "Rows created before
-/// names").
+/// PoC tenant row, each of its workarea rows and each of its keys has none,
+/// while a tenant created since, with its `universe` root, a workarea and a
+/// key issued under its name, reports nothing (ADR-0026 d9, d11; http-api.md
+/// "Rows created before names").
 #[tokio::test]
 async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_are_not() {
     let created = Mutex::new(Vec::new());
@@ -1709,6 +1708,16 @@ async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_a
         .await
         .expect("PoC workarea");
     }
+    sqlx::query(
+        "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, issued_seq) \
+         VALUES ($1, $2, $3, 'admin', 'oml/admin', 'human', 3)",
+    )
+    .bind(Uuid::from_u128(0xD700))
+    .bind(poc)
+    .bind(Sha256Hash::digest(b"poc admin key").0.to_vec())
+    .execute(&mut *tx)
+    .await
+    .expect("PoC key");
     tx.commit().await.expect("commit the PoC rows");
     let store = PgStore::connect(&db_url(&db)).await.expect("connect");
     store.migrate().await.expect("0006 applies over PoC rows");
@@ -1725,16 +1734,22 @@ async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_a
         .await;
     rig.create_workarea(&store, workarea_record(t, crew, Some(root), "metals-crew"))
         .await;
-    rig.issue_key(&store, key_record(t, key, Role::Writer, None))
-        .await;
+    rig.issue_key(
+        &store,
+        KeyRecord {
+            name: Some(name("agent-7")),
+            ..key_record(t, key, Role::Writer, None)
+        },
+    )
+    .await;
 
     assert_eq!(
         store
             .rows_without_names(&[poc, t])
             .await
             .expect("the check reads"),
-        vec![("tenants", 1), ("workareas", 2)],
-        "the PoC tenant and both its workareas, and nothing created since"
+        vec![("tenants", 1), ("workareas", 2), ("api_keys", 1)],
+        "the PoC tenant, both its workareas and its key, and nothing created since"
     );
     assert_eq!(
         store

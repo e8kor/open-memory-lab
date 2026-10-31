@@ -115,19 +115,16 @@ impl PgStore {
 
     /// The rows of `tenants` that predate names, per table, the tables that
     /// hold none left out: each tenant's own `tenants` row and its
-    /// `workareas` rows whose `name` is NULL. 0006 adds the column NULL on
-    /// every row it finds and every creation since names its row, so a NULL
-    /// here is a row the lead names before it serves (ADR-0026 d11;
-    /// http-api.md "Rows created before names"). `api_keys` is not read:
-    /// the HTTP issuance body carries no name yet (ADR-0026 d9), so a key
-    /// with no name is every key, not a sign of a row that predates names,
-    /// and every key that predates names belongs to a tenant this check
-    /// counts.
+    /// `workareas` and `api_keys` rows whose `name` is NULL. 0006 adds the
+    /// column NULL on every row it finds and every creation since names its
+    /// row, an issuance's key included, so a NULL here is a row the lead
+    /// names before it serves (ADR-0026 d9, d11; http-api.md "Rows created
+    /// before names").
     pub async fn rows_without_names(
         &self,
         tenants: &[Uuid],
     ) -> Result<Vec<(&'static str, u64)>, StoreError> {
-        let (mut tenant_rows, mut workarea_rows) = (0_i64, 0_i64);
+        let (mut tenant_rows, mut workarea_rows, mut key_rows) = (0_i64, 0_i64, 0_i64);
         for tenant_id in tenants {
             let mut tx = self.pool.begin().await.map_err(backend)?;
             set_tenant(&mut tx, *tenant_id).await?;
@@ -135,7 +132,9 @@ impl PgStore {
                 "SELECT (SELECT count(*) FROM tenants WHERE id = $1 AND name IS NULL) \
                         AS tenants, \
                         (SELECT count(*) FROM workareas WHERE tenant_id = $1 AND name IS NULL) \
-                        AS workareas",
+                        AS workareas, \
+                        (SELECT count(*) FROM api_keys WHERE tenant_id = $1 AND name IS NULL) \
+                        AS api_keys",
             )
             .bind(tenant_id)
             .fetch_one(&mut *tx)
@@ -144,12 +143,17 @@ impl PgStore {
             tx.commit().await.map_err(backend)?;
             tenant_rows += row.try_get::<i64, _>("tenants").map_err(backend)?;
             workarea_rows += row.try_get::<i64, _>("workareas").map_err(backend)?;
+            key_rows += row.try_get::<i64, _>("api_keys").map_err(backend)?;
         }
-        [("tenants", tenant_rows), ("workareas", workarea_rows)]
-            .into_iter()
-            .filter(|(_, n)| *n > 0)
-            .map(|(table, n)| Ok((table, u64::try_from(n).map_err(backend)?)))
-            .collect()
+        [
+            ("tenants", tenant_rows),
+            ("workareas", workarea_rows),
+            ("api_keys", key_rows),
+        ]
+        .into_iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(table, n)| Ok((table, u64::try_from(n).map_err(backend)?)))
+        .collect()
     }
 
     /// One workarea read under the tenant's RLS context: `sql` binds the

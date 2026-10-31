@@ -223,6 +223,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
         "/v2/bootstrap/claim",
         Call::default().body(json!({
             "enrollment_token": ENROLLMENT,
+            "name": "root-admin",
             "tenant_name": "test-tenant",
             "admin_principal": "platform/admin",
         })),
@@ -232,6 +233,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
     let token = body["value"].as_str().expect("show-once value").to_owned();
     assert!(token.starts_with("oml_"), "key wire format: {token}");
     assert_eq!(body["role"], "admin");
+    assert_eq!(body["name"], "root-admin", "the key's name as journalled");
     let tenant = Uuid::parse_str(body["tenant_id"].as_str().expect("tenant id")).expect("uuid");
     let root = Uuid::parse_str(body["root_workarea_id"].as_str().expect("root id")).expect("uuid");
     (token, tenant, root)
@@ -253,6 +255,17 @@ async fn issue_key(router: &Router, admin: &str, role: &str, principal: &str, wa
         .to_owned()
 }
 
+/// The fixture key name for a role and principal, unique wherever the pair
+/// is, as the idempotency key a fixture issuance sends is: every issuance
+/// names its key (ADR-0026 d9).
+fn key_name(role: &str, principal: &str) -> String {
+    format!("{role}-{principal}")
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
 /// Issues a key over HTTP carrying exactly `grants`; returns the 201 body.
 async fn issue_key_with(
     router: &Router,
@@ -261,17 +274,19 @@ async fn issue_key_with(
     principal: &str,
     grants: Value,
 ) -> Value {
+    let name = key_name(role, principal);
     let (status, _, body) = send(
         router,
         "POST",
         "/v2/keys",
         Call::auth(admin)
             .idem(&format!("issue-{role}-{principal}"))
-            .body(json!({ "role": role, "principal": principal, "grants": grants })),
+            .body(json!({ "role": role, "name": name, "principal": principal, "grants": grants })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "issue {role}: {body}");
     assert_eq!(body["role"], role);
+    assert_eq!(body["name"], name.as_str());
     body
 }
 
@@ -479,9 +494,9 @@ async fn a_lead_over_rows_that_predate_names_is_not_ready_and_serves_no_request(
 }
 
 /// A deployment this build bootstrapped holds no row that predates names:
-/// its tenant and workareas are named at creation, and a key's missing name
-/// is every key's until issuance takes one (ADR-0026 d9). Its startup names
-/// check passes and `/readyz` reports `names_assigned` ok.
+/// its tenant, workareas and keys are named at creation, the claim's key and
+/// every issued key included (ADR-0026 d9). Its startup names check passes
+/// and `/readyz` reports `names_assigned` ok.
 #[tokio::test]
 async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped() {
     let rig = fresh_rig().await;
@@ -607,6 +622,7 @@ async fn full_happy_path_over_http() {
         "/v2/keys",
         Call::auth(&admin).idem("bad-key").body(json!({
             "role": "admin",
+            "name": "bad-admin",
             "grants": [{"workarea_node_id": crew, "role": "dreamer"}],
         })),
     )
@@ -1347,6 +1363,7 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     let claim = |token: &str| {
         Call::default().body(json!({
             "enrollment_token": token,
+            "name": "root-admin",
             "tenant_name": "Test_Tenant",
         }))
     };
@@ -1360,12 +1377,40 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_envelope(&body, "request.validation");
     assert_eq!(body["error"]["details"]["field"], "tenant_name", "{body}");
+    // The key's name is required, and checked after the token too: a
+    // claim with none, or with one the creation grammar refuses, is
+    // `request.validation` naming `name` (ADR-0026 d9).
+    for name in [Value::Null, json!("Root Admin")] {
+        let mut unnamed = json!({ "enrollment_token": ENROLLMENT, "tenant_name": "test-tenant" });
+        if !name.is_null() {
+            unnamed["name"] = name;
+        }
+        let (status, _, body) = send(
+            router,
+            "POST",
+            "/v2/bootstrap/claim",
+            Call::default().body(unnamed),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_envelope(&body, "request.validation");
+        assert_eq!(body["error"]["details"]["field"], "name", "{body}");
+    }
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/bootstrap/claim",
+        Call::default().body(json!({ "enrollment_token": "enr_wrong" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.invalid");
     assert!(
         enumerate_tenants(rig.store.pool())
             .await
             .expect("tenants")
             .is_empty(),
-        "the refused claim journals nothing"
+        "the refused claims journal nothing"
     );
 
     bootstrap(router).await;
@@ -1525,9 +1570,9 @@ async fn an_unknown_issuance_field_is_request_validation() {
     // ignored, so no field the issuer meant is silently dropped (ADR-0025
     // d16).
     for (n, body) in [
-        json!({ "role": "writer", "scopes": ["all"] }),
-        json!({ "role": "writer", "grants": [{ "workarea_node_id": crew, "role": "writer", "expires": "never" }] }),
-        json!({ "role": "writer", "grants": [{ "workarea_node_id": crew, "role": "writer", "deny": [{ "node": crew }] }] }),
+        json!({ "role": "writer", "name": "agent-1", "scopes": ["all"] }),
+        json!({ "role": "writer", "name": "agent-2", "grants": [{ "workarea_node_id": crew, "role": "writer", "expires": "never" }] }),
+        json!({ "role": "writer", "name": "agent-3", "grants": [{ "workarea_node_id": crew, "role": "writer", "deny": [{ "node": crew }] }] }),
     ]
     .into_iter()
     .enumerate()
@@ -1547,6 +1592,86 @@ async fn an_unknown_issuance_field_is_request_validation() {
     drop_db(&rig.db_name).await;
 }
 
+/// Every issuance names its key: a body with no `name`, or with one the
+/// creation grammar refuses, is `request.validation` naming `name` before
+/// any check of the refusal order, and journals nothing; the `201` answers
+/// the name `key.issued` journalled, and a second key under it is
+/// `name.taken` (roles-and-keys.md issuance order; ADR-0026 d5, d9).
+#[tokio::test]
+async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_journals_nothing() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let head = head_seq(&rig, tenant).await;
+    let grants = json!([{ "workarea_node_id": crew, "role": "writer" }]);
+    for (n, name) in [
+        Value::Null,
+        json!("Claude Laptop"),
+        json!("key-0123456789abcdef0123456789abcdef"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut body = json!({ "role": "writer", "principal": "claude/laptop", "grants": grants });
+        if !name.is_null() {
+            body["name"] = name;
+        }
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&admin).idem(&format!("unnamed-{n}")).body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "name", "{refused}");
+    }
+    // Before step 1: a body that would also fail the two-key rule answers
+    // the missing name.
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("unnamed-admin").body(json!({
+            "role": "admin",
+            "grants": [{ "workarea_node_id": crew, "role": "dreamer" }],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["details"]["field"], "name", "{refused}");
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    let issued = issue_key_with(router, &admin, "writer", "claude/laptop", grants.clone()).await;
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
+    let stored = rig
+        .store
+        .key(tenant, key_id)
+        .await
+        .expect("read")
+        .expect("the key row");
+    assert_eq!(
+        stored.name.as_ref().map(Name::as_str),
+        Some("writer-claude-laptop")
+    );
+    let (status, _, taken) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("taken").body(json!({
+            "role": "writer",
+            "name": "writer-claude-laptop",
+            "principal": "claude/other",
+            "grants": grants,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{taken}");
+    assert_envelope(&taken, "name.taken");
+    drop_db(&rig.db_name).await;
+}
+
 #[tokio::test]
 async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
     let rig = fresh_rig().await;
@@ -1563,6 +1688,7 @@ async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
         "/v2/keys",
         Call::auth(&admin).idem("expiring").body(json!({
             "role": "writer",
+            "name": "expiring",
             "grants": [{ "workarea_node_id": crew, "role": "writer" }],
             "expiry": "2027-01-01T00:00:00Z",
         })),
@@ -1592,6 +1718,7 @@ async fn access_refusals_carry_their_recovery_details() {
         "/v2/keys",
         Call::auth(&admin).idem("k-1").body(json!({
             "role": "writer",
+            "name": "k-1",
             "grants": [
                 { "workarea_node_id": crew, "role": "reader" },
                 { "workarea_node_id": crew, "role": "dreamer" },
@@ -1612,7 +1739,7 @@ async fn access_refusals_carry_their_recovery_details() {
         "/v2/keys",
         Call::auth(&admin)
             .idem("k-2")
-            .body(json!({ "role": "operator" })),
+            .body(json!({ "role": "operator", "name": "k-2" })),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
@@ -1625,11 +1752,11 @@ async fn access_refusals_carry_their_recovery_details() {
     for (idem, body) in [
         (
             "k-3",
-            json!({ "role": "writer", "grants": [{ "workarea_node_id": quotes, "role": "writer", "deny": [{ "subtree_node_id": crew }] }] }),
+            json!({ "role": "writer", "name": "k-3", "grants": [{ "workarea_node_id": quotes, "role": "writer", "deny": [{ "subtree_node_id": crew }] }] }),
         ),
         (
             "k-4",
-            json!({ "role": "writer", "grants": [{ "workarea_node_id": quotes, "role": "writer" }], "default_workarea_id": crew }),
+            json!({ "role": "writer", "name": "k-4", "grants": [{ "workarea_node_id": quotes, "role": "writer" }], "default_workarea_id": crew }),
         ),
     ] {
         let (status, _, refused) = send(
@@ -3829,9 +3956,12 @@ async fn key_with(
         router,
         "POST",
         "/v2/keys",
-        Call::auth(admin)
-            .idem(idem)
-            .body(json!({ "role": role, "principal": principal, "grants": grants })),
+        Call::auth(admin).idem(idem).body(json!({
+            "role": role,
+            "name": key_name(role, idem),
+            "principal": principal,
+            "grants": grants,
+        })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");

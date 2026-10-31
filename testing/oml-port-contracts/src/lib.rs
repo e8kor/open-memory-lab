@@ -3833,9 +3833,9 @@ pub async fn a_key_reads_by_its_id_in_its_tenant_a_revoked_keys_included<S: Jour
 }
 
 /// Every row a creation folds is named, so a store this build writes lists
-/// no tenant and no workarea without a name; a key issued without one is
-/// listed, as a key that predates names is (ADR-0026 d11).
-pub async fn every_row_a_creation_folds_is_named_and_a_key_issued_without_a_name_is_listed<
+/// no tenant and no workarea without a name; a key folded with none, as a
+/// key that predates names is, is listed (ADR-0026 d9, d11).
+pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed<
     S: JournalStore,
 >(
     store: &S,
@@ -3932,10 +3932,7 @@ where
     a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant(&new_store().await)
         .await;
     a_key_reads_by_its_id_in_its_tenant_a_revoked_keys_included(&new_store().await).await;
-    every_row_a_creation_folds_is_named_and_a_key_issued_without_a_name_is_listed(
-        &new_store().await,
-    )
-    .await;
+    every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed(&new_store().await).await;
 }
 
 // ---------------------------------------------------------------------------

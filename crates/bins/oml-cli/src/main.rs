@@ -93,6 +93,9 @@ enum BootstrapCommand {
     /// Exchange the single-use enrollment token for the first admin key and
     /// store the credentials locally (0600).
     Claim {
+        /// The name of the key the claim mints, unique in its namespace and
+        /// never released (ADR-0026 d9, d12).
+        key_name: String,
         /// The enrollment token the lead printed at first boot.
         #[arg(long)]
         token: String,
@@ -122,6 +125,9 @@ enum KeysCommand {
 
 #[derive(Args)]
 struct KeysIssueArgs {
+    /// The key's name, unique in the tenant and never released; distinct
+    /// from its principal and label (ADR-0026 d9, d12).
+    key_name: String,
     /// reader | writer | dreamer | admin
     #[arg(long)]
     role: String,
@@ -149,6 +155,9 @@ struct KeysIssueArgs {
 
 #[derive(Args)]
 struct IssueAgentArgs {
+    /// The key's name, unique in the tenant and never released; never
+    /// derived from the principal (ADR-0026 d9, d12).
+    key_name: String,
     /// Principal the key acts as; give each agent its own.
     #[arg(long)]
     principal: String,
@@ -347,13 +356,14 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Bootstrap {
             command:
                 BootstrapCommand::Claim {
+                    key_name,
                     token,
                     tenant_name,
                     principal,
                 },
         } => {
             let client = resolve(cli, &stored)?;
-            let mut body = json!({ "enrollment_token": token });
+            let mut body = json!({ "enrollment_token": token, "name": key_name });
             if let Some(name) = tenant_name {
                 body["tenant_name"] = json!(name);
             }
@@ -426,6 +436,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             let mut body = json!({
                 "role": args.role,
+                "name": args.key_name,
                 "held_by": args.held_by,
                 "grants": grants_json(&grants),
             });
@@ -742,6 +753,7 @@ fn run_issue_agent(
         with_reader_beside_writers(&[(args.workarea, "writer".to_owned())], args.write_only);
     let body = json!({
         "role": "writer",
+        "name": args.key_name,
         "held_by": args.held_by,
         "principal": args.principal,
         "default_workarea_id": args.workarea,

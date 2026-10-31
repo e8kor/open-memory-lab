@@ -99,7 +99,9 @@ async fn run() -> Result<(), String> {
             "OML bootstrap: empty deployment — claim the first admin key with this single-use enrollment token:"
         );
         println!("{token}");
-        println!("POST /v2/bootstrap/claim {{\"enrollment_token\": \"...\"}}");
+        println!(
+            "POST /v2/bootstrap/claim {{\"enrollment_token\": \"...\", \"name\": \"<key-name>\"}}"
+        );
         Some(token)
     } else {
         None
