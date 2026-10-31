@@ -125,6 +125,7 @@ What `oml doctor` reads, per tenant in scope of the caller's key:
 | `lead_lease` | lead-lease row in Postgres | The current lead's holder id, address, epoch and lease age; **exactly one lead lease held** is a doctor check in every profile ([deployment — the lead lease](deployment.md)). A companion check verifies **no follower holds the signing key**: checkable in Kubernetes from the pod spec (no signing-key Secret mounted in `oml-server-follower`); in docker and standalone it is stated, not checkable, beyond the absence of the key file on the follower's mounts — the honesty is the check's output, not a gap it hides. |
 | `reconciler` | journalled cursor + findings | Cursor lag, last pass time, open findings by class, repair halts |
 | `settings_drift` | configured vs. effective | Delegated to `oml settings show`; doctor flags that drift exists |
+| `names_assigned` | journal + fold tables | Per chain, whether its `system.names_assigned` is journalled and folded ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d11). A follower on the schema version that adds names waits for it, not ready and serving nothing; a lead that finds a NULL `name` in a chain whose event is folded refuses to start, and this field names the table ([rows created before names](../api/http-api.md#rows-created-before-names)). |
 
 Doctor renders each field with a verdict (`ok` / `attention` / `failing`) and
 the rule it applied, in the same fail-closed, name-your-rule style as the

@@ -167,7 +167,7 @@ async fn crew_with_writer_grants(
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -200,7 +200,7 @@ async fn crew_with_writer_grants(
             "/v2/keys",
             Some(&admin),
             Some(&format!("issue-{role}")),
-            Some(&json!({"role": role, "principal": principal, "grants": grants})),
+            Some(&json!({"role": role, "name": role, "principal": principal, "grants": grants})),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{key}");
@@ -1128,6 +1128,86 @@ async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supers
     drop_db(&db).await;
 }
 
+/// `oml_remember`'s `workarea` takes the node's name as well as its id: the
+/// facade passes it through as `X-OML-Workarea` and the server resolves it,
+/// so a remember naming `metals-crew` is captured there and the own-work
+/// listing under that name lists it, while a derived path is refused as
+/// `request.validation` naming the HTTP field the argument maps to; the
+/// served catalog says so (mcp-plugin.md, a workarea by id or name;
+/// errors.md `details.field`; ADR-0026 d4, d7).
+#[tokio::test]
+async fn oml_remember_with_a_workarea_name_submits_into_it() {
+    let (router, db) = fresh_router().await;
+    let (agent, _, _, crew) = agent_crew(&router).await;
+
+    let remembered = call_tool(
+        &router,
+        &agent,
+        1,
+        "oml_remember",
+        json!({
+            "workarea": "metals-crew",
+            "claim_key": "supplier-quote-am-7741",
+            "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
+            "idempotency_key": "crew-procure/run-1/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(remembered["isError"], false, "{remembered}");
+    let receipt = &remembered["structuredContent"];
+    assert_eq!(receipt["workarea"], crew.to_string(), "{remembered}");
+    assert_eq!(receipt["state"], "held");
+    let mine = call_tool(
+        &router,
+        &agent,
+        2,
+        "oml_my_work",
+        json!({"workarea": "metals-crew"}),
+    )
+    .await;
+    assert_eq!(mine["isError"], false, "{mine}");
+    let items = mine["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(items.len(), 1, "{mine}");
+    assert_eq!(items[0]["artifact_id"], receipt["artifact_id"]);
+
+    let refused = call_tool(
+        &router,
+        &agent,
+        3,
+        "oml_remember",
+        json!({
+            "workarea": "universe.metals-crew",
+            "claim_key": "supplier-quote-am-7742",
+            "text": "Supplier Accra Metals quoted 415 USD/t.",
+            "idempotency_key": "crew-procure/run-1/step-2",
+        }),
+    )
+    .await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let error = &refused["structuredContent"]["error"];
+    assert_eq!(error["code"], "request.validation", "{refused}");
+    assert_eq!(error["details"]["field"], "X-OML-Workarea", "{refused}");
+
+    // The served entry describes what the build serves: the id or the
+    // name, and no path (ADR-0025 d12).
+    let listed = rpc(&router, &agent, 4, "tools/list", json!({})).await;
+    let tool = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "oml_remember")
+        .expect("oml_remember is served");
+    let described = tool["inputSchema"]["properties"]["workarea"]["description"]
+        .as_str()
+        .expect("a description");
+    assert!(described.contains("id or name"), "{described}");
+    assert!(!described.contains("path given here"), "{described}");
+
+    drop_db(&db).await;
+}
+
 #[tokio::test]
 async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() {
     let (router, db) = fresh_router().await;
@@ -1137,7 +1217,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -1149,10 +1229,11 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         "/v2/workareas",
         Some(&admin),
         Some("wa-1"),
+        // A workarea names at most one crew record (ADR-0026 d8); this one
+        // names none, so `crew` is null.
         Some(&json!({
             "parent_id": root,
             "name": "metals-crew",
-            "crew": {"name": "metals-crew"},
         })),
     )
     .await;
@@ -1167,7 +1248,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
                 "/v2/keys",
                 Some(admin),
                 Some(idem),
-                Some(&json!({"role": role, "principal": idem, "grants": grants})),
+                Some(&json!({"role": role, "name": idem, "principal": idem, "grants": grants})),
             )
             .await;
             assert_eq!(status, StatusCode::CREATED, "{key}");
@@ -1209,9 +1290,10 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         view,
         &json!({
             "id": crew,
+            "name": "metals-crew",
             "path": "universe.metals-crew",
             "status": "development",
-            "crew": {"name": "metals-crew"},
+            "crew": null,
             "parent": root,
             "children": [],
             "edges": [],
@@ -1223,15 +1305,18 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         })
     );
     assert!(view["permission_epoch"].is_u64(), "{view}");
-    let named = call_tool(
-        &router,
-        &agent,
-        3,
-        "oml_workarea_info",
-        json!({"workarea": crew}),
-    )
-    .await;
-    assert_eq!(&named["structuredContent"], view);
+    // By id and by name, the same node (ADR-0026 d4).
+    for (id, workarea) in [(3, crew.as_str()), (8, "metals-crew")] {
+        let named = call_tool(
+            &router,
+            &agent,
+            id,
+            "oml_workarea_info",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(&named["structuredContent"], view);
+    }
 
     // A key with no default is refused by name; a node the key cannot read
     // is absence, as on the ring; an unknown argument is validation.
@@ -1258,8 +1343,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
 }
 
 #[tokio::test]
-async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_not_it_has_a_default()
- {
+async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_default() {
     let (router, db) = fresh_router().await;
     let (status, boot) = send(
         &router,
@@ -1267,7 +1351,7 @@ async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -1280,7 +1364,9 @@ async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_
         "/v2/keys",
         Some(&bootstrap_admin),
         Some("second-admin"),
-        Some(&json!({"role": "admin", "principal": "bob-admin", "grants": []})),
+        Some(
+            &json!({"role": "admin", "name": "bob-admin", "principal": "bob-admin", "grants": []}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{second}");
@@ -1290,17 +1376,24 @@ async fn an_admin_key_is_refused_oml_workarea_info_with_verb_ceiling_whether_or_
         .expect("show-once value")
         .to_owned();
 
-    // Step 1 of the refusal order needs no node, so it answers before the
-    // default resolves: both admin keys get the same code, and neither is
-    // told about its default workarea.
-    for (id, token) in [(1, &bootstrap_admin), (2, &second_admin)] {
-        let refused = call_tool(&router, token, id, "oml_workarea_info", json!({})).await;
-        assert_eq!(refused["isError"], true, "{refused}");
-        assert_eq!(
-            refused["structuredContent"]["error"]["code"], "access.verb_ceiling",
-            "{refused}"
-        );
-    }
+    // The facade rides the ring, whose workarea read answers an admin key by
+    // its key role, structure only (ADR-0026 d15): the bootstrap admin reads
+    // its default, the root, with no effective verb, and the admin key with
+    // no default is refused by name.
+    let read = call_tool(&router, &bootstrap_admin, 1, "oml_workarea_info", json!({})).await;
+    assert_eq!(read["isError"], false, "{read}");
+    assert_eq!(read["structuredContent"]["path"], "universe", "{read}");
+    assert_eq!(
+        read["structuredContent"]["my_effective_verbs"],
+        json!([]),
+        "{read}"
+    );
+    let refused = call_tool(&router, &second_admin, 2, "oml_workarea_info", json!({})).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"], "request.workarea_unresolved",
+        "{refused}"
+    );
 
     drop_db(&db).await;
 }

@@ -17,6 +17,7 @@ class ErrorCode(StrEnum):
     LIFECYCLE_ERASED = "lifecycle.erased"
     LIMIT_QUOTA = "limit.quota"
     LIMIT_RATE = "limit.rate"
+    NAME_TAKEN = "name.taken"
     REQUEST_IDEMPOTENCY_KEY_REQUIRED = "request.idempotency_key_required"
     REQUEST_PAYLOAD_TOO_LARGE = "request.payload_too_large"
     REQUEST_UNSUPPORTED_MEDIA = "request.unsupported_media"

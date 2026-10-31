@@ -148,20 +148,20 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
             return json.loads(done.stdout)
 
         boot = oml(
-            "bootstrap", "claim", "--token", token,
+            "bootstrap", "claim", "sdk-admin", "--token", token,
             "--tenant-name", "sdk-tests", "--principal", "platform/admin",
         )  # fmt: skip
         root = boot["root_workarea_id"]
         workarea = oml("workareas", "create", root, "sdk")["id"]
         review_workarea = oml("workareas", "create", root, "sdk-review")["id"]
         agent = oml(
-            "keys", "issue", "--role", "writer", "--held-by", "agent",
+            "keys", "issue", "sdk-agent", "--role", "writer", "--held-by", "agent",
             "--principal", "sdk/agent", "--default-workarea", workarea,
             "--grant", f"{workarea}:writer", "--grant", f"{workarea}:reader",
             "--grant", f"{review_workarea}:writer", "--grant", f"{review_workarea}:reader",
         )["value"]  # fmt: skip
         dreamer = oml(
-            "keys", "issue", "--role", "dreamer", "--held-by", "human",
+            "keys", "issue", "sdk-reviewer", "--role", "dreamer", "--held-by", "human",
             "--principal", "sdk/reviewer", "--default-workarea", review_workarea,
             "--grant", f"{review_workarea}:dreamer",
         )["value"]  # fmt: skip

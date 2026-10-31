@@ -77,10 +77,11 @@ version, `0.1.0`, independent of the Cargo workspace's version.
 
 The exception classes are named after the family: `AuthError`, `AccessError`, `RequestError`,
 `IdempotencyError`, `SubmissionError`, `WorkareaError`, `ReviewError`, `SimulationError`,
-`VocabError`, `UploadError`, `LifecycleError`, `LimitError`, `ExportError`, `SettingsError`, and
-`ServerError` for `system`, because Python's builtins already own `SystemError`. Both languages use
-these names, all under `ApiError`, which is under `OmlError` beside `ConfigError`,
-`NotBuiltError` and `TransportError` (a transport failure after the last retry).
+`VocabError`, `UploadError`, `LifecycleError`, `LimitError`, `ExportError`, `SettingsError`,
+`NamingError` for `name` and `ServerError` for `system`, because Python's builtins already own
+`NameError` and `SystemError`. Both languages use these names, all under `ApiError`, which is
+under `OmlError` beside `ConfigError`, `NotBuiltError` and `TransportError` (a transport failure
+after the last retry).
 
 ## The regeneration rule
 

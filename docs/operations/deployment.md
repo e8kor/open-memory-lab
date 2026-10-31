@@ -157,7 +157,7 @@ $ kubectl --namespace oml wait --for=condition=Ready pod --all --timeout=300s
 $ kubectl --namespace oml port-forward svc/oml-server 8080:8080 &
 $ kubectl --namespace oml get secret oml-enrollment -o jsonpath='{.data.token}' \
     | base64 -d \
-    | oml bootstrap claim --url http://localhost:8080 --token-stdin
+    | oml bootstrap claim root-operator --url http://localhost:8080 --token-stdin
 enrollment secret accepted — consumed (single-use)
 root operator key (shown once, journalled as issued-without-value):
   oml_3fJ9***************************************
@@ -229,7 +229,7 @@ operator's machine (the release tarball's `oml`, or a `cargo build` of the check
 ```console
 $ TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
 $ kubectl --namespace oml port-forward service/oml-server 8080:8080 &
-$ oml --server http://127.0.0.1:8080 bootstrap claim --token "$TOKEN" \
+$ oml --server http://127.0.0.1:8080 bootstrap claim <key-name> --token "$TOKEN" \
     --tenant-name <tenant> --principal <you>
 ```
 
@@ -327,7 +327,7 @@ $ oml standalone init --config oml-standalone.toml
   migrations applied (owner role) · keyring minted · data dir verified (local fs, conditional-put OK)
   enrollment secret written to ./oml-enrollment.token (single-use)
 $ oml standalone up --config oml-standalone.toml &
-$ oml bootstrap claim --url http://localhost:8080 --token-stdin < oml-enrollment.token
+$ oml bootstrap claim root-operator --url http://localhost:8080 --token-stdin < oml-enrollment.token
 root operator key (shown once, journalled as issued-without-value): oml_8Wkd***************************************
 ```
 
@@ -386,7 +386,7 @@ the consequences.
 $ curl -LO https://e8kor.github.io/open-memory-lab/compose/docker-compose.yaml
 $ docker compose up --detach --wait
 $ docker compose cp oml-bootstrap:/run/oml/enrollment.token - \
-    | oml bootstrap claim --url http://localhost:8080 --token-stdin
+    | oml bootstrap claim root-operator --url http://localhost:8080 --token-stdin
 ```
 
 Follower scale-out, when read load calls for it:

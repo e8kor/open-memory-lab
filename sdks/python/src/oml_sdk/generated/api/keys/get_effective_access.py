@@ -18,7 +18,12 @@ def _get_kwargs(
 
     params: dict[str, Any] = {}
 
-    params["workarea"] = workarea
+    json_workarea: str | Unset
+    if isinstance(workarea, Unset):
+        json_workarea = UNSET
+    else:
+        json_workarea = workarea
+    params["workarea"] = json_workarea
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -68,8 +73,11 @@ def sync_detailed(
      Requires: admin key role. Reproducible from journalled grants by construction (permission epoch).
 
     Args:
-        key_id (str):
-        workarea (str | Unset):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -102,8 +110,11 @@ def sync(
      Requires: admin key role. Reproducible from journalled grants by construction (permission epoch).
 
     Args:
-        key_id (str):
-        workarea (str | Unset):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,8 +142,11 @@ async def asyncio_detailed(
      Requires: admin key role. Reproducible from journalled grants by construction (permission epoch).
 
     Args:
-        key_id (str):
-        workarea (str | Unset):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,8 +177,11 @@ async def asyncio(
      Requires: admin key role. Reproducible from journalled grants by construction (permission epoch).
 
     Args:
-        key_id (str):
-        workarea (str | Unset):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

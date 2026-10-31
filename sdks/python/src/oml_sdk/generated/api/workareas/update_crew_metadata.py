@@ -5,15 +5,15 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.crew_record import CrewRecord
 from ...models.error_envelope import ErrorEnvelope
+from ...models.workarea_crew_update import WorkareaCrewUpdate
 from ...types import Response
 
 
 def _get_kwargs(
     workarea_id: str,
     *,
-    body: CrewRecord,
+    body: WorkareaCrewUpdate,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -62,17 +62,22 @@ def sync_detailed(
     workarea_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CrewRecord,
+    body: WorkareaCrewUpdate,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope]:
-    """Journalled crew-metadata update; allowed on validated areas (freeze covers claims, not metadata).
+    """Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on
+    validated areas (freeze covers claims, not metadata).
 
-     Requires: admin key role.
+     Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew
+    that names no crew record of the tenant answers access.not_found, checked after the workarea. The
+    crew record itself is updated at POST /v2/crews/{crew_id}/update.
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
-        body (CrewRecord): Recorded, not operated — OML never contacts the external manager.
+        body (WorkareaCrewUpdate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,17 +104,22 @@ def sync(
     workarea_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CrewRecord,
+    body: WorkareaCrewUpdate,
     idempotency_key: str,
 ) -> ErrorEnvelope | None:
-    """Journalled crew-metadata update; allowed on validated areas (freeze covers claims, not metadata).
+    """Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on
+    validated areas (freeze covers claims, not metadata).
 
-     Requires: admin key role.
+     Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew
+    that names no crew record of the tenant answers access.not_found, checked after the workarea. The
+    crew record itself is updated at POST /v2/crews/{crew_id}/update.
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
-        body (CrewRecord): Recorded, not operated — OML never contacts the external manager.
+        body (WorkareaCrewUpdate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,17 +141,22 @@ async def asyncio_detailed(
     workarea_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CrewRecord,
+    body: WorkareaCrewUpdate,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope]:
-    """Journalled crew-metadata update; allowed on validated areas (freeze covers claims, not metadata).
+    """Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on
+    validated areas (freeze covers claims, not metadata).
 
-     Requires: admin key role.
+     Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew
+    that names no crew record of the tenant answers access.not_found, checked after the workarea. The
+    crew record itself is updated at POST /v2/crews/{crew_id}/update.
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
-        body (CrewRecord): Recorded, not operated — OML never contacts the external manager.
+        body (WorkareaCrewUpdate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,17 +181,22 @@ async def asyncio(
     workarea_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CrewRecord,
+    body: WorkareaCrewUpdate,
     idempotency_key: str,
 ) -> ErrorEnvelope | None:
-    """Journalled crew-metadata update; allowed on validated areas (freeze covers claims, not metadata).
+    """Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on
+    validated areas (freeze covers claims, not metadata).
 
-     Requires: admin key role.
+     Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew
+    that names no crew record of the tenant answers access.not_found, checked after the workarea. The
+    crew record itself is updated at POST /v2/crews/{crew_id}/update.
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
-        body (CrewRecord): Recorded, not operated — OML never contacts the external manager.
+        body (WorkareaCrewUpdate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

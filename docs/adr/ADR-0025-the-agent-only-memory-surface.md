@@ -7,7 +7,7 @@ answers: how one agent key both writes and recalls through grants; what an agent
 
 # ADR-0025 — One key writes and recalls through grants, and an agent reads back, budgets, supersedes and retires its own memory only through admission
 
-**Status:** accepted design · 2026-10-31
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md)
 
 **Amends:** ADR-0001 (d5), ADR-0008 (d4, d6), ADR-0010 (d1, d3), ADR-0012 (d7), ADR-0013 (d1, d2, d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0022 (d4, d6)
 

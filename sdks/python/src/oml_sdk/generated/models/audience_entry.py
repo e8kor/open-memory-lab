@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -13,10 +13,11 @@ T = TypeVar("T", bound="AudienceEntry")
 
 @_attrs_define
 class AudienceEntry:
-    """Exactly one of key_id / grant_ref names the audience member.
+    """Exactly one of key_id / grant_ref names the audience member; key_id takes a key's id or name.
 
     Attributes:
-        key_id (str | Unset):
+        key_id (str | Unset): A key, by its id or its name, resolved server-side like every reference; a revoked or
+            expired key's name still resolves (ADR-0026 d4, d10).
         grant_ref (str | Unset):
     """
 
@@ -25,7 +26,11 @@ class AudienceEntry:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        key_id = self.key_id
+        key_id: str | Unset
+        if isinstance(self.key_id, Unset):
+            key_id = UNSET
+        else:
+            key_id = self.key_id
 
         grant_ref = self.grant_ref
 
@@ -42,7 +47,13 @@ class AudienceEntry:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        key_id = d.pop("key_id", UNSET)
+
+        def _parse_key_id(data: object) -> str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(str | Unset, data)
+
+        key_id = _parse_key_id(d.pop("key_id", UNSET))
 
         grant_ref = d.pop("grant_ref", UNSET)
 

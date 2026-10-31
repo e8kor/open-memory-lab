@@ -1,15 +1,18 @@
-//! The listing cursor (http-api.md pagination; ADR-0025 d13): an opaque
-//! keyset position, base64url (no padding) over the JSON
-//! `{key_id, created_at, artifact_id, issued_at}`. It carries a position
-//! only — every page re-applies the listing's predicates — so a client that
-//! forges one for its own key learns nothing a fresh first page would not.
-//! It answers only the key it was issued to, and only within
-//! `api.cursor_ttl` of its issue.
+//! The listing cursors (http-api.md pagination): opaque keyset positions,
+//! base64url (no padding) over JSON — the memory listing's
+//! `{key_id, created_at, artifact_id, issued_at}` (ADR-0025 d13), the
+//! crew listing's `{key_id, after_name, issued_at}` (ADR-0026 d8), and the
+//! workarea tree's `{key_id, after_path, issued_at}` (ADR-0026 d15). A cursor
+//! carries a position only — every page re-applies the listing's predicates
+//! — so a client that forges one for its own key learns nothing a fresh
+//! first page would not. It answers only the key it was issued to, and only
+//! within `api.cursor_ttl` of its issue.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use oml_domain::EventTime;
+use oml_domain::name::Name;
 
 use crate::types::ListingPosition;
 
@@ -124,13 +127,147 @@ impl ListingCursor {
         now: &EventTime,
     ) -> Result<ListingPosition, CursorError> {
         let cursor = Self::decode(text)?;
-        if cursor.key_id != key_id {
-            return Err(CursorError::Foreign);
-        }
-        if now.unix_micros() - cursor.issued_at.unix_micros() > CURSOR_TTL_SECS * 1_000_000 {
-            return Err(CursorError::Stale);
-        }
+        answers(cursor.key_id, &cursor.issued_at, key_id, now)?;
         Ok(cursor.position)
+    }
+}
+
+/// Whether a cursor issued to `issued_to` at `issued_at` answers `key_id`
+/// at `now`: not another key's, and not older than [`CURSOR_TTL_SECS`].
+fn answers(
+    issued_to: Uuid,
+    issued_at: &EventTime,
+    key_id: Uuid,
+    now: &EventTime,
+) -> Result<(), CursorError> {
+    if issued_to != key_id {
+        return Err(CursorError::Foreign);
+    }
+    if now.unix_micros() - issued_at.unix_micros() > CURSOR_TTL_SECS * 1_000_000 {
+        return Err(CursorError::Stale);
+    }
+    Ok(())
+}
+
+/// A decoded crew-listing cursor: the name of the last crew record a page
+/// served, the crew listing being in name order (http-api.md crews and
+/// pagination; ADR-0026 d8). Only an admin key lists crews, and it reads
+/// every crew name of its tenant, so the position discloses nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameCursor {
+    /// The key the cursor answers.
+    pub key_id: Uuid,
+    pub after: Name,
+    pub issued_at: EventTime,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NameWire {
+    key_id: Uuid,
+    after_name: String,
+    issued_at: String,
+}
+
+impl NameCursor {
+    /// The opaque string a page's `next_cursor` carries.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        let wire = NameWire {
+            key_id: self.key_id,
+            after_name: self.after.as_str().to_owned(),
+            issued_at: self.issued_at.as_str().to_owned(),
+        };
+        let json = serde_json::to_vec(&wire).expect("a cursor serializes");
+        encode_b64url(&json)
+    }
+
+    /// Decodes a cursor string; anything an encoder did not write, a memory
+    /// listing's cursor among them, is [`CursorError::Malformed`].
+    pub fn decode(text: &str) -> Result<Self, CursorError> {
+        let bytes = decode_b64url(text).ok_or(CursorError::Malformed)?;
+        let wire: NameWire = serde_json::from_slice(&bytes).map_err(|_| CursorError::Malformed)?;
+        Ok(Self {
+            key_id: wire.key_id,
+            after: Name::parse_reference(&wire.after_name).map_err(|_| CursorError::Malformed)?,
+            issued_at: EventTime::parse(&wire.issued_at).map_err(|_| CursorError::Malformed)?,
+        })
+    }
+
+    /// The name `text` resumes after for `key_id` at `now`, under the rules
+    /// of [`ListingCursor::resume`].
+    pub fn resume(text: &str, key_id: Uuid, now: &EventTime) -> Result<Name, CursorError> {
+        let cursor = Self::decode(text)?;
+        answers(cursor.key_id, &cursor.issued_at, key_id, now)?;
+        Ok(cursor.after)
+    }
+}
+
+/// A decoded tree cursor: the derived path of the last node a tree page
+/// served, the tree being in path order — a node before its children, and
+/// siblings by name in byte order — so the path's names, compared one by
+/// one, are the position (http-api.md workareas and pagination; ADR-0026
+/// d15). The node was readable to the key the page answered, so the
+/// position discloses nothing it had not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathCursor {
+    /// The key the cursor answers.
+    pub key_id: Uuid,
+    /// The path's names, from `universe` down.
+    pub after: Vec<Name>,
+    pub issued_at: EventTime,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PathWire {
+    key_id: Uuid,
+    after_path: String,
+    issued_at: String,
+}
+
+impl PathCursor {
+    /// The opaque string a page's `next_cursor` carries.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        let after_path = self
+            .after
+            .iter()
+            .map(Name::as_str)
+            .collect::<Vec<_>>()
+            .join(".");
+        let wire = PathWire {
+            key_id: self.key_id,
+            after_path,
+            issued_at: self.issued_at.as_str().to_owned(),
+        };
+        let json = serde_json::to_vec(&wire).expect("a cursor serializes");
+        encode_b64url(&json)
+    }
+
+    /// Decodes a cursor string; anything an encoder did not write, another
+    /// listing's cursor among them, is [`CursorError::Malformed`].
+    pub fn decode(text: &str) -> Result<Self, CursorError> {
+        let bytes = decode_b64url(text).ok_or(CursorError::Malformed)?;
+        let wire: PathWire = serde_json::from_slice(&bytes).map_err(|_| CursorError::Malformed)?;
+        let after = wire
+            .after_path
+            .split('.')
+            .map(|name| Name::parse_reference(name).map_err(|_| CursorError::Malformed))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            key_id: wire.key_id,
+            after,
+            issued_at: EventTime::parse(&wire.issued_at).map_err(|_| CursorError::Malformed)?,
+        })
+    }
+
+    /// The path's names `text` resumes after for `key_id` at `now`, under
+    /// the rules of [`ListingCursor::resume`].
+    pub fn resume(text: &str, key_id: Uuid, now: &EventTime) -> Result<Vec<Name>, CursorError> {
+        let cursor = Self::decode(text)?;
+        answers(cursor.key_id, &cursor.issued_at, key_id, now)?;
+        Ok(cursor.after)
     }
 }
 
@@ -207,6 +344,100 @@ mod tests {
         );
         assert_eq!(
             ListingCursor::resume(&encode_b64url(b"{}"), Uuid::from_u128(7), &fresh),
+            Err(CursorError::Malformed)
+        );
+    }
+
+    #[test]
+    fn a_crew_cursor_resumes_after_its_name_only_for_its_key_and_only_within_the_ttl() {
+        let after = Name::parse("metals-crew").expect("a name");
+        let crew_cursor = NameCursor {
+            key_id: Uuid::from_u128(7),
+            after: after.clone(),
+            issued_at: at("2026-10-30T09:16:00.000000Z"),
+        };
+        let text = crew_cursor.encode();
+        assert_eq!(NameCursor::decode(&text), Ok(crew_cursor));
+        let fresh = at("2026-10-30T10:16:00.000000Z");
+        assert_eq!(
+            NameCursor::resume(&text, Uuid::from_u128(7), &fresh),
+            Ok(after)
+        );
+        assert_eq!(
+            NameCursor::resume(&text, Uuid::from_u128(8), &fresh),
+            Err(CursorError::Foreign)
+        );
+        assert_eq!(
+            NameCursor::resume(
+                &text,
+                Uuid::from_u128(7),
+                &at("2026-10-30T10:16:00.000001Z")
+            ),
+            Err(CursorError::Stale)
+        );
+        // Neither listing resumes from the other's cursor.
+        let listing = cursor(7, "2026-10-30T09:16:00.000000Z").encode();
+        assert_eq!(
+            NameCursor::resume(&listing, Uuid::from_u128(7), &fresh),
+            Err(CursorError::Malformed)
+        );
+        assert_eq!(
+            ListingCursor::resume(&text, Uuid::from_u128(7), &fresh),
+            Err(CursorError::Malformed)
+        );
+    }
+
+    #[test]
+    fn a_tree_cursor_resumes_after_its_path_only_for_its_key_and_only_within_the_ttl() {
+        let after: Vec<Name> = ["universe", "procurement", "metals"]
+            .into_iter()
+            .map(|name| Name::parse_reference(name).expect("a name"))
+            .collect();
+        let tree_cursor = PathCursor {
+            key_id: Uuid::from_u128(7),
+            after: after.clone(),
+            issued_at: at("2026-10-30T09:16:00.000000Z"),
+        };
+        let text = tree_cursor.encode();
+        assert_eq!(PathCursor::decode(&text), Ok(tree_cursor));
+        let fresh = at("2026-10-30T10:16:00.000000Z");
+        assert_eq!(
+            PathCursor::resume(&text, Uuid::from_u128(7), &fresh),
+            Ok(after)
+        );
+        assert_eq!(
+            PathCursor::resume(&text, Uuid::from_u128(8), &fresh),
+            Err(CursorError::Foreign)
+        );
+        assert_eq!(
+            PathCursor::resume(
+                &text,
+                Uuid::from_u128(7),
+                &at("2026-10-30T10:16:00.000001Z")
+            ),
+            Err(CursorError::Stale)
+        );
+        // A path whose names the grammar refuses is no position, and no
+        // listing resumes from another's cursor.
+        let forged = encode_b64url(
+            br#"{"key_id":"00000000-0000-0000-0000-000000000007","after_path":"universe..Metals","issued_at":"2026-10-30T09:16:00.000000Z"}"#,
+        );
+        assert_eq!(
+            PathCursor::resume(&forged, Uuid::from_u128(7), &fresh),
+            Err(CursorError::Malformed)
+        );
+        let crews = NameCursor {
+            key_id: Uuid::from_u128(7),
+            after: Name::parse("metals-crew").expect("a name"),
+            issued_at: at("2026-10-30T09:16:00.000000Z"),
+        }
+        .encode();
+        assert_eq!(
+            PathCursor::resume(&crews, Uuid::from_u128(7), &fresh),
+            Err(CursorError::Malformed)
+        );
+        assert_eq!(
+            NameCursor::resume(&text, Uuid::from_u128(7), &fresh),
             Err(CursorError::Malformed)
         );
     }

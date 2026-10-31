@@ -2,8 +2,10 @@
 # Quickstart: turn a freshly booted oml-server into a usable crew.
 #
 # Claims the single-use enrollment token, creates one workarea, and issues two
-# keys on it: the agent's one key, a writer key with a writer and a reader
-# grant, and a dreamer key (the reviewer, a different identity). Then checks
+# keys on it, naming the root `universe` and the workarea by its name wherever
+# an id would go (ADR-0026 d4, d6): the agent's one key, a writer key with a
+# writer and a reader grant, and a dreamer key (the reviewer, a different
+# identity). Then checks
 # the agent plugin end to end over /mcp on the agent's one key: remember ->
 # held in its own work -> its held row in its own recall -> approved by the
 # dreamer -> recalled (docs/api/mcp-plugin.md, "Wiring it into your agent";
@@ -65,21 +67,23 @@ if [ -z "$TOKEN" ] && [ -n "$IN_COMPOSE" ]; then
 fi
 [ -n "$TOKEN" ] || fail "no enrollment token: set OML_ENROLLMENT_TOKEN to the token the server printed at first boot"
 
-boot="$(oml bootstrap claim --token "$TOKEN" --tenant-name quickstart --principal platform/admin)" \
+boot="$(oml bootstrap claim quickstart-admin --token "$TOKEN" --tenant-name quickstart --principal platform/admin)" \
     || fail "bootstrap claim refused (already claimed? the token is single-use): $boot"
-root="$(jq -r .root_workarea_id <<<"$boot")"
-workarea="$(oml workareas create "$root" "$WORKAREA_NAME" | jq -r .id)"
+workarea="$(oml workareas create universe "$WORKAREA_NAME" | jq -r .id)"
 
-issue() { # role held_by principal grant_role...
-    local role="$1" held_by="$2" principal="$3" grant
+issue() { # key_name role held_by principal grant_role...
+    local key_name="$1" role="$2" held_by="$3" principal="$4" grant issued
     local grants=()
-    shift 3
-    for grant in "$@"; do grants+=(--grant "$workarea:$grant"); done
-    oml keys issue --role "$role" --held-by "$held_by" --principal "$principal" \
-        --default-workarea "$workarea" "${grants[@]}" | jq -r .value
+    shift 4
+    for grant in "$@"; do grants+=(--grant "$WORKAREA_NAME:$grant"); done
+    issued="$(oml keys issue "$key_name" --role "$role" --held-by "$held_by" --principal "$principal" \
+        --default-workarea "$WORKAREA_NAME" "${grants[@]}")"
+    [ "$(jq -r .default_workarea_id <<<"$issued")" = "$workarea" ] \
+        || fail "the workarea name $WORKAREA_NAME did not resolve to its id $workarea: $issued"
+    jq -r .value <<<"$issued"
 }
-agent="$(issue writer agent crew/agent writer reader)"
-dreamer="$(issue dreamer human crew/reviewer dreamer)"
+agent="$(issue quickstart-agent writer agent crew/agent writer reader)"
+dreamer="$(issue quickstart-reviewer dreamer human crew/reviewer dreamer)"
 
 rpc() { # id method params
     curl -fsS "$OML_URL/mcp" \

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -13,7 +13,9 @@ T = TypeVar("T", bound="TipOverrideRequest")
 class TipOverrideRequest:
     """
     Attributes:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any check that reads
+            state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+            (request.validation).
         claim_key (str):
         to_version (int):
         reason (str):
@@ -26,6 +28,7 @@ class TipOverrideRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        workarea_id: str
         workarea_id = self.workarea_id
 
         claim_key = self.claim_key
@@ -50,7 +53,11 @@ class TipOverrideRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        workarea_id = d.pop("workarea_id")
+
+        def _parse_workarea_id(data: object) -> str:
+            return cast(str, data)
+
+        workarea_id = _parse_workarea_id(d.pop("workarea_id"))
 
         claim_key = d.pop("claim_key")
 

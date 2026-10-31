@@ -209,7 +209,7 @@ async fn crew(router: &Router) -> Crew {
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "aom-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "aom-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -258,7 +258,7 @@ async fn crew(router: &Router) -> Crew {
             "/v2/keys",
             Some(&admin),
             Some(idem),
-            Some(&json!({"role": role, "principal": principal, "grants": grants})),
+            Some(&json!({"role": role, "name": idem, "principal": principal, "grants": grants})),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{key}");

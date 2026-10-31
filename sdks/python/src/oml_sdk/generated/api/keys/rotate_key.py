@@ -7,14 +7,14 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.key_issued import KeyIssued
-from ...models.rotate_key_body import RotateKeyBody
-from ...types import UNSET, Response, Unset
+from ...models.key_rotate_request import KeyRotateRequest
+from ...types import Response
 
 
 def _get_kwargs(
     key_id: str,
     *,
-    body: RotateKeyBody | Unset = UNSET,
+    body: KeyRotateRequest,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -27,8 +27,7 @@ def _get_kwargs(
         ),
     }
 
-    if not isinstance(body, Unset):
-        _kwargs["json"] = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
     headers["Content-Type"] = "application/json"
 
@@ -69,20 +68,23 @@ def sync_detailed(
     key_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RotateKeyBody | Unset = UNSET,
+    body: KeyRotateRequest,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled
     records); the old key enters a bounded grace window, then is revoked.
 
-     Requires: admin key role. One journalled act (key.rotated) carries both key ids and the grace
-    deadline; at the deadline the old key is revoked (journalled, epoch bump). Per key in v1; bulk crew
-    rotation is open — FR-6.
+     Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor's
+    name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The
+    successor takes its own name (409 name.taken when held), since both keys are live through the grace
+    window, and carries the old key's crew (ADR-0026 d9). Per key in v1; bulk crew rotation is open —
+    FR-6.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
-        body (RotateKeyBody | Unset):
+        body (KeyRotateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -109,20 +111,23 @@ def sync(
     key_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RotateKeyBody | Unset = UNSET,
+    body: KeyRotateRequest,
     idempotency_key: str,
 ) -> ErrorEnvelope | KeyIssued | None:
     """Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled
     records); the old key enters a bounded grace window, then is revoked.
 
-     Requires: admin key role. One journalled act (key.rotated) carries both key ids and the grace
-    deadline; at the deadline the old key is revoked (journalled, epoch bump). Per key in v1; bulk crew
-    rotation is open — FR-6.
+     Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor's
+    name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The
+    successor takes its own name (409 name.taken when held), since both keys are live through the grace
+    window, and carries the old key's crew (ADR-0026 d9). Per key in v1; bulk crew rotation is open —
+    FR-6.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
-        body (RotateKeyBody | Unset):
+        body (KeyRotateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -144,20 +149,23 @@ async def asyncio_detailed(
     key_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RotateKeyBody | Unset = UNSET,
+    body: KeyRotateRequest,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled
     records); the old key enters a bounded grace window, then is revoked.
 
-     Requires: admin key role. One journalled act (key.rotated) carries both key ids and the grace
-    deadline; at the deadline the old key is revoked (journalled, epoch bump). Per key in v1; bulk crew
-    rotation is open — FR-6.
+     Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor's
+    name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The
+    successor takes its own name (409 name.taken when held), since both keys are live through the grace
+    window, and carries the old key's crew (ADR-0026 d9). Per key in v1; bulk crew rotation is open —
+    FR-6.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
-        body (RotateKeyBody | Unset):
+        body (KeyRotateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,20 +190,23 @@ async def asyncio(
     key_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RotateKeyBody | Unset = UNSET,
+    body: KeyRotateRequest,
     idempotency_key: str,
 ) -> ErrorEnvelope | KeyIssued | None:
     """Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled
     records); the old key enters a bounded grace window, then is revoked.
 
-     Requires: admin key role. One journalled act (key.rotated) carries both key ids and the grace
-    deadline; at the deadline the old key is revoked (journalled, epoch bump). Per key in v1; bulk crew
-    rotation is open — FR-6.
+     Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor's
+    name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The
+    successor takes its own name (409 name.taken when held), since both keys are live through the grace
+    window, and carries the old key's crew (ADR-0026 d9). Per key in v1; bulk crew rotation is open —
+    FR-6.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
-        body (RotateKeyBody | Unset):
+        body (KeyRotateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

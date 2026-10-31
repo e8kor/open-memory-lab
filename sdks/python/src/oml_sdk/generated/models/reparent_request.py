@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -15,7 +15,9 @@ T = TypeVar("T", bound="ReparentRequest")
 class ReparentRequest:
     """
     Attributes:
-        new_parent_id (str):
+        new_parent_id (str): A workarea, by its node id or its name. Resolved server-side before any check that reads
+            state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+            (request.validation).
         dry_run (bool | Unset):  Default: False.
     """
 
@@ -24,6 +26,7 @@ class ReparentRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        new_parent_id: str
         new_parent_id = self.new_parent_id
 
         dry_run = self.dry_run
@@ -43,7 +46,11 @@ class ReparentRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        new_parent_id = d.pop("new_parent_id")
+
+        def _parse_new_parent_id(data: object) -> str:
+            return cast(str, data)
+
+        new_parent_id = _parse_new_parent_id(d.pop("new_parent_id"))
 
         dry_run = d.pop("dry_run", UNSET)
 

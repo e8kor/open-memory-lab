@@ -73,11 +73,15 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-     Requires: admin key role; operator only with tenant_id, for a tenant's first admin key. Journalled
-    as issued-without-value (show-once ceremony). Validated in the issuance order declared in
+     Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a
+    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-
+    without-value (show-once ceremony). Validated in the issuance order declared in
     docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
     admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves
-    (ADR-0025 d2). The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+    (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response
+    carries ids; name must be unique in the namespace (409 name.taken, checked after every other check,
+    before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The
+    response echoes each stored grant_id and epoch (its grant.issued journal seq).
 
     Args:
         idempotency_key (str):
@@ -111,11 +115,15 @@ def sync(
 ) -> ErrorEnvelope | KeyIssued | None:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-     Requires: admin key role; operator only with tenant_id, for a tenant's first admin key. Journalled
-    as issued-without-value (show-once ceremony). Validated in the issuance order declared in
+     Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a
+    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-
+    without-value (show-once ceremony). Validated in the issuance order declared in
     docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
     admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves
-    (ADR-0025 d2). The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+    (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response
+    carries ids; name must be unique in the namespace (409 name.taken, checked after every other check,
+    before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The
+    response echoes each stored grant_id and epoch (its grant.issued journal seq).
 
     Args:
         idempotency_key (str):
@@ -144,11 +152,15 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-     Requires: admin key role; operator only with tenant_id, for a tenant's first admin key. Journalled
-    as issued-without-value (show-once ceremony). Validated in the issuance order declared in
+     Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a
+    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-
+    without-value (show-once ceremony). Validated in the issuance order declared in
     docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
     admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves
-    (ADR-0025 d2). The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+    (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response
+    carries ids; name must be unique in the namespace (409 name.taken, checked after every other check,
+    before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The
+    response echoes each stored grant_id and epoch (its grant.issued journal seq).
 
     Args:
         idempotency_key (str):
@@ -180,11 +192,15 @@ async def asyncio(
 ) -> ErrorEnvelope | KeyIssued | None:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-     Requires: admin key role; operator only with tenant_id, for a tenant's first admin key. Journalled
-    as issued-without-value (show-once ceremony). Validated in the issuance order declared in
+     Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a
+    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-
+    without-value (show-once ceremony). Validated in the issuance order declared in
     docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
     admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves
-    (ADR-0025 d2). The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+    (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response
+    carries ids; name must be unique in the namespace (409 name.taken, checked after every other check,
+    before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The
+    response echoes each stored grant_id and epoch (its grant.issued journal seq).
 
     Args:
         idempotency_key (str):
