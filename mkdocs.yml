@@ -141,3 +141,4 @@ nav:
       - ADR-0028: adr/ADR-0028-agent-key-issuance.md
       - ADR-0029: adr/ADR-0029-session-start-hook.md
       - ADR-0033: adr/ADR-0033-interim-helm-chart.md
+      - ADR-0036: adr/ADR-0036-time-lives-in-the-journal-and-every-read-of-the-past-applies-todays-access.md
