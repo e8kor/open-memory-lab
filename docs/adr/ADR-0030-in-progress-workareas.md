@@ -24,8 +24,8 @@ exception's scope a new decision on that record, which this record proposes.
 **The maintainer's decisions**, fixed on 2026-10-31 and not reopened here:
 
 1. An in-progress workarea is a `development` workarea that a journalled admin act opts in.
-2. Inside it, every key with read access on the workarea recalls its memories in state held or
-   promoted; held rows are mixed in at their usual rank, because review never reorders, marked
+2. Inside it, every key with read access on the workarea recalls all its memories in any state;
+   held rows are mixed in at their usual rank, because review never reorders, marked
    `state: "held"` and `reviewed: false`. The scan still runs at admission.
 3. R2 is kept: review is deferred, never self-signed, and a non-author reviews every memory.
 4. Contribution is whole-workarea: nothing in the subtree, promoted claims included, reaches a
@@ -54,10 +54,11 @@ take. Proposed, not built.
     The later act is the maintainer's reading: the maintainer's crew workarea `crew/oml` already
     exists and holds rows. Either act is refused with `workarea.in_progress_refused` unless every
     node of the subtree is `development`, none is a vocabulary workarea, and neither the node nor
-    an ancestor or descendant has a root; `in_progress` with `prefix` is `request.validation`. So every node
-    inside stays `development` until the commit, and `committed` and `validated` workareas keep R3
-    without exception. Marking an existing workarea applies d4 and d5 at once to the rows already
-    in it, by the one journalled act and no row write.
+    an ancestor or descendant has a root; `in_progress: true` with `prefix` is
+    `request.validation`. So every node inside stays `development` until the commit, and
+    `committed` and `validated` workareas keep R3 without exception. Marking an existing workarea
+    applies d4 and d5 at once to the rows already in it, by the one journalled act and no row
+    write.
 
 - **d2 — Until the commit nothing crosses a subtree's boundary, and only its root moves up the
   ladder.** Each case is `workarea.in_progress_refused`:
@@ -106,7 +107,9 @@ take. Proposed, not built.
   Grants, denials, the simulation predicate ([ADR-0013](ADR-0013-reads-served-from-postgres.md)
   d3) and the `self_signed` scope apply beside it. The key's own rows obey it too: scoped
   outside, `include_own_held` and the listing serve none from inside, while get and `own=true`
-  still do.
+  still do. The review queue, review next, the verdict and an attachment fetch under a
+  `serve_id` are not reads under d4 or d5, so neither the boundary nor a block (d6) narrows
+  them: they keep ADR-0025 d1's dreamer effective access on the row's workarea unchanged.
 
     `oml-domain` holds it as one pure function beside `effective_roles`, giving the decision for
     the roots of N and D and the served node set over a list of nodes; every read path in
@@ -121,7 +124,8 @@ take. Proposed, not built.
   (its node D or an ancestor, its deny list masking neither) carries `unreviewed: block` (d6); one
   block wins over any inherited allow. `oml-domain` holds this as a pure function beside
   `effective_roles`, computed on every request. Held means state `held`, dead-lettered versions
-  included, of any kind; other states inside are served as everywhere else.
+  included, of any kind. The maintainer's reading of decision 2's "any state" is held or
+  promoted: other states inside are served as everywhere else.
 
     Every served claim version carries `reviewed`, true exactly when it is `promoted` and not
     `self_signed` (ADR-0001 d5). Every read applies d4 and then this rule, pointers included:
@@ -189,8 +193,10 @@ take. Proposed, not built.
   served tips, marked by `state` and `reviewed`, and `state=promoted` narrows it; the graph reads
   (`GET /v2/claim-edges`, `oml_graph`) serve the held claims d5 admits; get and the attachment
   fetch of a held version serve the keys d5 admits on its workarea. Scoped outside, each serves
-  no claim from inside and no edge with an endpoint that fails d4 at the scope. This amends
-  ADR-0025 d13 (the scoped listing).
+  no claim from inside and no edge with an endpoint that fails d4 at the scope. A graph read's
+  scope node is its `workarea_id` or `scope`, the key's default workarea when it is omitted, as
+  [`oml_graph`](../api/mcp-plugin.md#oml_graph) declares, and `oml_graph`'s lineage leg takes
+  that node, not its subject's. This amends ADR-0025 d13 (the scoped listing).
 
 - **d10 — The events tail is a scoped read at its `workarea_id` (d4), and inside, get's test
   decides a `lifecycle.*` event.** This is the maintainer's reading. A `lifecycle.*`,
@@ -237,8 +243,8 @@ take. Proposed, not built.
 - **d13 — Two codes, the wire, the version and the vocabulary.**
     - **Codes**, each `409`, in the [errors](../api/errors.md) tables and the `ErrorCode` enum:
       `workarea.held_remaining` (d12) and `workarea.in_progress_refused` (d1, d2).
-      `request.validation` gains `in_progress` with `prefix`, and `unreviewed` on a grant that is
-      not a reader grant. No other code changes.
+      `request.validation` gains `in_progress: true` with `prefix`, and `unreviewed` on a grant
+      that is not a reader grant. No other code changes.
     - **Shapes**: those d5, d6, d8 and d11 name, optional while this record is proposed, with
       `MemorySummary.reviewed` and `Workarea.in_progress_root_id` required from its acceptance; the
       payload fields `workarea.create.in_progress` and `grant.issued.unreviewed`; the columns

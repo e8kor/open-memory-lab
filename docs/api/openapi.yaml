@@ -623,7 +623,7 @@ paths:
       tags: [claim-edges]
       operationId: listClaimEdges
       summary: Paginated claim-graph read, pending and ratified, scoped to read access.
-      description: 'Requires: reader effective access. Proposed (ADR-0030 d4, d9): scoped outside an in-progress subtree it serves no claim from inside it and no edge with an endpoint inside it until its commit; scoped inside, it also serves the held claims ADR-0030 d5 admits.'
+      description: 'Requires: reader effective access. Proposed (ADR-0030 d4, d9): the scope node is workarea_id, or the key''s default workarea when it is omitted; scoped outside an in-progress subtree it serves no claim from inside it and no edge with an endpoint inside it until its commit; scoped inside, it also serves the held claims ADR-0030 d5 admits.'
       parameters:
         - { name: workarea_id, in: query, schema: { type: string } }
         - { name: artifact_id, in: query, schema: { type: string } }

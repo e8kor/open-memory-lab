@@ -599,9 +599,10 @@ Claim↔claim connection proposals follow the same propose-then-ratify shape ins
 pipeline ([admission.md](../architecture/admission.md)).
 
 - `GET /v2/claim-edges?workarea_id=…&artifact_id=…` — paginated graph read, pending and ratified,
-  scoped to read access. Proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d4, d9): scoped outside an in-progress
-  subtree it serves no claim from inside it and no edge with an endpoint inside it until its
-  commit; scoped inside, it also serves the held claims ADR-0030 d5 admits.
+  scoped to read access. Proposed ([ADR-0030](../adr/ADR-0030-in-progress-workareas.md) d4, d9):
+  the scope node is `workarea_id`, or the key's default workarea when it is omitted; scoped
+  outside an in-progress subtree it serves no claim from inside it and no edge with an endpoint
+  inside it until its commit; scoped inside, it also serves the held claims ADR-0030 d5 admits.
 - `POST /v2/claim-edges` — `{from_artifact_id, to_artifact_id, label}` under dreamer(propose) →
   `202`, pending. The label vocabulary for claim edges is not fixed by the design (the closed
   label set exists for workarea edges only); fixing it is an open detail for the
