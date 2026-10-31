@@ -110,8 +110,10 @@ accepts it.
   `OML_CLI_SERVER` or `OML_CLI_KEY`, and never reads the stored CLI credentials
   (`~/.config/oml/credentials`, or `OML_CLI_CREDENTIALS`): it runs before the CLI loads them.
   `OML_URL` is the server without `/mcp`, and has no default here: an unset URL means the user has
-  not pointed this agent at a server. Every occurrence of the key value in what the hook prints,
-  stored text included, is replaced by `[OML_API_KEY]`.
+  not pointed this agent at a server. A key value that holds whitespace or a character outside
+  printable ASCII is refused before anything is sent, with a stderr line that names the variable
+  and never the value. Every occurrence of the key value in what the hook prints, stored text and
+  stderr lines alike, is replaced by `[OML_API_KEY]`, before any line is flattened.
 
     An admin key must never feed an agent's context: the agent's session would read under a key
     above the agent ceiling (R1), whatever that key's grants reach, and the read log would
@@ -119,12 +121,17 @@ accepts it.
     context would enter the session transcript, which the
     [key format rule](../architecture/roles-and-keys.md#key-format) forbids; the redaction closes
     the one path left once the hook prints no credential of its own, a stored body that holds the
-    value. The cost is that a CLI user who keeps only the stored admin credentials gets no session
-    context until the agent's own key is in the environment.
+    value. The redaction matches the value exactly, so it holds only for a value the server reads
+    as sent: a key with a stray `\r` would reach stderr raw inside a header error, and one with a
+    trailing space would still authenticate, since the server trims it, while a stored body
+    holding the bare key would go unredacted. Refusing every value that is not printable ASCII
+    closes both. The cost is that a CLI user who keeps only the stored admin credentials gets no
+    session context until the agent's own key is in the environment.
 
 - **d5 — The hook fails open: every failure ends in no output and exit 0, and the context is
   printed whole or not at all.** No stdout and exit 0 follow `OML_SESSION_CONTEXT=off`, a refused
-  `OML_SESSION_CONTEXT` or budget value (d1, d2), a missing or empty `OML_URL` or `OML_API_KEY`,
+  `OML_SESSION_CONTEXT`, budget or key value (d1, d2, d4), a missing or empty `OML_URL` or
+  `OML_API_KEY`,
   stdin that is not a JSON object or whose `source` or `cwd` is not a string, an unreachable
   server, a typed refusal, a timeout, and an answer the hook cannot read. Each request has a
   3-second timeout. If the listing fails the recall is not sent, and if the recall fails nothing

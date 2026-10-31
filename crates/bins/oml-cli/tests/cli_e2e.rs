@@ -1644,6 +1644,94 @@ async fn the_hook_output_never_contains_the_key_value() {
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.is_empty(), "{stdout}");
     assert!(!stderr.contains(unknown), "no key on stderr: {stderr}");
+
+    // Every stderr line is redacted too: a refused variable that holds the
+    // key value, and a server that echoes the bearer back in a body that is
+    // not the typed envelope.
+    for var in ["OML_SESSION_CONTEXT", "OML_SESSION_CONTEXT_MAX_TOKENS"] {
+        let (code, stdout, stderr) = crew.hook(&[(var, crew.agent.as_str())], &stdin);
+        assert_eq!(code, 0, "{var}: {stderr}");
+        assert!(stdout.is_empty(), "{var}: {stdout}");
+        assert!(
+            stderr.contains(var) && !stderr.contains(&crew.agent),
+            "{var}: named, and no key on stderr: {stderr}"
+        );
+    }
+    let echo = axum::Router::new().route(
+        "/v1/memories",
+        axum::routing::get(|headers: axum::http::HeaderMap| async move {
+            let bearer = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                format!("not accepted: {bearer}"),
+            )
+        }),
+    );
+    let (url, task) = serve_stub(echo).await;
+    let (code, stdout, stderr) = hook(
+        &[("OML_URL", &url), ("OML_API_KEY", crew.agent.as_str())],
+        &stdin,
+    );
+    task.abort();
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("[OML_API_KEY]") && !stderr.contains(&crew.agent),
+        "the echoed bearer is redacted: {stderr}"
+    );
+    crew.lab.stop().await;
+}
+
+/// `router` served on an ephemeral port in place of a lab; returns its URL
+/// and the task serving it.
+async fn serve_stub(router: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("stub bind");
+    let url = format!("http://{}", listener.local_addr().expect("stub addr"));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("stub serve");
+    });
+    (url, task)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_refuses_a_key_that_is_not_printable_ascii_and_sends_nothing() {
+    let crew = Crew::start().await;
+    // A stored body that ends in the key value, which a key with a trailing
+    // space would still authenticate as (the server trims it) and would no
+    // longer match when the hook redacts.
+    crew.submit(
+        &crew.agent,
+        "memory",
+        "metals-key-tail",
+        &format!("Metals desk key {}.", crew.agent),
+    );
+    let stdin = session("startup", "/home/op/src/metals");
+    crew.lab.take_requests();
+
+    for tail in ["\r", "\u{a0}", " ", "\t"] {
+        let sent = format!("{}{tail}", crew.agent);
+        let (code, stdout, stderr) = crew.hook_as(&sent, &[], &stdin);
+        assert_eq!(code, 0, "{tail:?}: {stderr}");
+        assert!(stdout.is_empty(), "{tail:?}: {stdout}");
+        assert!(
+            crew.lab.take_requests().is_empty(),
+            "{tail:?}: nothing was sent"
+        );
+        assert!(
+            stderr.contains("OML_API_KEY") && stderr.lines().count() == 1,
+            "{tail:?}: one line names the variable: {stderr}"
+        );
+        assert!(
+            !stderr.contains(&crew.agent),
+            "{tail:?}: no key on stderr: {stderr}"
+        );
+    }
     crew.lab.stop().await;
 }
 

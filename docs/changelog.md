@@ -40,7 +40,8 @@ are taken by records on other branches. It amends no record.
   (`own=true`, ten newest) and a recall with `include_own_held` under a budget of 800 budget
   tokens (`OML_SESSION_CONTEXT_MAX_TOKENS`, 1 to 2000), queried with the words of the working
   directory's name (d1–d3); `OML_URL` and `OML_API_KEY` alone, never the stored admin credentials
-  or `OML_CLI_KEY`, and the key value redacted from everything it prints (d4); no output and exit
+  or `OML_CLI_KEY`, a key value that is not all printable ASCII refused before anything is sent,
+  and the key value redacted from everything it prints (d4); no output and exit
   0 on every failure, `OML_SESSION_CONTEXT=off` included, with a 3-second timeout per request and
   a context printed whole or not at all (d5); one SessionStart hook document whose context frames
   the entries as stored data and asks for the summary's durable facts after a compaction (d6);
