@@ -55,12 +55,14 @@ are taken by records on other branches. It amends no record.
   `oml hook session-start`, exits 0 with no output when `oml` is not on `PATH`, and exits 0 when
   that `oml` fails.
 - **Not verified here:** that Claude Code runs the hook and adds its context to a session; the
-  tests run the binary, not Claude Code.
+  tests run the binary, not Claude Code. The [roadmap](product/roadmap.md) opens FR-33 for it,
+  which closes on a recorded session on a named Claude Code version, a compaction run included.
 - **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
   stays `0.2.0-design`, and no package version moves until the release.
 - **Pages touched:** [ADR-0029](adr/ADR-0029-session-start-hook.md), the
   [decision register](adr/index.md) (row and the D14 cell), `mkdocs.yml`, [llms.txt](llms.txt),
-  [CLI reference](cli/reference.md), [agent plugin](api/mcp-plugin.md) and this page; outside
+  [CLI reference](cli/reference.md), [agent plugin](api/mcp-plugin.md), the
+  [roadmap](product/roadmap.md) (FR-33) and this page; outside
   `docs/`, `plugins/oml/README.md`, `plugins/oml/hooks/hooks.json` and
   `scripts/check_plugin.py`.
 

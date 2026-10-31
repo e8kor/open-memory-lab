@@ -336,7 +336,9 @@ This section is the single declaration site of the verb
 runs it from its SessionStart hook whenever Claude Code starts, resumes, clears, compacts or forks
 a session, and Claude Code adds the context it prints to Claude's context before the first
 prompt. It is the one verb of this CLI that runs under an agent's own key: it reads what that
-key's tools read, and performs no act.
+key's tools read, and performs no act. Its tests run the binary against the server, not inside
+Claude Code; that Claude Code runs it and adds its context is unverified until a recorded session
+shows it ([FR-33](../product/roadmap.md)).
 
 | Verb | Does |
 |---|---|
