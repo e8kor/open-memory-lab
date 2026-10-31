@@ -422,6 +422,12 @@ where
     /// obeys the same test, so one item never names in `replaces` what its
     /// `derives_from` hides (http-api.md get; ADR-0025 d3). The path is the
     /// ancestry's names from the root, joined with `.` (ADR-0025 d14).
+    ///
+    /// Not set-wise yet: each ancestor, the replaced version and the path
+    /// are read for this one row, so recall, get and every listing issue
+    /// those reads once per served row, against ADR-0024 d4 ("never N+1").
+    /// Only the rows themselves hydrate set-wise (`JournalStore::memories`).
+    /// The cost is unmeasured (FR-7, FR-25).
     async fn served(
         &self,
         caller: &Caller,

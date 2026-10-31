@@ -9,11 +9,11 @@ answers: what evidence OML produces for GDPR, SOC 2 and ISO 27001 asks; what cla
 
 **Status:** design draft for review · decided, not built
 
-This page maps Open Memory Lab's mechanisms to the questions compliance frameworks ask. The
-claim is the sanctioned one and no stronger: the system **produces the evidence an auditor asks
-for**. OML is not certified against any framework, no assessment of it has been performed,
-nothing is built, and no sentence here or anywhere in this documentation calls the design
-compliant, audit-ready or certified — the verdict belongs to the deploying organization's
+This page maps Open Memory Lab's mechanisms to the questions compliance frameworks ask. The claim
+is the sanctioned one and no stronger: the system **produces the evidence an auditor asks for**.
+OML is not certified against any framework, no assessment of it has been performed, only a first
+working slice of it is built, and no sentence here or anywhere in this documentation calls the
+design compliant, audit-ready or certified — the verdict belongs to the deploying organization's
 auditor, assessor and counsel. What this page adds to the guarantee register in
 [commitments](commitments.md) is the cross-walk: which mechanism produces evidence relevant to
 which framework's ask, and where each mechanism's honest boundary sits.

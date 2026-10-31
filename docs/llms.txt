@@ -5,9 +5,11 @@
 > it, and only then visible to others. PostgreSQL is the system of record with per-tenant
 > Ed25519-signed hash chains; a Delta Lake lakehouse is derived and never authoritative; erasure
 > is crypto-shredding; the surface is one JSON HTTP API with two stability rings (/v1 provider,
-> /v2 lab), an MCP facade and a CLI. Nothing is built: every page describes a decided design,
-> marks unmeasured quantities as roadmap rows, and says so. Each page opens with an HTML-comment
-> frontmatter block (id, tier, status, answers) stating what it answers.
+> /v2 lab), an MCP facade and a CLI. The design is the authority, and a first working slice is
+> built: the critical path's M1 and the agent-only-memory part of M2. Every page describes a
+> decided design, marks unmeasured quantities as roadmap rows, and says what is not built. Each
+> page opens with an HTML-comment frontmatter block (id, tier, status, answers) stating what it
+> answers.
 
 ## Start here
 
