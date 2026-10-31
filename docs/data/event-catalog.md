@@ -905,6 +905,7 @@ keyring entry ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) 
   "rule": "ADR-0026 d11",
   "names": [
     {"kind": "workarea", "id": "…", "name": "universe", "prior_name": "root"},
+    {"kind": "workarea", "id": "…", "name": "procurement", "prior_name": "procurement"},
     {"kind": "key", "id": "…", "name": "key-0f3c…", "prior_name": null}
   ],
   "crews": [
@@ -917,7 +918,10 @@ keyring entry ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) 
 Names the rows that predate names, once: signed by the lead at its first start on the schema
 version that adds names, before it serves a request, in each chain that has anything to assign —
 each tenant's chain for its workareas, crews and keys, and the provider chain for tenant and
-operator-key names. `prior_name` is the name the row's creation event carried, or null. `crews`
+operator-key names. `names` lists every row of the chain that predates names, those whose
+creation name is kept included (with `name` equal to `prior_name`), so the fold takes every such
+row's name from this event alone and never from a creation event. `prior_name` is the name the
+row's creation event carried, or null. `crews`
 lists the crew records made from the crew objects that workarea events carried, and the
 workareas that name each. The rule it applies is declared on the
 [HTTP API](../api/http-api.md#rows-created-before-names); every earlier event stays as it was

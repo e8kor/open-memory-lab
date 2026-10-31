@@ -119,6 +119,18 @@ The domain admits the derived form `<prefix>-<32 hex digits>`, because the fold 
 `system.names_assigned` writes it; every creation refuses that form in the name check the server
 runs before it journals anything ([names](../api/http-api.md#names-and-ids)).
 
+**The migration that adds names.** A migration cannot sign a journal event, and rows that predate
+names have no name until the lead journals `system.names_assigned`
+([rows created before names](../api/http-api.md#rows-created-before-names)). So the migration
+that adds names creates `crews`, adds each `name` and `crew_id` column nullable, and creates the
+unique constraints shown here, which admit any number of NULLs, so `name.taken` has its authority
+from the first request served. The lead, before it serves, journals `system.names_assigned` and
+folds it into those columns. A migration of a later schema version, which cannot run before
+that first start, then sets every `name` `NOT NULL`, the shape this page shows, and fails,
+holding that upgrade, if any NULL remains. A lead that finds a NULL `name` in a chain whose
+`system.names_assigned` is already journalled refuses to start, with a `doctor` line naming the
+table.
+
 ## memories
 
 The fold of submission, review and lifecycle events into the current state of every claim version.

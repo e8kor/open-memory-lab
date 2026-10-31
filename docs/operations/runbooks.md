@@ -75,7 +75,7 @@ workarea holds until `held_item_expiry` and then dead-letters
 
 **Diagnose.** `oml doctor` per workarea;
 `oml keys list --role dreamer --expiring <duration>` for expiries;
-`oml grants list --workarea <path>` for scope;
+`oml grants list --workarea <workarea>` (the node's id or name) for scope;
 `oml workareas show <workarea>` for the policy in force. Two named variants
 ([CLI reference](../cli/reference.md)): a vocabulary workarea with no active
 dreamer grant (flagged orphaned), and a policy naming

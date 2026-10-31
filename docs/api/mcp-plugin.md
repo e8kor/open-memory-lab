@@ -1279,9 +1279,11 @@ Operational notes:
 - **One key per agent.** Issue each crew member its own key
   ([key issuance](../architecture/roles-and-keys.md#key-lifecycle), via the
   [CLI](../cli/reference.md)); attribution, review independence and the
-  collusion statistics depend on it. `oml keys issue-agent <key-name>
-  --principal <principal> --workarea <workarea>` issues the one key this plugin
-  needs and prints the `OML_URL` and `OML_API_KEY` lines it reads
+  collusion statistics depend on it. `oml keys issue-agent --principal
+  <principal> --workarea <workarea-id>` issues the one key this plugin needs
+  (the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) adds the key's
+  name as a positional argument) and prints the `OML_URL` and `OML_API_KEY`
+  lines it reads
   ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)), and the
   [`oml-admin` plugin](../cli/reference.md#the-oml-admin-plugin) runs it for an
   operator with `--out`, so the value lands in an owner-only file and never in

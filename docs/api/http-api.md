@@ -170,11 +170,14 @@ last, 1–63 characters ([RFC 1035](https://www.rfc-editor.org/rfc/rfc1035.html)
 ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$
 ```
 
-— and is none of these three spellings, so that no name ever looks like an id: the hex-and-dash
-form; 32 hexadecimal digits; `tenant-`, `wa-`, `crew-` or `key-` followed by 32 hexadecimal digits
-(the derived form, [below](#rows-created-before-names)). There is no normalization and no case
-mapping: every allowed character is ASCII, and names compare byte for byte. `Metals-Crew` is
-refused, never read as `metals-crew`.
+— and is neither the hex-and-dash form nor 32 hexadecimal digits, so that no name ever looks like
+an id. That is the **reference grammar**, which every field that names a row checks. A creation
+checks the **creation grammar**, which also refuses the derived form: `tenant-`, `wa-`, `crew-` or
+`key-` followed by 32 hexadecimal digits, which only rows created before names hold
+([below](#rows-created-before-names)). A derived name is therefore a name in a reference and
+`request.validation` in a creation body. There is no normalization and no case mapping: every
+allowed character is ASCII, and names compare byte for byte. `Metals-Crew` is refused, never read
+as `metals-crew`.
 
 **Where a name is accepted.** Every request field, path parameter, query parameter and header
 that names one of the four kinds takes its id or its name. Field names do not change: a request
@@ -183,7 +186,7 @@ id, and each object of the four kinds carries its `name`.
 
 | Kind | Accepted in |
 |---|---|
-| workarea | `X-OML-Workarea`; the `{id}` of every `/v2/workareas/{id}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/claim-edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue` and `GET /v2/keys/{key_id}/effective-access`; `parent_id` on create, `new_parent_id` on re-parent, `to_workarea_id` on an edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea_node_id` and its denies' `subtree_node_id`, a denial's `workarea_node_id`, and `default_workarea_id` on issuance |
+| workarea | `X-OML-Workarea`; the `{id}` of every `/v2/workareas/{id}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/claim-edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue`, on `POST /v2/review/next` and on `GET /v2/keys/{key_id}/effective-access`; `parent_id` on create, `new_parent_id` on re-parent, `to_workarea_id` on an edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea_node_id` and its denies' `subtree_node_id`, a denial's `workarea_node_id`, and `default_workarea_id` on issuance |
 | crew | the `{crew_id}` of every `/v2/crews/{crew_id}` route; `crew` on workarea create, on `POST /v2/workareas/{id}/crew` and on issuance |
 | key | the `{key_id}` of every `/v2/keys/{key_id}` route; `key_id` in a simulation audience entry |
 | tenant | `tenant_id` on an operator key's issuance |
@@ -195,21 +198,38 @@ either form ([CLI](../cli/reference.md#conventions)). Neither resolves anything 
 **Classification and resolution.** Two steps, on the server:
 
 1. **At parse**, before any check that consults state, each value is classified: in the id form,
-   it is an id; otherwise, if it matches the name grammar, a name; otherwise the request is
-   refused with `request.validation`, `details.field` naming the field. A derived path
+   it is an id; otherwise, if it matches the reference grammar, a name, a derived name included;
+   otherwise the request is refused with `request.validation`, `details.field` naming the field.
+   A derived path
    (`universe.procurement`) contains `.`, so it is neither: paths are served and looked up, never
    accepted as a reference, and `GET /v2/workareas?path=` is the lookup by path.
 2. **After the verb ceiling**, which needs no row — step 1 of the
    [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), or
    the key-role check of an admin or operator verb — each name is replaced by the id of the row
-   that holds it in the caller's namespace (the key's tenant; the deployment for a tenant; the
-   provider's for an operator key), or by an id that matches no row. The request then runs
-   exactly as the same request by id runs.
+   that holds it in the caller's namespace, or, when no row holds it, by its **unresolved
+   value**: unique to that kind and name in that namespace, matching no row, never the nil scope
+   value of a lab record, and never shared with another name or with any id. The request then
+   runs exactly as the same request by id runs.
+
+The namespace is fixed by the caller and the kind:
+
+- A tenant's key, of any role, resolves every name in its tenant.
+- An operator key resolves a tenant name in the deployment, and a key name in the provider's
+  namespace, which holds operator keys only, so a key name an operator sends never resolves to a
+  tenant's key.
+- On an operator key's `POST /v2/keys`, `tenant_id` resolves first, in the deployment; the new
+  key's `name`, which `name.taken` checks, and every grant node, deny node, `default_workarea_id`
+  and `crew` then resolve in that tenant.
+- The bootstrap claim's `name` is in the provider's namespace.
 
 Names therefore add no refusal path. An unknown name and a name outside the key's access both
 answer `access.not_found`, at the same step and with the same body as the id would, and no
-refusal names the id a name resolved to unless it would name that id for a request that sent it:
-the service never confirms that a name exists to a key that may not see its row.
+refusal names the id a name resolved to unless it would name that id for a request that sent it.
+Resolution never confirms that a name exists: a lookup by a name the key may not see answers
+`access.not_found`. The derived paths and parent ids of the nodes a key can read still disclose
+the names and ids of their ancestors, and a re-parented node's former parent, as
+[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3's naming rule states
+([own](../architecture/roles-and-keys.md#own)).
 
 **Refusals.** A value that is neither form is `request.validation`. An unknown or unreadable name
 is `access.not_found`. A creation whose name its kind already holds in the namespace — a revoked
@@ -217,11 +237,20 @@ key's included, and `universe` for any workarea but the root — is `409 name.ta
 `{kind, name}` ([errors](errors.md)): it is checked after every other check of the creating
 request, the unique index is its authority, and a creation that loses the race to a concurrent one
 answers it and journals nothing. Only admin and operator keys hold a creating verb, and they see
-every row of their namespace, so no agent key ever learns that a name is taken.
+every row of their namespace; the bootstrap claim's caller holds a valid enrollment token, checked
+before its `name` ([below](#keys-grants-denials)). Only an admin or operator key, or the holder of
+a valid enrollment token at the bootstrap claim, therefore receives `name.taken`, and no agent key
+ever learns that a name is taken.
 
-**Idempotency.** The request digest covers the request as sent ([Idempotency](#idempotency)), so
-a request that names a row and the same request by id are two requests; on the provider ring the
-record's workarea component is the resolved node id either way.
+**Idempotency.** Path parameters and body fields are digested as sent
+([Idempotency](#idempotency)), so a `/v2` request that names a row in a path or a body and the
+same request by its id are two requests: reusing one `Idempotency-Key` for the other is
+`idempotency.digest_mismatch`. `X-OML-Workarea` is not in the digest, and the provider ring's
+record scope holds the resolved node id, so a `/v1` request whose header names the node and the
+same request whose header carries its id are one request, and the second replays. On `/v1` the
+header is resolved after step 1 of the refusal order and before the record is looked up; an
+unresolved header puts its unresolved value in the scope, so every unknown name has a scope of its
+own, as every unknown id does.
 
 **Paths.** A workarea's derived path is the names from `universe` to the node joined with `.`
 ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)); its last
@@ -235,12 +264,12 @@ lead names every row that has no name, in four rules, and journals the result:
 
 1. Each tenant's root workarea is named `universe`, whatever its `workarea.create` says.
 2. For each kind and namespace, in journal order of creation, a row whose creation event carries
-   a name the grammar admits, that is not `universe` for a non-root workarea and that no earlier
-   row of its kind holds, keeps it.
+   a name the creation grammar admits, that is not `universe` for a non-root workarea and that no
+   earlier row of its kind holds, keeps it.
 3. Every other row — one with no name, every key before ADR-0026 among them; one whose name the
-   grammar refuses; one whose name an earlier row holds — is named `<prefix>-<32 lowercase hex
-   digits of its id>`, the prefix `tenant`, `wa`, `crew` or `key`. Ids are unique and the grammar
-   refuses this form to every creation, so a derived name collides with nothing.
+   creation grammar refuses; one whose name an earlier row holds — is named `<prefix>-<32
+   lowercase hex digits of its id>`, the prefix `tenant`, `wa`, `crew` or `key`. Ids are unique
+   and the creation grammar refuses this form, so a derived name collides with nothing.
 4. Each workarea's current crew object — the latest of its `workarea.create` and
    `workarea.crew_updated` — is read in journal order; each distinct `{name, charter_uri,
    external_manager}` becomes one crew record with a fresh id, named by rules 2 and 3 in order of
@@ -248,10 +277,14 @@ lead names every row that has no name, in four rules, and journals the result:
    have no crew.
 
 One `system.names_assigned` event per chain that has anything to assign — each tenant's chain,
-and the provider chain for tenant and operator-key names — lists every assignment with its prior
-name and every crew record it creates ([event catalog](../data/event-catalog.md)). Every earlier
-event stays as it was signed. An admin who wants a chosen name on a key named by rule 3 issues a
-new key under that name and revokes the old one.
+and the provider chain for tenant and operator-key names — lists every row of the chain that
+predates names, those rule 2 keeps included (with `name` equal to `prior_name`), and every crew
+record it creates ([event catalog](../data/event-catalog.md)). The fold takes every such row's
+name from this event alone, never from a creation event. Every earlier event stays as it was
+signed. The schema steps around the event — the `name` columns added nullable, filled by the
+fold, then made `NOT NULL` — are on [PostgreSQL schema](../data/postgres-schema.md#names-and-tenants).
+An admin who wants a chosen name on a key named by rule 3 issues a new key under that name and
+revokes the old one; the derived name stays on the old key, and still addresses it.
 
 ## Idempotency
 
@@ -282,7 +315,9 @@ the HTTP method, the route template (`/v1/memories/{artifact_id}/supersede`, say
 parameters by name, and the parsed request body (`null` when there is none). Two requests to
 different targets therefore never share a digest, whatever their bodies. Path parameters and body
 fields are digested as sent, before any [name](#names-and-ids) is resolved, so a request that
-names a row and the same request by its id have different digests.
+names a row in a path or a body and the same request by its id have different digests. Headers
+are not digested: `X-OML-Workarea` enters the record only through the provider ring's resolved
+workarea component, so the header by name and by id is one request.
 
 ```mermaid
 sequenceDiagram
@@ -686,9 +721,9 @@ tenant without grants and never claim content
 | `GET /v2/workareas/{id}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
 | `GET /v2/workareas/{id}/edges` | Labelled `related` edges touching the node, `pending` and `ratified`, with proposer and ratifier. Edges confer zero access. |
 | `GET /v2/workareas/{id}/status` | Status, the review policy object in force, pending transitions. |
-| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}` — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). Refused under a `validated` parent (`workarea.frozen`). |
+| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}` — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). Refused under a `validated` parent (`workarea.frozen`). |
 | `POST /v2/workareas/{id}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
-| `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`). Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
+| `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the workarea. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
 | `POST /v2/workareas/{id}/edges` | Propose an edge `{to_workarea_id, label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`. Requires dreamer(propose) effective access on at least one endpoint and reader effective access on both (an admin who must act here holds a separate dreamer key — a key never combines admin with dreamer grants, `access.role_exclusive`). → `202`, pending. |
 | `POST /v2/workarea-edges/{edge_id}/ratify` | Ratify under dreamer(review) effective access on **both** endpoints; the proposer is refused (`review.ratifier_is_proposer`, R2 extends to edges). |
 | `POST /v2/workareas/{id}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
@@ -858,7 +893,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 | `POST /v2/keys/{key_id}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `POST /v2/keys/{key_id}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
 | `POST /v2/keys/{key_id}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
-| `POST /v2/keys/{key_id}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. |
+| `POST /v2/keys/{key_id}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. A denial on an admin key is refused, `request.validation` with `details.field: key_id`: denials attenuate grants, and an admin key carries none ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). |
 | `POST /v2/keys/{key_id}/denials/{denial_id}/lift` | Journalled lift. |
 | `GET /v2/keys/{key_id}/effective-access?workarea=…` | The resolved answer: what this key may do where, and which deny produced each hole — reproducible from journalled grants by construction (permission epoch). |
 
@@ -871,7 +906,11 @@ first admin key and nothing else — operator keys never read, write or review c
 the single-use, expiring **enrollment token** the Helm bootstrap job minted
 ([deployment.md](../operations/deployment.md)). `{enrollment_token, name}` → `201` with the root
 operator key, named `name` in the provider's namespace, value shown once; the token is consumed on first use, and a consumed, expired or
-unknown token answers `auth.invalid` with `details.reason` naming which. The `oml bootstrap claim`
+unknown token answers `auth.invalid` with `details.reason` naming which. The token is checked
+first; only then is `name` checked against the creation grammar (`request.validation`) and the
+provider's namespace (`name.taken`), so only the holder of a valid token learns that a name is
+taken. A refusal after the token check consumes no token and journals nothing; a re-run ceremony
+claims a name no earlier operator key held, since none is released. The `oml bootstrap claim`
 ceremony fronts exactly this call ([cli/reference.md](../cli/reference.md)).
 
 ## Bans

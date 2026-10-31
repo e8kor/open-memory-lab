@@ -50,7 +50,7 @@ touches these tables.
 | `bronze.events` | Digest-only columnar mirror of the per-tenant journal: the substrate for event analytics and for cross-checking the lake against the chain without loading Postgres | Body plaintext, body ciphertext, held content of any kind — payloads are digests and ciphertext *references* only | Append only; never MERGEd |
 | `silver.claims` | One row per promoted claim version with ciphertext body and full attribution: the reconciliation target ([architecture/reconciliation.md](../architecture/reconciliation.md)) and the materialized record of who wrote what, when, in which workarea | Held bodies (materialization is enqueued by promotion only); `self_signed` development rows (the constitution's development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md)); plaintext anywhere | Append on promotion; MERGE on retract |
 | `gold.lineage` | Ratified edges of the claim graph and the workarea relation graph, for lineage analytics and the evidence export | Pending edges (the promotion-time lineage closure over pending + ratified edges is computed in Postgres, never here) | Append on ratification; MERGE on retract |
-| `gold.areas` | Current snapshot of the workarea tree — node, parent, path, status, crew metadata — so lineage and analytics can join claims to governance context | Grants, denies, keys (authorization state stays in Postgres only) | MERGE-maintained snapshot |
+| `gold.areas` | Current snapshot of the workarea tree — node, name, parent, path, status, crew id — so lineage and analytics can join claims to governance context | Grants, denies, keys and crew records (authorization state and crew records stay in Postgres only) | MERGE-maintained snapshot |
 | `gold.curated_<table>` | One table per **validated** workarea: the frozen area's promoted claim versions, ciphertext-bodied, as a stable curated set; the substrate for future per-audience decrypted exports (deferred — FR in [product/roadmap.md](../product/roadmap.md)) | New writes, promotions, reassignments in — refused by the status ladder itself ([architecture/workareas.md](../architecture/workareas.md)); simulation-tainted rows (refused promotion into validated, [architecture/simulations.md](../architecture/simulations.md)) | Created at validation; thereafter MERGE on demote/erase only |
 
 The medallion words name these physical zones and nothing else; the workarea
@@ -356,13 +356,16 @@ to get wrong than a slowly-changing-dimension table, at the cost that
 | `workarea_id` | STRING | utf8 | no | Node id — MERGE key |
 | `parent_id` | STRING | utf8 | yes | NULL only for the tenant's `universe` root |
 | `path` | STRING | utf8 | no | Current derived ltree path; rewritten by the re-parent MERGE |
+| `name` | STRING | utf8 | no | The node's name, never changed ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d1): from `workarea.create`, or from `system.names_assigned` for a node that predates names |
 | `status` | STRING | utf8 | no | `development` \| `committed` \| `validated` |
-| `crew_name` | STRING | utf8 | yes | Recorded, not operated (D7) |
-| `crew_charter_uri` | STRING | utf8 | yes | |
-| `crew_external_manager` | STRING | utf8 | yes | External manager identifier |
+| `crew_id` | STRING | utf8 | yes | The crew record the node names, recorded, not operated (D7): from `workarea.create` and `workarea.crew_updated`, or from `system.names_assigned` for crew metadata that predates crew records; NULL when it names none |
 | `created_at` | TIMESTAMP | timestamp[µs, UTC] | no | |
 | `updated_at` | TIMESTAMP | timestamp[µs, UTC] | no | Last applied change |
 | `applied_seq` | LONG | int64 | no | Per-row frontier column |
+
+Crew records are not snapshotted in the lake: they stay in Postgres, and their `crew.created`
+and `crew.updated` events reach the lake only as `bronze.events` rows
+([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8).
 
 **Partitioning:** none; workarea counts are governance-bounded.
 
@@ -411,7 +414,7 @@ become unreferenced — which is what the erasure section below is about.
 | **Erase** | crypto-shred journalled (D4) | MERGE: `state = erased`, `body_ciphertext = NULL`, `attachments = NULL`, `retracted_at` set; digests and attribution remain | Same | — | — | New event row (digest-only; nothing to erase) |
 | **Simulation end** | simulation-end journalled | MERGE demoting every row with that `simulation_id`; taint closure (`sim_derived_ids` containing it) demoted or flagged for re-review as the event records | Cannot match (no sim rows in validated areas) | MERGE: `state = demoted` on edges carrying the `simulation_id` | — | New event rows |
 | **Reassign** | `lifecycle.reassign` (both policy snapshots journalled) | MERGE: `workarea_id = destination`; `workarea_path_at_write` untouched (history); when the move records re-entry into held (stricter destination policy), `state = held` | Reassignment into a validated area is refused upstream; out of one is refused by freeze | — | — | New event row |
-| **Re-parent / status / crew update** | journalled admin act | — | — | — | MERGE on `workarea_id`: path rewrite, status, crew fields | New event row |
+| **Re-parent / status / crew update** | journalled admin act | — | — | — | MERGE on `workarea_id`: path rewrite, status, `crew_id` | New event row |
 
 Two honesty notes on this table:
 

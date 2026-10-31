@@ -120,7 +120,10 @@ structure of every workarea in its tenant by its key role: the workarea read and
 path, the tree, a node's workarea edges and its status read — names, ids, parents, paths,
 statuses, crew records, children, workarea edges, review policy objects, pending transitions —
 beside the crew records, keys, grants and denials its own rows of this matrix already let it read.
-No grant and no denial enters: denials attenuate grants, and an admin key holds none. On the
+No grant and no denial enters: denials attenuate grants, and an admin key can hold neither. A
+global denial on an admin key is refused, `request.validation` with `details.field: key_id`
+([http-api](../api/http-api.md#keys-grants-denials)), so no denial is accepted, journalled and
+then ignored by a structure read. On the
 workarea read it sees every child and every workarea edge of the node, `my_effective_verbs`
 empty, since that field lists grant-role verbs, and its own permission epoch. It never reads claim
 content: recall, read, graph and lineage reads, the events tail, vocabulary reads and attachment
@@ -179,7 +182,9 @@ first checks that `tenant_id` is present if and only if the issuer is an operato
 3. grant admissibility (the table above) — `access.issuer_ceiling`, with details `{role,
    admissible, grant_index}`: `role` the first refused grant's role, `admissible` the key role's
    admissible set, `grant_index` that grant's 0-based position in `grants`;
-4. every grant node and deny node exists in the tenant — else `access.not_found`;
+4. for an operator, `tenant_id` names a tenant; every grant node and deny node exists in the
+   tenant; and the `crew`, when present, names a crew record of the tenant — else
+   `access.not_found`;
 5. each deny node lies inside its own grant's subtree — else `request.validation`;
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
@@ -189,9 +194,12 @@ first checks that `tenant_id` is present if and only if the issuer is an operato
 
 Every workarea, crew and tenant reference in the body — a grant's node, a deny's subtree, the
 default workarea, `crew`, `tenant_id` — takes an id or a [name](../api/http-api.md#names-and-ids),
-and each name is replaced by its row's id, or by an id that matches no row, before step 1, so an
-unknown name fails step 4 exactly as an unknown id does. `name` is checked against the
-[name grammar](../api/http-api.md#names-and-ids) with the rest of the body, before step 0. The
+and each name is replaced by its row's id, or by its unresolved value when no row holds it, before
+step 1, so an unknown name fails step 4 exactly as an unknown id does. An admin's names resolve
+in its tenant. An operator's `tenant_id` resolves first, in the deployment, and the new key's
+`name`, its grant and deny nodes, `default_workarea_id` and `crew` then resolve in that tenant;
+an unknown `tenant_id` fails step 4. `name` is checked against the
+[creation grammar](../api/http-api.md#names-and-ids) with the rest of the body, before step 0. The
 server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is a
 [CLI default](../cli/reference.md#oml-keys-issuance-revocation-rotation) the body carries like
 any other grant.
