@@ -19,7 +19,12 @@ def _get_kwargs(
 
     params: dict[str, Any] = {}
 
-    params["workarea_id"] = workarea_id
+    json_workarea_id: str | Unset
+    if isinstance(workarea_id, Unset):
+        json_workarea_id = UNSET
+    else:
+        json_workarea_id = workarea_id
+    params["workarea_id"] = json_workarea_id
 
     params["artifact_id"] = artifact_id
 
@@ -75,7 +80,9 @@ def sync_detailed(
      Requires: reader effective access.
 
     Args:
-        workarea_id (str | Unset):
+        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         artifact_id (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -115,7 +122,9 @@ def sync(
      Requires: reader effective access.
 
     Args:
-        workarea_id (str | Unset):
+        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         artifact_id (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -150,7 +159,9 @@ async def asyncio_detailed(
      Requires: reader effective access.
 
     Args:
-        workarea_id (str | Unset):
+        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         artifact_id (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -188,7 +199,9 @@ async def asyncio(
      Requires: reader effective access.
 
     Args:
-        workarea_id (str | Unset):
+        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         artifact_id (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):

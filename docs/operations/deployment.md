@@ -229,7 +229,7 @@ operator's machine (the release tarball's `oml`, or a `cargo build` of the check
 ```console
 $ TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
 $ kubectl --namespace oml port-forward service/oml-server 8080:8080 &
-$ oml --server http://127.0.0.1:8080 bootstrap claim --token "$TOKEN" \
+$ oml --server http://127.0.0.1:8080 bootstrap claim <key-name> --token "$TOKEN" \
     --tenant-name <tenant> --principal <you>
 ```
 

@@ -20,7 +20,12 @@ def _get_kwargs(
 
     params["after_seq"] = after_seq
 
-    params["workarea_id"] = workarea_id
+    json_workarea_id: str | Unset
+    if isinstance(workarea_id, Unset):
+        json_workarea_id = UNSET
+    else:
+        json_workarea_id = workarea_id
+    params["workarea_id"] = json_workarea_id
 
     params["limit"] = limit
 
@@ -85,7 +90,9 @@ def sync_detailed(
 
     Args:
         after_seq (int | Unset):  Default: 0.
-        workarea_id (str | Unset):
+        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
 
     Raises:
@@ -130,7 +137,9 @@ def sync(
 
     Args:
         after_seq (int | Unset):  Default: 0.
-        workarea_id (str | Unset):
+        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
 
     Raises:
@@ -170,7 +179,9 @@ async def asyncio_detailed(
 
     Args:
         after_seq (int | Unset):  Default: 0.
-        workarea_id (str | Unset):
+        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
 
     Raises:
@@ -213,7 +224,9 @@ async def asyncio(
 
     Args:
         after_seq (int | Unset):  Default: 0.
-        workarea_id (str | Unset):
+        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
 
     Raises:

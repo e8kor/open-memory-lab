@@ -102,7 +102,9 @@ def sync_detailed(
     Args:
         artifact_id (str):
         idempotency_key (str):
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (SupersedeRequest): Unknown fields are refused (request.validation). The body
             declares every submission field a successor can need — simulation_id, simulated_time,
             mapping and the term fields — so closing it refuses nothing a supersession must carry
@@ -159,7 +161,9 @@ def sync(
     Args:
         artifact_id (str):
         idempotency_key (str):
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (SupersedeRequest): Unknown fields are refused (request.validation). The body
             declares every submission field a successor can need — simulation_id, simulated_time,
             mapping and the term fields — so closing it refuses nothing a supersession must carry
@@ -211,7 +215,9 @@ async def asyncio_detailed(
     Args:
         artifact_id (str):
         idempotency_key (str):
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (SupersedeRequest): Unknown fields are refused (request.validation). The body
             declares every submission field a successor can need — simulation_id, simulated_time,
             mapping and the term fields — so closing it refuses nothing a supersession must carry
@@ -266,7 +272,9 @@ async def asyncio(
     Args:
         artifact_id (str):
         idempotency_key (str):
-        x_oml_workarea (str | Unset):
+        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id
+            answers. A derived path is neither, and is refused (request.validation).
         body (SupersedeRequest): Unknown fields are refused (request.validation). The body
             declares every submission field a successor can need — simulation_id, simulated_time,
             mapping and the term fields — so closing it refuses nothing a supersession must carry

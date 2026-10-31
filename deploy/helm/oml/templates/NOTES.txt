@@ -28,7 +28,7 @@ helm upgrade with --set ingress.enabled=false until you have.
 
      TOKEN="$(kubectl --namespace {{ $ns }} logs deployment/{{ $fullname }}-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
      kubectl --namespace {{ $ns }} port-forward service/{{ $fullname }}-server 8080:8080 &
-     oml --server http://127.0.0.1:8080 bootstrap claim --token "$TOKEN" \
+     oml --server http://127.0.0.1:8080 bootstrap claim <key-name> --token "$TOKEN" \
        --tenant-name <tenant> --principal <you>
 
    The key is printed once; the CLI stores it in ~/.config/oml/credentials.

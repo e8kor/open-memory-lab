@@ -39,6 +39,11 @@ def _parse_response(
 
         return response_201
 
+    if response.status_code == 409:
+        response_409 = ErrorEnvelope.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 415:
         response_415 = ErrorEnvelope.from_dict(response.json())
 
@@ -66,10 +71,12 @@ def sync_detailed(
     body: CreateTenantBody,
     idempotency_key: str,
 ) -> Response[CreateTenantResponse201 | ErrorEnvelope]:
-    """Create a tenant; the operator then issues its first admin key and nothing else.
+    """Create a tenant and its universe root; the operator then issues its first admin key and nothing
+    else.
 
-     Requires: operator key role. Operator keys never read, write or review content
-    (access.verb_ceiling).
+     Requires: operator key role. name must be unique in the deployment (409 name.taken — ADR-0026 d1,
+    d5); the tenant's root workarea is created with the name universe (ADR-0026 d6). Operator keys never
+    read, write or review content (access.verb_ceiling).
 
     Args:
         idempotency_key (str):
@@ -101,10 +108,12 @@ def sync(
     body: CreateTenantBody,
     idempotency_key: str,
 ) -> CreateTenantResponse201 | ErrorEnvelope | None:
-    """Create a tenant; the operator then issues its first admin key and nothing else.
+    """Create a tenant and its universe root; the operator then issues its first admin key and nothing
+    else.
 
-     Requires: operator key role. Operator keys never read, write or review content
-    (access.verb_ceiling).
+     Requires: operator key role. name must be unique in the deployment (409 name.taken — ADR-0026 d1,
+    d5); the tenant's root workarea is created with the name universe (ADR-0026 d6). Operator keys never
+    read, write or review content (access.verb_ceiling).
 
     Args:
         idempotency_key (str):
@@ -131,10 +140,12 @@ async def asyncio_detailed(
     body: CreateTenantBody,
     idempotency_key: str,
 ) -> Response[CreateTenantResponse201 | ErrorEnvelope]:
-    """Create a tenant; the operator then issues its first admin key and nothing else.
+    """Create a tenant and its universe root; the operator then issues its first admin key and nothing
+    else.
 
-     Requires: operator key role. Operator keys never read, write or review content
-    (access.verb_ceiling).
+     Requires: operator key role. name must be unique in the deployment (409 name.taken — ADR-0026 d1,
+    d5); the tenant's root workarea is created with the name universe (ADR-0026 d6). Operator keys never
+    read, write or review content (access.verb_ceiling).
 
     Args:
         idempotency_key (str):
@@ -164,10 +175,12 @@ async def asyncio(
     body: CreateTenantBody,
     idempotency_key: str,
 ) -> CreateTenantResponse201 | ErrorEnvelope | None:
-    """Create a tenant; the operator then issues its first admin key and nothing else.
+    """Create a tenant and its universe root; the operator then issues its first admin key and nothing
+    else.
 
-     Requires: operator key role. Operator keys never read, write or review content
-    (access.verb_ceiling).
+     Requires: operator key role. name must be unique in the deployment (409 name.taken — ADR-0026 d1,
+    d5); the tenant's root workarea is created with the name universe (ADR-0026 d6). Operator keys never
+    read, write or review content (access.verb_ceiling).
 
     Args:
         idempotency_key (str):

@@ -166,7 +166,7 @@ export async function startServer(): Promise<OmlServer> {
     };
 
     const boot = oml(
-      "bootstrap", "claim", "--token", token,
+      "bootstrap", "claim", "sdk-admin", "--token", token,
       "--tenant-name", "sdk-tests", "--principal", "platform/admin",
     );
     const root = String(boot.root_workarea_id);
@@ -174,7 +174,7 @@ export async function startServer(): Promise<OmlServer> {
     const reviewWorkarea = String(oml("workareas", "create", root, "sdk-review").id);
     const agentKey = String(
       oml(
-        "keys", "issue", "--role", "writer", "--held-by", "agent",
+        "keys", "issue", "sdk-agent", "--role", "writer", "--held-by", "agent",
         "--principal", "sdk/agent", "--default-workarea", workarea,
         "--grant", `${workarea}:writer`, "--grant", `${workarea}:reader`,
         "--grant", `${reviewWorkarea}:writer`, "--grant", `${reviewWorkarea}:reader`,
@@ -182,7 +182,7 @@ export async function startServer(): Promise<OmlServer> {
     );
     const dreamerKey = String(
       oml(
-        "keys", "issue", "--role", "dreamer", "--held-by", "human",
+        "keys", "issue", "sdk-reviewer", "--role", "dreamer", "--held-by", "human",
         "--principal", "sdk/reviewer", "--default-workarea", reviewWorkarea,
         "--grant", `${reviewWorkarea}:dreamer`,
       ).value,

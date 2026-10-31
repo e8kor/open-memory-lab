@@ -59,7 +59,9 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope]:
     """Resolve a workarea node by derived path (grants bind to node ids, never paths).
 
-     Requires: reader effective access on the node.
+     Requires: reader effective access on the node, or the admin key role, which reads the structure of
+    every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-
+    keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         path (str):
@@ -90,7 +92,9 @@ def sync(
 ) -> ErrorEnvelope | None:
     """Resolve a workarea node by derived path (grants bind to node ids, never paths).
 
-     Requires: reader effective access on the node.
+     Requires: reader effective access on the node, or the admin key role, which reads the structure of
+    every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-
+    keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         path (str):
@@ -116,7 +120,9 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope]:
     """Resolve a workarea node by derived path (grants bind to node ids, never paths).
 
-     Requires: reader effective access on the node.
+     Requires: reader effective access on the node, or the admin key role, which reads the structure of
+    every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-
+    keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         path (str):
@@ -145,7 +151,9 @@ async def asyncio(
 ) -> ErrorEnvelope | None:
     """Resolve a workarea node by derived path (grants bind to node ids, never paths).
 
-     Requires: reader effective access on the node.
+     Requires: reader effective access on the node, or the admin key role, which reads the structure of
+    every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-
+    keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         path (str):
