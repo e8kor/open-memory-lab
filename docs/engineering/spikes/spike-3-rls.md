@@ -1,13 +1,13 @@
 <!--
 id: engineering/spikes/spike-3-rls
 tier: engineering
-status: recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (ADR amendment needed, or an implementation fix, awaiting the maintainer's decision), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run
+status: recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (decided 2026-10-31: the role split, the migration ledger as d2's one exemption and a per-tenant FTS index, proposed as ADR-0034), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run
 answers: what M0 spike 3 found for S3.1–S3.4 (FORCE and the owner, the owner/service split as a PostgreSQL mechanism and as a claim about OML's roles, SET LOCAL across pooled transactions, the hostile cross-tenant probe), on which versions, what failed and why, which channel the role split closes and which it does not, and what each finding asks of the design
 -->
 
 # Findings: spike 3, RLS hardening
 
-**Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (ADR amendment needed, or an implementation fix, awaiting the maintainer's decision), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run
+**Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (decided 2026-10-31: the role split, the migration ledger as d2's one exemption and a per-tenant FTS index, proposed as ADR-0034), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run
 
 These are the findings for the four scenarios of the critical path's
 [spike 3](../../product/critical-path.md#spike-3-rls-hardening), one per scenario, in its
@@ -474,6 +474,14 @@ finding records the result then. No role split closes this channel.
   settings have the same trust as `oml.tenant_id`: only server code sets them.
 
 ## For the maintainer
+
+**Decided on 2026-10-31.** `FORCE` fences table reads only. The owner/serving split that C6
+designs gets built: migrations run under an owner role, the server serves as a role that owns no
+table, and security.md says what `FORCE` binds. It is proposed as ADR-0034, on branch
+`feat/role-split`. `_sqlx_migrations` becomes ADR-0007 d2's one named exemption, and the serving
+role gets no privilege on it. The FTS index becomes per tenant, as ADR-0007 d4 already decides, as
+an implementation fix in the same work. The entries below keep the evidence, and their "awaiting"
+wording describes the state before this decision.
 
 - **ADR amendment needed (ADR-0007 d2 and d4; security.md's `FORCE` commitment and its STRIDE
   information-disclosure mitigation), or an implementation fix, awaiting the maintainer's
