@@ -1,0 +1,8 @@
+# The values CI installs the chart with on kind (.github/workflows/ci.yml, job
+# chart): the image is the one CI built from the checkout and loaded into the
+# cluster, so it is never pulled. The Ingress stays off, as on any install
+# before the claim (ADR-0033 d8).
+image:
+  pullPolicy: Never
+networkPolicy:
+  enabled: true

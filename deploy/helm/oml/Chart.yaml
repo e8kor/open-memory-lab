@@ -1,0 +1,18 @@
+# The first revision of the one chart ADR-0016 d2 names, holding only what the
+# build has: the standalone lead, oml-server-lead (docs/adr/ADR-0033-interim-helm-chart.md).
+apiVersion: v2
+name: oml
+description: >-
+  Open Memory Lab on Kubernetes: the current build's one lead (oml-server-lead),
+  its keyring on a kept volume claim, Postgres external.
+type: application
+# version = appVersion = the workspace version in Cargo.toml (ADR-0033 d9);
+# scripts/check_chart.py fails a pull request on a mismatch.
+version: 0.2.2
+appVersion: "0.2.2"
+# fsGroupChangePolicy, which the keyring depends on (ADR-0033 d4), is stable
+# since Kubernetes 1.23.
+kubeVersion: ">=1.23.0-0"
+home: https://e8kor.github.io/open-memory-lab/
+sources:
+  - https://github.com/e8kor/open-memory-lab
