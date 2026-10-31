@@ -15,10 +15,12 @@ class of disagreement found:
   (SERVED_TOOLS in crates/transports/oml-transport-http/src/mcp.rs), and every
   served tool is declared in docs/api/mcp-tools.json;
 - plugins/oml/hooks/hooks.json exists and parses, and its SessionStart hooks
-  are exactly one command, which, run under /bin/sh, exits 0 with no output
-  when no `oml` is on PATH, and otherwise runs `oml` with exactly the
-  arguments `hook session-start` and exits 0 even when that `oml` fails
-  (docs/cli/reference.md, "oml hook session-start"; ADR-0029 d7);
+  are exactly one command, in a group with no matcher, with a timeout of 10
+  seconds and the status message "Loading OML memory", which, run under
+  /bin/sh, exits 0 with no output when no `oml` is on PATH, and otherwise
+  runs `oml` with exactly the arguments `hook session-start` and exits 0 even
+  when that `oml` fails (docs/cli/reference.md, "oml hook session-start";
+  ADR-0029 d7);
 - the marketplace lists oml-admin at a directory that has a manifest, at the
   workspace version;
 - oml-admin has no .mcp.json, so it adds no tool to any tool list;
@@ -38,6 +40,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ADMIN_SKILL = "skills/issue-agent-key/SKILL.md"
 HOOKS = "hooks/hooks.json"
+# Above the verb's own 8-second deadline (ADR-0029 d5, d7).
+HOOK_TIMEOUT = 10
+HOOK_STATUS = "Loading OML memory"
 # A fenced block, indented or not, and an inline code span outside one.
 FENCE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
 SPAN = re.compile(r"`([^`\n]+)`")
@@ -121,7 +126,14 @@ def check_hooks(plugin_dir: Path, errors: list[str]) -> None:
         types = [h.get("type") for h in entries]
         errors.append(f"{shown}: SessionStart holds the hooks {types}, not exactly one command")
         return
-    command = entries[0].get("command", "")
+    entry = entries[0]
+    if any("matcher" in group for group in groups):
+        errors.append(f"{shown}: the SessionStart group has a matcher; the hook runs for every source")
+    if entry.get("timeout") != HOOK_TIMEOUT:
+        errors.append(f"{shown}: the SessionStart timeout is {entry.get('timeout')!r}, not {HOOK_TIMEOUT}")
+    if entry.get("statusMessage") != HOOK_STATUS:
+        errors.append(f"{shown}: the SessionStart statusMessage is {entry.get('statusMessage')!r}, not {HOOK_STATUS!r}")
+    command = entry.get("command", "")
 
     with tempfile.TemporaryDirectory() as tmp:
         no_oml = Path(tmp) / "no-oml"

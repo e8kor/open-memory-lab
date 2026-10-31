@@ -202,10 +202,11 @@ accepts it.
     covers the CLI the plugin outran: a marketplace update can bring the hook before the user
     installs a CLI that has the verb, and an older `oml` answers an unknown subcommand with exit
     `2`, which Claude Code would show as a hook error at every session start. The cost is that a
-    crash of the verb itself is silent too. `scripts/check_plugin.py` holds the rule by running
-    the command under `/bin/sh`: with no `oml` on `PATH` it must exit 0 with no output, and with a
-    stand-in `oml` that fails it must run it with exactly the arguments `hook session-start` and
-    still exit 0.
+    crash of the verb itself is silent too. `scripts/check_plugin.py` holds the entry to no
+    matcher, the 10-second timeout and the status message, and holds the command by running it
+    under `/bin/sh`: with no `oml` on `PATH` it must exit 0 with no output, and with a stand-in
+    `oml` that fails it must run it with exactly the arguments `hook session-start` and still
+    exit 0.
 
 - **d8 — The plugin README gives the user two `permissions.allow` rules: the five read tools,
   which keeps the question on every write, and `mcp__plugin_oml_oml`, which allows every tool,
@@ -232,7 +233,8 @@ accepts it.
   it from "Wiring it into your agent", and the plugin README carries one paragraph and the
   permission rule of d8.
 - The `oml` plugin gains `hooks/hooks.json`; `scripts/check_plugin.py` fails if the file is
-  missing or does not parse, or if its SessionStart hooks are not exactly one command that runs
+  missing or does not parse, or if its SessionStart hooks are not exactly one command, without a
+  matcher, with a 10-second timeout and the status message `Loading OML memory`, that runs
   `oml hook session-start` guarded so that a missing or failing `oml` exits 0.
 - No HTTP operation, error code, event type or claim state is added: `docs/api/openapi.yaml` and
   `docs/api/errors.md` are unchanged, and `info.version` stays `0.2.0-design`. No package version
