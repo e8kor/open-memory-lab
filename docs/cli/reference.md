@@ -42,7 +42,14 @@ Every verb below is designed, not built; no transcript or flag on this page has 
   default; there `--dry-run` is an explicit opt-in preview, not the default.
 - **Names or ids.** Every argument that names a workarea, crew, key or tenant takes its id or its
   [name](../api/http-api.md#names-and-ids), and the server resolves it; the CLI resolves nothing
-  itself. Every grant, act and journal event binds to the **id**
+  itself. It sends each such argument as typed, one percent-encoded segment where the route
+  takes it in its path, so a value that is neither an id nor a name is the server's
+  `request.validation`. The one exception is checked before anything is sent: an argument a path
+  carries that is empty, `.` or `..` is refused (exit `2`), because no URL path carries it as
+  one segment — the empty value leaves none, and the URL Standard removes the other two as
+  [dot segments](https://url.spec.whatwg.org/#single-dot-path-segment), an escaped `%2e`
+  included — and no id or name is spelled so ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d2,
+  d3). Every grant, act and journal event binds to the **id**
   ([workareas](../architecture/workareas.md)); the CLI prints each row's name beside its id
   where the response carries both, and `--json` prints the response body unchanged: ids in id
   fields, and `name` on each workarea, crew, key and tenant object the body carries. A derived

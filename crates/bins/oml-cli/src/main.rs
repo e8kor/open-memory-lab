@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
-use oml_cli::client::{CallOpts, CliError, Client, segment};
+use oml_cli::client::{CallOpts, CliError, Client, encode, segment};
 use oml_cli::creds::{self, Credentials};
 use oml_cli::issue::{KeyFile, sh_quote, with_reader_beside_writers};
 use oml_cli::verify::parse_verifying_key;
@@ -570,7 +570,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: KeysCommand::Show { key_ref },
         } => {
             let client = resolve(cli, &stored)?;
-            let (_, response) = client.get(&format!("/v2/keys/{}", segment(key_ref)))?;
+            let (_, response) = client.get(&format!("/v2/keys/{}", segment(key_ref)?))?;
             if cli.json {
                 print_json(&response);
             } else {
@@ -617,7 +617,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 body["reason"] = json!(reason);
             }
             let (_, response) = client.post(
-                &format!("/v2/keys/{}/denials", segment(key_ref)),
+                &format!("/v2/keys/{}/denials", segment(key_ref)?),
                 &body,
                 &write_opts(),
             )?;
@@ -665,7 +665,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: WorkareasCommand::Show { workarea },
         } => {
             let client = resolve(cli, &stored)?;
-            let (_, response) = client.get(&format!("/v2/workareas/{}", segment(workarea)))?;
+            let (_, response) = client.get(&format!("/v2/workareas/{}", segment(workarea)?))?;
             if cli.json {
                 print_json(&response);
             } else {
@@ -1056,7 +1056,7 @@ fn run_workareas_tree(cli: &Cli, stored: &Credentials, root: &str) -> Result<Exi
     let mut nodes: Vec<Value> = Vec::new();
     // Last in, first read: the children go on in reverse, so the first
     // child is read first.
-    let mut pending = vec![segment(root)];
+    let mut pending = vec![segment(root)?];
     while let Some(reference) = pending.pop() {
         let (_, node) = client.get(&format!("/v2/workareas/{reference}"))?;
         let children: Vec<String> = node["children"]
@@ -1065,7 +1065,7 @@ fn run_workareas_tree(cli: &Cli, stored: &Credentials, root: &str) -> Result<Exi
             .flatten()
             .filter_map(|c| c["id"].as_str())
             .map(segment)
-            .collect();
+            .collect::<Result<_, _>>()?;
         pending.extend(children.into_iter().rev());
         nodes.push(node);
     }
@@ -1125,10 +1125,12 @@ fn run_crews(
             if let Some(manager) = &args.external_manager {
                 body["external_manager"] = json!(manager);
             }
-            let path = format!("/v2/crews/{}/update", segment(&args.crew));
+            let path = format!("/v2/crews/{}/update", segment(&args.crew)?);
             ("updated ", client.post(&path, &body, &write_opts())?.1)
         }
-        CrewsCommand::Show { crew } => ("", client.get(&format!("/v2/crews/{}", segment(crew)))?.1),
+        CrewsCommand::Show { crew } => {
+            ("", client.get(&format!("/v2/crews/{}", segment(crew)?))?.1)
+        }
         CrewsCommand::List => {
             let mut items: Vec<Value> = Vec::new();
             let mut path = "/v2/crews".to_owned();
@@ -1136,7 +1138,7 @@ fn run_crews(
                 let (_, page) = client.get(&path)?;
                 items.extend(page["items"].as_array().into_iter().flatten().cloned());
                 match page["next_cursor"].as_str() {
-                    Some(cursor) => path = format!("/v2/crews?cursor={}", segment(cursor)),
+                    Some(cursor) => path = format!("/v2/crews?cursor={}", encode(cursor)),
                     None => break,
                 }
             }

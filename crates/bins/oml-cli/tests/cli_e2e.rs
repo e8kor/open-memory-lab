@@ -1428,20 +1428,71 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
 }
 
 /// A reference that is neither an id nor a name reaches the server as
-/// typed, one path segment however it is spelled, and is refused there as
-/// `request.validation`: the CLI classifies nothing (cli/reference.md
-/// conventions; ADR-0026 d3, d4).
+/// typed, one path segment however it is spelled, a dot or an escape
+/// included, and is refused there as `request.validation`: the CLI
+/// classifies nothing but the three spellings a path cannot carry as one
+/// segment (cli/reference.md conventions; ADR-0026 d3, d4).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reference_that_is_neither_an_id_nor_a_name_is_refused_by_the_server_as_request_validation()
  {
     let lab = Lab::start().await;
-    for bad in ["Metals", "universe.procurement", "a/b", "x?y=1"] {
+    for bad in [
+        "Metals",
+        "universe.procurement",
+        "a/b",
+        "x?y=1",
+        "...",
+        "%2e",
+        "%2e%2e",
+    ] {
         let (code, envelope, log) = lab.json(None, &["workareas", "show", bad]);
         assert_eq!(code, 1, "{bad:?}: {log}");
         assert_eq!(
             envelope["error"]["code"], "request.validation",
             "{bad:?}: {log}"
         );
+    }
+    lab.stop().await;
+}
+
+/// A reference spelled ``, `.` or `..` is refused before anything is sent,
+/// exit 2, on every verb that puts a reference in a path: a URL path cannot
+/// carry it as one segment, the empty value leaving none and the URL parser
+/// removing the other two as dot segments, so it would reach another route
+/// or none, and no id or name is spelled so (cli/reference.md conventions;
+/// ADR-0026 d2, d3, d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reference_spelled_empty_dot_or_dot_dot_is_refused_before_anything_is_sent() {
+    let lab = Lab::start().await;
+    lab.take_requests();
+    for bad in ["", ".", ".."] {
+        for args in [
+            vec!["keys", "show", bad],
+            vec!["deny", "set", bad, "universe"],
+            vec!["workareas", "show", bad],
+            vec!["workareas", "tree", "--root", bad],
+            vec!["crews", "show", bad],
+            vec![
+                "crews",
+                "update",
+                bad,
+                "--charter-uri",
+                "https://example.org/c",
+            ],
+        ] {
+            let (code, stdout, stderr) = lab.text(&args);
+            assert_eq!(code, 2, "{args:?}: {stdout}{stderr}");
+            assert!(
+                stderr.contains(&format!("{bad:?}")) && stderr.contains("one URL path segment"),
+                "{args:?}: the value and the reason are named: {stderr}"
+            );
+            assert!(stdout.is_empty(), "{args:?}: {stdout}");
+            assert_eq!(
+                routes(&lab.take_requests()),
+                Vec::<String>::new(),
+                "{args:?}: nothing was sent"
+            );
+        }
     }
     lab.stop().await;
 }
