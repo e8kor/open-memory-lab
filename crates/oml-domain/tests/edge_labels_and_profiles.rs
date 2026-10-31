@@ -8,10 +8,10 @@
 use std::collections::BTreeSet;
 
 use oml_domain::access::{
-    CrewKind, EdgeLabelsRefusal, EffectiveAccess, Grant, KeyDenial, LabelledGrant, MemberProfile,
-    ProfileClause, ProfileMismatch, Verb, VerbRefusal, check_member_profile,
+    AccessRefusal, CrewKind, EdgeLabelsRefusal, EffectiveAccess, Grant, KeyDenial, LabelledGrant,
+    MemberProfile, ProfileClause, ProfileMismatch, Verb, VerbRefusal, check_member_profile,
     check_profile_amendment, effective_access, effective_roles, effective_verbs, my_edge_labels,
-    resolve_verb,
+    resolve, resolve_verb,
 };
 use oml_domain::vocab::{OmlLabel, PrefixRegistry};
 use oml_domain::{HeldBy, Role};
@@ -70,6 +70,16 @@ impl Tree {
     fn is_vocabulary_node(&self, node: Uuid) -> bool {
         self.registry.is_vocabulary_node(&self.ancestry(node))
     }
+
+    fn nodes(&self) -> [Uuid; 5] {
+        [
+            self.universe,
+            self.metals_vocab,
+            self.alloys,
+            self.research,
+            self.lit_review,
+        ]
+    }
 }
 
 fn plain(n: u128, node: Uuid, role: Role, deny: &[Uuid]) -> Grant {
@@ -84,6 +94,16 @@ fn plain(n: u128, node: Uuid, role: Role, deny: &[Uuid]) -> Grant {
 /// A grant without `edge_labels`.
 fn grant(n: u128, node: Uuid, role: Role) -> LabelledGrant {
     LabelledGrant::from(plain(n, node, role, &[]))
+}
+
+/// The grants a caller still on `effective_roles` and `resolve` reads:
+/// every grant that is not narrowed.
+fn unnarrowed(grants: &[LabelledGrant]) -> Vec<Grant> {
+    grants
+        .iter()
+        .filter_map(LabelledGrant::unnarrowed)
+        .cloned()
+        .collect()
 }
 
 /// A dreamer grant narrowed to `labels`.
@@ -174,10 +194,15 @@ fn edge_labels_are_admitted_on_a_dreamer_grant_only_as_distinct_oml_labels() {
         built.edge_labels(),
         Some(&labels(&[OmlLabel::IsA, OmlLabel::About]))
     );
-    assert_eq!(built.grant(), &dreamer);
+    // A narrowed grant is no plain grant; an unnarrowed one is the grant sent.
+    assert_eq!(built.unnarrowed(), None);
     assert_eq!(
         LabelledGrant::new(dreamer.clone(), None).map(|g| g.edge_labels().cloned()),
         Ok(None)
+    );
+    assert_eq!(
+        LabelledGrant::new(dreamer.clone(), None).map(|g| g.unnarrowed().cloned()),
+        Ok(Some(dreamer.clone()))
     );
 
     for role in [Role::Reader, Role::Writer] {
@@ -343,28 +368,98 @@ fn a_global_denial_empties_a_narrowed_dreamer() {
 }
 
 #[test]
-fn the_roles_of_narrowed_effective_access_are_effective_roles_of_the_same_grants() {
+fn the_plain_refusal_order_allows_nothing_the_narrowed_one_refuses() {
     let tree = Tree::new();
+    // A classifier's review next on its vocabulary, resolved by a caller
+    // still on `effective_roles` and `resolve`, is grant refused as it is
+    // through `resolve_verb`, never allowed.
+    let classifier = classifier_grants(&tree);
+    let at_alloys = tree.ancestry(tree.alloys);
+    assert_eq!(
+        resolve(
+            Role::Dreamer,
+            &effective_roles(&unnarrowed(&classifier), &[], &at_alloys),
+            Role::Dreamer
+        ),
+        Err(AccessRefusal::GrantRefused {
+            needed_role: Role::Dreamer
+        })
+    );
+
     let denials = [denial(1, tree.lit_review)];
     for grants in [
         classifier_grants(&tree),
         term_creator_grants(&tree),
         curator_grants(&tree),
     ] {
-        let unlabelled: Vec<Grant> = grants.iter().map(|g| g.grant().clone()).collect();
-        for node in [
-            tree.universe,
-            tree.metals_vocab,
-            tree.alloys,
-            tree.research,
-            tree.lit_review,
-        ] {
+        let plain_grants = unnarrowed(&grants);
+        for node in tree.nodes() {
             let ancestry = tree.ancestry(node);
-            assert_eq!(
-                effective_access(&grants, &denials, &ancestry).roles,
-                effective_roles(&unlabelled, &denials, &ancestry),
-                "{node}"
-            );
+            let access = effective_access(&grants, &denials, &ancestry);
+            let roles = effective_roles(&plain_grants, &denials, &ancestry);
+            for key_role in [Role::Reader, Role::Writer, Role::Dreamer] {
+                for (needed, verb) in [
+                    (Role::Reader, Verb::Needs(Role::Reader)),
+                    (Role::Writer, Verb::Needs(Role::Writer)),
+                    (Role::Dreamer, Verb::Needs(Role::Dreamer)),
+                    (Role::Dreamer, Verb::ClaimEdge(ABOUT)),
+                    (Role::Dreamer, Verb::ClaimEdge("oml:is_a")),
+                ] {
+                    if resolve(key_role, &roles, needed).is_ok() {
+                        assert_eq!(
+                            resolve_verb(key_role, &access, verb),
+                            Ok(()),
+                            "{node} {key_role:?} {verb:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_plain_refusal_order_is_the_narrowed_one_where_no_grant_is_narrowed() {
+    let tree = Tree::new();
+    let denials = [denial(1, tree.lit_review)];
+    let mixed = vec![
+        grant(1, tree.metals_vocab, Role::Dreamer),
+        LabelledGrant::from(plain(2, tree.universe, Role::Reader, &[tree.research])),
+        grant(3, tree.research, Role::Writer),
+    ];
+    let as_plain = |refusal: VerbRefusal| match refusal {
+        VerbRefusal::VerbCeiling { role, needed } => AccessRefusal::VerbCeiling { role, needed },
+        VerbRefusal::GrantRefused {
+            needed_role,
+            edge_labels: None,
+        } => AccessRefusal::GrantRefused { needed_role },
+        VerbRefusal::GrantRefused { .. } => panic!("narrowed where no grant is narrowed"),
+        VerbRefusal::NotFound => AccessRefusal::NotFound,
+    };
+    for grants in [term_creator_grants(&tree), mixed] {
+        let plain_grants = unnarrowed(&grants);
+        assert_eq!(plain_grants.len(), grants.len());
+        for node in tree.nodes() {
+            let ancestry = tree.ancestry(node);
+            let access = effective_access(&grants, &denials, &ancestry);
+            let roles = effective_roles(&plain_grants, &denials, &ancestry);
+            assert_eq!(access.roles, roles, "{node}");
+            assert_eq!(access.edge_labels, None, "{node}");
+            for key_role in [
+                Role::Reader,
+                Role::Writer,
+                Role::Dreamer,
+                Role::Admin,
+                Role::Operator,
+            ] {
+                for needed in [Role::Reader, Role::Writer, Role::Dreamer] {
+                    assert_eq!(
+                        resolve_verb(key_role, &access, Verb::Needs(needed)).map_err(as_plain),
+                        resolve(key_role, &roles, needed),
+                        "{node} {key_role:?} {needed:?}"
+                    );
+                }
+            }
         }
     }
 }
