@@ -17,8 +17,9 @@ attested — which is this page's job to specify. The first pipeline is an M1 it
 [critical path](../product/critical-path.md). Since 2026-10-30 `.github/workflows/ci.yml` runs
 the format, lint, test, docs, cargo-deny and end-to-end gates, and `release.yml` ships the signed
 artifacts below; since 2026-10-31 `ci.yml` also runs the three jobs of the
-[client SDKs](sdks.md). Not running yet: the MSRV build, the sqlx offline check, container tests
-against MinIO, the scheduled `cargo audit` and the bench job.
+[client SDKs](sdks.md), and `m0-spikes.yml` holds the M0 spike gate below. Not running yet: the
+MSRV build, the sqlx offline check, container tests against MinIO, the scheduled `cargo audit` and
+the bench job.
 
 ## Toolchain pins and MSRV
 
@@ -53,6 +54,7 @@ ratchet that only ever loosens, so it starts tight:
 | Site | `mkdocs build --strict` | this documentation set keeps building; a broken link is a failure, not a warning |
 | Chart | `scripts/check_chart.py`, then job `chart`: a kind cluster, `pgvector/pgvector:pg17` in it, the image built from the checkout, `helm install`, the claim through `kubectl port-forward`, `scripts/quickstart.sh`, a restart, and an uninstall and reinstall | the Helm chart renders the one lead [ADR-0033](../adr/ADR-0033-interim-helm-chart.md) decides, at the workspace version and as the image's own user, and that lead serves the quickstart after a real install and keeps its signing key across a restart and a reinstall |
 | Schema sync | sqlx offline check: compile-time-checked queries against committed query metadata, regenerated whenever `migrations/` changes | queries and migrations cannot drift apart silently; the companion shape-vs-bytes rule is declared in the [schema page](../data/postgres-schema.md#migrations) |
+| M0 spikes | `uv run --locked --script scripts/check_chain_vectors.py`; `uv run --locked --script testing/spikes/rls/spike_rls.py --require-all` against `pgvector/pgvector:pg17` | the chain-format vectors keep reproducing outside Rust and the Rust tests' copies of them keep equalling the page, and spike 3's findings keep standing, recorded failures included ([M0 spikes](spikes/index.md)) |
 
 ## Supply chain: cargo-deny and cargo-audit
 

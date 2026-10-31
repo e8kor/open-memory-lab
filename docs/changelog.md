@@ -29,6 +29,110 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-31 — M0 spikes: the Rust tests' copies of the vectors are compared with the page, S3.2 is two findings, and EXPLAIN's estimate is a recorded cross-tenant disclosure
+
+A second review fix to the M0 spike findings and harnesses. No decision changes, and no record is
+amended or proposed.
+
+- **Chain vectors:** the M0 spikes page said the repository held no second copy of the vectors.
+  It holds three: the Rust tests in `crates/oml-domain` and `crates/bins/oml-cli` keep the
+  vectors as literals, and each Rust test checks the code against its own copy, so until now the
+  copies agreed with the page only because they had been copied by hand.
+  `scripts/check_chain_vectors.py` now finds every Rust file that copies the vectors and compares
+  each copy with the page. It reads `crates/` and changes nothing there. Run from a scratch tree,
+  the check as first committed passed with a drifted copy. As it stands, it fails on six drifted
+  copies and passes on the repository's three files (6 `signed_bytes` literals, 34 hex values).
+  Having the Rust tests read the page is a follow-up for `feat/iteration-3`
+  ([finding](engineering/spikes/chain-vectors.md#the-rust-tests-copies)).
+- **S3.2:** S3.2 is now two findings. The first is PostgreSQL's mechanism: a non-owner role
+  without `BYPASSRLS` stays inside the policy, and migrations succeed under the owner. It can
+  pass in CI. Its controls are the refused DDL taking effect for the owner, rolled back, and the
+  service role's rows under tenant B. The `BYPASSRLS` control role is gone. The second is the
+  claim about OML's own roles. It is **inconclusive, not testable** on every host, because the
+  harness's roles are its own and no page specifies a deployment's roles and grants, so a CI run
+  never prints `pass` and `none` for it. The harness's role attributes are now preconditions,
+  not checks ([findings](engineering/spikes/spike-3-rls.md#s32)).
+- **S3.1 and S3.4:** the page claimed that the role split confines the statistics leak to the
+  owner. Its own S3.4 observation contradicted that. EXPLAIN's row estimate under tenant A follows
+  tenant B's words, and by PostgreSQL's documentation and the `REL_17_STABLE` source it does so for
+  every role the policy binds. The estimate is now the check `S3.4/<role>/estimate`. The owner's
+  failure is recorded. The service role's is not, so CI fails if it leaks. Both findings now also
+  cite ADR-0007 d4 and security.md's STRIDE information-disclosure mitigation ("no cross-tenant
+  index to leak through"), which the shared index `memories_claim_fts` breaks. Their action is
+  ADR amendment needed, or an implementation fix that makes the FTS index per tenant, awaiting
+  the maintainer. The designed `memories_fts` and `held_fts` are not partitioned per tenant
+  either.
+- **Harness fix found on the way:** the owner's `UPDATE journal` observation ran with no tenant
+  set, matched no row, and could not show the guard trigger. It now runs under tenant A.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md),
+  [chain vectors](engineering/spikes/chain-vectors.md), [spike 3](engineering/spikes/spike-3-rls.md),
+  [critical path](product/critical-path.md) (M0 progress),
+  [CI and toolchain](engineering/ci-and-toolchain.md) (the gate row), `docs/llms.txt` and this
+  page. Outside `docs/`, the two harnesses.
+- **Not verified here:** any pg17 or service-role result, S3.2's mechanism among them. CI jobs
+  `chain-vectors` and `rls-spike` have not run. The S3.2 code path was run only with the owner
+  standing in for the service role, which the preconditions reported as not as minted.
+
+### 2026-10-31 — M0 spike 3: a failed scenario says ADR amendment needed, the lead run is recorded, and the harness follows new migrations
+
+A review fix to the spike 3 findings and harness of the entry below. No decision changes, and no
+record is amended or proposed.
+
+- **Findings:** S3.1 and S3.4 now say **ADR amendment needed** against ADR-0007 d2 and
+  security.md's `FORCE` commitment, awaiting the maintainer's decision. The earlier wording said
+  no amendment was needed and that the maintainer had confirmed this, and the maintainer had not.
+  `_sqlx_migrations`, which has no RLS, no `FORCE` and no policy, is recorded as ADR amendment
+  needed (ADR-0007 d2) or an implementation fix. The run of `oml-server-lead` 0.2.0 behind both
+  claims is now on the page: the command, the configuration shape and the catalog output, which
+  show the serving role owning all 12 tables
+  ([findings](engineering/spikes/spike-3-rls.md)).
+- **Harness:** `testing/spikes/rls/spike_rls.py` prints the same action for a failure. It records
+  which tables its seeders write. A table that a later migration adds and no seeder writes is
+  reported as unprobed for row visibility, and it does not fail the run. The no-tenant write and
+  the probe function no longer depend on the 0001–0005 column shapes. Run on PostgreSQL 18.6 with
+  `feat/iteration-3`'s `0006_names.sql` added from scratch, the harness as first committed failed
+  S3.1 (`crews` empty) and S3.3 (`23514`). As fixed, it gives the 0001–0005 verdicts and reports
+  `crews` as unprobed. It still gives the 0001–0005 verdicts on this branch's migrations.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md) (how the harness follows the
+  migrations, and two more rejected alternatives), [spike 3](engineering/spikes/spike-3-rls.md),
+  [critical path](product/critical-path.md) (M0 progress) and this page. Outside `docs/`, the
+  harness.
+- **Not verified here:** any pg17 or service-role result. CI job `rls-spike` has not run.
+
+### 2026-10-31 — M0: the chain-format vectors reproduce outside Rust, and spike 3 runs on PostgreSQL 18.6
+
+An M0 change: two of the critical path's de-risking experiments are built and run, and their
+findings are recorded. No decision changes, no record is amended or proposed, and the harness
+decisions live on an engineering page, [M0 spikes](engineering/spikes/index.md).
+
+- **Built:** `scripts/check_chain_vectors.py`, which rebuilds the three
+  [chain format](data/chain-format.md) vectors from their inputs with two RFC 8785
+  implementations (`rfc8785`, `jcs`), two Ed25519 implementations (`cryptography`, PyNaCl) and
+  two SHA-256 implementations (`hashlib`, libsodium). It runs the verification procedure and its
+  mutation claims, and fails on any difference. Also built: `testing/spikes/rls/spike_rls.py`,
+  which applies `migrations/*.sql` to a throwaway database and asserts S3.1–S3.4. Both pin their
+  libraries through uv, inline and in a committed lock file. `.github/workflows/m0-spikes.yml`
+  adds the jobs `chain-vectors` and `rls-spike`, the latter on `pgvector/pgvector:pg17`.
+- **Found:** the vectors reproduce byte for byte
+  ([finding](engineering/spikes/chain-vectors.md)). On PostgreSQL 18.6, as the table owner, every
+  read shape of the fold tables stayed inside its tenant. A read with no tenant set returns zero
+  rows, which is now the recorded behaviour. `pg_stats` shows the owner other tenants' lexemes
+  through the expression index `memories_claim_fts`, so S3.1 and S3.4 fail for the owner, and the
+  harness records both as expected failures. Under RLS that GIN index serves no FTS plan, since
+  `@@` is not leakproof. S3.2 did not run, for lack of a role that can create roles
+  ([findings](engineering/spikes/spike-3-rls.md)).
+- **Page edit:** chain format now says that omitting the last event fails step 9, against the
+  stated head, and not step 1 or 5. The check's first run failed on the old sentence.
+- **Not verified here:** any result on the pinned pg17, any result for a non-owner role, and
+  S3.2. The two CI jobs have not run. Spikes 1, 2 and 4 are not run.
+- **No surface change:** no HTTP operation, error code, event type or claim state changes, and
+  `info.version` stays `0.2.0-design`.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md) and its two finding pages (new),
+  [chain format](data/chain-format.md), [critical path](product/critical-path.md) (M0
+  progress), [CI and toolchain](engineering/ci-and-toolchain.md) (the M0 spikes gate),
+  `mkdocs.yml`, [llms.txt](llms.txt) and this page. Outside `docs/`, the two scripts, their lock
+  files and the workflow.
+
 ### 2026-10-31 — A Helm chart for the current build's one lead (ADR-0033)
 
 [ADR-0033](adr/ADR-0033-interim-helm-chart.md), proposed on 2026-10-31, decides what a Helm

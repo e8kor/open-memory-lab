@@ -105,6 +105,10 @@ nav:
       - Test strategy: engineering/test-strategy.md
       - CI and toolchain: engineering/ci-and-toolchain.md
       - Benchmark harness: engineering/benchmark-harness.md
+      - M0 spikes:
+          - Harness and status: engineering/spikes/index.md
+          - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
+          - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
       - Client SDKs: engineering/sdks.md
   - Decisions:
       - Index: adr/index.md

@@ -118,6 +118,30 @@ than self-confirmed, and committed as the fixtures every later tier verifies
 ([test strategy](../engineering/test-strategy.md)). **Everything depends on M0's findings
 standing.**
 
+**Progress.** The recorded findings, and the experiments that have not run, are listed on the
+[M0 spikes](../engineering/spikes/index.md) page. Two experiments ran on 2026-10-31:
+
+- The chain-format test vectors were reproduced byte for byte by independent implementations
+  outside Rust: two of the canonical form and two of the signature. The cross-check also
+  corrected one sentence on the chain format page, and it now checks that the copies of the
+  vectors kept in the Rust tests agree with that page
+  ([finding](../engineering/spikes/chain-vectors.md)).
+- Spike 3 ran on the host's PostgreSQL 18, not yet on the pinned version. The part of the
+  scenario that needs a separate application account did not run. The part that asks whether
+  OML's own accounts are kept apart cannot be tested yet, because no deployment's accounts are
+  specified. In that run, every kind of read the server makes stayed inside its tenant. The
+  database's statistics about indexed text did not. The account that owns the tables can read
+  other tenants' words in them. The database's own estimates also tell a session whether another
+  tenant's text holds a given word. That was measured for the owning account. By the database's
+  documentation and source it holds for any account, and keeping the owning account away from
+  requests does not close it. Both come from one search index shared by every tenant, where the
+  design says no index is shared. Whether that changes a recorded decision, or the index is
+  split per tenant, is for the maintainer to decide, and that decision is still open. The same
+  run found that, with tenant isolation on, the full-text index is never used
+  ([findings](../engineering/spikes/spike-3-rls.md)).
+
+Spikes 1, 2 and 4 have not run. M0's exit stays open.
+
 ## M1 — System of record
 
 **Goal.** The one commit point exists and the constitution is code.
