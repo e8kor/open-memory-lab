@@ -47,7 +47,8 @@ are taken by records on other branches. It amends no record.
   all (d5); one SessionStart hook document whose context frames
   the entries as stored data and asks for the summary's durable facts after a compaction (d6);
   `plugins/oml/hooks/hooks.json`, which runs the verb only when `oml` is on `PATH` (d7); and the
-  `permissions.allow` rule in the plugin README (d8).
+  two `permissions.allow` rules in the plugin README, the five read tools and every tool, with the
+  cost of the second, writes the user never sees, stated beside it (d8).
 - **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` runs the verb against the real lead behind a
   request recorder; `scripts/check_plugin.py` now also fails if `plugins/oml/hooks/hooks.json` is
   missing or does not parse, or if its SessionStart hooks are not exactly one command that runs

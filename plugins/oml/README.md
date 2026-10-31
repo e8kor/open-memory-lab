@@ -65,19 +65,30 @@ prints nothing when the server does not answer. Set `OML_SESSION_CONTEXT=off` to
 `OML_SESSION_CONTEXT_MAX_TOKENS` to change the budget. Without the CLI the hook does nothing. See
 the [CLI reference](../../docs/cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
 
-A plugin cannot allow its own tools for you, so Claude Code asks you before each call to
-`oml_remember` or `oml_recall` until you allow them. To allow every tool of this plugin, add the rule to
-`permissions.allow` in your settings:
+A plugin cannot allow its own tools for you, so Claude Code asks you before each call to one
+of them until you allow it. To stop the question on reads and keep it on every write, add the
+read tools to `permissions.allow` in your settings:
 
 ```json
 {
   "permissions": {
-    "allow": ["mcp__plugin_oml_oml"]
+    "allow": [
+      "mcp__plugin_oml_oml__oml_recall",
+      "mcp__plugin_oml_oml__oml_get",
+      "mcp__plugin_oml_oml__oml_my_work",
+      "mcp__plugin_oml_oml__oml_workarea_info",
+      "mcp__plugin_oml_oml__oml_events_tail"
+    ]
   }
 }
 ```
 
-Every write stays held until a different identity reviews it.
+The broader rule, `mcp__plugin_oml_oml`, allows every tool of the plugin, the writes too, and
+costs you the sight of them: Claude then calls `oml_remember`, `oml_learn` and `oml_supersede`,
+which can propose retiring a claim, without showing you the call, so whatever the session
+chooses to record leaves for the server unseen. What it chooses is shaped by the stored text the
+hook adds at session start, which other writers in the workarea can influence. Every write is
+still held until a different identity reviews it, so nothing it records is shared before then.
 
 ## Other MCP clients
 

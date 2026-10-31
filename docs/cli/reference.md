@@ -399,7 +399,8 @@ To record a durable fact or decision, call oml_remember with one checkable claim
 ```
 
 - Each stored entry is one line, its whitespace collapsed, so a body cannot forge a section or
-  the framing line. An empty section reads `- none`; an empty query reads `- none: the working
+  the framing line; a multi-line body, a list or a code block, arrives flattened, and `oml_get`
+  serves it whole. An empty section reads `- none`; an empty query reads `- none: the working
   directory's name has no word to search for`.
 - When the budget cut hits, the matching section ends with `- <n> more matched beyond the
   <budget>-token budget; oml_recall shows them.`
