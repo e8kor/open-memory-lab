@@ -3368,6 +3368,31 @@ async fn crew_given_at_create_is_persisted_and_returned() {
 }
 
 #[tokio::test]
+async fn a_workarea_created_without_crew_omits_crew() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+
+    // `Workarea.crew` is a crew record, never null: the create answers it
+    // absent, as the read does, when none was sent (openapi.yaml Workarea;
+    // ADR-0025 d14).
+    let (status, _, created) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(&admin)
+            .idem("wa-no-crew")
+            .body(json!({ "parent_id": root, "name": "metals-crew" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert!(created.get("crew").is_none(), "{created}");
+    assert_eq!(created["path"], "universe.metals-crew");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
 async fn an_unreadable_workarea_is_not_found() {
     let rig = fresh_rig().await;
     let router = &rig.router;
@@ -4011,14 +4036,10 @@ async fn a_cursor_from_another_key_or_expired_is_request_validation() {
     drop_db(&rig.db_name).await;
 }
 
-#[tokio::test]
-async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
-    let rig = fresh_rig().await;
-    let router = &rig.router;
-    bootstrap(router).await;
-    // An operator key is a provider-level row (tenant_id NULL): no admin
-    // issues one, so the fixture writes the row as the table's owner would,
-    // with row-level security off for that one insert.
+/// A provider-level operator key (tenant_id NULL), returned by value. No
+/// admin issues one, so the fixture writes the row as the table's owner
+/// would, with row-level security off for that one insert.
+async fn provider_operator_key(rig: &Rig) -> String {
     let operator = format!("oml_{}", "0".repeat(42) + "1");
     let hash = sha256_digest_string(operator.as_bytes());
     let mut conn = rig.store.pool().acquire().await.expect("connection");
@@ -4039,6 +4060,15 @@ async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
         .await
         .expect("restore force");
     drop(conn);
+    operator
+}
+
+#[tokio::test]
+async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    bootstrap(router).await;
+    let operator = provider_operator_key(&rig).await;
 
     // The operator never reads content: refused by its role, before any
     // tenant is consulted, with or without own.
@@ -4047,6 +4077,78 @@ async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{query}: {body}");
         assert_envelope(&body, "access.verb_ceiling");
     }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_operator_key_is_refused_get_with_verb_ceiling() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let written = remember(
+        router,
+        &writer,
+        "supplier-quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let operator = provider_operator_key(&rig).await;
+
+    // Operator keys never read content (http-api.md, admin verbs): get
+    // refuses the role at step 1 of the refusal order, before any lookup,
+    // so a row that exists and an id that names none answer alike
+    // (roles-and-keys.md refusal order; ADR-0025 d1).
+    for id in [written, Uuid::from_u128(0xDEAD).to_string()] {
+        let (status, _, body) = send(
+            router,
+            "GET",
+            &format!("/v1/memories/{id}"),
+            Call::auth(&operator),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{id}: {body}");
+        assert_envelope(&body, "access.verb_ceiling");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_get_with_x_oml_workarea_is_request_validation() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let written = remember(
+        router,
+        &writer,
+        "supplier-quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let path = format!("/v1/memories/{written}");
+
+    // The author reads its own held row back without the header.
+    let (status, _, body) = send(router, "GET", &path, Call::auth(&writer)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["artifact_id"], written.as_str());
+
+    // Get resolves no workarea, so the override is refused, not ignored,
+    // even when it names the row's own workarea (http-api.md get;
+    // ADR-0025 d13).
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &path,
+        Call::auth(&writer).workarea(&crew.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
 
     drop_db(&rig.db_name).await;
 }

@@ -308,12 +308,20 @@ where
         )
     }
 
+    /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
+    /// workarea, so an `X-OML-Workarea` sent with it is refused, not
+    /// ignored, as on the own-work listing (ADR-0025 d13).
     async fn get_memory_inner(
         st: &Self,
         artifact_id: &str,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
+        if workarea_override(headers)?.is_some() {
+            return Err(ApiError::validation(
+                "X-OML-Workarea is refused on get: get resolves no workarea",
+            ));
+        }
         // Ids are opaque; one that can name no row is absent (access.not_found).
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let memory = st
@@ -774,20 +782,21 @@ where
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let workarea = &created.workarea;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &json!({
-                "id": workarea.workarea_id,
-                "parent_id": workarea.parent_id,
-                // Derived from the parent names, as the workarea read serves
-                // it (ADR-0025 d14).
-                "path": created.path,
-                "status": workarea.status(),
-                // The crew as stored, which the workarea read serves.
-                "crew": workarea.crew,
-                "created_at": system_event_time().as_str(),
-            }),
-        ))
+        let mut response = json!({
+            "id": workarea.workarea_id,
+            "parent_id": workarea.parent_id,
+            // Derived from the parent names, as the workarea read serves
+            // it (ADR-0025 d14).
+            "path": created.path,
+            "status": workarea.status(),
+            "created_at": system_event_time().as_str(),
+        });
+        // The crew as stored, which the workarea read serves: absent when
+        // none was sent, since `Workarea.crew` is never null (openapi.yaml).
+        if let (Some(crew), Some(obj)) = (&workarea.crew, response.as_object_mut()) {
+            obj.insert("crew".to_owned(), json!(crew));
+        }
+        Ok(json_response(StatusCode::CREATED, &response))
     }
 
     async fn get_workarea(
