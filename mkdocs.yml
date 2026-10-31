@@ -131,3 +131,4 @@ nav:
       - ADR-0025: adr/ADR-0025-the-agent-only-memory-surface.md
       - ADR-0028: adr/ADR-0028-agent-key-issuance.md
       - ADR-0029: adr/ADR-0029-session-start-hook.md
+      - ADR-0035: adr/ADR-0035-a-deliverable-is-the-last-claim-in-its-chain.md

@@ -29,6 +29,29 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-31 — A deliverable is the last claim in its chain (ADR-0035, proposed)
+
+[ADR-0035](adr/ADR-0035-a-deliverable-is-the-last-claim-in-its-chain.md), proposed on
+2026-10-31, designs how agents store finished work in workareas: a claim of kind `deliverable`
+whose files ride `oml_remember` and `oml_supersede` as upload sessions or inline text, are named by
+a file manifest, are served as descriptors, and are reviewed like every claim. Its number follows those that
+records on other branches hold. It binds nothing before its acceptance, and no accepted record
+changes until then.
+
+- **Proposed, not built:** kind `deliverable` (d1); the file manifest and
+  `submission.file_manifest_invalid` (d2); download-only attachment fetch (d3); the two attachment
+  forms and `oml attach put` (d4); descriptors, counter `oml-tc/2` and `include_text` (d5); the
+  forms described per key and selected by the harness (d6); several deliverables in one workarea
+  (d7); declared lineage and the descendants read (d8); withdrawal, `lifecycle.withdraw` and
+  `lifecycle.not_held` (d9); the object-store and KMS ports with one DEK per stored object (d10);
+  three vocabulary rows (d11); the build order after iteration 3 (d12).
+- **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-40 to FR-42 on
+  the roadmap, each marked proposed. No contract page changes, so `info.version` stays
+  `0.2.0-design`.
+- **Amends, on acceptance:** ADR-0004 (d3, d4), ADR-0005 (d1), ADR-0012 (d5), ADR-0014 (d2),
+  ADR-0018 (d4) and ADR-0025 (d4, d6, d8, d11, d12, d14); their Status lines gain the back-pointer
+  then.
+
 ### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
 
 [ADR-0029](adr/ADR-0029-session-start-hook.md), accepted by the maintainer on 2026-10-31 with release v0.2.2, records what the maintainer decided on
