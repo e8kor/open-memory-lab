@@ -21,7 +21,9 @@ What it does, in order:
    database. Otherwise the connecting role owns the database and S3.2 is not run.
 2. Applies migrations/*.sql in filename order under the owner role. Two tenants are seeded
    after 0003, so the backfills of 0004 and 0005 run over both tenants' rows while FORCE ROW
-   LEVEL SECURITY binds the role running them.
+   LEVEL SECURITY binds the role running them. A table that a later migration adds and no
+   seeder writes is checked for ENABLE, FORCE and a policy, and reported as unprobed for row
+   visibility; it does not fail the run.
 3. Runs S3.1-S3.4. Each scenario has checks, which must hold, and controls, which weaken one
    thing and must then observe the leak. A scenario whose control does not leak is
    inconclusive.
@@ -41,6 +43,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import secrets
 import sys
 import uuid
@@ -89,6 +92,12 @@ RECORDED_FAILURES = {
     "S3.4/owner/pg_stats": "spike-3-rls.md#s34",
 }
 
+# The tables the seeders below wrote rows into, filled by seed_insert as they run. A table a
+# later migration adds and no seeder writes is probed structurally (ENABLE, FORCE, a policy,
+# zero rows with no tenant) and reported as unprobed for row visibility: no row of either
+# tenant exists in it, so no read of it could show a leak (docs/engineering/spikes/index.md).
+SEEDED_TABLES: set[str] = set()
+
 
 # ---------------------------------------------------------------------------
 # Results
@@ -106,6 +115,7 @@ class Scenario:
     controls: list[tuple[bool, str]] = field(default_factory=list)
     observations: list[str] = field(default_factory=list)
     settings: list[str] = field(default_factory=list)
+    unprobed: list[str] = field(default_factory=list)  # tables with no seeded row (SEEDED_TABLES)
 
     def check(self, ok: bool, text: str, key: str | None = None) -> bool:
         """key names a check RECORDED_FAILURES may list; it is "<scenario>/<role kind>/<what>"."""
@@ -210,11 +220,25 @@ def tenant_tx(conn: psycopg.Connection, tenant: uuid.UUID | None) -> Iterator[ps
         yield conn
 
 
+INSERT_TARGET = re.compile(r"\s*INSERT INTO (\w+)")
+
+
+def seed_insert(conn: psycopg.Connection, statement: str, params: list) -> None:
+    """Every seed row goes in through here, so SEEDED_TABLES names exactly the tables seeded."""
+    SEEDED_TABLES.add(INSERT_TARGET.match(statement).group(1))
+    conn.execute(statement, params)
+
+
+def unseeded(tables: dict[str, str]) -> list[str]:
+    return sorted(set(tables) - SEEDED_TABLES)
+
+
 def journal_row(conn, t: Tenant, seq: int, event_type: str, payload: dict, key: uuid.UUID | None):
     signed = json.dumps({"seq": seq, "event_type": event_type, "payload": payload,
                          "note": t.marker}, sort_keys=True).encode()
     prev = b"\x00" * 32 if seq == 1 else hashlib.sha256(f"{t.letter}-{seq - 1}".encode()).digest()
-    conn.execute(
+    seed_insert(
+        conn,
         "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, "
         "api_key_id, payload, signed_bytes_hash, sig, signed_bytes) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -226,14 +250,14 @@ def journal_row(conn, t: Tenant, seq: int, event_type: str, payload: dict, key: 
 def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
     """Rows in every 0001-0003 table, in the 0003 schema (0001 + 0002 columns)."""
     with tenant_tx(conn, t.id):
-        conn.execute("INSERT INTO tenants (id, name) VALUES (%s, %s)", [t.id, f"{t.marker} tenant"])
-        conn.execute(
-            "INSERT INTO workareas (id, tenant_id, parent_id, name, status) VALUES "
+        seed_insert(conn, "INSERT INTO tenants (id, name) VALUES (%s, %s)", [t.id, f"{t.marker} tenant"])
+        seed_insert(
+            conn, "INSERT INTO workareas (id, tenant_id, parent_id, name, status) VALUES "
             "(%s, %s, NULL, %s, 'committed'), (%s, %s, %s, %s, 'development')",
             [t.universe, t.id, f"{t.marker} universe", t.child, t.id, t.universe, f"{t.marker} child"],
         )
-        conn.execute(
-            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, default_workarea_id) "
+        seed_insert(
+            conn, "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, default_workarea_id) "
             "VALUES (%s, %s, %s, 'writer', %s, 'agent', %s), (%s, %s, %s, 'dreamer', %s, 'agent', %s)",
             [t.writer, t.id, key_hash(t.letter, "writer"), t.principal, t.child,
              t.dreamer, t.id, key_hash(t.letter, "dreamer"), f"{t.marker}/dreamer-1", t.universe],
@@ -246,13 +270,13 @@ def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
         journal_row(conn, t, 6, "submission.remember", {"artifact_id": str(t.m2)}, t.writer)
         journal_row(conn, t, 7, "submission.remember", {"artifact_id": str(t.m3)}, t.writer)
         journal_row(conn, t, 8, "lifecycle.promote", {"artifact_id": str(t.m3)}, t.dreamer)
-        conn.execute(
-            "INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES (%s, 8, %s)",
+        seed_insert(
+            conn, "INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES (%s, 8, %s)",
             [t.id, hashlib.sha256(f"{t.letter}-8".encode()).digest()],
         )
         for seq in (4, 5, 6, 7, 8):
-            conn.execute(
-                "INSERT INTO outbox (tenant_id, tenant_seq, kind, payload) VALUES (%s, %s, 'bronze-event', %s)",
+            seed_insert(
+                conn, "INSERT INTO outbox (tenant_id, tenant_seq, kind, payload) VALUES (%s, %s, 'bronze-event', %s)",
                 [t.id, seq, Jsonb({"note": t.marker, "seq": seq})],
             )
         memories = [
@@ -261,8 +285,8 @@ def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
             (t.m3, f"{t.marker} steering always drain first", "promoted", 7, "steering-rule"),
         ]
         for mid, claim, status, seq, claim_key in memories:
-            conn.execute(
-                "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, "
+            seed_insert(
+                conn, "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, "
                 "created_event_id, terms, claim_key, author_principal, author_key_id, derives_from, "
                 "lineage_principals, lineage_key_ids) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -270,12 +294,12 @@ def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
                  t.events[seq], ["oml:runbook"], claim_key, t.principal, t.writer, [],
                  [t.principal], [t.writer]],
             )
-        conn.execute(
-            "INSERT INTO review_queue (memory_id, tenant_id, held_by_key) VALUES (%s, %s, NULL)",
+        seed_insert(
+            conn, "INSERT INTO review_queue (memory_id, tenant_id, held_by_key) VALUES (%s, %s, NULL)",
             [t.m2, t.id],
         )
-        conn.execute(
-            "INSERT INTO idempotency (tenant_id, key, request_digest, response, committed_at) "
+        seed_insert(
+            conn, "INSERT INTO idempotency (tenant_id, key, request_digest, response, committed_at) "
             "VALUES (%s, %s, %s, %s, now())",
             [t.id, t.idem_key, hashlib.sha256(t.idem_key.encode()).digest(),
              Jsonb({"artifact_id": str(t.m1), "note": t.marker})],
@@ -285,13 +309,13 @@ def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
 def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
     """Rows only the 0004/0005 schema has: grants, denials, a steering kind, a held successor."""
     with tenant_tx(conn, t.id):
-        conn.execute(
-            "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, deny, epoch) VALUES "
+        seed_insert(
+            conn, "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, deny, epoch) VALUES "
             "(%s, %s, %s, 'writer', %s, '[]', 2), (%s, %s, %s, 'dreamer', %s, '[]', 3)",
             [t.grant_w, t.id, t.writer, t.child, t.grant_d, t.id, t.dreamer, t.universe],
         )
-        conn.execute(
-            "INSERT INTO key_denials (id, tenant_id, key_id, workarea_node_id, epoch, created_by) "
+        seed_insert(
+            conn, "INSERT INTO key_denials (id, tenant_id, key_id, workarea_node_id, epoch, created_by) "
             "VALUES (%s, %s, %s, %s, 3, %s)",
             [t.denial, t.id, t.writer, t.universe, t.dreamer],
         )
@@ -299,8 +323,8 @@ def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
         journal_row(conn, t, 9, "submission.remember", {"artifact_id": str(t.m4)}, t.writer)
         conn.execute("UPDATE journal_chain_head SET seq = 9 WHERE tenant_id = %s", [t.id])
         claim = f"{t.marker} runbook drain upgrade verify undrain, revised"
-        conn.execute(
-            "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, "
+        seed_insert(
+            conn, "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, "
             "created_event_id, claim_key, author_principal, author_key_id, lineage_principals, "
             "lineage_key_ids, version, kind, is_tip, body_bytes, replaces_artifact_id) "
             "VALUES (%s, %s, %s, %s, %s, 'held', %s, 'deploy-runbook', %s, %s, %s, %s, 2, "
@@ -411,13 +435,15 @@ def s3_1(owner_ci: str, a: Tenant, b: Tenant, owner_name: str) -> Scenario:
         owners = {r[4] for r in rls}
         s.check(owners == {owner_name}, f"the connecting role {owner_name} owns every table (owners: {sorted(owners)})")
 
+        s.unprobed = unseeded(tables)
         for viewer, other in ((a, b), (b, a)):
             c = counts(conn, tables, viewer.id, other.id)
             foreign = {t: v[1] for t, v in c.items() if v[1]}
-            empty = [t for t, v in c.items() if v[0] == 0]
+            empty = [t for t, v in c.items() if v[0] == 0 and t in SEEDED_TABLES]
             s.check(not foreign and not empty,
-                    f"as owner with tenant {viewer.letter} set, every table shows its own rows only "
-                    f"({sum(v[0] for v in c.values())} rows over {len(c)} tables, 0 of tenant {other.letter})"
+                    f"as owner with tenant {viewer.letter} set, every seeded table shows its own rows only "
+                    f"({sum(v[0] for v in c.values())} rows over {len(c) - len(s.unprobed)} seeded tables, "
+                    f"0 of tenant {other.letter})"
                     + (f"; foreign rows: {foreign}" if foreign else "") + (f"; empty: {empty}" if empty else ""))
         c = counts(conn, tables, None, b.id)
         s.check(all(v[0] == 0 for v in c.values()),
@@ -509,11 +535,14 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
 
     with connect(service_ci) as conn:
         tables = tenant_tables(conn)
+        s.unprobed = unseeded(tables)
         c = counts(conn, tables, a.id, b.id)
         foreign = {t: v[1] for t, v in c.items() if v[1]}
-        s.check(not foreign and all(v[0] > 0 for v in c.values()),
-                f"as the service role with tenant A set, every table shows tenant A rows only "
-                f"({sum(v[0] for v in c.values())} rows, 0 of tenant B)" + (f"; foreign: {foreign}" if foreign else ""))
+        empty = [t for t, v in c.items() if v[0] == 0 and t in SEEDED_TABLES]
+        s.check(not foreign and not empty,
+                f"as the service role with tenant A set, every seeded table shows tenant A rows only "
+                f"({sum(v[0] for v in c.values())} rows, 0 of tenant B)" + (f"; foreign: {foreign}" if foreign else "")
+                + (f"; empty: {empty}" if empty else ""))
         c = counts(conn, tables, None, b.id)
         s.check(all(v[0] == 0 for v in c.values()),
                 "as the service role with no tenant set, every table shows 0 rows")
@@ -690,8 +719,10 @@ def s3_3_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant) -> None:
                     f"[{role}] SET LOCAL outside a transaction block has no effect: the server warns "
                     f"({notices[-1] if notices else 'no warning'}) and the next statement shows 0 rows")
 
+            # A row every constraint and domain of the schema accepts (a lowercase label, under
+            # A's universe), so the policy is the only thing that can refuse it.
             state = sqlstate_of(conn, "INSERT INTO workareas (tenant_id, parent_id, name, status) "
-                                      "VALUES (%s, NULL, 'no-tenant write', 'development')", [a.id])
+                                      "VALUES (%s, %s, 'no-tenant-write', 'development')", [a.id, a.universe])
             s.check(state == "42501", f"[{role}] a write with no tenant set is refused with {state} "
                                       "(new row violates row-level security policy)")
 
@@ -1040,10 +1071,13 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
             n = rows_tainted(rows, needles)
             if n or err:
                 leaks.append(f"{name}: {n} tainted rows {err or ''}")
+        s.unprobed = unseeded(tables)
         s.check(not leaks, f"[{role}] {len(gen)} shapes with no tenant predicate (full scans and GROUP BY of all "
                            f"{len(tables)} tables, joins, LATERAL, UNION ALL, window, ORDER BY LIMIT, overlap, a "
                            "non-leakproof regex) return tenant A rows and no value of tenant B"
-                           + (f"; {leaks}" if leaks else ""))
+                           + (f"; {leaks}" if leaks else "")
+                           + (f"; {s.unprobed} hold no seeded row, so their scans could show none"
+                              if s.unprobed else ""))
 
         schema_indexes = {r[0] for r in conn.execute(
             "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'").fetchall()}
@@ -1088,12 +1122,10 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         conn.execute(
             "CREATE FUNCTION pg_temp.spike_leak(text) RETURNS boolean LANGUAGE plpgsql COST 0.0001 AS "
             "$$ BEGIN RAISE NOTICE 'spike-saw:%', $1; RETURN true; END $$")
-        probes = ["SELECT id FROM memories WHERE pg_temp.spike_leak(claim)",
-                  "SELECT id FROM workareas WHERE pg_temp.spike_leak(name)",
-                  "SELECT id FROM api_keys WHERE pg_temp.spike_leak(principal)",
-                  "SELECT seq FROM journal WHERE pg_temp.spike_leak(payload::text || principal)",
-                  "SELECT id FROM tenants WHERE pg_temp.spike_leak(name)",
-                  "SELECT seq FROM outbox WHERE pg_temp.spike_leak(payload::text)"]
+        # The function is handed the whole row as text, so a migration that renames or moves a
+        # column cannot leave it handed NULLs.
+        probes = [f"SELECT 1 FROM {t} x WHERE pg_temp.spike_leak(x::text)"
+                  for t in ("memories", "workareas", "api_keys", "journal", "tenants", "outbox")]
         seen: dict[str, list[str]] = {}
         for tenant, label in ((a.id, "A"), (b.id, "B")):
             notices.clear()
@@ -1223,9 +1255,12 @@ def host_facts() -> str:
 def print_finding(s: Scenario, versions: str, settings: str, environment: str) -> None:
     failing = [key for ok, _, key in s.checks if not ok]
     recorded = failing and all(key in RECORDED_FAILURES for key in failing)
+    # A failure is "ADR amendment needed" until the maintainer decides otherwise; the harness
+    # never reads a failure as needing none (docs/engineering/spikes/index.md).
     action = {"pass": "none",
-              "fail": ("recorded: " + ", ".join(RECORDED_FAILURES[k] for k in failing)) if recorded else
-                      "ADR amendment needed if the failed check stands on review: " + s.adr_clause,
+              "fail": f"ADR amendment needed, against {s.adr_clause}; awaiting maintainer decision"
+                      + (f"; recorded at {', '.join(RECORDED_FAILURES[k] for k in failing)}" if recorded
+                         else "; no finding records this failure yet"),
               "inconclusive": "re-run: a control did not leak, so a check could not have failed",
               "not run": "run where the harness can mint roles (CI job rls-spike)"}[s.verdict]
     print(f"\nspike-finding: {s.id} — {s.title}")
@@ -1233,7 +1268,8 @@ def print_finding(s: Scenario, versions: str, settings: str, environment: str) -
     print(f"versions:      {versions}")
     print(f"settings:      {'; '.join([settings, *s.settings])}")
     print(f"environment:   {environment}")
-    print(f"verdict:       {s.verdict}" + (f" — {s.not_run_reason}" if not s.ran else ""))
+    print(f"verdict:       {s.verdict}" + (f" — {s.not_run_reason}" if not s.ran else "")
+          + (f"; unprobed for row visibility, no seeded row: {', '.join(s.unprobed)}" if s.unprobed else ""))
     print(f"adr-clause:    {s.adr_clause}")
     print(f"action:        {action}")
     for ok, text, key in s.checks:
@@ -1411,8 +1447,10 @@ def main() -> int:
         sys.stdout.flush()
         print("spike_rls: FAIL: " + "; ".join(problems), file=sys.stderr)
         return 1
+    unprobed = sorted({t for sc in scenarios for t in sc.unprobed})
     print("spike_rls: OK: every check passed or reproduced its recorded finding"
-          + (f"; not run: {skipped}" if skipped else ""))
+          + (f"; not run: {skipped}" if skipped else "")
+          + (f"; unprobed for row visibility (no seeded row): {unprobed}" if unprobed else ""))
     return 0
 
 

@@ -1,13 +1,13 @@
 <!--
 id: engineering/spikes/spike-3-rls
 tier: engineering
-status: recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail for the table owner on planner statistics, S3.3 passes, S3.2 did not run; the pinned pg17 has not run
+status: recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail for the table owner on planner statistics (ADR amendment needed, awaiting the maintainer's decision), S3.3 passes, S3.2 did not run; the pinned pg17 has not run
 answers: what M0 spike 3 found for S3.1–S3.4 (FORCE and the owner, the owner/service split, SET LOCAL across pooled transactions, the hostile cross-tenant probe), on which versions, what failed and why, and what each finding asks of the design
 -->
 
 # Findings: spike 3, RLS hardening
 
-**Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail for the table owner on planner statistics, S3.3 passes, S3.2 did not run; the pinned pg17 has not run
+**Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail for the table owner on planner statistics (ADR amendment needed, awaiting the maintainer's decision), S3.3 passes, S3.2 did not run; the pinned pg17 has not run
 
 These are the findings for the four scenarios of the critical path's
 [spike 3](../../product/critical-path.md#spike-3-rls-hardening), one per scenario, in its
@@ -29,7 +29,10 @@ result for a non-owner role.
 | [S3.4](#s34) hostile cross-tenant probe | **fail**: every read shape of the fold tables returns 0 rows; planner statistics do not | not yet run (CI `rls-spike`) |
 
 The two failures are one fact, seen from two scenarios. Both are entries in the harness's
-`RECORDED_FAILURES`, so CI stays green while they reproduce and fails when they stop.
+`RECORDED_FAILURES`, so CI stays green while they reproduce and fails when they stop. Recording
+them does not settle them: each finding says ADR amendment needed until the maintainer decides,
+and the harness prints the same action. The run seeded every table of migrations 0001–0005, so
+no table was left unprobed.
 
 ## S3.1 — FORCE binds the table owner {#s31}
 
@@ -48,8 +51,9 @@ environment:   Linux 7.0.0-38-generic x86_64, 8 vCPU AMD EPYC-Genoa, 15.2 GiB RA
 verdict:       fail: the owner's table reads are filtered, and its view of the planner
                statistics of the expression index memories_claim_fts is not
 adr-clause:    ADR-0007 d2, through the FORCE commitment of security.md (commitments C6)
-action:        no ADR amendment, on this finding's reading, which the maintainer confirms
-               (below); recorded in the harness as S3.1/owner/pg_stats
+action:        ADR amendment needed (ADR-0007 d2 / security.md FORCE commitment), unless
+               the maintainer reads FORCE as fencing table reads only; awaiting maintainer
+               decision; recorded in the harness as S3.1/owner/pg_stats
 ```
 
 **What held.** All 11 tables have `ENABLE` and `FORCE ROW LEVEL SECURITY` and a policy. Set to
@@ -87,25 +91,96 @@ the control shows. `FORCE` binds what the owner reads from the table. It does no
 owner's DDL, and it does not bind the owner's view of the catalog. Both are reasons the querying
 role must not be the owner, and that is S3.2's split.
 
-**Reading for the action.** ADR-0007 d2 binds the roles OML workloads use, and security.md's
-split keeps those roles off ownership: "migrations run under a separate owner role no workload
-uses". If the split holds, the leak above reaches only the role that runs migrations, and that
-role can lift `FORCE` anyway. So this finding asks for no amendment to the decision. It does
-ask for three things:
+**Reading for the action.** There are two readings, and the maintainer has not yet chosen
+between them. The finding therefore says **ADR amendment needed**.
 
-- **The split is not built.** On 2026-10-31, `oml-server-lead` 0.2.0 (commit `030d7b8`) was started
-  against a throwaway database. It ran the migrations on boot over its own `postgres.url`, and its
-  role then owned all 11 tables. As built, the role that serves tenant requests is the owner, so
-  the statistics leak and the `NO FORCE` capability both reach it. Using either still needs SQL
-  that the server does not issue.
+- **This page's reading.** ADR-0007 d2 binds the roles OML workloads use, and security.md's
+  split keeps those roles off ownership: "migrations run under a separate owner role no workload
+  uses". If the split holds, the leak above reaches only the role that runs migrations, and that
+  role can lift `FORCE` anyway. On this reading `FORCE` fences table reads only, the decision
+  stands, and security.md takes the page edit below.
+- **The other reading.** security.md's `FORCE` sentence promises that `FORCE` fences the owner,
+  and the owner's view of `pg_stats` breaks that promise. On this reading the amendment goes
+  ahead.
+
+The finding asks for three more things whichever reading the maintainer takes:
+
+- **The split is not built.** The evidence is a run outside the harness, recorded under
+  "Evidence: the lead migrates as its serving role" below. `oml-server-lead` 0.2.0 (commit
+  `030d7b8`) ran the migrations on boot over its one `postgres.url`, and that URL's role then
+  owned all 12 tables: the 11 of migrations 0001–0005 and `_sqlx_migrations`. The lead's source
+  at that commit agrees. `crates/bins/oml-server-lead/src/main.rs` connects one `PgStore` to
+  `postgres.url`, calls `migrate()` on it and serves over the same store, and the lead's
+  `Config` has no `postgres.owner_url`, the owner URL that
+  [configuration](../../operations/configuration.md) designs. As built, the role that serves
+  tenant requests is the owner, so both the statistics leak and the `NO FORCE` capability reach
+  it. Using either still needs SQL that the server does not issue. This is an implementation
+  gap against C6: the split is decided and not built.
 - **A page edit for security.md**, proposed and not made here: say that `FORCE` binds an owner's
   table reads but not its view of planner statistics or its DDL, and that the split, not `FORCE`,
   is what keeps those from a workload.
-- **`_sqlx_migrations`.** The lead's sqlx migrator creates this table, with neither RLS nor
-  `FORCE`. It holds no tenant data, but security.md says every Postgres table carries a policy
-  and that "there is no table exempted for convenience". Either that sentence or that table
-  needs to change. The harness applies the SQL files directly, so its database has no such
-  table.
+- **`_sqlx_migrations`: ADR amendment needed (ADR-0007 d2), or an implementation fix.**
+  ADR-0007 d2 decides "Row-level security keyed by `tenant_id` on every Postgres table. No table
+  is exempted for convenience", and security.md says the same. The lead's sqlx migrator creates
+  `_sqlx_migrations` with no RLS, no `FORCE` and no policy (the run below). The table holds no
+  tenant data and has no `tenant_id` to key a policy on. So either d2 is amended to name the
+  migrator's ledger as an exemption, or the implementation brings that table under d2. Which one
+  is the maintainer's decision. The harness applies the SQL files directly, so its database has
+  no such table, and none of its checks cover it.
+
+**Evidence: the lead migrates as its serving role.** This run happened on 2026-10-31, outside the
+harness, against a throwaway database on the host's PostgreSQL 18.6. The connecting role was
+`oml` (CREATEDB, not a superuser), the same as in the harness run. `env -i` keeps every `OML_*`
+variable out of the environment, because the lead reads those variables over the file
+(`crates/bins/oml-server-lead/src/lib.rs`, `Config::load`). The configuration file, with the
+scratch path and the database name replaced:
+
+```toml
+[postgres]
+url = "postgresql://oml:oml_dev_only@127.0.0.1:5432/<throwaway>"
+
+[server]
+listen = "127.0.0.1:8341"
+
+[kms]
+adapter = "file"
+keyring_path = "<scratch>/keyring"
+```
+
+```text
+$ psql -h 127.0.0.1 -U oml -d oml_dev -c "CREATE DATABASE <throwaway>"
+$ env -i PATH=/usr/bin:/bin HOME=<scratch> /usr/local/bin/oml-server-lead --config <scratch>/oml.toml
+INFO oml_server_lead: build version=0.2.0 commit=030d7b8005ed668032c1a620805b0549cd8acbec ...
+INFO oml_server_lead: migrations applied
+INFO oml_server_lead: startup fork check passed tenants=0
+INFO oml_server_lead: serving both rings addr=127.0.0.1:8341
+
+$ psql -h 127.0.0.1 -U oml -d <throwaway> -c "SELECT c.relname, pg_get_userbyid(c.relowner) AS owner,
+    c.relrowsecurity, c.relforcerowsecurity,
+    (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid) AS policies
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relkind IN ('r','p') ORDER BY 1"
+      relname       | owner | relrowsecurity | relforcerowsecurity | policies
+--------------------+-------+----------------+---------------------+----------
+ _sqlx_migrations   | oml   | f              | f                   |        0
+ api_keys           | oml   | t              | t                   |        2
+ grants             | oml   | t              | t                   |        1
+ idempotency        | oml   | t              | t                   |        1
+ journal            | oml   | t              | t                   |        1
+ journal_chain_head | oml   | t              | t                   |        1
+ key_denials        | oml   | t              | t                   |        1
+ memories           | oml   | t              | t                   |        1
+ outbox             | oml   | t              | t                   |        1
+ review_queue       | oml   | t              | t                   |        1
+ tenants            | oml   | t              | t                   |        2
+ workareas          | oml   | t              | t                   |        1
+(12 rows)
+```
+
+`_sqlx_migrations` listed versions 1–5, all `success = t`. The lead was then stopped and the
+database dropped. The run's log also printed the empty deployment's single-use enrollment token,
+which is left out here. Re-running it takes the steps above and nothing else. The repository has
+no script for it, because the harness, not the lead, is what CI runs.
 
 ## S3.2 — owner/migration-role split, no BYPASSRLS {#s32}
 
@@ -216,7 +291,9 @@ verdict:       fail: every read shape of the fold tables returns 0 rows of tenan
                pg_stats does not (S3.1's failure, seen from a tenant session)
 adr-clause:    ADR-0007 d2 and d6 (RLS as the second fence, judged against the hostile
                co-tenant)
-action:        as S3.1; recorded in the harness as S3.4/owner/pg_stats; the observations
+action:        ADR amendment needed (ADR-0007 d2 / security.md FORCE commitment), unless
+               the maintainer reads FORCE as fencing table reads only; awaiting maintainer
+               decision; recorded in the harness as S3.4/owner/pg_stats; the observations
                below go to M6's security pass, and one goes to FR-4 and FR-7
 ```
 
@@ -287,15 +364,20 @@ lexemes in the statistics of `memories_claim_fts`. No read shape of the fold tab
 
 ## For the maintainer
 
-- **ADR amendment needed: none, on this page's reading.** S3.1 and S3.4 fail only for the table
-  owner, which the decided split keeps off every workload (S3.1, "Reading for the action"). If the
+- **ADR amendment needed (ADR-0007 d2 / security.md `FORCE` commitment), awaiting the
+  maintainer's decision.** S3.1 and S3.4 fail for the table owner. On this page's reading,
+  `FORCE` fences table reads only, the decided split keeps every workload off ownership, and the
+  decision stands with a page edit to security.md (S3.1, "Reading for the action"). If the
   maintainer reads ADR-0007 d2, or security.md's `FORCE` sentence, as promising that `FORCE` alone
-  fences the owner, the failure breaks that promise, and an amendment is needed.
-- **Implementation:** the lead's migrate-on-boot makes the serving role the owner. The split is
-  what C6 decides, and it is not built.
+  fences the owner, the failure breaks that promise and the amendment goes ahead. Neither reading
+  has been chosen.
+- **ADR amendment needed (ADR-0007 d2), or an implementation fix, awaiting the maintainer's
+  decision:** `_sqlx_migrations` has no RLS, no `FORCE` and no policy, and d2 exempts no table
+  (S3.1, the lead run).
+- **Implementation:** the lead's migrate-on-boot makes the serving role the owner (S3.1, the lead
+  run). The split is what C6 decides, and it is not built.
 - **Page edits, proposed and not made:** security.md, on what `FORCE` binds; postgres-schema.md,
-  on the policy predicate form and the zero-row behaviour; security.md or the sqlx table, on
-  `_sqlx_migrations`.
+  on the policy predicate form and the zero-row behaviour.
 - **A decision to weigh:** whether a GIN index under RLS is still the FTS strategy, given that RLS
   keeps it out of every plan.
 - **The pinned run:** CI job `rls-spike` on `pgvector/pgvector:pg17` decides S3.2 and the

@@ -29,6 +29,32 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.2.0-design
 
+### 2026-10-31 — M0 spike 3: a failed scenario says ADR amendment needed, the lead run is recorded, and the harness follows new migrations
+
+A review fix to the spike 3 findings and harness of the entry below. No decision changes, and no
+record is amended or proposed.
+
+- **Findings:** S3.1 and S3.4 now say **ADR amendment needed** against ADR-0007 d2 and
+  security.md's `FORCE` commitment, awaiting the maintainer's decision. The earlier wording said
+  no amendment was needed and that the maintainer had confirmed this, and the maintainer had not.
+  `_sqlx_migrations`, which has no RLS, no `FORCE` and no policy, is recorded as ADR amendment
+  needed (ADR-0007 d2) or an implementation fix. The run of `oml-server-lead` 0.2.0 behind both
+  claims is now on the page: the command, the configuration shape and the catalog output, which
+  show the serving role owning all 12 tables
+  ([findings](engineering/spikes/spike-3-rls.md)).
+- **Harness:** `testing/spikes/rls/spike_rls.py` prints the same action for a failure. It records
+  which tables its seeders write. A table that a later migration adds and no seeder writes is
+  reported as unprobed for row visibility, and it does not fail the run. The no-tenant write and
+  the probe function no longer depend on the 0001–0005 column shapes. Run on PostgreSQL 18.6 with
+  `feat/iteration-3`'s `0006_names.sql` added from scratch, the harness as first committed failed
+  S3.1 (`crews` empty) and S3.3 (`23514`). As fixed, it gives the 0001–0005 verdicts and reports
+  `crews` as unprobed. It still gives the 0001–0005 verdicts on this branch's migrations.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md) (how the harness follows the
+  migrations, and two more rejected alternatives), [spike 3](engineering/spikes/spike-3-rls.md),
+  [critical path](product/critical-path.md) (M0 progress) and this page. Outside `docs/`, the
+  harness.
+- **Not verified here:** any pg17 or service-role result. CI job `rls-spike` has not run.
+
 ### 2026-10-31 — M0: the chain-format vectors reproduce outside Rust, and spike 3 runs on PostgreSQL 18.6
 
 An M0 change: two of the critical path's de-risking experiments are built and run, and their

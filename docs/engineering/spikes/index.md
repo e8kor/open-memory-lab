@@ -80,6 +80,15 @@ the database when it ends, whatever the result. It seeds two tenants after `0003
 than an empty schema. Every text value of tenant B carries a marker string. The hostile probe
 fails if a B marker, B's tenant id or any of B's row ids appears in its results.
 
+Every seed row goes in through one helper, which records the table it writes. The checks that
+need rows in a table (each tenant sees its own rows and none of the other's) apply to the
+recorded tables. A table that a later migration adds, and that no seeder writes, still gets the
+checks that need no rows: `ENABLE` and `FORCE` and a policy (S3.1), zero rows with no tenant
+set, and its full scans in S3.4. Its finding reports it as **unprobed for row visibility**, and
+so does the run's last line. An unprobed table does not fail the run. It also is not evidence:
+no row of either tenant exists in it, so no read of it could show a leak, until a seeder writes
+it.
+
 ### The role split is built when the connecting role can build it
 
 The critical path's S3.2 needs an owner role and a separate application role. The harness mints
@@ -119,7 +128,10 @@ its finding's anchor). A listed check that fails prints `FAIL, recorded` and doe
 run. A listed check that passes, or does not run, does fail the run, so a fixed failure gets its
 finding re-recorded instead of going stale. A failure not on the list fails the run as usual.
 This is a strict expected failure: the scenario's verdict stays `fail`, and only the exit code
-treats a known result as known.
+treats a known result as known. Recording a failure does not decide it. A failed scenario's
+`action` line, on its finding and in the script's output, says **ADR amendment needed** with its
+clause and "awaiting maintainer decision" until the maintainer decides. The harness never prints
+`none` for a failure.
 
 ### Findings live here, one block per scenario
 
@@ -135,8 +147,36 @@ a separate record, and this page does not write it.
 `.github/workflows/m0-spikes.yml` holds two jobs. `chain-vectors` runs the vector check.
 `rls-spike` runs spike 3 against a `pgvector/pgvector:pg17` service with `--require-all`. Both
 use the pinned uv and Python versions the workflow names. They keep the critical path's
-findings reproducible on every pull request, which is the "kept green forever after" that
-[test strategy](../test-strategy.md#integration-tier) asks of spike 3.
+findings reproducible on every pull request. That is what
+[test strategy](../test-strategy.md#integration-tier) asks of spike 3 when it says "kept green
+forever after", and it ties `rls-spike` to `migrations/` (next section).
+
+### The harness follows the migrations
+
+`rls-spike` applies whatever `migrations/` holds, so a pull request that adds a migration runs the
+spike against it. A new table is reported unprobed, as above, and does not fail the job. A new
+migration does need the harness updated in the same change when any of these holds:
+
+- it renames or constrains a column that a seed statement writes (seeding happens after 0003 and
+  after the last migration);
+- it renames or drops a column that S3.4's copies of the adapter's read shapes name (taken
+  from `crates/adapters/oml-pg/src/lib.rs` at `02a385d`), or the adapter's shapes change;
+- it changes a recorded failure, for example by dropping the expression index
+  `memories_claim_fts`. The stale entry then fails the run, and the finding is re-recorded.
+
+The harness was run against the in-flight rewrite. On 2026-10-31 it ran on the host's 18.6, as
+the owner, over this branch's 0001–0005 plus `migrations/0006_names.sql` from `feat/iteration-3`
+at `65c07dc`, copied into scratch with `--migrations`. That migration adds the RLS table `crews`,
+moves `tenants.name` and `workareas.name` to `prior_name`, and adds a `name` column of the domain
+`oml_name`. With the harness as first committed, that run failed in two places. S3.1 reported
+`crews` empty for both tenants. S3.3's no-tenant write was refused with `23514`, because its
+workarea name was not an `oml_name`, so the policy never got to refuse it with `42501`. With the
+harness as it stands, the run gives the verdicts of the 0001–0005 run and reports `crews` as
+unprobed. Three changes made that happen. The non-empty checks apply to seeded tables only. The
+no-tenant write uses a row that every constraint of either schema accepts. The non-leakproof
+probe function is handed whole rows, where before it was handed named columns that 0006 leaves
+NULL. That run does not cover the pinned pg17 or the service role. When `feat/iteration-3`
+merges, `crews` stays unprobed until a seeder writes it.
 
 ## Rejected alternatives
 
@@ -157,3 +197,10 @@ findings reproducible on every pull request, which is the "kept green forever af
   without parsing its output.
 - **A private superuser cluster on the developer host, to run S3.2 locally.** It would add a
   third environment that neither the pin nor the deployment uses, to save one CI run.
+- **Scoping `rls-spike` by a path filter, or running it advisory until the rewrite lands.** The
+  branch it would spare is the one that changes `migrations/`. A path filter on `migrations/`
+  would still run it there, and a path filter is set per workflow, so it would also scope
+  `chain-vectors`. An advisory job would show a real cross-tenant leak as green.
+- **Requiring every table to hold seeded rows.** That would fail every migration that adds a
+  table until the harness seeds it, which here means the in-flight rewrite. Reporting the table
+  as unprobed keeps the gap in the output without blocking.

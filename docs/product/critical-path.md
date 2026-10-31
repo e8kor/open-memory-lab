@@ -129,9 +129,10 @@ standing.**
   needs a separate application role did not run at all. In that run, every kind of read the
   server makes stayed inside its tenant. The database's statistics about indexed text did not: the account that owns
   the tables can read other tenants' words in them. That is one more reason the owning account
-  must never serve requests, and the first working slice does not yet keep the two apart. The
-  same run found that, with tenant isolation on, the full-text index is never used
-  ([findings](../engineering/spikes/spike-3-rls.md)).
+  must never serve requests, and the first working slice does not yet keep the two apart.
+  Whether the result changes a recorded decision is for the maintainer to decide, and that
+  decision is still open. The same run found that, with tenant isolation on, the full-text index
+  is never used ([findings](../engineering/spikes/spike-3-rls.md)).
 
 Spikes 1, 2 and 4 have not run. M0's exit stays open.
 
