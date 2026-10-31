@@ -40,18 +40,36 @@ pub fn session_start(
     stdin: &mut dyn Read,
 ) -> Result<String, Option<String>> {
     let set = |name: &str| var(name).filter(|v| !v.is_empty());
-    // Read first, so that every line this prints, a refused variable's
-    // value included, goes through the redaction.
+    let switch = set("OML_SESSION_CONTEXT");
+    if switch.as_deref() == Some("off") {
+        return Err(None);
+    }
+    // A key value is printable ASCII. One with whitespace or any other byte
+    // is refused before anything is sent: a header error would carry it raw,
+    // and a server that trims it would authenticate a value the redaction
+    // below no longer matches (ADR-0029 d4).
     let api_key = set("OML_API_KEY");
+    if api_key
+        .as_ref()
+        .is_some_and(|key| !key.bytes().all(|b| b.is_ascii_graphic()))
+    {
+        return Err(Some(
+            "OML_API_KEY holds whitespace or a character outside printable ASCII, so it was not \
+             sent and no context was loaded"
+                .to_owned(),
+        ));
+    }
+    // Every line this prints, a refused variable's value included, goes
+    // through the redaction, and before it is flattened, so the flattening
+    // cannot change what the redaction matches.
     let redact = |text: &str| match &api_key {
         Some(key) => text.replace(key.as_str(), REDACTED),
         None => text.to_owned(),
     };
-    let quiet = |reason: String| Some(redact(&one_line(&reason)));
+    let quiet = |reason: String| Some(one_line(&redact(&reason)));
 
-    match set("OML_SESSION_CONTEXT").as_deref() {
+    match switch.as_deref() {
         None | Some("on") => {}
-        Some("off") => return Err(None),
         Some(other) => {
             return Err(quiet(format!(
                 "OML_SESSION_CONTEXT is {other:?}; it takes on or off, so no context was loaded"

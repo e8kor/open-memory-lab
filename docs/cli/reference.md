@@ -347,7 +347,7 @@ key's tools read, and performs no act.
 | Variable | Read as |
 |---|---|
 | `OML_URL` | The server, without `/mcp`: the value the plugin's MCP entry reads. Unset or empty, the verb prints nothing. |
-| `OML_API_KEY` | The agent's own plugin key, the bearer of both requests. Unset or empty, the verb prints nothing. |
+| `OML_API_KEY` | The agent's own plugin key, the bearer of both requests. Unset or empty, the verb prints nothing; a value holding whitespace or a character outside printable ASCII is refused before anything is sent, with a stderr line that names the variable and never the value. |
 | `OML_SESSION_CONTEXT` | Unset, empty or `on` runs the verb; `off` prints nothing; any other value prints nothing and names the variable on stderr. |
 | `OML_SESSION_CONTEXT_MAX_TOKENS` | The recall's `max_tokens`: default `800`, an integer from 1 to 2000; any other value prints nothing and names the variable on stderr. Steering is never cut, so the budget bounds the hits ([token budgets](../architecture/retrieval.md#token-budgets)). The ceiling keeps the hits inside Claude Code's 10,000-character cap on hook context ([ADR-0029](../adr/ADR-0029-session-start-hook.md) d2). |
 
@@ -364,7 +364,8 @@ the PoC, names every word of it.
 
 **It fails open.** Each of these ends with no stdout and exit `0`, and at most one stderr line
 naming the reason, with the key value redacted: `OML_SESSION_CONTEXT=off`; a refused variable
-value above; a missing `OML_URL` or `OML_API_KEY`; stdin that is not a JSON object, or whose
+value above, an `OML_API_KEY` that is not all printable ASCII among them; a missing `OML_URL` or
+`OML_API_KEY`; stdin that is not a JSON object, or whose
 `source` or `cwd` is not a string; an unreachable server; a typed refusal; a request that takes
 longer than 3 seconds; and an answer it cannot read. The context is printed whole or not at
 all: a failed listing sends no recall, and a failed recall prints nothing. A write-only key,
