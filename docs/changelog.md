@@ -199,6 +199,243 @@ each of those records' Status lines gains the back-pointer when ADR-0026 is acce
 
 ## 0.2.0-design
 
+### 2026-10-31 — M0 spikes: the Rust tests' copies of the vectors are compared with the page, S3.2 is two findings, and EXPLAIN's estimate is a recorded cross-tenant disclosure
+
+A second review fix to the M0 spike findings and harnesses. No decision changes, and no record is
+amended or proposed.
+
+- **Chain vectors:** the M0 spikes page said the repository held no second copy of the vectors.
+  It holds three: the Rust tests in `crates/oml-domain` and `crates/bins/oml-cli` keep the
+  vectors as literals, and each Rust test checks the code against its own copy, so until now the
+  copies agreed with the page only because they had been copied by hand.
+  `scripts/check_chain_vectors.py` now finds every Rust file that copies the vectors and compares
+  each copy with the page. It reads `crates/` and changes nothing there. Run from a scratch tree,
+  the check as first committed passed with a drifted copy. As it stands, it fails on six drifted
+  copies and passes on the repository's three files (6 `signed_bytes` literals, 34 hex values).
+  Having the Rust tests read the page is a follow-up for `feat/iteration-3`
+  ([finding](engineering/spikes/chain-vectors.md#the-rust-tests-copies)).
+- **S3.2:** S3.2 is now two findings. The first is PostgreSQL's mechanism: a non-owner role
+  without `BYPASSRLS` stays inside the policy, and migrations succeed under the owner. It can
+  pass in CI. Its controls are the refused DDL taking effect for the owner, rolled back, and the
+  service role's rows under tenant B. The `BYPASSRLS` control role is gone. The second is the
+  claim about OML's own roles. It is **inconclusive, not testable** on every host, because the
+  harness's roles are its own and no page specifies a deployment's roles and grants, so a CI run
+  never prints `pass` and `none` for it. The harness's role attributes are now preconditions,
+  not checks ([findings](engineering/spikes/spike-3-rls.md#s32)).
+- **S3.1 and S3.4:** the page claimed that the role split confines the statistics leak to the
+  owner. Its own S3.4 observation contradicted that. EXPLAIN's row estimate under tenant A follows
+  tenant B's words, and by PostgreSQL's documentation and the `REL_17_STABLE` source it does so for
+  every role the policy binds. The estimate is now the check `S3.4/<role>/estimate`. The owner's
+  failure is recorded. The service role's is not, so CI fails if it leaks. Both findings now also
+  cite ADR-0007 d4 and security.md's STRIDE information-disclosure mitigation ("no cross-tenant
+  index to leak through"), which the shared index `memories_claim_fts` breaks. Their action is
+  ADR amendment needed, or an implementation fix that makes the FTS index per tenant, awaiting
+  the maintainer. The designed `memories_fts` and `held_fts` are not partitioned per tenant
+  either.
+- **Harness fix found on the way:** the owner's `UPDATE journal` observation ran with no tenant
+  set, matched no row, and could not show the guard trigger. It now runs under tenant A.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md),
+  [chain vectors](engineering/spikes/chain-vectors.md), [spike 3](engineering/spikes/spike-3-rls.md),
+  [critical path](product/critical-path.md) (M0 progress),
+  [CI and toolchain](engineering/ci-and-toolchain.md) (the gate row), `docs/llms.txt` and this
+  page. Outside `docs/`, the two harnesses.
+- **Not verified here:** any pg17 or service-role result, S3.2's mechanism among them. CI jobs
+  `chain-vectors` and `rls-spike` have not run. The S3.2 code path was run only with the owner
+  standing in for the service role, which the preconditions reported as not as minted.
+
+### 2026-10-31 — M0 spike 3: a failed scenario says ADR amendment needed, the lead run is recorded, and the harness follows new migrations
+
+A review fix to the spike 3 findings and harness of the entry below. No decision changes, and no
+record is amended or proposed.
+
+- **Findings:** S3.1 and S3.4 now say **ADR amendment needed** against ADR-0007 d2 and
+  security.md's `FORCE` commitment, awaiting the maintainer's decision. The earlier wording said
+  no amendment was needed and that the maintainer had confirmed this, and the maintainer had not.
+  `_sqlx_migrations`, which has no RLS, no `FORCE` and no policy, is recorded as ADR amendment
+  needed (ADR-0007 d2) or an implementation fix. The run of `oml-server-lead` 0.2.0 behind both
+  claims is now on the page: the command, the configuration shape and the catalog output, which
+  show the serving role owning all 12 tables
+  ([findings](engineering/spikes/spike-3-rls.md)).
+- **Harness:** `testing/spikes/rls/spike_rls.py` prints the same action for a failure. It records
+  which tables its seeders write. A table that a later migration adds and no seeder writes is
+  reported as unprobed for row visibility, and it does not fail the run. The no-tenant write and
+  the probe function no longer depend on the 0001–0005 column shapes. Run on PostgreSQL 18.6 with
+  `feat/iteration-3`'s `0006_names.sql` added from scratch, the harness as first committed failed
+  S3.1 (`crews` empty) and S3.3 (`23514`). As fixed, it gives the 0001–0005 verdicts and reports
+  `crews` as unprobed. It still gives the 0001–0005 verdicts on this branch's migrations.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md) (how the harness follows the
+  migrations, and two more rejected alternatives), [spike 3](engineering/spikes/spike-3-rls.md),
+  [critical path](product/critical-path.md) (M0 progress) and this page. Outside `docs/`, the
+  harness.
+- **Not verified here:** any pg17 or service-role result. CI job `rls-spike` has not run.
+
+### 2026-10-31 — M0: the chain-format vectors reproduce outside Rust, and spike 3 runs on PostgreSQL 18.6
+
+An M0 change: two of the critical path's de-risking experiments are built and run, and their
+findings are recorded. No decision changes, no record is amended or proposed, and the harness
+decisions live on an engineering page, [M0 spikes](engineering/spikes/index.md).
+
+- **Built:** `scripts/check_chain_vectors.py`, which rebuilds the three
+  [chain format](data/chain-format.md) vectors from their inputs with two RFC 8785
+  implementations (`rfc8785`, `jcs`), two Ed25519 implementations (`cryptography`, PyNaCl) and
+  two SHA-256 implementations (`hashlib`, libsodium). It runs the verification procedure and its
+  mutation claims, and fails on any difference. Also built: `testing/spikes/rls/spike_rls.py`,
+  which applies `migrations/*.sql` to a throwaway database and asserts S3.1–S3.4. Both pin their
+  libraries through uv, inline and in a committed lock file. `.github/workflows/m0-spikes.yml`
+  adds the jobs `chain-vectors` and `rls-spike`, the latter on `pgvector/pgvector:pg17`.
+- **Found:** the vectors reproduce byte for byte
+  ([finding](engineering/spikes/chain-vectors.md)). On PostgreSQL 18.6, as the table owner, every
+  read shape of the fold tables stayed inside its tenant. A read with no tenant set returns zero
+  rows, which is now the recorded behaviour. `pg_stats` shows the owner other tenants' lexemes
+  through the expression index `memories_claim_fts`, so S3.1 and S3.4 fail for the owner, and the
+  harness records both as expected failures. Under RLS that GIN index serves no FTS plan, since
+  `@@` is not leakproof. S3.2 did not run, for lack of a role that can create roles
+  ([findings](engineering/spikes/spike-3-rls.md)).
+- **Page edit:** chain format now says that omitting the last event fails step 9, against the
+  stated head, and not step 1 or 5. The check's first run failed on the old sentence.
+- **Not verified here:** any result on the pinned pg17, any result for a non-owner role, and
+  S3.2. The two CI jobs have not run. Spikes 1, 2 and 4 are not run.
+- **No surface change:** no HTTP operation, error code, event type or claim state changes, and
+  `info.version` stays `0.2.0-design`.
+- **Pages touched:** [M0 spikes](engineering/spikes/index.md) and its two finding pages (new),
+  [chain format](data/chain-format.md), [critical path](product/critical-path.md) (M0
+  progress), [CI and toolchain](engineering/ci-and-toolchain.md) (the M0 spikes gate),
+  `mkdocs.yml`, [llms.txt](llms.txt) and this page. Outside `docs/`, the two scripts, their lock
+  files and the workflow.
+
+### 2026-10-31 — A Helm chart for the current build's one lead (ADR-0033)
+
+[ADR-0033](adr/ADR-0033-interim-helm-chart.md), proposed on 2026-10-31, decides what a Helm
+chart holds while the build has one server binary, and this change builds it. Numbers 0030 to
+0032 are taken by records on other branches. It amends ADR-0016 (d4) and ADR-0023 (d16) for this
+chart only; their Status lines gain the back-pointer when the record is accepted.
+
+- **Decided and built:** `deploy/helm/oml`, the first revision of the one chart ADR-0016 d2
+  names, holding `oml-server-lead` alone (d1): one replica under `Recreate` in place of the lead
+  lease, with the chain lock as the fence (d2); the keyring on a ReadWriteOnce claim mounted at
+  `/var/lib/oml/keyring`, kept by `helm uninstall` and reattachable through
+  `keyring.existingClaim` (d3); uid and gid 999, the image's `oml` user, with `fsGroup: 999` under
+  `fsGroupChangePolicy: OnRootMismatch`, because the default policy turns the 0600 keyring into
+  0660 and the lead refuses it (d4); `runAsNonRoot`, a read-only root filesystem, every capability
+  dropped, seccomp `RuntimeDefault`, no service account token, resources as comments, and an
+  optional NetworkPolicy (d5); `OML_POSTGRES__URL` from an existing Secret's key, never a value
+  (d6); startup and liveness probes on `/healthz` and readiness on `/readyz` (d7); the Ingress
+  off by default, and install notes that give the claim of the enrollment token through
+  `kubectl port-forward` before any Ingress, and warn when an install enables one (d8);
+  `version` = `appVersion` = the workspace version, the image
+  `ghcr.io/e8kor/open-memory-lab:<appVersion>`, pinned by `image.digest` when set (d9); and the
+  release and CI jobs (d10).
+- **Checks:** `scripts/check_chart.py` runs `helm lint --strict` and `helm template` on the
+  default values, `ci/kind-values.yaml` and the optional features, and fails on a version
+  mismatch, a duplicated mapping key, or the loss of any property d2–d8 decide, NOTES.txt's
+  included; with `--image-user` it also requires the pod's ids to be the built image's.
+  `scripts/check_release.py` now also fails if `release.yml` stops checking the chart's version
+  against the tag, packaging it, signing it with `cosign sign-blob` or uploading the archive and
+  its bundle to the release. `ci.yml` gains job `chart`: kind, `pgvector/pgvector:pg17` in the
+  cluster, the image built from the checkout and loaded, `helm install`, the claim through
+  port-forward, `scripts/quickstart.sh`, then a restart that must keep the public key, answer
+  `/readyz` 200 and print no token, and an uninstall that must leave the keyring claim and a
+  reinstall that must load the same key. `release.yml` gains jobs `chart` and `chart-release`; its
+  other jobs are unchanged.
+- **Not run here:** the kind job and the release jobs. This change ran `helm lint`,
+  `helm template`, a strict Kubernetes schema validation of the rendered objects, both checkers
+  and `actionlint` locally, and the quickstart against the installed lead the way the kind job
+  drives it; the pull request's CI run is the kind job's first, and the first tag after it is the
+  release jobs' first. d4's fsGroup behaviour is read from the kubelet's source and the
+  Kubernetes documentation, not observed on a cluster.
+- **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
+  stays `0.2.0-design`. The chart is at the workspace version, 0.2.2, and moves with it.
+- **Pages touched:** [ADR-0033](adr/ADR-0033-interim-helm-chart.md), the
+  [decision register](adr/index.md) (row and the D15 cell), `mkdocs.yml`, [llms.txt](llms.txt),
+  [deployment](operations/deployment.md) (the interim chart's section and the keyring backup
+  row), [CI and toolchain](engineering/ci-and-toolchain.md) (the chart gate and the release
+  artifact) and this page; outside `docs/`, `deploy/helm/oml/`, `deploy/k8s/README.md`,
+  `scripts/check_chart.py`, `scripts/check_release.py`, `.github/workflows/ci.yml` and
+  `.github/workflows/release.yml`.
+
+### 2026-10-31 — Python and TypeScript clients generated from openapi.yaml (implementation, FR-12)
+
+[Client SDKs](engineering/sdks.md), a new engineering page, decides how the client half of
+[FR-12](product/roadmap.md) is made and kept current, and this change builds it. FR-12's batch
+half, `POST /v1/memories:batch`, changes the server and is not part of it. No ADR records the
+decision: FR-12 already decides that the clients are generated, and the page decides the
+generators, the package names, the wrapper and the regeneration rule, with the rejected
+alternatives. It amends no record.
+
+- **Decided and built:** `sdks/python`, the distribution `oml-sdk` imported as `oml_sdk`,
+  generated by openapi-python-client 0.29.1, and `sdks/typescript`, the npm package `oml-sdk`,
+  typed by openapi-typescript 7.13.0 over openapi-fetch 0.17.0, with every generator pinned and
+  locked in `uv.lock` and `package-lock.json`; neither is released to a registry. Over each, a
+  hand-written wrapper that takes the key from the caller or `OML_API_KEY`, sends one
+  `Idempotency-Key` per write and reuses it on every retry of that call, follows `next_cursor`
+  through the listing, raises one exception class per [errors.md](api/errors.md) family carrying
+  `code`, `rule`, `message` and `retryable`, and refuses uploads with `NotBuiltError`, because the
+  server serves no upload sessions yet.
+- **The regeneration rule:** `scripts/generate_sdks.py` regenerates both generated layers from
+  openapi.yaml, and with `--check` fails on stale generated code or on a change to the Python
+  generator's recorded warnings, so a change to openapi.yaml regenerates both clients in the
+  same change.
+- **Checks:** `sdks/python/tests` (pytest) and `sdks/typescript/test` (`node --test`) run against
+  a real `oml-server-lead` on a throwaway database: remember, held, the author's own recall, a
+  dreamer key's approve verdict, recall; a write whose response was lost, retried and replayed
+  under the same key; a key reused with another body, refused and not retried; the listing
+  iterated across pages; the error mapping. `.github/workflows/ci.yml` gains three jobs,
+  `sdk-python`, `sdk-typescript` and `sdk-generated`, and changes none.
+- **Not verified here:** the three CI jobs, which have not run yet. Locally both suites passed
+  against the installed `oml-server-lead` 0.2.0 and `oml` 0.2.2, the Python suite on Python 3.11
+  and 3.13 and the TypeScript suite on Node 24.
+- **Not built:** the batch write path and the upload wrapper, which keep FR-12 open; and the
+  Python generated layer types no `Workarea`, `WorkareaPage` or `WorkareaView`, the generator gap
+  the SDK page records.
+- **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
+  stays `0.2.0-design`.
+- **Pages touched:** [client SDKs](engineering/sdks.md), new; [HTTP API](api/http-api.md) and
+  [errors](api/errors.md), which link it; the FR-12 status on the [roadmap](product/roadmap.md),
+  the M2 progress on the [critical path](product/critical-path.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md), `mkdocs.yml`, [llms.txt](llms.txt) and this
+  page; outside `docs/`, `README.md`, `sdks/`, `scripts/generate_sdks.py` and
+  `.github/workflows/ci.yml`.
+
+### 2026-10-31 — Every agent session starts from what OML holds for its key: `oml hook session-start` (ADR-0029)
+
+[ADR-0029](adr/ADR-0029-session-start-hook.md), accepted by the maintainer on 2026-10-31 with release v0.2.2, records what the maintainer decided on
+2026-10-31, and this change builds it: the `oml` plugin ships a SessionStart hook that runs a Rust
+subcommand of the `oml` CLI, on by default and bounded by a token budget. Numbers 0026 and 0027
+are taken by records on other branches. It amends no record.
+
+- **Decided and built:** `oml hook session-start`, which sends the own-work listing
+  (`own=true`, ten newest) and a recall with `include_own_held` under a budget of 800 budget
+  tokens (`OML_SESSION_CONTEXT_MAX_TOKENS`, 1 to 2000), queried with the words of the working
+  directory's name (d1–d3); `OML_URL` and `OML_API_KEY` alone, never the stored admin credentials
+  or `OML_CLI_KEY`, a key value that is not all printable ASCII refused before anything is sent,
+  and the key value redacted from everything it prints (d4); no output and exit
+  0 on every failure, `OML_SESSION_CONTEXT=off` included, with a 3-second timeout per request, its
+  connect included, an 8-second deadline on the whole verb, and a context printed whole or not at
+  all (d5); one SessionStart hook document whose context puts the request to record, and after a
+  compaction the request to record the summary's durable facts, right after the header and above
+  the line that frames the entries below as stored data, and prints claim keys and the path in at
+  most 120 characters, the key redacted before the cut (d6);
+  `plugins/oml/hooks/hooks.json`, which runs the verb only when `oml` is on `PATH` (d7); and the
+  two `permissions.allow` rules in the plugin README, the five read tools and every tool, with the
+  cost of the second, writes the user never sees, stated beside it (d8).
+- **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` runs the verb against the real lead behind a
+  request recorder; `scripts/check_plugin.py` now also fails if `plugins/oml/hooks/hooks.json` is
+  missing or does not parse, or if its SessionStart hooks are not exactly one command, without a
+  matcher, with a 10-second timeout and the status message `Loading OML memory`, that runs
+  `oml hook session-start`, exits 0 with no output when `oml` is not on `PATH`, and exits 0 when
+  that `oml` fails.
+- **Not verified here:** that Claude Code runs the hook and adds its context to a session; the
+  tests run the binary, not Claude Code. The [roadmap](product/roadmap.md) opens FR-33 for it,
+  which closes on a recorded session on a named Claude Code version, a compaction run included.
+- **No surface change:** no HTTP operation, error code, event type or claim state; `info.version`
+  stays `0.2.0-design`, and no package version moves until the release.
+- **Pages touched:** [ADR-0029](adr/ADR-0029-session-start-hook.md), the
+  [decision register](adr/index.md) (row and the D14 cell), `mkdocs.yml`, [llms.txt](llms.txt),
+  [CLI reference](cli/reference.md), [agent plugin](api/mcp-plugin.md), the
+  [roadmap](product/roadmap.md) (FR-33) and this page; outside
+  `docs/`, `plugins/oml/README.md`, `plugins/oml/hooks/hooks.json` and
+  `scripts/check_plugin.py`.
+
 ### 2026-10-31 — The agent-only memory surface (implementation)
 
 An implementation milestone; no decision changes. The code now serves what

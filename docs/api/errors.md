@@ -262,3 +262,7 @@ both the OpenAPI `ErrorCode` enum and that Rust mapping are checked against:
 `scripts/check_contract_sync.py` enforces the OpenAPI side today, and a Rust-side exhaustiveness
 check joins it once code exists. A variant with no code here, or a code here with no variant, is
 the same documentation bug the opening paragraph names.
+
+The client SDKs raise one exception class per family on this page, chosen by the code's family
+prefix, and their tests read the families from this page
+([client SDKs](../engineering/sdks.md#what-the-wrapper-covers)).

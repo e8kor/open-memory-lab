@@ -1,0 +1,47 @@
+{{- $fullname := include "oml.fullname" . -}}
+{{- $ns := .Release.Namespace -}}
+Open Memory Lab {{ .Chart.AppVersion }}: one lead, deployment/{{ $fullname }}-server-lead, in namespace {{ $ns }}.
+{{- if and .Release.IsInstall .Values.ingress.enabled }}
+
+WARNING: this install enabled the Ingress before the first admin key is claimed.
+Until the claim, anyone who reaches the Ingress and has seen the enrollment
+token in the pod log can claim that key first. Claim it now (step 3), or run
+helm upgrade with --set ingress.enabled=false until you have.
+{{- end }}
+
+1. The lead reads its Postgres URL from Secret {{ .Values.postgres.secretName }}, key {{ .Values.postgres.secretKey }}.
+   Without it the pod waits in CreateContainerConfigError. To create it:
+
+     kubectl --namespace {{ $ns }} create secret generic {{ .Values.postgres.secretName }} \
+       --from-literal={{ .Values.postgres.secretKey }}='postgres://USER:PASSWORD@HOST:5432/DATABASE'
+
+2. Wait for the lead to be ready:
+
+     kubectl --namespace {{ $ns }} rollout status deployment/{{ $fullname }}-server-lead
+
+3. Claim the first admin key through a port-forward, before anything outside
+   the cluster can reach the lead. While no tenant exists, the lead prints a
+   single-use enrollment token at every boot; it sits in the pod log until
+   used, and whoever presents it first receives the key. A restart before the
+   claim prints a new token, and the old one stops working. With the oml CLI
+   of this release on your machine:
+
+     TOKEN="$(kubectl --namespace {{ $ns }} logs deployment/{{ $fullname }}-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
+     kubectl --namespace {{ $ns }} port-forward service/{{ $fullname }}-server 8080:8080 &
+     oml --server http://127.0.0.1:8080 bootstrap claim --token "$TOKEN" \
+       --tenant-name <tenant> --principal <you>
+
+   The key is printed once; the CLI stores it in ~/.config/oml/credentials.
+
+4. Only then expose the API, if it needs to leave the cluster:
+
+     helm upgrade {{ .Release.Name }} <this chart> --namespace {{ $ns }} --reuse-values \
+       --set ingress.enabled=true --set 'ingress.hosts[0].host=<your host>'
+
+The volume claim {{ include "oml.keyringClaim" . }} holds the deployment signing key. helm uninstall
+leaves it in place, and a reinstall under the same release name takes it back.
+Deleting it while the database is kept makes the lead mint a new key and refuse
+readiness at its startup fork check.
+
+What this chart runs, what it does not run yet, and why:
+https://e8kor.github.io/open-memory-lab/operations/deployment/#the-interim-chart-the-current-build-on-kubernetes

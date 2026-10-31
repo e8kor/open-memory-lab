@@ -4,6 +4,8 @@ site_url: https://e8kor.github.io/open-memory-lab/
 repo_url: https://github.com/e8kor/open-memory-lab
 edit_uri: edit/main/docs/
 docs_dir: docs
+exclude_docs: |
+  assets/brand/tokens.md
 copyright: >
   Code licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE">Apache-2.0</a> ·
   documentation licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE-docs">CC BY 4.0</a>
@@ -14,6 +16,8 @@ validation:
 
 theme:
   name: material
+  logo: assets/brand/oml-mark.svg
+  favicon: assets/brand/favicon.svg
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -101,6 +105,11 @@ nav:
       - Test strategy: engineering/test-strategy.md
       - CI and toolchain: engineering/ci-and-toolchain.md
       - Benchmark harness: engineering/benchmark-harness.md
+      - M0 spikes:
+          - Harness and status: engineering/spikes/index.md
+          - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
+          - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
+      - Client SDKs: engineering/sdks.md
   - Decisions:
       - Index: adr/index.md
       - ADR template: adr/TEMPLATE.md
@@ -131,3 +140,5 @@ nav:
       - ADR-0025: adr/ADR-0025-the-agent-only-memory-surface.md
       - ADR-0026: adr/ADR-0026-names-are-keys.md
       - ADR-0028: adr/ADR-0028-agent-key-issuance.md
+      - ADR-0029: adr/ADR-0029-session-start-hook.md
+      - ADR-0033: adr/ADR-0033-interim-helm-chart.md
