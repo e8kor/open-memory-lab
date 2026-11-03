@@ -24,8 +24,8 @@ use oml_domain::name::{
 };
 use oml_domain::{
     ChainHead, Envelope, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
-    sha256_digest_string, transition,
+    SignedEnvelope, WorkareaStatus, canonical_bytes, check_reviewer, event_types, next_envelope,
+    nfc, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ListingCursor, NameCursor, PathCursor};
@@ -1051,6 +1051,8 @@ where
             tenant_id,
             parent_id: None,
             name: Name::parse(UNIVERSE).expect("universe is a name (ADR-0026 d6)"),
+            // The universe root is permanently committed (ADR-0009 d1).
+            status: WorkareaStatus::Committed,
             crew: None,
             crew_id: None,
         };
@@ -1064,7 +1066,7 @@ where
                 "workarea_id": root_workarea_id.to_string(),
                 "parent_id": Value::Null,
                 "name": workarea.name.as_str(),
-                "status": workarea.status(),
+                "status": workarea.status.as_str(),
                 "crew_id": Value::Null,
                 "prefix": Value::Null,
             }),
@@ -1390,6 +1392,7 @@ where
             tenant_id: key.tenant_id,
             parent_id,
             name: name.clone(),
+            status: WorkareaStatus::Development,
             crew: None,
             crew_id,
         };
@@ -1404,7 +1407,7 @@ where
                 "workarea_id": workarea.workarea_id.to_string(),
                 "parent_id": parent_id.map(|p| p.to_string()),
                 "name": workarea.name.as_str(),
-                "status": workarea.status(),
+                "status": workarea.status.as_str(),
                 "crew_id": crew_id.map(|c| c.to_string()),
                 "prefix": Value::Null,
             }),

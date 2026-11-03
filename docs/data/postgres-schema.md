@@ -295,6 +295,11 @@ A superseded version keeps `state = 'promoted'` with `is_tip = false`
 
 ## workareas and edges
 
+**Status:** `workareas.status` is one stored column, written at create (`development`, and
+`committed` on the universe root) and served back by every workarea read; `workarea_transitions`
+is built in `migrations/0010_workarea_transitions.sql`, and no transition writes it yet
+([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3).
+
 The governed tree (one per tenant, rooted at `universe`) plus the two edge tables. The algebra —
 node-id grants, deny semantics, status ladder — is declared in
 [workareas](../architecture/workareas.md); this page holds only the shapes.
@@ -351,8 +356,8 @@ CREATE TABLE workarea_edges (
     CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id)
 );
 
--- Decided, not built: status-ladder proposals (ADR-0009 d3), the build's reading on
--- architecture/workareas.md. Several pending rows may share a workarea; ratification,
+-- Built in migrations/0010_workarea_transitions.sql: status-ladder proposals (ADR-0009
+-- d3), the build's reading on architecture/workareas.md. Several pending rows may share a workarea; ratification,
 -- under the chain lock, re-checks from_status against workareas.status (a stale row is
 -- refused) and, for a step to validated, that every child is validated. A stale row stays
 -- 'pending'; the status read lists only pending rows whose from_status is the node's status.
@@ -361,9 +366,9 @@ CREATE TABLE workarea_transitions (
     tenant_id          uuid   NOT NULL,
     workarea_id        uuid   NOT NULL,
     from_status        text   NOT NULL
-        CHECK (from_status IN ('development', 'committed')),
+        CHECK (from_status IN ('development', 'committed', 'validated')),
     to_status          text   NOT NULL
-        CHECK (to_status IN ('committed', 'validated')),
+        CHECK (to_status IN ('development', 'committed', 'validated')),
     state              text   NOT NULL CHECK (state IN ('pending', 'ratified')),
     proposer_key_id    uuid   NOT NULL,
     proposer_principal text   NOT NULL,              -- R2 is checked on the principal too
@@ -956,6 +961,7 @@ serving role until that migration grants its row here, under the sync rule.
 | `grants` | ✓ | ✓ | | | |
 | `key_denials` | ✓ | ✓ | ✓ | | |
 | `crews` | ✓ | ✓ | ✓ | | |
+| `workarea_transitions` | ✓ | ✓ | ✓ | | |
 | `_sqlx_migrations` | | | | | |
 
 - **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
@@ -963,6 +969,8 @@ serving role until that migration grants its row here, under the sync rule.
 - **`review_queue`** is the one table a statement deletes from, at a verdict.
 - **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the
   `bigserial` sequence.
+- **`workarea_transitions`** is granted by its own migration, 0010, in 0007's form: the
+  proposal's `INSERT`, the ratification's `UPDATE` and the status read's `SELECT`.
 - **No table** grants `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`, whole-table operations
   row security does not bind.
 - **`_sqlx_migrations`** is the one table without row-level security: sqlx's record of which
@@ -989,7 +997,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
 | `tenants` | the provider chain's `tenant.created`, `system.names_assigned` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
-| `workarea_transitions` (decided, not built) | `workarea.status_proposed`, `workarea.status_transition` |
+| `workarea_transitions` | `workarea.status_proposed`, `workarea.status_transition` |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |
 | `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |

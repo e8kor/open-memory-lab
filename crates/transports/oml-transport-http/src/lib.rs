@@ -2075,7 +2075,7 @@ fn workarea_json(workarea: &WorkareaRecord, path: &str, crew: Option<&CrewRecord
         "name": workarea.name.as_str(),
         "parent_id": workarea.parent_id,
         "path": path,
-        "status": workarea.status(),
+        "status": workarea.status.as_str(),
         "crew": crew.map(crew_json),
     })
 }
@@ -2095,7 +2095,7 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
                     json!({
                         "id": c.workarea_id,
                         "path_leaf": c.name.as_str(),
-                        "status": c.status(),
+                        "status": c.status.as_str(),
                     })
                 })
                 .collect(),

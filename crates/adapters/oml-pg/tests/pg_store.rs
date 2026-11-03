@@ -3902,3 +3902,192 @@ async fn the_migrations_create_no_function_marked_leakproof() {
     assert_eq!(marked, Vec::<String>::new());
     drop_dbs(&created).await;
 }
+
+// ---------------------------------------------------------------------------
+// Status-ladder proposals (migrations/0010_workarea_transitions.sql;
+// ADR-0009 d1, d3)
+// ---------------------------------------------------------------------------
+
+/// Runs `sql` as the serving role in `tenant`'s context, binding the
+/// transition `id`, the `workarea`, the proposer and the ratifier keys in
+/// that order, and commits when it succeeds.
+async fn transition_statement(
+    store: &PgStore,
+    tenant: Uuid,
+    sql: &str,
+    ids: [Option<Uuid>; 4],
+) -> Result<sqlx::postgres::PgQueryResult, sqlx::Error> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let mut query = sqlx::query(sql).bind(tenant);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let result = query.execute(&mut *tx).await;
+    if result.is_ok() {
+        tx.commit().await.expect("commit");
+    }
+    result
+}
+
+/// A proposal is one rung forward, a ratified row names its ratifier and
+/// its event's seq, the ratifier is never the proposer, and the node and
+/// keys it names are its own tenant's; the serving role inserts, ratifies
+/// and reads a row under its tenant's row security, and another tenant
+/// sees none (ADR-0009 d1, d3; ADR-0034 d3, d12).
+#[tokio::test]
+async fn the_schema_holds_a_transition_to_one_rung_forward_ratified_by_another_key_in_its_own_tenant()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut a = ChainRig::new(101);
+    a.seed_chain(&store, 0).await;
+    let t = a.tenant_id;
+    let root = Uuid::from_u128(0xB1010);
+    a.create_workarea(&store, workarea_record(t, root, None, "universe"))
+        .await;
+    let node = Uuid::from_u128(0xB1011);
+    a.create_workarea(&store, workarea_record(t, node, Some(root), "procurement"))
+        .await;
+    let (proposer, ratifier) = (Uuid::from_u128(0xD1010), Uuid::from_u128(0xD1011));
+    for key in [proposer, ratifier] {
+        a.issue_key(&store, key_record(t, key, Role::Admin, None))
+            .await;
+    }
+    let mut b = ChainRig::new(102);
+    b.seed_chain(&store, 0).await;
+    let theirs = Uuid::from_u128(0xB1020);
+    b.create_workarea(
+        &store,
+        workarea_record(b.tenant_id, theirs, None, "universe"),
+    )
+    .await;
+
+    // $1 tenant, $2 id, $3 workarea, $4 proposer, $5 ratifier.
+    let row = |from: &str, to: &str, state: &str, ratified_seq: Option<i64>| {
+        let ratified_seq = ratified_seq.map_or_else(|| "NULL".to_owned(), |s| s.to_string());
+        format!(
+            "INSERT INTO workarea_transitions (tenant_id, id, workarea_id, proposer_key_id, \
+             ratifier_key_id, from_status, to_status, state, proposer_principal, proposed_seq, \
+             ratified_seq) VALUES ($1, $2, $3, $4, $5, '{from}', '{to}', '{state}', 'p', 7, \
+             {ratified_seq})"
+        )
+    };
+    let pending = Uuid::from_u128(0xE1010);
+    transition_statement(
+        &store,
+        t,
+        &row("development", "committed", "pending", None),
+        [Some(pending), Some(node), Some(proposer), None],
+    )
+    .await
+    .expect("a pending proposal one rung forward");
+
+    let refusals = [
+        (
+            "a skipped rung",
+            row("development", "validated", "pending", None),
+            [
+                Some(Uuid::from_u128(0xE1011)),
+                Some(node),
+                Some(proposer),
+                None,
+            ],
+            "23514",
+        ),
+        (
+            "a backward step",
+            row("committed", "development", "pending", None),
+            [
+                Some(Uuid::from_u128(0xE1012)),
+                Some(node),
+                Some(proposer),
+                None,
+            ],
+            "23514",
+        ),
+        (
+            "a ratification by its proposer",
+            row("development", "committed", "ratified", Some(8)),
+            [
+                Some(Uuid::from_u128(0xE1013)),
+                Some(node),
+                Some(proposer),
+                Some(proposer),
+            ],
+            "23514",
+        ),
+        (
+            "a ratified row with no ratifier",
+            row("development", "committed", "ratified", Some(8)),
+            [
+                Some(Uuid::from_u128(0xE1014)),
+                Some(node),
+                Some(proposer),
+                None,
+            ],
+            "23514",
+        ),
+        (
+            "a ratified row with no seq",
+            row("development", "committed", "ratified", None),
+            [
+                Some(Uuid::from_u128(0xE1015)),
+                Some(node),
+                Some(proposer),
+                Some(ratifier),
+            ],
+            "23514",
+        ),
+        (
+            "another tenant's node",
+            row("development", "committed", "pending", None),
+            [
+                Some(Uuid::from_u128(0xE1016)),
+                Some(theirs),
+                Some(proposer),
+                None,
+            ],
+            "23503",
+        ),
+    ];
+    for (what, sql, ids, code) in refusals {
+        assert_eq!(
+            refused_code(transition_statement(&store, t, &sql, ids).await, what),
+            code,
+            "{what}"
+        );
+    }
+
+    transition_statement(
+        &store,
+        t,
+        "UPDATE workarea_transitions SET state = 'ratified', ratifier_key_id = $5, \
+         ratified_seq = 9 WHERE tenant_id = $1 AND id = $2 AND workarea_id = $3 \
+         AND proposer_key_id = $4",
+        [Some(pending), Some(node), Some(proposer), Some(ratifier)],
+    )
+    .await
+    .expect("the serving role ratifies a pending row");
+    for (tenant, seen) in [(t, 1_i64), (b.tenant_id, 0)] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM workarea_transitions")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("count");
+        assert_eq!(n, seen, "tenant {tenant} sees {seen}");
+    }
+    drop_dbs(&created).await;
+}

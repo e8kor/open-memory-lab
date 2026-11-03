@@ -17,7 +17,8 @@ use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::{hit_order, steering_order};
 use oml_domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_domain::{
-    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types,
+    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, WorkareaStatus,
+    event_types,
 };
 
 use crate::ports::{
@@ -97,6 +98,9 @@ struct QueueEntry {
 #[derive(Debug, Clone)]
 struct UnnamedWorkarea {
     parent_id: Option<Uuid>,
+    /// The status the PoC stored: `committed` on the root, `development`
+    /// on every other node, the only statuses its `workarea.create` wrote.
+    status: WorkareaStatus,
     crew: Option<Crew>,
 }
 
@@ -327,6 +331,11 @@ fn fold_poc_event(
                 poc_required_id(payload, "workarea_id")?,
                 UnnamedWorkarea {
                     parent_id: poc_id(payload, "parent_id"),
+                    status: if poc_id(payload, "parent_id").is_none() {
+                        WorkareaStatus::Committed
+                    } else {
+                        WorkareaStatus::Development
+                    },
                     crew,
                 },
             );
@@ -826,6 +835,7 @@ fn assign_names_fold(
                     tenant_id,
                     parent_id: unnamed.parent_id,
                     name: assignment.name.clone(),
+                    status: unnamed.status,
                     crew: unnamed.crew,
                     crew_id: crew_of.remove(&id),
                 };
