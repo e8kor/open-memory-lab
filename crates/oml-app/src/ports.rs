@@ -159,13 +159,17 @@ pub enum MetadataFold {
         voids: Option<Uuid>,
     },
     /// `connection.opened`: the `authorized` connection opens, its
-    /// `opened_seq` this commit's seq, and the key's earlier open
-    /// connection, which `replaces` names, is revoked with the cause
-    /// `replaced` and its `revoked_seq` this seq; nothing else is stamped.
-    /// The store refuses a connection that is not `authorized`, a `replaces`
+    /// `opened_seq` this commit's seq and its `auth_code_redeemed_at` this
+    /// commit's `at`, and the key's earlier open connection, which
+    /// `replaces` names, is revoked with the cause `replaced` and its
+    /// `revoked_seq` this seq. The store refuses a connection that is not
+    /// `authorized`, one whose authorization code is redeemed already or
+    /// expired at this `at`, one whose connect code is voided, a `replaces`
     /// that is not the key's open connection, and a key that is revoked, so
-    /// no connection opens after its key's `key.revoked` (event-catalog.md
-    /// `connection.opened`; ADR-0031 d7, d11, d12).
+    /// no connection opens after its key's `key.revoked` or after a mint or
+    /// revocation voided its code since Connect (postgres-schema.md
+    /// `oauth_connections`; event-catalog.md `connection.opened`; ADR-0031
+    /// d7, d8, d10, d11, d12).
     ConnectionOpened {
         connection_id: Uuid,
         replaces: Option<Uuid>,

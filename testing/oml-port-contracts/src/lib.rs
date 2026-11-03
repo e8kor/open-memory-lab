@@ -4154,6 +4154,16 @@ impl ChainRig {
         .await
     }
 
+    /// The `at` of the rig's last committed event.
+    fn head_at(&self) -> EventTime {
+        self.head
+            .as_ref()
+            .expect("the rig has committed")
+            .envelope
+            .at
+            .clone()
+    }
+
     /// Mint `code_id` for `key_id`, spend it, create its `authorized`
     /// connection and open it: the key's open connection from that code.
     async fn opened_connection<S: ConnectionStore>(
@@ -4442,8 +4452,9 @@ pub async fn key_revoked_voids_the_keys_unredeemed_codes<S: ConnectionStore>(sto
 }
 
 /// `connection.opened` opens its `authorized` connection, its `opened_seq`
-/// the commit's seq, and revokes the key's earlier open connection as
-/// `replaced` with its `revoked_seq` that seq, stamping nothing else; one
+/// the commit's seq and its `auth_code_redeemed_at` the commit's `at`, and
+/// revokes the key's earlier open connection as `replaced` with its
+/// `revoked_seq` that seq; one
 /// whose `replaces` does not name the key's open connection is refused and
 /// commits nothing (roles-and-keys.md connections; event-catalog.md
 /// `connection.opened`; ADR-0031 d7, d12).
@@ -4462,6 +4473,7 @@ pub async fn connection_opened_revokes_the_keys_earlier_open_connection_as_repla
     let r1 = rig
         .opened_connection(store, key.key_id, c1, first, None, None)
         .await;
+    let first_at = rig.head_at();
     let opened = store
         .connection(t, first)
         .await
@@ -4472,9 +4484,10 @@ pub async fn connection_opened_revokes_the_keys_earlier_open_connection_as_repla
         ConnectionRecord {
             state: ConnectionState::Open,
             opened_seq: Some(r1.seq),
+            auth_code_redeemed_at: Some(first_at.clone()),
             ..authorized_connection(first, key.key_id, c1)
         },
-        "the exchange opens the row and stamps its opened_seq, nothing else"
+        "the exchange opens the row, stamps its opened_seq and redeems its authorization code"
     );
 
     rig.authorized_connection(store, key.key_id, c2, second, None)
@@ -4495,12 +4508,14 @@ pub async fn connection_opened_revokes_the_keys_earlier_open_connection_as_repla
         .open_connection(store, second, Some(first))
         .await
         .expect("open the second");
+    let second_at = rig.head_at();
     assert_eq!(
         store.connection(t, first).await.expect("read"),
         Some(ConnectionRecord {
             state: ConnectionState::Revoked(RevokedCause::Replaced),
             opened_seq: Some(r1.seq),
             revoked_seq: Some(r2.seq),
+            auth_code_redeemed_at: Some(first_at),
             ..authorized_connection(first, key.key_id, c1)
         }),
         "the earlier open connection is revoked as replaced in the same commit"
@@ -4510,6 +4525,7 @@ pub async fn connection_opened_revokes_the_keys_earlier_open_connection_as_repla
         Some(ConnectionRecord {
             state: ConnectionState::Open,
             opened_seq: Some(r2.seq),
+            auth_code_redeemed_at: Some(second_at),
             ..authorized_connection(second, key.key_id, c2)
         })
     );
@@ -4550,6 +4566,170 @@ pub async fn connection_opened_for_a_revoked_key_is_refused_and_commits_nothing<
     );
 }
 
+/// `connection.opened` for a connection whose connect code a newer mint
+/// voided is refused and commits nothing: Connect takes no chain lock, so
+/// the fold reads the code's voiding in the transaction that holds it, and
+/// a page holding a code, or the authorization code it produced, opens no
+/// connection once the admin mints a new code (postgres-schema.md
+/// `oauth_connections`; ADR-0031 d8).
+pub async fn connection_opened_for_a_voided_code_is_refused_and_commits_nothing<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(316);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3160));
+    rig.issue_key(store, key.clone()).await;
+    let (spent, newer) = (Uuid::from_u128(0xC3161), Uuid::from_u128(0xC3162));
+    let connection = Uuid::from_u128(0xE3161);
+    rig.authorized_connection(store, key.key_id, spent, connection, None)
+        .await;
+    // The spent code is not the key's unredeemed one, so the mint names
+    // none; it voids the spent code all the same.
+    let r = rig
+        .mint_code(store, connect_code(newer, key.key_id), None)
+        .await
+        .expect("mint");
+    assert_eq!(
+        voided_seqs(store, t, key.key_id).await,
+        vec![(spent, Some(r.seq)), (newer, None)]
+    );
+    let head = store.chain_head(t).await.expect("head");
+    rig.open_connection(store, connection, None)
+        .await
+        .expect_err("no connection opens from a voided code");
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        store.connection(t, connection).await.expect("read"),
+        Some(authorized_connection(connection, key.key_id, spent)),
+        "the refused opening stamps nothing"
+    );
+}
+
+/// `connection.opened` for an authorization code expired at the commit's
+/// `at` is refused and commits nothing, as the exchange's conditional
+/// update matches no row past `auth_code_expires_at` (postgres-schema.md
+/// `oauth_connections`; ADR-0031 d10).
+pub async fn connection_opened_for_an_expired_authorization_code_is_refused_and_commits_nothing<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(317);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3170));
+    rig.issue_key(store, key.clone()).await;
+    let (code, connection) = (Uuid::from_u128(0xC3171), Uuid::from_u128(0xE3171));
+    rig.mint_code(store, connect_code(code, key.key_id), None)
+        .await
+        .expect("mint");
+    assert!(
+        store
+            .connect_code_redeem(t, code, &fixture_time("2026-10-29T12:59:50.000000Z"))
+            .await
+            .expect("redeem")
+    );
+    // Every rig commit lands after 13:00:00, so this code has expired.
+    let expired = ConnectionRecord {
+        auth_code_expires_at: Some(fixture_time("2026-10-29T13:00:00.000000Z")),
+        ..authorized_connection(connection, key.key_id, code)
+    };
+    store
+        .connection_authorize(t, expired.clone())
+        .await
+        .expect("authorize");
+    let head = store.chain_head(t).await.expect("head");
+    rig.open_connection(store, connection, None)
+        .await
+        .expect_err("an expired authorization code opens no connection");
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        store.connection(t, connection).await.expect("read"),
+        Some(expired),
+        "the refused opening stamps nothing"
+    );
+}
+
+/// A tenant's codes and connections are invisible and unwritable from
+/// another tenant: its reads find nothing, its redemption spends nothing,
+/// and its Connect and its three folds naming the first tenant's key, code
+/// or connection are refused and commit nothing (postgres-schema.md
+/// `connect_codes`, `oauth_connections` RLS; ADR-0031 d7, d8, d12;
+/// ADR-0034 d12).
+pub async fn a_tenants_codes_and_connections_are_invisible_and_unwritable_from_another_tenant<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut a = ChainRig::new(318);
+    a.seed_chain(store, 0).await;
+    let mut b = ChainRig::new(319);
+    b.seed_chain(store, 0).await;
+    let (ta, tb) = (a.tenant_id, b.tenant_id);
+    let key = connector_key(ta, Uuid::from_u128(0xD3180));
+    a.issue_key(store, key.clone()).await;
+    let (opened_code, live_code, foreign_code) = (
+        Uuid::from_u128(0xC3181),
+        Uuid::from_u128(0xC3182),
+        Uuid::from_u128(0xC3183),
+    );
+    let (open, foreign) = (Uuid::from_u128(0xE3181), Uuid::from_u128(0xE3182));
+    a.opened_connection(store, key.key_id, opened_code, open, None, None)
+        .await;
+    a.mint_code(store, connect_code(live_code, key.key_id), None)
+        .await
+        .expect("mint");
+    let codes = store.connect_codes(ta, key.key_id).await.expect("codes");
+    let connection = store.connection(ta, open).await.expect("read");
+    assert!(connection.is_some());
+    let head_a = store.chain_head(ta).await.expect("head");
+    let head_b = store.chain_head(tb).await.expect("head");
+
+    assert_eq!(
+        store.connect_codes(tb, key.key_id).await.expect("codes"),
+        Vec::new(),
+        "another tenant's key has no codes here"
+    );
+    assert_eq!(
+        store.connection(tb, open).await.expect("read"),
+        None,
+        "another tenant's connection is not found here"
+    );
+    assert!(
+        !store
+            .connect_code_redeem(tb, live_code, &fixture_time("2026-10-29T13:00:20.000000Z"))
+            .await
+            .expect("redeem"),
+        "another tenant's code is not spent from here"
+    );
+    store
+        .connection_authorize(tb, authorized_connection(foreign, key.key_id, live_code))
+        .await
+        .expect_err("Connect naming another tenant's key and code is refused");
+    b.mint_code(store, connect_code(foreign_code, key.key_id), None)
+        .await
+        .expect_err("a code for another tenant's key is refused");
+    b.open_connection(store, open, None)
+        .await
+        .expect_err("another tenant's connection is not opened from here");
+    b.revoke_connection(store, open, RevokedCause::Admin)
+        .await
+        .expect_err("another tenant's connection is not revoked from here");
+
+    assert_eq!(store.chain_head(tb).await.expect("head"), head_b);
+    assert_eq!(store.chain_head(ta).await.expect("head"), head_a);
+    assert_eq!(
+        store.connect_codes(ta, key.key_id).await.expect("codes"),
+        codes,
+        "the first tenant's codes are untouched, its live code unspent"
+    );
+    assert_eq!(store.connection(ta, open).await.expect("read"), connection);
+    assert_eq!(store.connection(tb, foreign).await.expect("read"), None);
+}
+
 /// Every connection-store law in one call, each against a fresh store.
 pub async fn run_connection_store_suite<S, F, Fut>(new_store: F)
 where
@@ -4568,6 +4748,15 @@ where
     connection_opened_revokes_the_keys_earlier_open_connection_as_replaced(&new_store().await)
         .await;
     connection_opened_for_a_revoked_key_is_refused_and_commits_nothing(&new_store().await).await;
+    connection_opened_for_a_voided_code_is_refused_and_commits_nothing(&new_store().await).await;
+    connection_opened_for_an_expired_authorization_code_is_refused_and_commits_nothing(
+        &new_store().await,
+    )
+    .await;
+    a_tenants_codes_and_connections_are_invisible_and_unwritable_from_another_tenant(
+        &new_store().await,
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------

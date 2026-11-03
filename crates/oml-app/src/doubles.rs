@@ -795,9 +795,34 @@ fn apply_fold(
                     "connection {connection_id} is not held by this tenant"
                 )));
             };
-            let key_id = connection.key_id;
+            let (key_id, code_id) = (connection.key_id, connection.code_id);
             connection_transition(connection.state, ConnectionAct::Exchange)
                 .map_err(|e| StoreError::Backend(e.to_string()))?;
+            // The exchange redeems the authorization code once and before
+            // its expiry, as the store's conditional update does
+            // (postgres-schema.md `oauth_connections`; ADR-0031 d10).
+            if connection.auth_code_redeemed_at.is_some()
+                || connection
+                    .auth_code_expires_at
+                    .as_ref()
+                    .is_none_or(|expires| expires.as_str() <= at.as_str())
+            {
+                return Err(StoreError::Backend(format!(
+                    "connection {connection_id} holds no live, unredeemed authorization code"
+                )));
+            }
+            // Connect takes no chain lock, so the code's voiding is read
+            // here, under it: a mint or revocation since Connect ends the
+            // connection at the exchange (ADR-0031 d8).
+            if state
+                .connect_codes
+                .get(&code_id)
+                .is_none_or(|c| c.voided_seq.is_some())
+            {
+                return Err(StoreError::Backend(format!(
+                    "connection {connection_id} comes from code {code_id}, which is voided"
+                )));
+            }
             // The key's state is read under the chain lock, so no
             // connection opens after its key's key.revoked (ADR-0031 d11).
             if !state
@@ -826,6 +851,7 @@ fn apply_fold(
             if let Some(connection) = state.connections.get_mut(&connection_id) {
                 connection.state = ConnectionState::Open;
                 connection.opened_seq = Some(seq);
+                connection.auth_code_redeemed_at = Some(at.clone());
             }
         }
         MetadataFold::ConnectionRevoked {
