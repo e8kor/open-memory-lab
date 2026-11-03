@@ -41,8 +41,8 @@ this section rather than a second one.
 `info.version` is `0.4.0-design`. The new [openapi-designed.yaml](api/openapi-designed.yaml), from
 which nothing is generated, holds the 45 designed operations and, under `x-oml-designed-fields`,
 the designed fields of served ones: the attachment, simulation and vocabulary fields of submit,
-supersede and recall, a workarea's `prefix`, and the workarea read's review policy and pending
-transitions. A designed field sent to a served operation answers its v0.3.0 code.
+supersede and recall, a workarea's `prefix`, the `expiry` and `tenant_id` of key issuance, the
+review serve's `workarea` filter, and the workarea read's review policy and pending transitions. A designed field sent to a served operation answers its v0.3.0 code.
 
 - **Removed:** `GET /v2/workareas/{id}/status`, a second read of the node the workarea read
   serves.

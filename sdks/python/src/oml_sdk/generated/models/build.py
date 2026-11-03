@@ -17,8 +17,8 @@ class Build:
 
         Attributes:
             version (str): The workspace version the binary was built at.
-            commit (str): The full 40-hex commit
-            commit_time (str): The commit's committer time
+            commit (str): The full 40-hex commit, or unknown.
+            commit_time (str): The commit's committer time, or unknown.
             build_time (str): When the build captured these fields; SOURCE_DATE_EPOCH fixes it when set.
             rustc (str): The compiler's rustc -V line.
             target (str): The target triple.

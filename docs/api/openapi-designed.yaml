@@ -1560,7 +1560,7 @@ components:
       type: object
       required: [workarea_id]
       properties:
-        workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: Destination node, by id or name. }
+        workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: 'Destination node, by id or name.' }
         re_key: { type: [string, 'null'], description: New claim_key when the move would collide at the destination. }
         dry_run: { type: boolean, default: false }
 
@@ -1655,7 +1655,7 @@ components:
       required: [kind, from_workarea_id, to_workarea_id, label]
       properties:
         kind: { type: string, const: workarea }
-        from_workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: The node the edge leaves, by id or name; the path parameter of the family's former workarea route. }
+        from_workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: 'The node the edge leaves, by id or name; the path parameter of the family''s former workarea route.' }
         to_workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef' }
         label: { type: string, enum: [relates_to, continues, derived_from, mirrors] }
 
@@ -1734,7 +1734,7 @@ components:
         curie: { $ref: '#/components/schemas/Curie' }
         workarea_id: { type: string, description: The owning vocabulary workarea. }
         version: { type: integer, description: The served tip version of the term claim. }
-        term_status: { type: string, enum: [active, deprecated], description: Structural payload field — survives shredding, deterministically readable. }
+        term_status: { type: string, enum: [active, deprecated], description: 'Structural payload field — survives shredding, deterministically readable.' }
         definition_state: { type: string, enum: [present, erased], description: The CURIE is permanent; the definition body is erasable (410 lifecycle.erased on fetch). }
         successors:
           type: array
@@ -2087,3 +2087,10 @@ x-oml-designed-fields:
     response:
       policy: { $ref: '#/components/schemas/ReviewPolicy' }
       pending_transitions: { type: array, items: { $ref: '#/components/schemas/Transition' } }
+  issueKey:
+    request:
+      expiry: { type: string, format: date-time, description: 'When the issued key stops authenticating. Refused with request.validation until key expiry is built: a key minted without it would keep its access past the issuer''s date (ADR-0025 d2, d16).' }
+      tenant_id: { $ref: 'openapi.yaml#/components/schemas/TenantRef', description: "Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant_id, and its name is in the provider's namespace (ADR-0026 d4, d5). Refused with request.validation until the first-admin-key path is built." }
+  reviewNext:
+    request:
+      workarea: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: 'Serve only from this subtree, by id or name. Refused with request.validation until the subtree filter is built: the queue is served whole, so the filter is refused, never ignored (ADR-0026 d4).' }

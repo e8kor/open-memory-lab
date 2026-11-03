@@ -39,7 +39,8 @@ class Key:
         label (str | Unset):
         expiry (datetime.datetime | None | Unset):
         revoked_at (datetime.datetime | None | Unset):
-        rotated_from (None | str | Unset): The key_id this key succeeded by rotation
+        rotated_from (None | str | Unset): The key_id this key succeeded by rotation, if any (key.rotated links the
+            two).
         grants (list[Grant] | Unset):
         denials (list[Denial] | Unset):
         epoch (int | Unset):

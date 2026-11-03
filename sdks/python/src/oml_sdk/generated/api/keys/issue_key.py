@@ -74,8 +74,10 @@ def sync_detailed(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a
-    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-
-    without-value (show-once ceremony). Validated in the issuance order declared in
+    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). expiry and tenant_id
+    are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with
+    request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
+    Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in
     docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
     admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves
     (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response
@@ -116,8 +118,10 @@ def sync(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a
-    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-
-    without-value (show-once ceremony). Validated in the issuance order declared in
+    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). expiry and tenant_id
+    are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with
+    request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
+    Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in
     docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
     admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves
     (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response
@@ -153,8 +157,10 @@ async def asyncio_detailed(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a
-    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-
-    without-value (show-once ceremony). Validated in the issuance order declared in
+    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). expiry and tenant_id
+    are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with
+    request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
+    Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in
     docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
     admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves
     (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response
@@ -193,8 +199,10 @@ async def asyncio(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a
-    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-
-    without-value (show-once ceremony). Validated in the issuance order declared in
+    tenant's first admin key, sent with tenant_id (step 0 of the issuance order). expiry and tenant_id
+    are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with
+    request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
+    Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in
     docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
     admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves
     (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response

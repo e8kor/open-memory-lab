@@ -303,7 +303,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a tenant's first admin key, sent with tenant_id (step 0 of the issuance order). expiry and tenant_id are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).
          */
         post: operations["issueKey"];
         delete?: never;
@@ -832,14 +832,10 @@ export interface components {
             held_by?: "agent" | "human" | "service";
             /** @description The key's crew record, by id or name, journalled as crew_id and fixed for the key's life; one that names no crew record of the tenant answers access.not_found at step 4 of the issuance order (ADR-0026 d8). */
             crew?: components["schemas"]["CrewRef"];
-            /** Format: date-time */
-            expiry?: string;
             /** @description A free-text note; unique nowhere. */
             label?: string;
-            /** @description Who acts — the attribution identity */
+            /** @description Who acts — the attribution identity, shared across one identity's keys; free text. */
             principal?: string;
-            /** @description Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant_id, and its name is in the provider's namespace (ADR-0026 d4, d5). */
-            tenant_id?: components["schemas"]["TenantRef"];
         };
         Key: {
             key_id: string;
@@ -861,7 +857,7 @@ export interface components {
             expiry?: string | null;
             /** Format: date-time */
             revoked_at?: string | null;
-            /** @description The key_id this key succeeded by rotation */
+            /** @description The key_id this key succeeded by rotation, if any (key.rotated links the two). */
             rotated_from?: string | null;
             grants?: components["schemas"]["Grant"][];
             denials?: components["schemas"]["Denial"][];
@@ -931,9 +927,9 @@ export interface components {
         Build: {
             /** @description The workspace version the binary was built at. */
             version: string;
-            /** @description The full 40-hex commit */
+            /** @description The full 40-hex commit, or unknown. */
             commit: string;
-            /** @description The commit's committer time */
+            /** @description The commit's committer time, or unknown. */
             commit_time: string;
             /** @description When the build captured these fields; SOURCE_DATE_EPOCH fixes it when set. */
             build_time: string;
@@ -1889,14 +1885,8 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                /**
-                 * @example {
-                 *       "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286"
-                 *     }
-                 */
-                "application/json": {
-                    workarea?: components["schemas"]["WorkareaRef"];
-                };
+                /** @example {} */
+                "application/json": Record<string, never>;
             };
         };
         responses: {

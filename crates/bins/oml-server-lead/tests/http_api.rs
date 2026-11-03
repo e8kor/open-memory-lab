@@ -7254,3 +7254,94 @@ async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
     assert_eq!(status, StatusCode::CONFLICT, "{revised}");
     assert_envelope(&revised, "submission.tip_conflict");
 }
+
+/// `expiry` and `tenant_id` on key issuance and `workarea` on the review
+/// serve are designed fields: openapi-designed.yaml declares them for
+/// issueKey and reviewNext under `x-oml-designed-fields`, the served
+/// openapi.yaml declares them on neither request, and each sent still
+/// answers its v0.3.0 `request.validation`, where the same call without it
+/// passes that check: the issuance is created, and the serve finds an
+/// empty queue (ADR-0039 d9).
+#[tokio::test]
+async fn an_unbuilt_issuance_or_review_field_is_designed_and_answers_request_validation() {
+    let designed = designed_openapi();
+    let fields = block(&designed, 0, "x-oml-designed-fields").join("\n");
+    for (operation, field) in [
+        ("issueKey", "expiry"),
+        ("issueKey", "tenant_id"),
+        ("reviewNext", "workarea"),
+    ] {
+        let request = block(&fields, 2, operation).join("\n");
+        assert!(
+            block(&request, 4, "request")
+                .iter()
+                .any(|l| l.starts_with(&format!("      {field}:"))),
+            "{operation} declares {field} as designed"
+        );
+    }
+    let served = served_openapi();
+    for field in ["expiry", "tenant_id"] {
+        assert!(
+            !block(&served, 4, "KeyIssueRequest")
+                .iter()
+                .any(|l| l.trim_start().starts_with(&format!("{field}:"))),
+            "openapi.yaml KeyIssueRequest serves no {field}"
+        );
+    }
+    assert!(
+        !block(&served, 2, "/v2/review/next")
+            .iter()
+            .any(|l| l.trim_start().starts_with("workarea:")),
+        "openapi.yaml reviewNext serves no workarea"
+    );
+
+    let router = &doubles_router();
+    let (admin, _, root) = bootstrap(router).await;
+    for (n, (field, value)) in [
+        ("expiry", json!("2027-01-01T00:00:00Z")),
+        ("tenant_id", json!("test-tenant")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut body = json!({
+            "role": "reader",
+            "name": format!("designed-{n}"),
+            "grants": [{ "workarea_node_id": root, "role": "reader" }],
+        });
+        body[field] = value;
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&admin).idem(&format!("designed-{n}")).body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+    let dreamer = issue_key(router, &admin, "dreamer", "agent/designed", root).await;
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer)
+            .idem("designed-next-1")
+            .body(json!({ "workarea": root })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_envelope(&refused, "request.validation");
+    let (status, _, _) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer).idem("designed-next-2"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "an empty queue without the field"
+    );
+}

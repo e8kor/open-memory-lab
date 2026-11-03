@@ -671,12 +671,10 @@ paths:
         required: false
         content:
           application/json:
-            example:
-              workarea: fbbb41c5-9630-4274-ae53-166f562f5286
+            example: {}
             schema:
               type: object
-              properties:
-                workarea: { $ref: '#/components/schemas/WorkareaRef' }
+              description: 'The queue is served whole: the subtree filter workarea is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built (ADR-0039 d9).'
       responses:
         '200':
           description: The serve.
@@ -765,7 +763,7 @@ paths:
       tags: [keys]
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
-      description: 'Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a tenant''s first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).'
+      description: 'Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a tenant''s first admin key, sent with tenant_id (step 0 of the issuance order). expiry and tenant_id are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1758,10 +1756,8 @@ components:
         default_workarea_id: { $ref: '#/components/schemas/WorkareaRef', description: "The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md." }
         held_by: { type: string, enum: [agent, human, service], description: "The issuing admin's journalled attestation (ADR-0021); never verified as fact." }
         crew: { $ref: '#/components/schemas/CrewRef', description: "The key's crew record, by id or name, journalled as crew_id and fixed for the key's life; one that names no crew record of the tenant answers access.not_found at step 4 of the issuance order (ADR-0026 d8)." }
-        expiry: { type: string, format: date-time }
         label: { type: string, description: A free-text note; unique nowhere. }
-        principal: { type: string, description: Who acts — the attribution identity, shared across one identity's keys; free text. }
-        tenant_id: { $ref: '#/components/schemas/TenantRef', description: "Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant_id, and its name is in the provider's namespace (ADR-0026 d4, d5)." }
+        principal: { type: string, description: 'Who acts — the attribution identity, shared across one identity''s keys; free text.' }
 
     Key:
       type: object
@@ -1777,7 +1773,7 @@ components:
         label: { type: string }
         expiry: { type: [string, 'null'], format: date-time }
         revoked_at: { type: [string, 'null'], format: date-time }
-        rotated_from: { type: [string, 'null'], description: The key_id this key succeeded by rotation, if any (key.rotated links the two). }
+        rotated_from: { type: [string, 'null'], description: 'The key_id this key succeeded by rotation, if any (key.rotated links the two).' }
         grants: { type: array, items: { $ref: '#/components/schemas/Grant' } }
         denials: { type: array, items: { $ref: '#/components/schemas/Denial' } }
         epoch: { type: integer }
@@ -1876,8 +1872,8 @@ components:
       additionalProperties: false
       properties:
         version: { type: string, description: The workspace version the binary was built at. }
-        commit: { type: string, description: The full 40-hex commit, or unknown. }
-        commit_time: { type: string, description: The commit's committer time, or unknown. }
+        commit: { type: string, description: 'The full 40-hex commit, or unknown.' }
+        commit_time: { type: string, description: 'The commit''s committer time, or unknown.' }
         build_time: { type: string, description: When the build captured these fields; SOURCE_DATE_EPOCH fixes it when set. }
         rustc: { type: string, description: The compiler's rustc -V line. }
         target: { type: string, description: The target triple. }

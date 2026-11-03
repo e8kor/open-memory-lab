@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
@@ -36,10 +35,8 @@ class KeyIssueRequest:
             as fact.
         crew (str | Unset): A crew record, by its id or its name, resolved server-side like every reference (ADR-0026
             d4).
-        expiry (datetime.datetime | Unset):
         label (str | Unset): A free-text note; unique nowhere.
-        principal (str | Unset): Who acts — the attribution identity
-        tenant_id (str | Unset): A tenant, by its id or its name, resolved in the deployment's namespace (ADR-0026 d4).
+        principal (str | Unset): Who acts — the attribution identity, shared across one identity's keys; free text.
     """
 
     role: Role
@@ -48,10 +45,8 @@ class KeyIssueRequest:
     default_workarea_id: str | Unset = UNSET
     held_by: KeyIssueRequestHeldBy | Unset = UNSET
     crew: str | Unset = UNSET
-    expiry: datetime.datetime | Unset = UNSET
     label: str | Unset = UNSET
     principal: str | Unset = UNSET
-    tenant_id: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
@@ -81,19 +76,9 @@ class KeyIssueRequest:
         else:
             crew = self.crew
 
-        expiry: str | Unset = UNSET
-        if not isinstance(self.expiry, Unset):
-            expiry = self.expiry.isoformat()
-
         label = self.label
 
         principal = self.principal
-
-        tenant_id: str | Unset
-        if isinstance(self.tenant_id, Unset):
-            tenant_id = UNSET
-        else:
-            tenant_id = self.tenant_id
 
         field_dict: dict[str, Any] = {}
 
@@ -111,14 +96,10 @@ class KeyIssueRequest:
             field_dict["held_by"] = held_by
         if crew is not UNSET:
             field_dict["crew"] = crew
-        if expiry is not UNSET:
-            field_dict["expiry"] = expiry
         if label is not UNSET:
             field_dict["label"] = label
         if principal is not UNSET:
             field_dict["principal"] = principal
-        if tenant_id is not UNSET:
-            field_dict["tenant_id"] = tenant_id
 
         return field_dict
 
@@ -163,23 +144,9 @@ class KeyIssueRequest:
 
         crew = _parse_crew(d.pop("crew", UNSET))
 
-        _expiry = d.pop("expiry", UNSET)
-        expiry: datetime.datetime | Unset
-        if isinstance(_expiry, Unset):
-            expiry = UNSET
-        else:
-            expiry = datetime.datetime.fromisoformat(_expiry)
-
         label = d.pop("label", UNSET)
 
         principal = d.pop("principal", UNSET)
-
-        def _parse_tenant_id(data: object) -> str | Unset:
-            if isinstance(data, Unset):
-                return data
-            return cast(str | Unset, data)
-
-        tenant_id = _parse_tenant_id(d.pop("tenant_id", UNSET))
 
         key_issue_request = cls(
             role=role,
@@ -188,10 +155,8 @@ class KeyIssueRequest:
             default_workarea_id=default_workarea_id,
             held_by=held_by,
             crew=crew,
-            expiry=expiry,
             label=label,
             principal=principal,
-            tenant_id=tenant_id,
         )
 
         return key_issue_request

@@ -23,6 +23,9 @@ This script extracts each surface and fails with a diff on any disagreement:
   * a surface-table row on http-api.md whose Contract cell says served for an
     operation openapi.yaml does not declare, or designed for one
     openapi-designed.yaml does not declare
+  * a key with a null value in either OpenAPI document outside an example,
+    default or const: an unquoted ", " in a flow mapping splits a description
+    into a truncated one and a garbage key, which the 3.1 validator accepts
 
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
@@ -319,6 +322,27 @@ def designed_field_problems(spec: dict, designed: dict) -> list[str]:
     return problems
 
 
+NULL_EXEMPT = {"example", "examples", "default", "const"}
+
+
+def null_keys(node, path: str = "") -> list[str]:
+    """Every key whose value is null, outside example, default and const subtrees."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in NULL_EXEMPT:
+                continue
+            here = f"{path}/{key}"
+            if value is None:
+                found.append(here)
+            else:
+                found += null_keys(value, here)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found += null_keys(value, f"{path}/{index}")
+    return found
+
+
 def format_ops(ops: set[tuple[str, str]]) -> list[str]:
     return [f"{method} {path}" for method, path in sorted(ops, key=lambda t: (t[1], t[0]))]
 
@@ -408,6 +432,11 @@ def main() -> int:
             ("paths documented on http-api.md but absent from both OpenAPI documents",
              format_ops(only_docs))
         )
+
+    for name, document in (("openapi.yaml", spec), ("openapi-designed.yaml", designed)):
+        nulls = null_keys(document)
+        if nulls:
+            failures.append((f"{name}: keys with a null value (an unquoted ', ' split a mapping?)", nulls))
 
     field_problems = designed_field_problems(spec, designed)
     if field_problems:
