@@ -4065,6 +4065,84 @@ impl EdgeWorld {
             .await
     }
 
+    /// Holds a term on `node` by `author`: kind `term`, its `claim_key` the
+    /// CURIE `curie` (ontologies.md, a term's `claim_key` is its CURIE).
+    async fn hold_term<S: JournalStore>(
+        &mut self,
+        store: &S,
+        node: Uuid,
+        memory_id: Uuid,
+        author: &str,
+        curie: &str,
+    ) -> MemoryRecord {
+        let memory = MemoryRecord {
+            kind: MemoryKind::Term,
+            claim_key: curie.to_owned(),
+            ..held_memory(
+                self.rig.tenant_id,
+                node,
+                memory_id,
+                author,
+                author_key(author),
+                "term body",
+            )
+        };
+        hold(&mut self.rig, store, memory.clone())
+            .await
+            .expect("hold term");
+        memory
+    }
+
+    /// Issues a dreamer key that is not the proposer, to ratify with.
+    async fn ratifier<S: JournalStore>(&mut self, store: &S, key_id: Uuid) -> KeyRecord {
+        let key = key_record(self.rig.tenant_id, key_id, Role::Dreamer, None);
+        self.rig.issue_key(store, key.clone()).await;
+        key
+    }
+
+    /// Commits `review.ratify` for the edge `edge_id` by `ratifier`,
+    /// folding [`MetadataFold::ClaimEdgeRatified`] (event-catalog.md,
+    /// `subject_kind: "claim_edge"`).
+    async fn ratify<S: JournalStore>(
+        &mut self,
+        store: &S,
+        edge_id: Uuid,
+        ratifier: Uuid,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.rig
+            .commit(
+                store,
+                event_types::REVIEW_RATIFY,
+                json!({
+                    "subject_kind": "claim_edge",
+                    "edge_id": edge_id.to_string(),
+                    "ratifier_key_id": ratifier.to_string(),
+                }),
+                MetadataFold::ClaimEdgeRatified {
+                    edge_id,
+                    ratifier_key_id: ratifier,
+                },
+                None,
+            )
+            .await
+    }
+
+    /// Proposes `src -> dst` labelled `label`; the edge as committed.
+    async fn propose_labelled<S: JournalStore>(
+        &mut self,
+        store: &S,
+        edge_id: Uuid,
+        src: Uuid,
+        dst: Uuid,
+        label: &str,
+    ) -> ClaimEdgeRecord {
+        let edge = ClaimEdgeRecord {
+            label: label.to_owned(),
+            ..self.edge(edge_id, src, dst)
+        };
+        self.propose(store, edge).await.expect("propose")
+    }
+
     /// The stored flattened closure of `memory_id`, as sets.
     async fn closure<S: JournalStore>(
         &self,
@@ -4565,6 +4643,299 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
     );
 }
 
+/// Ratifying a pending edge stores it ratified, naming its ratifier, and
+/// changes nothing else of it (postgres-schema.md `claim_edges`;
+/// event-catalog.md `review.ratify` with `subject_kind: "claim_edge"`).
+pub async fn ratifying_a_pending_edge_records_its_ratifier_and_state<S: JournalStore>(store: &S) {
+    let mut world = EdgeWorld::new(store, 330).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x330A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x330B), "bob", &[])
+        .await;
+    let edge = world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x330E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+    let ratifier = world.ratifier(store, Uuid::from_u128(0x330D)).await;
+
+    world
+        .ratify(store, edge.edge_id, ratifier.key_id)
+        .await
+        .expect("a pending edge ratifies");
+
+    let read = store
+        .claim_edge(world.rig.tenant_id, edge.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge is held");
+    assert_eq!(
+        read,
+        ClaimEdgeRecord {
+            state: EdgeState::Ratified,
+            ratifier_key_id: Some(ratifier.key_id),
+            ..edge
+        },
+        "the edge is ratified by its ratifier, everything else as proposed"
+    );
+}
+
+/// A second ratification of an edge finds it no longer pending: the commit
+/// writes nothing, its event included, and is refused by name, as a lost
+/// tip compare-and-set is (ADR-0025 d10's shape; ADR-0021 d5).
+pub async fn ratifying_an_edge_already_ratified_writes_nothing_and_is_refused_edge_not_pending<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 331).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x331A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x331B), "bob", &[])
+        .await;
+    let edge = world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x331E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+    let first = world.ratifier(store, Uuid::from_u128(0x331D)).await;
+    let second = world.ratifier(store, Uuid::from_u128(0x331C)).await;
+    world
+        .ratify(store, edge.edge_id, first.key_id)
+        .await
+        .expect("the first ratification");
+    let head = store
+        .chain_head(world.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+
+    assert_eq!(
+        world.ratify(store, edge.edge_id, second.key_id).await,
+        Err(StoreError::EdgeNotPending {
+            edge_id: edge.edge_id
+        }),
+        "an edge already ratified is refused by name"
+    );
+    assert_eq!(
+        store.chain_head(world.rig.tenant_id).await.expect("head"),
+        Some(head),
+        "the journal head is unchanged"
+    );
+    let read = store
+        .claim_edge(world.rig.tenant_id, edge.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge is held");
+    assert_eq!(
+        read.ratifier_key_id,
+        Some(first.key_id),
+        "the first ratifier stands"
+    );
+}
+
+/// A tenant with four terms on its root, and a ratifier.
+async fn term_world<S: JournalStore>(
+    store: &S,
+    seed: u64,
+) -> (EdgeWorld, [MemoryRecord; 4], KeyRecord) {
+    let mut world = EdgeWorld::new(store, seed).await;
+    let root = world.root;
+    let base = u128::from(seed) << 16;
+    let mut terms = Vec::new();
+    for (i, curie) in ["acme:Animal", "acme:Dog", "acme:Puppy", "acme:Cat"]
+        .into_iter()
+        .enumerate()
+    {
+        let author = format!("author-{i}");
+        terms.push(
+            world
+                .hold_term(
+                    store,
+                    root,
+                    Uuid::from_u128(base | (0xA0 + i as u128)),
+                    &author,
+                    curie,
+                )
+                .await,
+        );
+    }
+    let ratifier = world.ratifier(store, Uuid::from_u128(base | 0xD0)).await;
+    let terms: [MemoryRecord; 4] = terms.try_into().expect("four terms");
+    (world, terms, ratifier)
+}
+
+/// The ratified term edges of a label are each listed once by its
+/// endpoints' `claim_key`s, a term's CURIE (ontologies.md; ADR-0021 d5's
+/// cycle read), in the order (source, target) ascending.
+pub async fn the_ratified_term_edges_of_a_label_list_each_by_its_endpoints_claim_keys<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut world, [animal, dog, puppy, cat], ratifier) = term_world(store, 332).await;
+    let tenant = world.rig.tenant_id;
+    for (low, src, dst) in [
+        (0xE1, &dog, &animal),
+        (0xE2, &puppy, &dog),
+        (0xE3, &cat, &animal),
+    ] {
+        let edge = world
+            .propose_labelled(
+                store,
+                Uuid::from_u128((332_u128 << 16) | low),
+                src.memory_id,
+                dst.memory_id,
+                "oml:is_a",
+            )
+            .await;
+        world
+            .ratify(store, edge.edge_id, ratifier.key_id)
+            .await
+            .expect("ratify");
+    }
+
+    let pair = |s: &str, d: &str| (s.to_owned(), d.to_owned());
+    assert_eq!(
+        store
+            .ratified_term_edges(tenant, "oml:is_a")
+            .await
+            .expect("read"),
+        vec![
+            pair("acme:Cat", "acme:Animal"),
+            pair("acme:Dog", "acme:Animal"),
+            pair("acme:Puppy", "acme:Dog"),
+        ],
+        "each ratified is_a edge by its endpoints' CURIEs"
+    );
+    let other = EdgeWorld::new(store, 333).await;
+    assert!(
+        store
+            .ratified_term_edges(other.rig.tenant_id, "oml:is_a")
+            .await
+            .expect("read")
+            .is_empty(),
+        "another tenant reads none of these edges"
+    );
+}
+
+/// A pending edge and a ratified edge of another label are absent from a
+/// label's ratified term edges: the cycle check sees ratified edges of its
+/// own label alone (ADR-0021 d5).
+pub async fn a_pending_or_other_label_edge_is_absent_from_the_ratified_term_edges<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut world, [animal, dog, puppy, cat], ratifier) = term_world(store, 334).await;
+    let tenant = world.rig.tenant_id;
+    let ratified = world
+        .propose_labelled(
+            store,
+            Uuid::from_u128((334_u128 << 16) | 0xE1),
+            dog.memory_id,
+            animal.memory_id,
+            "oml:is_a",
+        )
+        .await;
+    world
+        .ratify(store, ratified.edge_id, ratifier.key_id)
+        .await
+        .expect("ratify");
+    world
+        .propose_labelled(
+            store,
+            Uuid::from_u128((334_u128 << 16) | 0xE2),
+            puppy.memory_id,
+            dog.memory_id,
+            "oml:is_a",
+        )
+        .await;
+    let part_of = world
+        .propose_labelled(
+            store,
+            Uuid::from_u128((334_u128 << 16) | 0xE3),
+            cat.memory_id,
+            animal.memory_id,
+            "oml:part_of",
+        )
+        .await;
+    world
+        .ratify(store, part_of.edge_id, ratifier.key_id)
+        .await
+        .expect("ratify");
+
+    assert_eq!(
+        store
+            .ratified_term_edges(tenant, "oml:is_a")
+            .await
+            .expect("read"),
+        vec![("acme:Dog".to_owned(), "acme:Animal".to_owned())],
+        "only the ratified is_a edge"
+    );
+    assert_eq!(
+        store
+            .ratified_term_edges(tenant, "oml:part_of")
+            .await
+            .expect("read"),
+        vec![("acme:Cat".to_owned(), "acme:Animal".to_owned())],
+        "only the ratified part_of edge"
+    );
+}
+
+/// A ratified edge with a memory at either end is absent from the ratified
+/// term edges, whatever its label: the read covers edges between two terms
+/// (ADR-0021 d5).
+pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_ratified_term_edges<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut world, [animal, dog, ..], ratifier) = term_world(store, 335).await;
+    let tenant = world.rig.tenant_id;
+    let root = world.root;
+    let note = world
+        .hold(store, root, Uuid::from_u128(0x335F), "alice", &[])
+        .await;
+    for (low, src, dst) in [
+        (0xE1, note.memory_id, animal.memory_id),
+        (0xE2, dog.memory_id, note.memory_id),
+    ] {
+        let edge = world
+            .propose_labelled(
+                store,
+                Uuid::from_u128((335_u128 << 16) | low),
+                src,
+                dst,
+                "oml:is_a",
+            )
+            .await;
+        world
+            .ratify(store, edge.edge_id, ratifier.key_id)
+            .await
+            .expect("ratify");
+    }
+
+    assert!(
+        store
+            .ratified_term_edges(tenant, "oml:is_a")
+            .await
+            .expect("read")
+            .is_empty(),
+        "an edge with a memory endpoint is no term edge"
+    );
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
@@ -4666,6 +5037,18 @@ where
     )
     .await;
     a_claim_edge_whose_created_at_is_not_its_events_at_commits_nothing(&new_store().await).await;
+    ratifying_a_pending_edge_records_its_ratifier_and_state(&new_store().await).await;
+    ratifying_an_edge_already_ratified_writes_nothing_and_is_refused_edge_not_pending(
+        &new_store().await,
+    )
+    .await;
+    the_ratified_term_edges_of_a_label_list_each_by_its_endpoints_claim_keys(&new_store().await)
+        .await;
+    a_pending_or_other_label_edge_is_absent_from_the_ratified_term_edges(&new_store().await).await;
+    a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_ratified_term_edges(
+        &new_store().await,
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------
