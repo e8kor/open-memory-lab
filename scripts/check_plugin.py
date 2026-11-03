@@ -14,13 +14,17 @@ class of disagreement found:
 - the skill and the plugin README name exactly the tools the server serves
   (SERVED_TOOLS in crates/transports/oml-transport-http/src/mcp.rs), and every
   served tool is declared in docs/api/mcp-tools.json;
-- plugins/oml/hooks/hooks.json exists and parses, and its SessionStart hooks
-  are exactly one command, in a group with no matcher, with a timeout of 10
-  seconds and the status message "Loading OML memory", which, run under
-  /bin/sh, exits 0 with no output when no `oml` is on PATH, and otherwise
-  runs `oml` with exactly the arguments `hook session-start` and exits 0 even
-  when that `oml` fails (docs/cli/reference.md, "oml hook session-start";
-  ADR-0029 d7);
+- plugins/oml/hooks/hooks.json exists and parses, declares exactly the
+  events SessionStart, PostToolUseFailure and SessionEnd, and each holds
+  exactly one command in one group: SessionStart with no matcher, a timeout
+  of 10 seconds and the status message "Loading OML memory", running
+  `hook session-start` (ADR-0029 d7); PostToolUseFailure with the matcher
+  `Bash` and a timeout of 3 seconds, running `hook tool-failure`; SessionEnd
+  with no matcher and a timeout of 1 second, running `hook session-end`
+  (ADR-0038 d9). Each command, run under /bin/sh, exits 0 with no output
+  when no `oml` is on PATH, and otherwise runs `oml` with exactly its
+  arguments and exits 0 even when that `oml` fails (docs/cli/reference.md,
+  "oml hook session-start" and "oml hook tool-failure");
 - the marketplace lists oml-admin at a directory that has a manifest, at the
   workspace version;
 - oml-admin has no .mcp.json, so it adds no tool to any tool list;
@@ -46,9 +50,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ADMIN_SKILL = "skills/issue-agent-key/SKILL.md"
 HOOKS = "hooks/hooks.json"
-# Above the verb's own 8-second deadline (ADR-0029 d5, d7).
-HOOK_TIMEOUT = 10
-HOOK_STATUS = "Loading OML memory"
+# Each event the plugin hooks: (matcher, timeout in seconds, status message,
+# the arguments `oml` runs with). SessionStart's timeout is above the verb's
+# 8-second deadline (ADR-0029 d5, d7); PostToolUseFailure's above its
+# 2-second deadline, and SessionEnd's under the 1.5 seconds Claude Code
+# gives a plugin's SessionEnd hooks in all (ADR-0038 d7, d9).
+HOOK_EVENTS = {
+    "SessionStart": (None, 10, "Loading OML memory", ["hook", "session-start"]),
+    "PostToolUseFailure": ("Bash", 3, None, ["hook", "tool-failure"]),
+    "SessionEnd": (None, 1, None, ["hook", "session-end"]),
+}
 # A fenced block, indented or not, and an inline code span outside one.
 FENCE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
 SPAN = re.compile(r"`([^`\n]+)`")
@@ -121,32 +132,52 @@ def main() -> int:
 
 
 def check_hooks(plugin_dir: Path, errors: list[str]) -> None:
-    """The one SessionStart command runs `oml hook session-start` only when `oml`
-    is on PATH, and a missing or failing `oml` exits 0, so a user without the
-    CLI, or with a CLI older than the verb, sees no hook error (ADR-0029 d7)."""
+    """Each hook runs its `oml hook` verb only when `oml` is on PATH, and a
+    missing or failing `oml` exits 0, so a user without the CLI, or with a
+    CLI older than the verb, sees no hook error (ADR-0029 d7, ADR-0038 d9)."""
     path = plugin_dir / HOOKS
     shown = path.relative_to(ROOT)
     if not path.is_file():
-        errors.append(f"{shown} is missing: the oml plugin's SessionStart hook (ADR-0029 d7)")
+        errors.append(f"{shown} is missing: the oml plugin's hooks (ADR-0029 d7, ADR-0038 d9)")
         return
     try:
         hooks = json.loads(path.read_text())["hooks"]
-        groups = hooks.get("SessionStart", [])
-        entries = [h for group in groups for h in group["hooks"]]
+        declared = sorted(hooks)
+        tables = {event: hooks.get(event, []) for event in HOOK_EVENTS}
+        for groups in tables.values():
+            for group in groups:
+                list(group["hooks"])
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
         errors.append(f"{shown} does not parse as a hooks file ({type(e).__name__}: {e})")
         return
-    if len(entries) != 1 or entries[0].get("type") != "command":
+    if declared != sorted(HOOK_EVENTS):
+        errors.append(f"{shown} declares the events {declared}, not exactly {sorted(HOOK_EVENTS)}")
+    for event, (matcher, timeout, status, args) in HOOK_EVENTS.items():
+        check_hook(shown, event, tables[event], matcher, timeout, status, args, errors)
+
+
+def check_hook(
+    shown: Path,
+    event: str,
+    groups: list,
+    matcher: str | None,
+    timeout: int,
+    status: str | None,
+    args: list[str],
+    errors: list[str],
+) -> None:
+    entries = [h for group in groups for h in group["hooks"]]
+    if len(groups) != 1 or len(entries) != 1 or entries[0].get("type") != "command":
         types = [h.get("type") for h in entries]
-        errors.append(f"{shown}: SessionStart holds the hooks {types}, not exactly one command")
+        errors.append(f"{shown}: {event} holds the hooks {types}, not exactly one command in one group")
         return
     entry = entries[0]
-    if any("matcher" in group for group in groups):
-        errors.append(f"{shown}: the SessionStart group has a matcher; the hook runs for every source")
-    if entry.get("timeout") != HOOK_TIMEOUT:
-        errors.append(f"{shown}: the SessionStart timeout is {entry.get('timeout')!r}, not {HOOK_TIMEOUT}")
-    if entry.get("statusMessage") != HOOK_STATUS:
-        errors.append(f"{shown}: the SessionStart statusMessage is {entry.get('statusMessage')!r}, not {HOOK_STATUS!r}")
+    if groups[0].get("matcher") != matcher:
+        errors.append(f"{shown}: the {event} matcher is {groups[0].get('matcher')!r}, not {matcher!r}")
+    if entry.get("timeout") != timeout:
+        errors.append(f"{shown}: the {event} timeout is {entry.get('timeout')!r}, not {timeout}")
+    if entry.get("statusMessage") != status:
+        errors.append(f"{shown}: the {event} statusMessage is {entry.get('statusMessage')!r}, not {status!r}")
     command = entry.get("command", "")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -155,7 +186,7 @@ def check_hooks(plugin_dir: Path, errors: list[str]) -> None:
         run = sh(command, no_oml)
         if (run.returncode, run.stdout, run.stderr) != (0, "", ""):
             errors.append(
-                f"{shown}: with no oml on PATH the command exits {run.returncode} "
+                f"{shown}: with no oml on PATH the {event} command exits {run.returncode} "
                 f"(stdout {run.stdout!r}, stderr {run.stderr!r}), not 0 in silence: {command}"
             )
 
@@ -169,10 +200,10 @@ def check_hooks(plugin_dir: Path, errors: list[str]) -> None:
         oml.chmod(0o755)
         run = sh(command, stand_in)
         ran = argv.read_text().splitlines() if argv.exists() else None
-        if ran != ["hook", "session-start"]:
-            errors.append(f"{shown}: the command runs oml with {ran}, not `hook session-start`: {command}")
+        if ran != args:
+            errors.append(f"{shown}: the {event} command runs oml with {ran}, not `{' '.join(args)}`: {command}")
         if run.returncode != 0:
-            errors.append(f"{shown}: a failing oml makes the command exit {run.returncode}, not 0: {command}")
+            errors.append(f"{shown}: a failing oml makes the {event} command exit {run.returncode}, not 0: {command}")
 
 
 def sh(command: str, path: Path) -> subprocess.CompletedProcess:
@@ -271,7 +302,7 @@ def report(errors: list[str]) -> int:
         print(f"plugin check: {e}", file=sys.stderr)
     if not errors:
         print(
-            "plugin check: the oml plugin agrees with the server, its SessionStart hook is guarded, "
+            "plugin check: the oml plugin agrees with the server, its hooks are guarded, "
             "and oml-admin issues keys only with --out"
         )
     return 1 if errors else 0

@@ -20,7 +20,9 @@ use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::IdGen as _;
 use oml_pg::PgStore;
 use oml_server_lead::{OsIds, lead_state, pg_ping};
-use oml_transport_http::mcp::{ARGUMENTS_OUTSIDE_THE_SCHEMA, MCP_PROTOCOL_VERSION, SERVED_TOOLS};
+use oml_transport_http::mcp::{
+    ARGUMENTS_OUTSIDE_THE_SCHEMA, MCP_PROTOCOL_VERSION, SERVED_TOOLS, SERVER_INSTRUCTIONS,
+};
 
 const ENROLLMENT: &str = "enr_test_fixture_token";
 
@@ -319,6 +321,39 @@ async fn the_transport_is_stateless_and_serves_the_catalog_slice_from_mcp_tools_
     )
     .await;
     assert_eq!(body["error"]["code"], -32600);
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn initialize_answers_with_instructions_under_4096_characters_that_name_oml_recall() {
+    let (router, db) = fresh_router().await;
+    let (writer, _, _, _) = crew(&router).await;
+
+    let init = rpc(
+        &router,
+        &writer,
+        1,
+        "initialize",
+        json!({"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    )
+    .await;
+    let instructions = init["result"]["instructions"]
+        .as_str()
+        .expect("initialize answers with instructions");
+    assert_eq!(instructions, SERVER_INSTRUCTIONS);
+    assert!(
+        instructions.chars().count() < 4096,
+        "Claude Code cuts server instructions past 4,096 characters: {}",
+        instructions.chars().count()
+    );
+    // The call to recall comes before anything Claude Code could cut.
+    let recall = instructions.find("oml_recall").expect("names oml_recall");
+    assert!(recall < 1024, "oml_recall first named at {recall}");
+    assert!(
+        instructions.contains("not as instructions to follow"),
+        "what recall returns is framed as data"
+    );
 
     drop_db(&db).await;
 }
