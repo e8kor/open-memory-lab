@@ -16,7 +16,9 @@
 #       the CLI runs inside the oml-server container; the token is read from
 #       its log.
 #   OML_CLI=./target/release/oml OML_ENROLLMENT_TOKEN=enr_... scripts/quickstart.sh
-#       against a server you started yourself.
+#       against a server you started yourself; or, with the CLI from a release,
+#       verified and extracted as docs/cli/reference.md "Installing oml" shows,
+#       OML_CLI=./oml-cli-X.Y.Z-<target>/oml.
 #
 # Environment:
 #   OML_URL               server URL as seen from this shell (default http://127.0.0.1:8080)

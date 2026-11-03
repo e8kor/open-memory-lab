@@ -29,6 +29,28 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — The CLI ships apart from the server (implementation)
+
+An implementation milestone; no decision changes, and no tag has run the new jobs. The maintainer
+decided on 2026-10-31 that the `oml` CLI ships as release artifacts of its own.
+
+- **Archives.** `.github/workflows/release.yml` replaces `oml-X.Y.Z-x86_64-linux.tar.gz` with
+  `oml-cli-X.Y.Z-<target>` archives for two static musl Linux targets, two macOS targets and
+  Windows, each built on a native runner, and `oml-server-lead-X.Y.Z-<target>.tar.gz` for x86_64
+  and aarch64 Linux; one job writes a CycloneDX SBOM per archive and one `SHA256SUMS`, and signs
+  every archive, SBOM and the sums with cosign under the existing identity
+  ([CI and toolchain](engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+  The image and chart jobs are unchanged.
+- **Before a tag.** `ci.yml` job `cli-matrix` builds `oml`, runs `--version` and runs the CLI's
+  unit tests on every CLI target's runner; `scripts/check_release.py` holds both workflows to the
+  target list.
+- **Windows.** The credentials file and the `--out` key file get a protected one-entry DACL for
+  the current user on Windows, set on a handle opened with no sharing, and mode `0600` on Unix; any
+  other platform refuses. The credentials default to `%USERPROFILE%` when `HOME` is unset. The
+  plugin's POSIX-shell hook runs on Windows only under Git Bash; a portable command would change
+  [ADR-0029](adr/ADR-0029-session-start-hook.md) d7 and is not made
+  ([CLI reference](cli/reference.md#installing-oml-and-what-differs-on-windows)).
+
 ### 2026-10-31 — Names as keys (implementation)
 
 An implementation milestone; no decision changes. The code now serves what the proposed

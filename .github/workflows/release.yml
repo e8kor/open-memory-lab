@@ -3,8 +3,14 @@ name: Release
 # A release is a set of verifiable artifacts, not a tag
 # (docs/engineering/ci-and-toolchain.md "Release artifacts"). One tag vX.Y.Z,
 # equal to the workspace version, ships:
-#   - oml-X.Y.Z-x86_64-linux.tar.gz (oml-server-lead + oml), its CycloneDX SBOM
-#     and a SHA-256 sum, each signed keyless with cosign;
+#   - oml-cli-X.Y.Z-<target>.tar.gz (.zip on Windows), the `oml` CLI alone, for
+#     x86_64-unknown-linux-musl, aarch64-unknown-linux-musl (static, any
+#     distro), aarch64-apple-darwin, x86_64-apple-darwin and
+#     x86_64-pc-windows-msvc, each built on a native runner;
+#   - oml-server-lead-X.Y.Z-<target>.tar.gz for x86_64-unknown-linux-gnu and
+#     aarch64-unknown-linux-gnu;
+#   - one CycloneDX SBOM per archive (<archive stem>.cdx.json), one SHA256SUMS
+#     over every archive and SBOM, each of them signed keyless with cosign;
 #   - ghcr.io/e8kor/open-memory-lab:X.Y.Z (and :latest), one image index for
 #     linux/amd64 and linux/arm64, each built on a native runner with buildx SBOM
 #     and provenance attestations, the index signed by digest;
@@ -42,15 +48,122 @@ jobs:
           fi
           echo "version=$tag" >> "$GITHUB_OUTPUT"
 
-  binaries:
-    name: linux binaries, SBOM, signatures
+  # The runner labels are the ones GitHub lists for public repositories
+  # (docs.github.com/en/actions/reference/runners/github-hosted-runners,
+  # fetched 2026-11-03): each target builds on a runner of its own OS and
+  # architecture, so `oml --version` runs on the binary it ships.
+  cli:
+    name: oml CLI, ${{ matrix.target }}
     needs: version
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # musl from Ubuntu's musl-tools for the C in ring; Rust links its
+          # own self-contained musl, so the binary is static.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+      - name: musl C toolchain
+        if: endsWith(matrix.target, '-linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --bin oml --target "$TARGET"
+      - name: Package, after the binary prints the tag's version
+        run: |
+          exe=""
+          [ "${TARGET%-windows-msvc}" != "$TARGET" ] && exe=".exe"
+          bin="target/$TARGET/release/oml$exe"
+          got="$("$bin" --version | tr -d '\r')"
+          [ "$got" = "oml $VERSION" ] || { echo "$TARGET: '$got', expected 'oml $VERSION'" >&2; exit 1; }
+          if [ "${TARGET%-linux-musl}" != "$TARGET" ]; then
+            # A static binary has no program interpreter to load it.
+            if readelf -l "$bin" | grep -q INTERP; then echo "$TARGET: not static" >&2; exit 1; fi
+          fi
+          name="oml-cli-${VERSION}-${TARGET}"
+          mkdir -p "dist/$name"
+          cp "$bin" README.md LICENSE "dist/$name/"
+          if [ -n "$exe" ]; then
+            (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)
+          else
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          fi
+          rm -rf "dist/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  server:
+    name: oml-server-lead, ${{ matrix.target }}
+    needs: version
+    strategy:
+      matrix:
+        # Ubuntu 22.04's glibc, the oldest the listed runners carry, so the
+        # binary loads on the widest set of glibc distributions.
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+      - run: cargo build --release --locked --bin oml-server-lead --target "$TARGET"
+      - name: Package
+        run: |
+          name="oml-server-lead-${VERSION}-${TARGET}"
+          mkdir -p "dist/$name"
+          cp "target/$TARGET/release/oml-server-lead" README.md LICENSE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # One job signs everything, so every bundle carries this workflow's identity
+  # from one runner, and SHA256SUMS is written once the set is complete.
+  binaries:
+    name: SBOMs, SHA256SUMS, signatures
+    needs: [version, cli, server]
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      CLI_TARGETS: >-
+        x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin
+        x86_64-apple-darwin x86_64-pc-windows-msvc
+      SERVER_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -58,23 +171,39 @@ jobs:
         with:
           tool: cargo-cyclonedx
       - uses: sigstore/cosign-installer@v3
-      - run: cargo build --release --locked --bin oml-server-lead --bin oml
-      - name: Package
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "{cli,server}-*"
+          merge-multiple: true
+      - name: Every archive is here, and nothing else
         run: |
-          name="oml-${VERSION}-x86_64-linux"
-          mkdir -p "dist/$name"
-          cp target/release/oml-server-lead target/release/oml README.md LICENSE "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
-          rm -rf "dist/$name"
-          # One SBOM per crate, written beside its manifest; ship the two binaries'.
-          cargo cyclonedx --format json --override-filename sbom
-          cp crates/bins/oml-server-lead/sbom.json "dist/oml-server-lead-${VERSION}.cdx.json"
-          cp crates/bins/oml-cli/sbom.json "dist/oml-${VERSION}.cdx.json"
-          (cd dist && sha256sum ./*.tar.gz ./*.cdx.json > SHA256SUMS)
+          want=""
+          for t in $CLI_TARGETS; do
+            case "$t" in
+              *-windows-msvc) want="$want oml-cli-${VERSION}-$t.zip" ;;
+              *) want="$want oml-cli-${VERSION}-$t.tar.gz" ;;
+            esac
+          done
+          for t in $SERVER_TARGETS; do want="$want oml-server-lead-${VERSION}-$t.tar.gz"; done
+          diff <(printf '%s\n' $want | sort) <(ls dist | sort)
+      - name: One SBOM per archive, for its own target's dependency graph
+        run: |
+          # cargo-cyclonedx writes one SBOM per crate beside its manifest;
+          # --target keeps the dependencies that target compiles.
+          for t in $CLI_TARGETS; do
+            cargo cyclonedx --format json --override-filename sbom --target "$t"
+            cp crates/bins/oml-cli/sbom.json "dist/oml-cli-${VERSION}-$t.cdx.json"
+          done
+          for t in $SERVER_TARGETS; do
+            cargo cyclonedx --format json --override-filename sbom --target "$t"
+            cp crates/bins/oml-server-lead/sbom.json "dist/oml-server-lead-${VERSION}-$t.cdx.json"
+          done
+          (cd dist && sha256sum ./*.tar.gz ./*.zip ./*.cdx.json > SHA256SUMS)
       - name: Sign (keyless, bound to this workflow)
         run: |
           cd dist
-          for f in *.tar.gz *.cdx.json SHA256SUMS; do
+          for f in *.tar.gz *.zip *.cdx.json SHA256SUMS; do
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
           done
       - uses: actions/upload-artifact@v4
@@ -236,24 +365,45 @@ jobs:
               claude plugin install oml@open-memory-lab
 
           Image: \`${IMAGE}:${VERSION}\` (\`${IMAGE}@${DIGEST}\`), one index for
-          linux/amd64 and linux/arm64. The binary tarball is x86_64-linux only; on arm64,
-          run the image.
+          linux/amd64 and linux/arm64.
+
+          The \`oml\` CLI: \`oml-cli-${VERSION}-<target>.tar.gz\` for x86_64-unknown-linux-musl,
+          aarch64-unknown-linux-musl (static, any distribution), aarch64-apple-darwin and
+          x86_64-apple-darwin, and \`oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip\`.
+          The server: \`oml-server-lead-${VERSION}-<target>.tar.gz\` for x86_64-unknown-linux-gnu
+          and aarch64-unknown-linux-gnu.
 
           ## Verify
 
-          Every artifact here and the image are signed keyless by this release workflow;
-          the image's signature is on the index digest, and each platform image is signed too:
+          Every archive, SBOM and \`SHA256SUMS\` here, and the image, are signed keyless by this
+          release workflow; the image's signature is on the index digest, and each platform image
+          is signed too:
 
               cosign verify \\
                 --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
                 --certificate-identity-regexp '${identity}' \\
                 ${IMAGE}@${DIGEST}
 
+          Verify an archive, then extract it (Linux; on macOS the same, with that target's name):
+
               cosign verify-blob \\
                 --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
                 --certificate-identity-regexp '${identity}' \\
-                --bundle oml-${VERSION}-x86_64-linux.tar.gz.sigstore.json \\
-                oml-${VERSION}-x86_64-linux.tar.gz
+                --bundle oml-cli-${VERSION}-x86_64-unknown-linux-musl.tar.gz.sigstore.json \\
+                oml-cli-${VERSION}-x86_64-unknown-linux-musl.tar.gz
+              tar -xzf oml-cli-${VERSION}-x86_64-unknown-linux-musl.tar.gz
+
+          On Windows, in PowerShell:
+
+              cosign verify-blob \`
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \`
+                --certificate-identity-regexp '${identity}' \`
+                --bundle oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip.sigstore.json \`
+                oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip
+              Expand-Archive oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip -DestinationPath .
+
+          \`SHA256SUMS\` lists every archive and SBOM; verify its bundle the same way, then
+          \`sha256sum --check --ignore-missing SHA256SUMS\`.
 
           Each binary has a CycloneDX SBOM (\`*.cdx.json\`), generated from the committed Cargo.lock.
           EOF
