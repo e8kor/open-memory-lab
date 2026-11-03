@@ -14,7 +14,10 @@
 //! connections — the connect code, PKCE, the redirect allowlist, client
 //! identity, the fetch-address allow-list, discovery, token formats,
 //! rotation with reuse detection and the connection lifecycle (ADR-0031,
-//! proposed).
+//! proposed); `guardrail` holds the guardrail kind's fields and caps, the
+//! `oml-gr/1` rule grammar, its tool classes, glob and check, the set's order
+//! and conflicts, and the rule cache's codec (proposed ADR-0037 d2, d4, d7,
+//! d8, d9, d10).
 
 #![forbid(unsafe_code)]
 
@@ -22,6 +25,7 @@ pub mod access;
 pub mod budget;
 pub mod chain;
 pub mod envelope;
+pub mod guardrail;
 pub mod jcs;
 pub mod keys;
 pub mod model;
