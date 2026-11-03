@@ -10,7 +10,10 @@
 //! d2, d14, d15); `budget` holds the budget token, the budget cut and the
 //! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
 //! classification of a reference as an id or a name, and the naming of rows
-//! that predate names (ADR-0026 d2, d3, d11).
+//! that predate names (ADR-0026 d2, d3, d11); `guardrail` holds the
+//! guardrail kind's fields and caps, the `oml-gr/1` rule grammar, its tool
+//! classes, glob and check, the set's order and conflicts, and the rule
+//! cache's codec (proposed ADR-0037 d2, d4, d7, d8, d9, d10).
 
 #![forbid(unsafe_code)]
 
@@ -18,6 +21,7 @@ pub mod access;
 pub mod budget;
 pub mod chain;
 pub mod envelope;
+pub mod guardrail;
 pub mod jcs;
 pub mod keys;
 pub mod model;
