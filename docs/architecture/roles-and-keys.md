@@ -121,7 +121,7 @@ path, the tree, a node's workarea edges and its status read — names, ids, pare
 statuses, crew records, children, workarea edges, review policy objects, pending transitions —
 beside the crew records, keys, grants and denials its own rows of this matrix already let it read.
 No grant and no denial enters: denials attenuate grants, and an admin key can hold neither. A
-global denial on an admin key is refused, `request.validation` with `details.field: key_id`
+global denial on an admin key is refused, `request.validation` with `details.field: key`
 ([http-api](../api/http-api.md#keys-grants-denials)), so no denial is accepted, journalled and
 then ignored by a structure read, and one journalled before names is lifted by the lead at the
 upgrade ([rows created before names](../api/http-api.md#rows-created-before-names), rule 5). On

@@ -478,4 +478,27 @@ mod tests {
             "/include_unreviewed"
         );
     }
+
+    /// A global denial on an admin key is refused naming `key`, the field
+    /// v0.4.0 sends, and the architecture page that declares the rule names
+    /// the same field (roles-and-keys.md footnote 6; ADR-0026 d15, ADR-0039 d7).
+    #[test]
+    fn a_denial_on_an_admin_key_names_the_key_field_as_roles_and_keys_states() {
+        let refusal = map_app_error(AppError::DenialOnAdminKey, ErrorContext::Write);
+        assert_eq!(refusal.code, "request.validation");
+        assert_eq!(refusal.details, Some(json!({ "field": "key" })));
+        let page = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../docs/architecture/roles-and-keys.md"
+        ))
+        .expect("docs/architecture/roles-and-keys.md reads");
+        let flat = page.split_whitespace().collect::<Vec<_>>().join(" ");
+        let sentence = "A global denial on an admin key is refused, `request.validation` with `details.field: ";
+        let at = flat.find(sentence).expect("footnote 6 states the refusal") + sentence.len();
+        assert!(
+            flat[at..].starts_with("key`"),
+            "roles-and-keys.md names {:?}",
+            &flat[at..at + 12]
+        );
+    }
 }
