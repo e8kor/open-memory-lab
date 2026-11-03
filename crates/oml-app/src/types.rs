@@ -691,6 +691,26 @@ pub struct ClaimEdgePosition {
     pub edge_id: Uuid,
 }
 
+/// `GET /v2/claim-edges`'s query as the use case takes it: the workarea by
+/// id or name (ADR-0026), resolved to the [`ClaimEdgeFilter`] every page
+/// re-applies.
+#[derive(Debug, Clone, Default)]
+pub struct ClaimEdgeQuery {
+    /// Only edges with an endpoint version in this workarea.
+    pub workarea: Option<Reference>,
+    /// Only edges with this version at either endpoint.
+    pub artifact_id: Option<Uuid>,
+}
+
+/// One page of the claim-edge read, newest first, each edge as openapi.yaml's
+/// `ClaimEdge`, and the cursor of the next page, `None` once the read is
+/// exhausted (openapi.yaml `ClaimEdgePage`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEdgePage {
+    pub items: Vec<ClaimEdgeProposal>,
+    pub next_cursor: Option<String>,
+}
+
 /// `GET /v1/memories` as the use-case takes it (http-api.md search;
 /// ADR-0025 d13).
 #[derive(Debug, Clone)]
