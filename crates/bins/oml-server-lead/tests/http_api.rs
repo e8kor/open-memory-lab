@@ -6777,6 +6777,16 @@ async fn whoami(router: &Router, token: &str) -> (StatusCode, Value) {
     (status, body)
 }
 
+/// The grants an issuance echoed, as `whoami` serves them: each without its
+/// per-grant deny masks (ADR-0039 d15).
+fn whoami_grants(issued: &Value) -> Value {
+    let mut grants = issued["grants"].clone();
+    for grant in grants.as_array_mut().expect("grants") {
+        grant.as_object_mut().expect("grant").remove("deny");
+    }
+    grants
+}
+
 /// A tenant with a `metals-crew` workarea, a `q1-2027` workarea under it, a
 /// `metals-crew` crew record and the agent key `claude-laptop`, writer and
 /// reader on the crew workarea, defaulting to the quarter, its crew the
@@ -6839,7 +6849,7 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
                 "path": "universe.metals-crew.q1-2027",
             },
             "crew": { "id": crew_record["crew_id"], "name": "metals-crew" },
-            "grants": issued["grants"],
+            "grants": whoami_grants(&issued),
         })
     );
 
@@ -6865,7 +6875,7 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
         json!({ "id": crew, "name": "metals-crew", "path": "universe.metals-crew" })
     );
     assert_eq!(review["crew"], Value::Null, "{review}");
-    assert_eq!(review["grants"], reviewer["grants"], "{review}");
+    assert_eq!(review["grants"], whoami_grants(&reviewer), "{review}");
 
     let (status, root) = whoami(router, &admin).await;
     assert_eq!(status, StatusCode::OK, "{root}");
@@ -6911,6 +6921,50 @@ async fn whoami_omits_the_keys_denials() {
             .contains(denial["denial_id"].as_str().expect("denial id")),
         "{me}"
     );
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A grant's per-grant deny mask names a subtree the key may not read
+/// through that grant, so `whoami` serves each grant without its masks: the
+/// masked subtree's id appears nowhere in the body (ADR-0039 d15).
+#[tokio::test]
+async fn whoami_serves_each_grant_without_its_deny_masks() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let sealed = create_workarea(router, &admin, crew, "sealed").await;
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea_node_id": crew, "role": "writer", "deny": [{ "subtree_node_id": sealed }] },
+        ]),
+    )
+    .await;
+    assert_eq!(
+        issued["grants"][0]["deny"],
+        json!([{ "subtree_node_id": sealed.to_string() }]),
+        "{issued}"
+    );
+
+    let (status, me) = whoami(router, issued["value"].as_str().expect("value")).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(
+        me["grants"],
+        json!([{
+            "grant_id": issued["grants"][0]["grant_id"],
+            "workarea_node_id": crew.to_string(),
+            "role": "writer",
+            "epoch": issued["grants"][0]["epoch"],
+        }]),
+        "{me}"
+    );
+    assert!(!me.to_string().contains(&sealed.to_string()), "{me}");
 
     drop_db(&rig.db_name).await;
 }

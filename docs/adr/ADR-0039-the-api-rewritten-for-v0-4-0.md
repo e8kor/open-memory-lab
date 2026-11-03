@@ -287,8 +287,9 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
       needs the key's own reference, and `getWorkarea` names no tenant, role or key. Any live key
       calls it for itself and gets `{key_id, name, role, principal, held_by, tenant,
       default_workarea, crew, grants}`, each reference as `{id, name}` and the workarea with its
-      `path`. It omits denials, which name subtrees the key may not read, logs no read, since it
-      reads no claim, and gains the guardrail scope when ADR-0037's is built.
+      `path`, and each grant as `{grant_id, workarea_node_id, role, epoch}`. It omits denials and
+      the grants' per-grant deny masks, both of which name subtrees the key may not read, logs no
+      read, since it reads no claim, and gains the guardrail scope when ADR-0037's is built.
     - **`oml doctor` checks the pair alone**: each value's source, never the key; `/readyz`; and
       `whoami`, printing role, tenant and default workarea.
     - **Admin extras stay off the start path**: the enrollment secret and `--signing-key` are read

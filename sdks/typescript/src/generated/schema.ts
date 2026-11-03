@@ -796,8 +796,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials.
-         * @description Requires: any live key; it reads only its own record. Each reference is {id, name} and the default workarea carries its derived path. The key's denials, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+         * The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks.
+         * @description Requires: any live key; it reads only its own record. Each reference is {id, name} and the default workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
          */
         get: operations["whoami"];
         put?: never;
@@ -2058,7 +2058,17 @@ export interface components {
             /** @description The names from the root to the node, joined by '.'; derived, never stored. */
             path: string;
         };
-        /** @description The calling key's own record (GET /v2/whoami): everything a client derives from its URL and key alone. Never the key's value and never its denials (ADR-0039 d15). */
+        /** @description A stored grant as whoami serves it, without its per-grant deny masks, which name subtrees the key may not read through it (ADR-0039 d15). */
+        WhoamiGrant: {
+            grant_id: string;
+            /** @description Node id, never a path. */
+            workarea_node_id: string;
+            /** @enum {string} */
+            role: "reader" | "writer" | "dreamer";
+            /** @description The journal seq of this grant's grant.issued event. */
+            epoch: number;
+        };
+        /** @description The calling key's own record (GET /v2/whoami): everything a client derives from its URL and key alone. Never the key's value, its denials or its grants' deny masks (ADR-0039 d15). */
         Whoami: {
             key_id: string;
             /** @description The key's name; null only for a key that predates names, which the lead names before it serves (ADR-0026 d11). */
@@ -2076,8 +2086,8 @@ export interface components {
             default_workarea: components["schemas"]["WhoamiWorkarea"] | null;
             /** @description The key's crew record, fixed for its life; null when none was named. */
             crew: components["schemas"]["WhoamiRef"] | null;
-            /** @description The key's stored grants, each with its epoch. */
-            grants: components["schemas"]["Grant"][];
+            /** @description The key's stored grants, each with its epoch and without its deny masks. */
+            grants: components["schemas"]["WhoamiGrant"][];
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
@@ -4685,7 +4695,6 @@ export interface operations {
                      *           "workarea_node_id": "3a5c7e9b-1d2f-4a6c-8e0b-2d4f6a8c0e1b",
                      *           "role": "writer",
                      *           "grant_id": "9c1e3a5b-7d9f-4b2d-8a4c-6e8a0c2e4a6c",
-                     *           "deny": [],
                      *           "epoch": 41
                      *         }
                      *       ]

@@ -161,6 +161,8 @@ from .vocab_term_successors_item import VocabTermSuccessorsItem
 from .vocab_term_successors_item_relation import VocabTermSuccessorsItemRelation
 from .vocab_term_term_status import VocabTermTermStatus
 from .whoami import Whoami
+from .whoami_grant import WhoamiGrant
+from .whoami_grant_role import WhoamiGrantRole
 from .whoami_held_by import WhoamiHeldBy
 from .whoami_ref import WhoamiRef
 from .whoami_workarea import WhoamiWorkarea
@@ -333,6 +335,8 @@ __all__ = (
     "VocabTermSuccessorsItemRelation",
     "VocabTermTermStatus",
     "Whoami",
+    "WhoamiGrant",
+    "WhoamiGrantRole",
     "WhoamiHeldBy",
     "WhoamiRef",
     "WhoamiWorkarea",

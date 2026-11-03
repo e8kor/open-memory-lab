@@ -1867,7 +1867,7 @@ fn key_json(detail: &KeyDetail) -> Value {
 
 /// openapi.yaml `Whoami`: the calling key's own record, each reference
 /// `{id, name}` and the default workarea with its `path`, its stored grants
-/// and never its denials (ADR-0039 d15).
+/// without their deny masks, and never its denials (ADR-0039 d15).
 fn whoami_json(whoami: &Whoami) -> Value {
     let key = &whoami.key;
     let named = |r: &oml_app::types::NamedRef| json!({ "id": r.id, "name": r.name.as_str() });
@@ -1884,7 +1884,20 @@ fn whoami_json(whoami: &Whoami) -> Value {
             "path": w.path,
         })),
         "crew": whoami.crew.as_ref().map(named),
-        "grants": whoami.grants.iter().map(grant_json).collect::<Vec<_>>(),
+        "grants": whoami.grants.iter().map(whoami_grant_json).collect::<Vec<_>>(),
+    })
+}
+
+/// openapi.yaml `WhoamiGrant`: a stored grant as `whoami` serves it, its
+/// id, node, role and epoch and never its per-grant deny masks, which name
+/// subtrees the key may not read through it, the reason `whoami` omits the
+/// key's denials (ADR-0039 d15).
+fn whoami_grant_json(g: &GrantRecord) -> Value {
+    json!({
+        "grant_id": g.grant.grant_id,
+        "workarea_node_id": g.grant.node,
+        "role": g.grant.role.as_str(),
+        "epoch": g.epoch,
     })
 }
 
@@ -2177,4 +2190,36 @@ pub fn event_json(tailed: &TailedEvent) -> Value {
         "at": e.envelope.at.as_str(),
         "payload": tailed.payload,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oml_app::domain::access::Grant;
+
+    /// openapi.yaml `WhoamiGrant`: a grant as `whoami` serves it carries
+    /// its id, node, role and epoch and never its per-grant deny masks,
+    /// which name subtrees the key may not read through it (ADR-0039 d15).
+    #[test]
+    fn whoami_serves_a_grant_without_its_deny_masks() {
+        let sealed = Uuid::from_u128(7);
+        let record = GrantRecord {
+            grant: Grant {
+                grant_id: Uuid::from_u128(1),
+                node: Uuid::from_u128(2),
+                role: Role::Writer,
+                deny: vec![sealed],
+            },
+            epoch: 41,
+        };
+        assert_eq!(
+            whoami_grant_json(&record),
+            json!({
+                "grant_id": Uuid::from_u128(1),
+                "workarea_node_id": Uuid::from_u128(2),
+                "role": "writer",
+                "epoch": 41,
+            })
+        );
+    }
 }

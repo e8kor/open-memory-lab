@@ -9,7 +9,7 @@ from ..models.role import Role
 from ..models.whoami_held_by import WhoamiHeldBy
 
 if TYPE_CHECKING:
-    from ..models.grant import Grant
+    from ..models.whoami_grant import WhoamiGrant
     from ..models.whoami_ref import WhoamiRef
     from ..models.whoami_workarea import WhoamiWorkarea
 
@@ -20,7 +20,7 @@ T = TypeVar("T", bound="Whoami")
 @_attrs_define
 class Whoami:
     """The calling key's own record (GET /v2/whoami): everything a client derives from its URL and key alone. Never the
-    key's value and never its denials (ADR-0039 d15).
+    key's value, its denials or its grants' deny masks (ADR-0039 d15).
 
         Attributes:
             key_id (str):
@@ -32,7 +32,7 @@ class Whoami:
             tenant (None | WhoamiRef): The key's tenant; null for an operator key, which no tenant holds.
             default_workarea (None | WhoamiWorkarea): The key's journalled default workarea; null when it has none.
             crew (None | WhoamiRef): The key's crew record, fixed for its life; null when none was named.
-            grants (list[Grant]): The key's stored grants, each with its epoch.
+            grants (list[WhoamiGrant]): The key's stored grants, each with its epoch and without its deny masks.
     """
 
     key_id: str
@@ -43,7 +43,7 @@ class Whoami:
     tenant: None | WhoamiRef
     default_workarea: None | WhoamiWorkarea
     crew: None | WhoamiRef
-    grants: list[Grant]
+    grants: list[WhoamiGrant]
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.whoami_ref import WhoamiRef
@@ -103,7 +103,7 @@ class Whoami:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.grant import Grant
+        from ..models.whoami_grant import WhoamiGrant
         from ..models.whoami_ref import WhoamiRef
         from ..models.whoami_workarea import WhoamiWorkarea
 
@@ -171,7 +171,7 @@ class Whoami:
         grants = []
         _grants = d.pop("grants")
         for grants_item_data in _grants:
-            grants_item = Grant.from_dict(grants_item_data)
+            grants_item = WhoamiGrant.from_dict(grants_item_data)
 
             grants.append(grants_item)
 

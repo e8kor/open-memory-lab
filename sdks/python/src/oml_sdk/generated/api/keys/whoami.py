@@ -53,12 +53,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | Whoami]:
     """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
-    denials.
+    denials or deny masks.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. The key's denials, which name subtrees it may not read, are
-    omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
-    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+    workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which
+    name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A
+    revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
+    ADR-0039 d15).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -82,12 +83,13 @@ def sync(
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | Whoami | None:
     """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
-    denials.
+    denials or deny masks.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. The key's denials, which name subtrees it may not read, are
-    omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
-    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+    workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which
+    name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A
+    revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
+    ADR-0039 d15).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,12 +109,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | Whoami]:
     """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
-    denials.
+    denials or deny masks.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. The key's denials, which name subtrees it may not read, are
-    omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
-    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+    workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which
+    name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A
+    revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
+    ADR-0039 d15).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,12 +137,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | Whoami | None:
     """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
-    denials.
+    denials or deny masks.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. The key's denials, which name subtrees it may not read, are
-    omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
-    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+    workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which
+    name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A
+    revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
+    ADR-0039 d15).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

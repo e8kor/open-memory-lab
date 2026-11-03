@@ -951,11 +951,13 @@ d15): `getKey` is admin-only and needs the key's own reference, and the workarea
 tenant, role or key. The answer is `{key_id, name, role, principal, held_by, tenant,
 default_workarea, crew, grants}`: each reference is `{id, name}`, the default workarea also carries
 its derived `path`, `held_by` is the attestation as the key's row stores it, and `grants` are the
-key's stored grants as `GET /v2/keys/{key_id}` lists them. `tenant`, `default_workarea` and `crew`
+key's stored grants as `GET /v2/keys/{key_id}` lists them, each `{grant_id, workarea_node_id, role,
+epoch}` without its per-grant `deny` masks. `tenant`, `default_workarea` and `crew`
 are null where the key names none; an operator key, which no tenant holds, has all three null and
 no grants.
 
-The key's denials are omitted: they name subtrees the key may not read. The read journals
+The key's denials and its grants' deny masks are omitted: both name subtrees the key may not read,
+and a mask no other grant covers is as much a hole as a denial. The read journals
 nothing, since it reads no claim. A revoked or unknown key answers `auth.invalid`, and a request
 without a key `auth.missing`, as on every route.
 
