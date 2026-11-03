@@ -1,0 +1,23 @@
+{{- if not .Values.keyring.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "oml.keyringClaim" . }}
+  labels:
+    {{- include "oml.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keyring
+  annotations:
+    # The claim holds the deployment signing key: helm uninstall leaves it,
+    # because a lead that loses it mints a new key and refuses readiness at
+    # the startup fork check (ADR-0033 d3).
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.keyring.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.keyring.size }}
+{{- end }}

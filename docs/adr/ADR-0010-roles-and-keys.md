@@ -7,7 +7,7 @@ answers: why exactly five roles exist; how API keys are issued, scoped and banne
 
 # ADR-0010 — Roles and keys: reader, writer, dreamer, admin, operator
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
 
 ## Context
 

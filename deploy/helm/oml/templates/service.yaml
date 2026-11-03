@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "oml.fullname" . }}-server
+  labels:
+    {{- include "oml.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  # Cluster-internal: the claim goes through kubectl port-forward before any
+  # Ingress exists (ADR-0033 d8). It selects every server pod, so followers
+  # join it when they exist (ADR-0023 d16).
+  type: ClusterIP
+  selector:
+    {{- include "oml.serverSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
