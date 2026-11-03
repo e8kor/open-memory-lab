@@ -45,7 +45,10 @@ use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
-use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, StoreError};
+use oml_app::ports::{
+    ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
+    Signer, StoreError,
+};
 use oml_app::types::{
     AppError, BootstrapRequest, CrewCreateRequest, CrewRecord, CrewUpdate, GrantRecord,
     GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, RecallRequest, ServedMemory,
@@ -124,6 +127,11 @@ pub struct ApiState<J, S, C, I, Sc> {
     names_assigned: bool,
     enrollment: Arc<Mutex<Option<String>>>,
     build: Arc<BuildInfo>,
+    /// The authorization request's sealer: one key per process, held in
+    /// memory only (ADR-0031 d9 step 1).
+    sealer: Arc<dyn HandleSealer>,
+    /// The authorize page's client document fetcher (ADR-0031 d5).
+    documents: oauth::Documents,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -136,6 +144,8 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             names_assigned: self.names_assigned,
             enrollment: Arc::clone(&self.enrollment),
             build: Arc::clone(&self.build),
+            sealer: Arc::clone(&self.sealer),
+            documents: self.documents.clone(),
         }
     }
 }
@@ -216,7 +226,19 @@ where
             names_assigned: true,
             enrollment: Arc::new(Mutex::new(enrollment_token)),
             build: Arc::new(BuildInfo::unknown()),
+            sealer: Arc::new(oauth::seal::AeadSealer::generate()),
+            documents: oauth::Documents::default(),
         }
+    }
+
+    /// The fetcher of client ID metadata documents the authorize page
+    /// reads through (ADR-0031 d5); without one every document fetch
+    /// fails, so a document client is `oauth.client_invalid` and the page
+    /// makes no outbound call.
+    #[must_use]
+    pub fn with_document_fetcher<F: ClientDocumentFetcher + 'static>(mut self, fetcher: F) -> Self {
+        self.documents = oauth::Documents::new(fetcher);
+        self
     }
 
     /// The build `/readyz` reports; without it every build field is `unknown`.
