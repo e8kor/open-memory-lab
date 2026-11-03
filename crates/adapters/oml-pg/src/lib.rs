@@ -3806,6 +3806,26 @@ impl ConnectionStore for PgStore {
         rows.iter().map(code_from_row).collect()
     }
 
+    async fn connections(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Vec<ConnectionRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {CONNECTION_COLUMNS} FROM oauth_connections \
+             WHERE tenant_id = $1 AND key_id = $2 ORDER BY created_at, id"
+        ))
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(connection_from_row).collect()
+    }
+
     async fn connection(
         &self,
         tenant_id: Uuid,

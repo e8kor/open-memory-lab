@@ -721,6 +721,9 @@ pub struct BootstrapRequest {
 #[derive(Debug, Clone)]
 pub struct IssuedKey {
     pub key_id: Uuid,
+    /// The bearer key's value; empty for a connector key, which has none
+    /// and whose [`IssuedKey::connect_code`] stands in its place (ADR-0031
+    /// d7).
     pub value: String,
     pub role: Role,
     pub principal: String,
@@ -735,6 +738,26 @@ pub struct IssuedKey {
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
     pub access: KeyAccess,
+    /// A connector key's connect code, returned only after the key's last
+    /// `grant.issued` and its `connection.code_issued` committed; `None` for
+    /// a bearer key (roles-and-keys.md issuance order, step 7; ADR-0031 d7).
+    pub connect_code: Option<ConnectCodeIssued>,
+}
+
+/// A connect code as its minting answers it: `{code_id, code, expires_at,
+/// connector_url}` (http-api.md `POST /v2/keys/{key_id}/connect-codes`;
+/// openapi.yaml `ConnectCode`; ADR-0031 d7, d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectCodeIssued {
+    pub code_id: Uuid,
+    /// The twelve symbols in three groups of four, shown exactly once:
+    /// `Some` in a fresh answer and `None` in the response an idempotency
+    /// record stores, so no record holds a code (ADR-0031 d7, d8).
+    pub code: Option<String>,
+    pub expires_at: EventTime,
+    /// `<issuer>/mcp`, from `oauth.issuer`, the URL to enter as the custom
+    /// connector.
+    pub connector_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -755,7 +778,7 @@ pub struct IssueKeyRequest {
     pub role: Role,
     /// The key's name, required at issuance and distinct from its principal
     /// and its label; whether it is taken is checked after every other check
-    /// (step 7, `name.taken`; ADR-0026 d5, d9).
+    /// (step 8, `name.taken`; ADR-0026 d5, d9).
     pub name: Name,
     pub principal: String,
     /// The issuing admin's attestation; `None` journals null and stores the
@@ -768,6 +791,10 @@ pub struct IssueKeyRequest {
     /// hold is absent at step 4 (ADR-0026 d8).
     pub crew: Option<Reference>,
     pub grants: Vec<GrantRequest>,
+    /// Issue a connector key: no value, a connect code in its place, after
+    /// step 7 admits a key that can hold a connection (roles-and-keys.md
+    /// issuance order, step 7; ADR-0031 d7).
+    pub connect_code: bool,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the

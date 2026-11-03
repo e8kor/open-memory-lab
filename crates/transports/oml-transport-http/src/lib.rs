@@ -828,6 +828,8 @@ where
             default_workarea,
             crew,
             grants,
+            // The `connect_code` member waits for ADR-0039's route rewrite.
+            connect_code: false,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await

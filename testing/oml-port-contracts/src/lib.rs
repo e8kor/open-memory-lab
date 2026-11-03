@@ -4635,6 +4635,53 @@ pub async fn key_revoked_voids_the_keys_unredeemed_codes<S: ConnectionStore>(sto
     );
 }
 
+/// A key's connections are listed in every state, by creation and ties by
+/// id, and no other key's connection and nothing of another tenant is
+/// listed (roles-and-keys.md connections; ADR-0031 d11).
+pub async fn a_keys_connections_are_listed_in_every_state_and_no_other_keys<S: ConnectionStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(345);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3180));
+    let other = connector_key(t, Uuid::from_u128(0xD3181));
+    rig.issue_key(store, key.clone()).await;
+    rig.issue_key(store, other.clone()).await;
+    let (c1, c2, c3) = (
+        Uuid::from_u128(0xC3181),
+        Uuid::from_u128(0xC3182),
+        Uuid::from_u128(0xC3183),
+    );
+    let (open, authorized, others) = (
+        Uuid::from_u128(0xE3181),
+        Uuid::from_u128(0xE3182),
+        Uuid::from_u128(0xE3183),
+    );
+    rig.opened_connection(store, key.key_id, c1, open, None, None)
+        .await;
+    rig.authorized_connection(store, key.key_id, c2, authorized, None)
+        .await;
+    rig.authorized_connection(store, other.key_id, c3, others, None)
+        .await;
+    let listed = store.connections(t, key.key_id).await.expect("listing");
+    let states: Vec<(Uuid, ConnectionState)> =
+        listed.iter().map(|c| (c.connection_id, c.state)).collect();
+    assert_eq!(
+        states,
+        [
+            (open, ConnectionState::Open),
+            (authorized, ConnectionState::Authorized)
+        ],
+        "both of the key's connections, by creation and ties by id, and not the other key's"
+    );
+    assert_eq!(
+        store.connections(Uuid::from_u128(0xBAD), key.key_id).await,
+        Ok(Vec::new()),
+        "another tenant lists nothing of this one's"
+    );
+}
+
 /// `connection.opened` opens its `authorized` connection, its `opened_seq`
 /// the commit's seq and its `auth_code_redeemed_at` the commit's `at`, and
 /// revokes the key's earlier open connection as `replaced` with its
@@ -6295,6 +6342,7 @@ where
     key_revoked_voids_the_keys_unredeemed_codes(&new_store().await).await;
     connection_opened_revokes_the_keys_earlier_open_connection_as_replaced(&new_store().await)
         .await;
+    a_keys_connections_are_listed_in_every_state_and_no_other_keys(&new_store().await).await;
     connection_opened_for_a_revoked_key_is_refused_and_commits_nothing(&new_store().await).await;
     connection_opened_for_a_voided_code_is_refused_and_commits_nothing(&new_store().await).await;
     connection_opened_for_an_expired_authorization_code_is_refused_and_commits_nothing(

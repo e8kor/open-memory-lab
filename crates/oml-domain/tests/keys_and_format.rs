@@ -97,6 +97,23 @@ fn an_event_time_counts_microseconds_from_the_unix_epoch() {
     );
 }
 
+#[test]
+fn an_event_time_is_written_back_from_its_microseconds_exactly() {
+    for s in [
+        "1970-01-01T00:00:00.000000Z",
+        "2024-02-29T23:59:59.999999Z",
+        "2026-10-29T12:10:00.000001Z",
+        "0000-01-01T00:00:00.000000Z",
+        "9999-12-31T23:59:59.999999Z",
+        "1969-12-31T23:59:59.999999Z",
+    ] {
+        let time = EventTime::parse(s).expect("fixed width");
+        assert_eq!(EventTime::from_unix_micros(time.unix_micros()), Some(time));
+    }
+    let last = EventTime::parse("9999-12-31T23:59:59.999999Z").expect("fixed width");
+    assert_eq!(EventTime::from_unix_micros(last.unix_micros() + 1), None);
+}
+
 fn draft(event_type: &str) -> EventDraft {
     EventDraft {
         tenant_id: Uuid::from_u128(0xAA),

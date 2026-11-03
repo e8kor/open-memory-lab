@@ -22,27 +22,30 @@ use oml_domain::name::{
     Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
     assign_names, unresolved_value,
 };
+use oml_domain::oauth::{
+    ConnectCode as CodeSymbols, ConnectRefused, ConnectionState, Issuer, Refusal, RevokedCause,
+};
 use oml_domain::{
-    ChainHead, Envelope, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
+    ChainHead, Envelope, EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role,
+    Sha256Hash, SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
     sha256_digest_string, transition,
 };
 
 use crate::cursor::{ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
+    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, OutboxRow, ScanOutcome,
     Scanner, Signer, StoreError, SubjectRow, TailEvent,
 };
 use crate::types::{
-    AppError, AssignedNames, BootstrapRequest, BootstrapResult, CreatedWorkarea, Credential,
-    CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS,
-    IssueKeyRequest, IssuedKey, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter,
-    ListingPosition, ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT,
-    RecallHit, RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt,
-    SubmitRequest, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
-    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo,
-    WorkareaRecord,
+    AppError, AssignedNames, BootstrapRequest, BootstrapResult, ConnectCode, ConnectCodeIssued,
+    ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
+    CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey, KeyAccess,
+    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage,
+    MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult,
+    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeReceipt,
+    SupersedeRequest, TailPage, TailedEvent, TreeNode, TreePage, UnnamedRows, Verdict,
+    VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -60,6 +63,23 @@ const NAMES_RULE: &str = "ADR-0026 d11";
 /// ADR-0026 d11, rule 5).
 const ADMIN_DENIAL_LIFT_REASON: &str = "adr-0026-d15";
 
+/// `oauth.connect_code_ttl`'s shipped default, 10 minutes, in seconds
+/// (configuration.md; ADR-0031 d8). FR-22: until journalled settings are
+/// built, this code constant is the lifetime of every connect code this
+/// build mints, as [`CURSOR_TTL_SECS`](crate::cursor::CURSOR_TTL_SECS) is a
+/// cursor's.
+pub const CONNECT_CODE_TTL_SECS: i64 = 600;
+
+/// `oauth.access_token_ttl`'s shipped default, 1 hour, in seconds: the
+/// lifetime of every access token this build mints until settings are
+/// built (configuration.md; FR-22; ADR-0031 d10).
+pub const ACCESS_TOKEN_TTL_SECS: i64 = 3_600;
+
+/// `oauth.refresh_token_ttl`'s shipped default, 30 days, in seconds: the
+/// lifetime of every refresh token this build mints until settings are
+/// built (configuration.md; FR-22; ADR-0031 d10).
+pub const REFRESH_TOKEN_TTL_SECS: i64 = 30 * 86_400;
+
 /// The application, generic over its driven ports.
 pub struct App<J, S, C, I, Sc> {
     journal: J,
@@ -67,6 +87,9 @@ pub struct App<J, S, C, I, Sc> {
     clock: C,
     ids: I,
     scanner: Sc,
+    /// `oauth.issuer`, the public origin; `None` where the deployment sets
+    /// none, and then no connect code is minted (ADR-0031 d1).
+    oauth_issuer: Option<Issuer>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -148,6 +171,25 @@ fn access_refusal(refusal: AccessRefusal, node: Uuid, verb: &'static str) -> App
 }
 
 /// Issuance steps 1–3 as the typed refusal.
+/// `oauth.connect_refused` with its `details.reason` (errors.md; ADR-0031
+/// d7, d8).
+fn connect_refused(reason: ConnectRefused) -> AppError {
+    AppError::OAuth(Refusal::ConnectRefused(reason))
+}
+
+/// The catalog payload of `connection.code_issued`: the code's id and
+/// expiry and nothing derived from the code, not even its digest
+/// (event-catalog.md `connection.code_issued`; ADR-0031 d8).
+fn code_issued_payload(code: &ConnectCode, issued_by: Uuid, voids: Option<Uuid>) -> Value {
+    json!({
+        "code_id": code.code_id.to_string(),
+        "key_id": code.key_id.to_string(),
+        "issued_by_key_id": issued_by.to_string(),
+        "expires_at": code.expires_at.as_str(),
+        "voids_code_id": voids.map(|c| c.to_string()),
+    })
+}
+
 fn issuance_refusal(refusal: IssuanceRefusal) -> AppError {
     match refusal {
         IssuanceRefusal::RoleExclusive => AppError::RoleExclusive,
@@ -515,6 +557,17 @@ where
             clock,
             ids,
             scanner,
+            oauth_issuer: None,
+        }
+    }
+
+    /// The app for a deployment that sets `oauth.issuer`: connect codes are
+    /// minted, and their connector URL is `<issuer>/mcp` (ADR-0031 d1).
+    #[must_use]
+    pub fn with_oauth_issuer(self, issuer: Issuer) -> Self {
+        Self {
+            oauth_issuer: Some(issuer),
+            ..self
         }
     }
 
@@ -902,8 +955,13 @@ where
         crew_id: Option<Uuid>,
         issued_by: Option<Uuid>,
     ) -> (KeyRecord, String) {
-        let secret = self.ids.new_secret();
-        let value = format!("oml_{}", base62_43(&secret));
+        // A connector key has no value and so no hash (ADR-0031 d7).
+        let (credential, value) = if req.connect_code {
+            (Credential::Connection, String::new())
+        } else {
+            let secret = self.ids.new_secret();
+            (Credential::Bearer, format!("oml_{}", base62_43(&secret)))
+        };
         let record = KeyRecord {
             key_id: self.ids.new_id(),
             tenant_id,
@@ -914,8 +972,9 @@ where
             held_by: req.held_by.unwrap_or(HeldBy::Agent),
             default_workarea,
             issued_by,
-            credential: Credential::Bearer,
-            key_hash: Some(sha256_digest_string(value.as_bytes())),
+            credential,
+            key_hash: (credential == Credential::Bearer)
+                .then(|| sha256_digest_string(value.as_bytes())),
             name: Some(req.name.clone()),
             crew_id,
             revoked_at: None,
@@ -950,26 +1009,7 @@ where
         key_id: Uuid,
         grant: Grant,
     ) -> Result<(SignedEnvelope, GrantRecord), AppError> {
-        let epoch = prev.envelope.seq + 1;
-        let event = self.seal(
-            Some(prev),
-            issuer.tenant_id,
-            event_types::GRANT_ISSUED,
-            &issuer.principal,
-            Some(issuer.key_id),
-            json!({
-                "grant_id": grant.grant_id.to_string(),
-                "key_id": key_id.to_string(),
-                "workarea_node_id": grant.node.to_string(),
-                "role": grant.role.as_str(),
-                "deny": grant
-                    .deny
-                    .iter()
-                    .map(|d| json!({ "subtree_node_id": d.to_string() }))
-                    .collect::<Vec<_>>(),
-                "epoch": epoch,
-            }),
-        )?;
+        let event = self.grant_event(prev, issuer, key_id, &grant)?;
         let receipt = self
             .commit(
                 event.clone(),
@@ -987,6 +1027,65 @@ where
                 epoch: receipt.seq,
             },
         ))
+    }
+
+    /// The sealed `grant.issued` of `grant` on `key_id`, on `prev`.
+    fn grant_event(
+        &self,
+        prev: &SignedEnvelope,
+        issuer: &KeyRecord,
+        key_id: Uuid,
+        grant: &Grant,
+    ) -> Result<SignedEnvelope, AppError> {
+        let epoch = prev.envelope.seq + 1;
+        self.seal(
+            Some(prev),
+            issuer.tenant_id,
+            event_types::GRANT_ISSUED,
+            &issuer.principal,
+            Some(issuer.key_id),
+            json!({
+                "grant_id": grant.grant_id.to_string(),
+                "key_id": key_id.to_string(),
+                "workarea_node_id": grant.node.to_string(),
+                "role": grant.role.as_str(),
+                "deny": grant
+                    .deny
+                    .iter()
+                    .map(|d| json!({ "subtree_node_id": d.to_string() }))
+                    .collect::<Vec<_>>(),
+                "epoch": epoch,
+            }),
+        )
+    }
+
+    /// A fresh connect code for `key_id`: its row as `connection.code_issued`
+    /// folds it, holding only the code's digest, and the answer that shows
+    /// the code once, with its connector URL `<issuer>/mcp`. The code is 60
+    /// bits of the id generator's secret, and lives
+    /// [`CONNECT_CODE_TTL_SECS`] from now (ADR-0031 d8).
+    fn new_connect_code(&self, oauth: &Issuer, key_id: Uuid) -> (ConnectCode, ConnectCodeIssued) {
+        let secret = self.ids.new_secret();
+        let mut random = [0_u8; 8];
+        random.copy_from_slice(&secret[24..]);
+        let symbols = CodeSymbols::from_random(random);
+        let expires_at = EventTime::from_unix_micros(
+            self.clock.now().unix_micros() + CONNECT_CODE_TTL_SECS * 1_000_000,
+        )
+        .expect("ten minutes after a clock reading is a time the fixed-width form writes");
+        let code = ConnectCode {
+            code_id: self.ids.new_id(),
+            key_id,
+            code_hash: Sha256Hash(symbols.digest()),
+            expires_at,
+        };
+        let shown = ConnectCodeIssued {
+            code_id: code.code_id,
+            code: Some(symbols.grouped()),
+            expires_at: code.expires_at.clone(),
+            connector_url: oauth.resource().to_owned(),
+        };
+        (code, shown)
     }
 
     /// The `key.revoked` that follows an issuance which failed after its
@@ -1086,6 +1185,7 @@ where
             default_workarea: Some(root_workarea_id.into()),
             crew: None,
             grants: Vec::new(),
+            connect_code: false,
         };
         let (record, value) = self.mint_key(tenant_id, &issue, Some(root_workarea_id), None, None);
         let key_id = record.key_id;
@@ -1119,6 +1219,7 @@ where
                     denials: Vec::new(),
                     lift_epochs: Vec::new(),
                 },
+                connect_code: None,
             },
         })
     }
@@ -1126,7 +1227,8 @@ where
     /// Issue a key with its grants, validated in the issuance order of
     /// roles-and-keys.md (ADR-0025 d2): the two-key rule, the issuer ceiling,
     /// grant admissibility, node and crew existence, deny containment, the
-    /// default's coverage, and last the key's name. Every workarea and crew
+    /// default's coverage, with `connect_code` whether the key can hold a
+    /// connection, and last the key's name. Every workarea and crew
     /// reference is resolved, in the issuer's tenant, once the issuer's role
     /// admits the verb and before step 1, so an unknown name fails step 4 as
     /// an unknown id does (ADR-0026 d4, d8). `key.issued`, journalling the
@@ -1137,6 +1239,15 @@ where
     /// fails after `key.issued` journals `key.revoked` over the fixed reason
     /// and answers the failure: the value was never disclosed, so the key
     /// authenticates nothing either way.
+    ///
+    /// With `connect_code`, step 7 refuses a key role of `admin` or
+    /// `operator`, `held_by: service` and a deployment without `oauth.issuer`
+    /// with `oauth.connect_refused`, by that reason. The key then has no
+    /// value: `key.issued` journals its credential `connection`, and it,
+    /// every `grant.issued` and `connection.code_issued` commit as one
+    /// chain, so a refusal of any of them, `name.taken` included, journals
+    /// none. The code is returned last, in the value's place
+    /// (roles-and-keys.md issuance order, steps 7 and 8; ADR-0031 d7, d8).
     pub async fn issue_key(
         &self,
         api_key: &str,
@@ -1225,7 +1336,26 @@ where
             _ => grants.first().map(|g| g.node),
         };
 
-        // Step 7, the name, is the unique index's, at the commit of
+        // Step 7: with `connect_code`, the key can hold a connection — a
+        // role other than admin or operator, `held_by` other than service,
+        // and a deployment that sets `oauth.issuer` (ADR-0031 d7).
+        let oauth = if req.connect_code {
+            if matches!(req.role, Role::Admin | Role::Operator) {
+                return Err(connect_refused(ConnectRefused::Role));
+            }
+            if req.held_by == Some(HeldBy::Service) {
+                return Err(connect_refused(ConnectRefused::HeldByService));
+            }
+            Some(
+                self.oauth_issuer
+                    .as_ref()
+                    .ok_or_else(|| connect_refused(ConnectRefused::NotConfigured))?,
+            )
+        } else {
+            None
+        };
+
+        // Step 8, the name, is the unique index's, at the commit of
         // `key.issued` below.
         let (record, value) = self.mint_key(
             tenant_id,
@@ -1245,6 +1375,50 @@ where
             Self::key_issued_payload(&record, req.held_by),
         )?;
         let mut last = event.clone();
+        if let Some(oauth) = oauth {
+            // One chain: a refusal of any link journals none, so no key
+            // outlives a failed issuance and none needs revoking.
+            let issued_seq = event.envelope.seq;
+            let mut links = vec![(event, MetadataFold::KeyIssued(record))];
+            let mut stored = Vec::with_capacity(grants.len());
+            for grant in grants {
+                let event = self.grant_event(&last, &issuer, key_id, &grant)?;
+                stored.push(GrantRecord {
+                    grant: grant.clone(),
+                    epoch: event.envelope.seq,
+                });
+                last = event.clone();
+                links.push((event, MetadataFold::GrantIssued { key_id, grant }));
+            }
+            let (code, shown) = self.new_connect_code(oauth, key_id);
+            let event = self.seal(
+                Some(&last),
+                tenant_id,
+                event_types::CONNECTION_CODE_ISSUED,
+                &issuer.principal,
+                Some(issuer.key_id),
+                code_issued_payload(&code, issuer.key_id, None),
+            )?;
+            links.push((event, MetadataFold::ConnectCodeIssued { code, voids: None }));
+            self.commit_chain(links).await?;
+            return Ok(IssuedKey {
+                key_id,
+                value,
+                role: req.role,
+                principal: req.principal.clone(),
+                held_by: req.held_by,
+                default_workarea,
+                name: req.name.clone(),
+                crew_id,
+                access: KeyAccess {
+                    issued_seq,
+                    grants: stored,
+                    denials: Vec::new(),
+                    lift_epochs: Vec::new(),
+                },
+                connect_code: Some(shown),
+            });
+        }
         let receipt = self
             .commit(event, MetadataFold::KeyIssued(record), None)
             .await?;
@@ -1279,6 +1453,7 @@ where
                 denials: Vec::new(),
                 lift_epochs: Vec::new(),
             },
+            connect_code: None,
         })
     }
 
@@ -3045,6 +3220,153 @@ where
             events,
             head_seq: scan.head_seq,
             next_after_seq,
+        })
+    }
+}
+
+/// The connection verbs that read the connection rows: a store that serves
+/// connector keys (postgres-schema.md "connections (ADR-0031)").
+impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
+where
+    J: ConnectionStore,
+    S: Signer,
+    C: Clock,
+    I: IdGen,
+    Sc: Scanner,
+{
+    /// Mint a fresh connect code for a connector key by id or name: admin
+    /// key role only. A bearer key, a revoked key and a deployment without
+    /// `oauth.issuer` are refused with `oauth.connect_refused`, by that
+    /// reason, journalling nothing. `connection.code_issued` names the key's
+    /// unredeemed code in `voids_code_id` and its commit voids every code of
+    /// the key from which no connection has opened, so a key has at most
+    /// one live code; the code is returned once, after that commit (http-api.md
+    /// `POST /v2/keys/{key_id}/connect-codes`; ADR-0031 d7, d8).
+    ///
+    /// Keys carry no expiry in this build (`key.issued.expiry` is null), so
+    /// `expired` is never the answer here.
+    pub async fn mint_connect_code(
+        &self,
+        api_key: &str,
+        key: Reference,
+    ) -> Result<ConnectCodeIssued, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "mint_connect_code")?;
+        let tenant_id = admin.tenant_id;
+        let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
+        let target = self
+            .journal
+            .key(tenant_id, key_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if target.credential == Credential::Bearer {
+            return Err(connect_refused(ConnectRefused::BearerKey));
+        }
+        if target.revoked_at.is_some() {
+            return Err(connect_refused(ConnectRefused::Revoked));
+        }
+        let oauth = self
+            .oauth_issuer
+            .as_ref()
+            .ok_or_else(|| connect_refused(ConnectRefused::NotConfigured))?;
+        let voids = self
+            .journal
+            .connect_codes(tenant_id, key_id)
+            .await?
+            .into_iter()
+            .find(|c| c.redeemed_at.is_none() && c.voided_seq.is_none())
+            .map(|c| c.code_id);
+        let (code, shown) = self.new_connect_code(oauth, key_id);
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::CONNECTION_CODE_ISSUED,
+            &admin.principal,
+            Some(admin.key_id),
+            code_issued_payload(&code, admin.key_id, voids),
+        )?;
+        self.commit(event, MetadataFold::ConnectCodeIssued { code, voids }, None)
+            .await?;
+        Ok(shown)
+    }
+
+    /// A key's open connections, the key by id or name: admin key role
+    /// only, and served whether or not `oauth.issuer` is set. An
+    /// `authorized` connection is not journalled and is not listed, and a
+    /// revoked one is history the journal holds; a key the tenant does not
+    /// hold is absent (roles-and-keys.md connections; ADR-0031 d1, d11).
+    pub async fn list_connections(
+        &self,
+        api_key: &str,
+        key: Reference,
+    ) -> Result<Vec<ConnectionRecord>, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "list_connections")?;
+        let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
+        if self.journal.key(admin.tenant_id, key_id).await?.is_none() {
+            return Err(AppError::NotFound);
+        }
+        let mut connections = self.journal.connections(admin.tenant_id, key_id).await?;
+        connections.retain(|c| c.state == ConnectionState::Open);
+        Ok(connections)
+    }
+
+    /// End an open connection of a key, the key by id or name: admin key
+    /// role only, and served whether or not `oauth.issuer` is set. It
+    /// journals `connection.revoked` with the cause `admin` and
+    /// `reason_digest` over the reason given, else null, and its commit
+    /// voids every code of the key from which no connection has opened. A
+    /// connection that is not the key's or not open, an `authorized` one
+    /// included, answers `access.not_found` as an unknown id does
+    /// (http-api.md `POST /v2/keys/{key_id}/connections/{connection_id}/revoke`;
+    /// event-catalog.md `connection.revoked`; ADR-0031 d1, d8, d11, d12).
+    pub async fn revoke_connection(
+        &self,
+        api_key: &str,
+        key: Reference,
+        connection_id: Uuid,
+        reason: Option<&str>,
+    ) -> Result<ConnectionRecord, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "revoke_connection")?;
+        let tenant_id = admin.tenant_id;
+        let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
+        let connection = self
+            .journal
+            .connection(tenant_id, connection_id)
+            .await?
+            .filter(|c| c.key_id == key_id && c.state == ConnectionState::Open)
+            .ok_or(AppError::NotFound)?;
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::CONNECTION_REVOKED,
+            &admin.principal,
+            Some(admin.key_id),
+            json!({
+                "connection_id": connection_id.to_string(),
+                "key_id": key_id.to_string(),
+                "revoked_by_key_id": admin.key_id.to_string(),
+                "cause": RevokedCause::Admin.as_str(),
+                "reason_digest": reason.map(|r| sha256_digest_string(r.as_bytes())),
+            }),
+        )?;
+        let receipt = self
+            .commit(
+                event,
+                MetadataFold::ConnectionRevoked {
+                    connection_id,
+                    cause: RevokedCause::Admin,
+                },
+                None,
+            )
+            .await?;
+        Ok(ConnectionRecord {
+            state: ConnectionState::Revoked(RevokedCause::Admin),
+            revoked_seq: Some(receipt.seq),
+            ..connection
         })
     }
 }

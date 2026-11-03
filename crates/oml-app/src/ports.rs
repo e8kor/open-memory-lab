@@ -891,6 +891,15 @@ pub trait ConnectionStore: JournalStore {
         key_id: Uuid,
     ) -> impl Future<Output = Result<Vec<ConnectCodeRecord>, StoreError>> + Send;
 
+    /// The key's connections in any state, in the order they were created,
+    /// ties by id; empty for a key the tenant does not hold
+    /// (roles-and-keys.md connections; ADR-0031 d11).
+    fn connections(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<ConnectionRecord>, StoreError>> + Send;
+
     /// One connection of the tenant, in any state; `None` for one it does
     /// not hold.
     fn connection(

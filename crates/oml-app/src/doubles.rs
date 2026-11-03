@@ -2333,6 +2333,28 @@ impl ConnectionStore for MemStore {
         Ok(codes)
     }
 
+    async fn connections(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Vec<ConnectionRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut connections: Vec<ConnectionRecord> = state
+            .connections
+            .values()
+            .filter(|c| c.key_id == key_id)
+            .cloned()
+            .collect();
+        connections.sort_by(|a, b| {
+            (a.created_at.unix_micros(), a.connection_id)
+                .cmp(&(b.created_at.unix_micros(), b.connection_id))
+        });
+        Ok(connections)
+    }
+
     async fn connection(
         &self,
         tenant_id: Uuid,
