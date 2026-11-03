@@ -46,10 +46,14 @@ to tenant A along two channels:
   whose query the policy binds, the service role included. CI's `S3.4/service/estimate` will
   measure that, and has not run. The role split does not close this channel.
 
-The three owner checks behind the two failures (`S3.1/owner/pg_stats`, `S3.4/owner/pg_stats`,
-`S3.4/owner/estimate`) are entries in the harness's `RECORDED_FAILURES`. CI stays green while they
-reproduce, and fails when they stop. The two service-role checks are not on the list, so CI fails
-if either leaks. Recording a failure does not settle it: each finding says ADR amendment needed
+The harness's `RECORDED_FAILURES` holds the two `estimate` checks alone, `S3.4/owner/estimate` and
+`S3.4/service/estimate` ([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
+d9 and d10 step 2). CI stays green while they reproduce, and fails when they stop. Since d9 the
+harness migrates as the lead does, `_sqlx_migrations` created as sqlx creates it and the service
+role holding only the grants the migrations make it through `oml.serving_role`. The owner serves
+nothing under the split, so `S3.1/owner/pg_stats` and `S3.4/owner/pg_stats`, which failed in the
+runs recorded below, are now controls: the owner's view must show tenant B's lexemes, or the
+service role's `S3.4/service/pg_stats` check, which is not on the list, could not have caught them. Recording a failure does not settle it: each finding says ADR amendment needed
 until the maintainer decides, and the harness prints the same action. The run seeded every table
 of migrations 0001–0005, so no table was left unprobed.
 
