@@ -29,6 +29,7 @@ oml-port-contracts = { path = "testing/oml-port-contracts" }
 oml-server-lead = { path = "crates/bins/oml-server-lead" }
 oml-transport-http = { path = "crates/transports/oml-transport-http" }
 oml-pg = { path = "crates/adapters/oml-pg" }
+oml-fetch = { path = "crates/adapters/oml-fetch" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive", "env"] }
 getrandom = "0.2"

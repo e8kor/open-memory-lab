@@ -2,6 +2,7 @@
 //! compositions): configuration (oml.toml + `OML_` environment,
 //! configuration.md), the role-split boot (ADR-0034 d4, d5), the kms-file
 //! keyring (ADR-0023 d4), the runtime clock/id/scanner adapters, the
+//! client document fetcher under its caps (ADR-0031 d5), the
 //! startup fork check (ADR-0002 d7), the
 //! startup naming and names check (ADR-0026 d11), and the start and state
 //! constructors the integration tests share with `main`.
@@ -18,10 +19,13 @@ use oml_app::App;
 use oml_app::domain::oauth::Issuer;
 use oml_app::domain::{EventTime, KeySet};
 use oml_app::ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
+use oml_app::oauth_fetch::CappedFetcher;
 use oml_app::ports::{
-    AdmissionEnvelope, Clock, IdGen, KeyringError, KeyringStore, ScanOutcome, Scanner, Signer,
+    AdmissionEnvelope, Clock, DocumentFetcher, IdGen, KeyringError, KeyringStore, ScanOutcome,
+    Scanner, Signer,
 };
 use oml_app::types::AssignedNames;
+use oml_fetch::PinnedFetcher;
 use oml_pg::{
     ForkCheckError, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
@@ -543,15 +547,21 @@ pub fn lead_state(
         db_ping,
         fork_check_ok,
         enrollment_token,
+        PinnedFetcher,
     )
 }
 
-fn composed(
+/// The state over `app`, its authorize page reading client documents
+/// through `fetcher` behind the one [`CappedFetcher`] the lead composes:
+/// the 16 slots, one per host name and one per resolved address, and the
+/// address allow-list before any connection (ADR-0031 d5).
+fn composed<F: DocumentFetcher + 'static>(
     app: LeadApp,
     store: &PgStore,
     db_ping: DbPing,
     fork_check_ok: bool,
     enrollment_token: Option<String>,
+    fetcher: F,
 ) -> LeadState {
     ApiState::new(
         Arc::new(app),
@@ -561,6 +571,7 @@ fn composed(
         enrollment_token,
     )
     .with_build(build_info())
+    .with_document_fetcher(CappedFetcher::new(fetcher))
 }
 
 /// What the lead's start decided before it serves: the boot order after the
@@ -586,12 +597,25 @@ pub struct LeadStart {
 /// enumerate the tenants, run the fork check, then name every row that
 /// predates names, mint the enrollment token against an empty deployment,
 /// and build the router on what they found, with the OAuth routes where
-/// `oauth_issuer` is set (ADR-0031 d1). Only a failed tenant enumeration
-/// fails the start.
+/// `oauth_issuer` is set (ADR-0031 d1), its authorize page fetching client
+/// documents over the network through [`PinnedFetcher`] (ADR-0031 d5).
+/// Only a failed tenant enumeration fails the start.
 pub async fn start_lead(
     store: &PgStore,
     signing_key: SigningKey,
     oauth_issuer: Option<Issuer>,
+) -> Result<LeadStart, String> {
+    start_lead_with(store, signing_key, oauth_issuer, PinnedFetcher).await
+}
+
+/// [`start_lead`] with `fetcher` as the outbound adapter under the fetch
+/// caps in place of [`PinnedFetcher`], so a test sees what the composed
+/// page asks of the network without reaching it.
+pub async fn start_lead_with<F: DocumentFetcher + 'static>(
+    store: &PgStore,
+    signing_key: SigningKey,
+    oauth_issuer: Option<Issuer>,
+    fetcher: F,
 ) -> Result<LeadStart, String> {
     let tenants = enumerate_tenants(store.pool())
         .await
@@ -619,6 +643,7 @@ pub async fn start_lead(
         pg_ping(store.pool().clone()),
         fork_check.is_ok(),
         enrollment_token.clone(),
+        fetcher,
     )
     .with_names_assigned(names.is_ok())
     .into_router();
