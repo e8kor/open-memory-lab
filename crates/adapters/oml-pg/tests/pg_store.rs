@@ -4252,3 +4252,152 @@ async fn a_ratified_claim_edge_without_a_ratifier_is_refused_by_its_check() {
     );
     drop_dbs(&created).await;
 }
+
+/// The planner's row estimate, as `EXPLAIN (FORMAT JSON)` gives it, for
+/// `query` over the serving login under `tenant`, beside the rows it returns.
+async fn estimate_under(store: &PgStore, tenant: Uuid, query: &str) -> (f64, i64) {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let plan: Value = sqlx::query_scalar(&format!("EXPLAIN (FORMAT JSON) {query}"))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("explain");
+    let rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM ({query}) q"))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the rows");
+    tx.rollback().await.expect("rollback");
+    let estimated = plan[0]["Plan"]["Plan Rows"]
+        .as_f64()
+        .unwrap_or_else(|| panic!("no Plan Rows in {plan}"));
+    (estimated, rows)
+}
+
+/// After the owner analyses `claim_edges`, each probe pair's estimate and
+/// rows under `tenant`: another tenant's value first, an unused one second.
+async fn edge_estimates(
+    store: &PgStore,
+    owner: &mut PgConnection,
+    tenant: Uuid,
+    probes: &[(String, String)],
+) -> Vec<((f64, i64), (f64, i64))> {
+    owner
+        .execute("ANALYZE claim_edges")
+        .await
+        .expect("the owner analyses");
+    let mut found = Vec::new();
+    for (theirs, unused) in probes {
+        found.push((
+            estimate_under(store, tenant, theirs).await,
+            estimate_under(store, tenant, unused).await,
+        ));
+    }
+    found
+}
+
+/// Under tenant A, EXPLAIN estimates as many claim edges for a label only
+/// tenant B's edges carry, and for one of tenant B's endpoints, as for a
+/// label and an id no tenant holds: 0011 keeps no column statistics on
+/// `claim_edges`, whose labels are tenant text, so the estimate cannot tell
+/// tenant A whether another tenant uses an edge label (FR-45; ADR-0034 d1,
+/// d11; spike 3's S3.4/estimate). The control restores the default target,
+/// and the same estimates then differ.
+#[tokio::test]
+async fn under_tenant_a_explain_estimates_tenant_bs_edge_label_as_it_estimates_an_unused_one() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 304, 0x3400).await;
+    let b = edge_tenant(&store, 305, 0x3500).await;
+    let mut owner = owner_conn(&store).await;
+    // Each tenant holds as many edges, each under a label of its own, so the
+    // default statistics, the control's, tell the two tenants' values apart.
+    for (t, label) in [(&a, "own:relates_to"), (&b, "acme:merger_target")] {
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, false)")
+            .bind(t.rig.tenant_id.to_string())
+            .execute(&mut owner)
+            .await
+            .expect("the owner set to the tenant");
+        sqlx::query(
+            "INSERT INTO claim_edges (id, tenant_id, src_artifact_id, dst_artifact_id, label, \
+                                      state, proposer_key_id, ratifier_key_id) \
+             SELECT gen_random_uuid(), $1, $2, $3, $4, 'ratified', $5, $6 \
+               FROM generate_series(1, 2000)",
+        )
+        .bind(t.rig.tenant_id)
+        .bind(t.src)
+        .bind(t.dst)
+        .bind(label)
+        .bind(t.proposer)
+        .bind(t.ratifier)
+        .execute(&mut owner)
+        .await
+        .expect("the tenant's edges");
+    }
+
+    let probes = [
+        (
+            "SELECT id FROM claim_edges \
+              WHERE state = 'ratified' AND label = 'acme:merger_target'"
+                .to_owned(),
+            "SELECT id FROM claim_edges \
+              WHERE state = 'ratified' AND label = 'zzz:unused_label'"
+                .to_owned(),
+        ),
+        (
+            format!(
+                "SELECT id FROM claim_edges WHERE src_artifact_id = '{}'",
+                b.src
+            ),
+            format!(
+                "SELECT id FROM claim_edges WHERE src_artifact_id = '{}'",
+                Uuid::from_u128(0x0BAD_0011)
+            ),
+        ),
+    ];
+    let tenant = a.rig.tenant_id;
+    for ((theirs, unused), (query, _)) in edge_estimates(&store, &mut owner, tenant, &probes)
+        .await
+        .into_iter()
+        .zip(&probes)
+    {
+        assert_eq!(
+            theirs.1, 0,
+            "tenant A reads none of tenant B's edges: {query}"
+        );
+        assert_eq!(
+            theirs.0, unused.0,
+            "under tenant A, {query} is estimated as an unused value is \
+             (estimated, returned: {theirs:?} and {unused:?})"
+        );
+    }
+
+    // Control: with the default statistics target the same estimates differ,
+    // so the law above measures 0011's setting, not an empty table.
+    for column in ["label", "src_artifact_id", "state", "tenant_id"] {
+        owner
+            .execute(
+                format!("ALTER TABLE claim_edges ALTER COLUMN {column} SET STATISTICS -1").as_str(),
+            )
+            .await
+            .expect("the owner restores the default target");
+    }
+    for ((theirs, unused), (query, _)) in edge_estimates(&store, &mut owner, tenant, &probes)
+        .await
+        .into_iter()
+        .zip(&probes)
+    {
+        assert_ne!(
+            theirs.0, unused.0,
+            "control: with column statistics, {query} is estimated apart from an unused value"
+        );
+    }
+    drop(owner);
+    drop_dbs(&created).await;
+}
