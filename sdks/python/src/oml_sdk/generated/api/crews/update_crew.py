@@ -12,7 +12,7 @@ from ...types import Response
 
 
 def _get_kwargs(
-    crew_id: str,
+    crew: str,
     *,
     body: CrewUpdate,
     idempotency_key: str,
@@ -22,8 +22,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v2/crews/{crew_id}/update".format(
-            crew_id=quote(str(crew_id), safe=""),
+        "url": "/v2/crews/{crew}/update".format(
+            crew=quote(str(crew), safe=""),
         ),
     }
 
@@ -70,7 +70,7 @@ def _build_response(
 
 
 def sync_detailed(
-    crew_id: str,
+    crew: str,
     *,
     client: AuthenticatedClient | Client,
     body: CrewUpdate,
@@ -83,7 +83,7 @@ def sync_detailed(
     of the workareas that name it (ADR-0026 d8).
 
     Args:
-        crew_id (str): A crew record, by its id or its name, resolved server-side like every
+        crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
         idempotency_key (str):
         body (CrewUpdate): At least one field; the name is not updatable.
@@ -97,7 +97,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        crew_id=crew_id,
+        crew=crew,
         body=body,
         idempotency_key=idempotency_key,
     )
@@ -110,7 +110,7 @@ def sync_detailed(
 
 
 def sync(
-    crew_id: str,
+    crew: str,
     *,
     client: AuthenticatedClient | Client,
     body: CrewUpdate,
@@ -123,7 +123,7 @@ def sync(
     of the workareas that name it (ADR-0026 d8).
 
     Args:
-        crew_id (str): A crew record, by its id or its name, resolved server-side like every
+        crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
         idempotency_key (str):
         body (CrewUpdate): At least one field; the name is not updatable.
@@ -137,7 +137,7 @@ def sync(
     """
 
     return sync_detailed(
-        crew_id=crew_id,
+        crew=crew,
         client=client,
         body=body,
         idempotency_key=idempotency_key,
@@ -145,7 +145,7 @@ def sync(
 
 
 async def asyncio_detailed(
-    crew_id: str,
+    crew: str,
     *,
     client: AuthenticatedClient | Client,
     body: CrewUpdate,
@@ -158,7 +158,7 @@ async def asyncio_detailed(
     of the workareas that name it (ADR-0026 d8).
 
     Args:
-        crew_id (str): A crew record, by its id or its name, resolved server-side like every
+        crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
         idempotency_key (str):
         body (CrewUpdate): At least one field; the name is not updatable.
@@ -172,7 +172,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        crew_id=crew_id,
+        crew=crew,
         body=body,
         idempotency_key=idempotency_key,
     )
@@ -183,7 +183,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    crew_id: str,
+    crew: str,
     *,
     client: AuthenticatedClient | Client,
     body: CrewUpdate,
@@ -196,7 +196,7 @@ async def asyncio(
     of the workareas that name it (ADR-0026 d8).
 
     Args:
-        crew_id (str): A crew record, by its id or its name, resolved server-side like every
+        crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
         idempotency_key (str):
         body (CrewUpdate): At least one field; the name is not updatable.
@@ -211,7 +211,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            crew_id=crew_id,
+            crew=crew,
             client=client,
             body=body,
             idempotency_key=idempotency_key,

@@ -304,7 +304,7 @@ async fn crew(router: &Router) -> Crew {
         "/v2/workareas",
         Some(&admin),
         Some("wa-1"),
-        Some(&json!({"parent_id": root, "name": "metals-crew"})),
+        Some(&json!({"parent": root, "name": "metals-crew"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{wa}");
@@ -333,7 +333,7 @@ async fn crew(router: &Router) -> Crew {
     ] {
         let grants: Vec<Value> = grants
             .into_iter()
-            .map(|grant| json!({"workarea_node_id": workarea, "role": grant}))
+            .map(|grant| json!({"workarea": workarea, "role": grant}))
             .collect();
         let (status, key) = send(
             router,

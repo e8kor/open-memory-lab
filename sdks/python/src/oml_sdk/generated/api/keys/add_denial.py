@@ -12,7 +12,7 @@ from ...types import Response
 
 
 def _get_kwargs(
-    key_id: str,
+    key: str,
     *,
     body: DenialRequest,
     idempotency_key: str,
@@ -22,8 +22,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v2/keys/{key_id}/denials".format(
-            key_id=quote(str(key_id), safe=""),
+        "url": "/v2/keys/{key}/denials".format(
+            key=quote(str(key), safe=""),
         ),
     }
 
@@ -65,7 +65,7 @@ def _build_response(
 
 
 def sync_detailed(
-    key_id: str,
+    key: str,
     *,
     client: AuthenticatedClient | Client,
     body: DenialRequest,
@@ -74,12 +74,14 @@ def sync_detailed(
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
      Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the
-    denial's epoch is that event's journal seq. A denial on an admin key is refused with
-    request.validation, details.field key_id: denials attenuate grants, and an admin key carries none
-    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+    denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id,
+    the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7).
+    A denial on an admin key is refused with request.validation, details.field key: denials attenuate
+    grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix
+    footnote 6; ADR-0026 d15).
 
     Args:
-        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+        key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (DenialRequest):
@@ -93,7 +95,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        key_id=key_id,
+        key=key,
         body=body,
         idempotency_key=idempotency_key,
     )
@@ -106,7 +108,7 @@ def sync_detailed(
 
 
 def sync(
-    key_id: str,
+    key: str,
     *,
     client: AuthenticatedClient | Client,
     body: DenialRequest,
@@ -115,12 +117,14 @@ def sync(
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
      Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the
-    denial's epoch is that event's journal seq. A denial on an admin key is refused with
-    request.validation, details.field key_id: denials attenuate grants, and an admin key carries none
-    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+    denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id,
+    the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7).
+    A denial on an admin key is refused with request.validation, details.field key: denials attenuate
+    grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix
+    footnote 6; ADR-0026 d15).
 
     Args:
-        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+        key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (DenialRequest):
@@ -134,7 +138,7 @@ def sync(
     """
 
     return sync_detailed(
-        key_id=key_id,
+        key=key,
         client=client,
         body=body,
         idempotency_key=idempotency_key,
@@ -142,7 +146,7 @@ def sync(
 
 
 async def asyncio_detailed(
-    key_id: str,
+    key: str,
     *,
     client: AuthenticatedClient | Client,
     body: DenialRequest,
@@ -151,12 +155,14 @@ async def asyncio_detailed(
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
      Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the
-    denial's epoch is that event's journal seq. A denial on an admin key is refused with
-    request.validation, details.field key_id: denials attenuate grants, and an admin key carries none
-    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+    denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id,
+    the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7).
+    A denial on an admin key is refused with request.validation, details.field key: denials attenuate
+    grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix
+    footnote 6; ADR-0026 d15).
 
     Args:
-        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+        key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (DenialRequest):
@@ -170,7 +176,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        key_id=key_id,
+        key=key,
         body=body,
         idempotency_key=idempotency_key,
     )
@@ -181,7 +187,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    key_id: str,
+    key: str,
     *,
     client: AuthenticatedClient | Client,
     body: DenialRequest,
@@ -190,12 +196,14 @@ async def asyncio(
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
      Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the
-    denial's epoch is that event's journal seq. A denial on an admin key is refused with
-    request.validation, details.field key_id: denials attenuate grants, and an admin key carries none
-    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+    denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id,
+    the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7).
+    A denial on an admin key is refused with request.validation, details.field key: denials attenuate
+    grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix
+    footnote 6; ADR-0026 d15).
 
     Args:
-        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+        key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (DenialRequest):
@@ -210,7 +218,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            key_id=key_id,
+            key=key,
             client=client,
             body=body,
             idempotency_key=idempotency_key,

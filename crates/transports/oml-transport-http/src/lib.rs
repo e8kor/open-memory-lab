@@ -75,17 +75,17 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/review/next"),
     ("POST", "/v2/review/verdicts"),
     ("POST", "/v2/keys"),
-    ("GET", "/v2/keys/{key_id}"),
-    ("POST", "/v2/keys/{key_id}/denials"),
+    ("GET", "/v2/keys/{key}"),
+    ("POST", "/v2/keys/{key}/denials"),
     ("GET", "/v2/whoami"),
     ("POST", "/v2/crews"),
     ("GET", "/v2/crews"),
-    ("GET", "/v2/crews/{crew_id}"),
-    ("POST", "/v2/crews/{crew_id}/update"),
+    ("GET", "/v2/crews/{crew}"),
+    ("POST", "/v2/crews/{crew}/update"),
     ("POST", "/v2/workareas"),
-    ("GET", "/v2/workareas/{workarea_id}"),
-    ("GET", "/v2/workareas/{workarea_id}/tree"),
-    ("POST", "/v2/workareas/{workarea_id}/crew"),
+    ("GET", "/v2/workareas/{workarea}"),
+    ("GET", "/v2/workareas/{workarea}/tree"),
+    ("POST", "/v2/workareas/{workarea}/crew"),
     ("GET", "/v2/events"),
     ("POST", "/v2/bootstrap/claim"),
 ];
@@ -260,17 +260,17 @@ where
             ("POST", "/v2/review/next") => post(Self::review_next),
             ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
             ("POST", "/v2/keys") => post(Self::issue_key),
-            ("GET", "/v2/keys/{key_id}") => get(Self::get_key),
-            ("POST", "/v2/keys/{key_id}/denials") => post(Self::deny_key),
+            ("GET", "/v2/keys/{key}") => get(Self::get_key),
+            ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
             ("GET", "/v2/whoami") => get(Self::whoami),
             ("POST", "/v2/crews") => post(Self::create_crew),
             ("GET", "/v2/crews") => get(Self::list_crews),
-            ("GET", "/v2/crews/{crew_id}") => get(Self::get_crew),
-            ("POST", "/v2/crews/{crew_id}/update") => post(Self::update_crew),
+            ("GET", "/v2/crews/{crew}") => get(Self::get_crew),
+            ("POST", "/v2/crews/{crew}/update") => post(Self::update_crew),
             ("POST", "/v2/workareas") => post(Self::create_workarea),
-            ("GET", "/v2/workareas/{workarea_id}") => get(Self::get_workarea),
-            ("GET", "/v2/workareas/{workarea_id}/tree") => get(Self::workarea_tree),
-            ("POST", "/v2/workareas/{workarea_id}/crew") => post(Self::set_workarea_crew),
+            ("GET", "/v2/workareas/{workarea}") => get(Self::get_workarea),
+            ("GET", "/v2/workareas/{workarea}/tree") => get(Self::workarea_tree),
+            ("POST", "/v2/workareas/{workarea}/crew") => post(Self::set_workarea_crew),
             ("GET", "/v2/events") => get(Self::events_tail),
             ("POST", "/v2/bootstrap/claim") => post(Self::bootstrap_claim),
             _ => panic!("{method} {path} is in ROUTES with no handler"),
@@ -810,7 +810,7 @@ where
         let _idem = idempotency_key(headers)?;
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
-        let req: KeyIssueBody = parse_json(headers, body)?;
+        let req: KeyIssueBody = parse_json_renamed(headers, body, key_issue_renamed)?;
         // Every issuance names its key, under the creation grammar, checked
         // with the rest of the body before step 0 of the issuance order
         // (roles-and-keys.md issuance order; ADR-0026 d5, d9).
@@ -823,9 +823,9 @@ where
                 "expiry on key issuance is not built: an issued key does not expire, so the field is refused, never dropped",
             ));
         }
-        if req.tenant_id.is_some() {
+        if req.tenant.is_some() {
             return Err(ApiError::validation(
-                "tenant_id on key issuance (operator first-admin-key path) is outside the PoC slice",
+                "tenant on key issuance (operator first-admin-key path) is outside the PoC slice",
             ));
         }
         let role = parse_role(&req.role)?;
@@ -848,27 +848,21 @@ where
             .enumerate()
             .map(|(i, g)| {
                 Ok(GrantRequest {
-                    node: reference(
-                        &format!("/grants/{i}/workarea_node_id"),
-                        &g.workarea_node_id,
-                    )?,
+                    node: reference(&format!("/grants/{i}/workarea"), &g.workarea)?,
                     role: parse_grant_role(&g.role)?,
                     deny: g
                         .deny
                         .iter()
                         .enumerate()
                         .map(|(j, d)| {
-                            reference(
-                                &format!("/grants/{i}/deny/{j}/subtree_node_id"),
-                                &d.subtree_node_id,
-                            )
+                            reference(&format!("/grants/{i}/deny/{j}/workarea"), &d.workarea)
                         })
                         .collect::<Result<_, _>>()?,
                 })
             })
             .collect::<Result<Vec<_>, ApiError>>()?;
         let default_workarea =
-            optional_reference("/default_workarea_id", req.default_workarea_id.as_deref())?;
+            optional_reference("/default_workarea", req.default_workarea.as_deref())?;
         let crew = optional_reference("/crew", req.crew.as_deref())?;
         let principal = req
             .principal
@@ -906,7 +900,7 @@ where
         )
     }
 
-    /// `POST /v2/keys/{key_id}/denials`: one journalled `key.denied`, its
+    /// `POST /v2/keys/{key}/denials`: one journalled `key.denied`, its
     /// epoch its own seq, the key and the node each by id or name
     /// (http-api.md keys, grants, denials; ADR-0025 d2; ADR-0026 d4).
     async fn deny_key_inner(
@@ -918,9 +912,11 @@ where
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
-        let key = reference("key_id", key_id)?;
-        let req: DenialBody = parse_json(headers, body)?;
-        let node = reference("/workarea_node_id", &req.workarea_node_id)?;
+        let key = reference("key", key_id)?;
+        let req: DenialBody = parse_json_renamed(headers, body, |body| {
+            refuse_renamed(body, "", &[("workarea_node_id", "workarea")])
+        })?;
+        let node = reference("/workarea", &req.workarea)?;
         let denial = retry_chain(|| st.app.deny_key(&token, key.clone(), node.clone()))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -952,13 +948,15 @@ where
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
-        let req: WorkareaCreateBody = parse_json(headers, body)?;
+        let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
+            refuse_renamed(body, "", &[("parent_id", "parent")])
+        })?;
         if req.prefix.is_some() {
             return Err(ApiError::validation(
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
             ));
         }
-        let parent = reference("/parent_id", &req.parent_id)?;
+        let parent = reference("/parent", &req.parent)?;
         let name = creation_name("/name", &req.name)?;
         // A crew record's id or name (ADR-0026 d8).
         let crew = optional_reference("/crew", req.crew.as_deref())?;
@@ -990,7 +988,7 @@ where
         )
     }
 
-    /// `GET /v2/workareas/{workarea_id}`: the node and the calling key's
+    /// `GET /v2/workareas/{workarea}`: the node and the calling key's
     /// view of it in one call, at reader effective access, or for an admin
     /// key its structure by its key role, and otherwise `access.not_found`
     /// (http-api.md workareas; ADR-0025 d14; ADR-0026 d15). `None` is
@@ -1003,7 +1001,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
-        let node = optional_reference("workarea_id", workarea_id)?;
+        let node = optional_reference("workarea", workarea_id)?;
         let info = st
             .app
             .workarea_info(&token, node)
@@ -1030,7 +1028,7 @@ where
         finish(&rid, result)
     }
 
-    /// `GET /v2/workareas/{workarea_id}/tree`: one page of the subtree at a
+    /// `GET /v2/workareas/{workarea}/tree`: one page of the subtree at a
     /// workarea, by id or name, in path order, each node with the `Workarea`
     /// fields the workarea read serves, under a cursor bound to the key: at
     /// reader effective access with every node outside it omitted, or for an
@@ -1045,7 +1043,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
-        let node = reference("workarea_id", workarea_id)?;
+        let node = reference("workarea", workarea_id)?;
         let (limit, cursor) = page_params(params)?;
         let page = st
             .app
@@ -1195,7 +1193,7 @@ where
         finish(&rid, Self::get_key_inner(&st, &key_id, &headers).await)
     }
 
-    /// `GET /v2/keys/{key_id}`: one key, by id or name, admin by key role,
+    /// `GET /v2/keys/{key}`: one key, by id or name, admin by key role,
     /// a revoked key's included; never its value (http-api.md keys, grants,
     /// denials; ADR-0026 d4, d9, d10).
     async fn get_key_inner(
@@ -1204,7 +1202,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
-        let key = reference("key_id", key_id)?;
+        let key = reference("key", key_id)?;
         let detail = st
             .app
             .key(&token, key)
@@ -1309,7 +1307,7 @@ where
         finish(&rid, Self::get_crew_inner(&st, &crew_id, &headers).await)
     }
 
-    /// `GET /v2/crews/{crew_id}`: one crew record, by id or name, admin by
+    /// `GET /v2/crews/{crew}`: one crew record, by id or name, admin by
     /// key role; one the tenant does not hold is absent (http-api.md crews;
     /// ADR-0026 d4, d8).
     async fn get_crew_inner(
@@ -1318,7 +1316,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
-        let crew = reference("crew_id", crew_id)?;
+        let crew = reference("crew", crew_id)?;
         let record = st
             .app
             .crew(&token, crew)
@@ -1340,7 +1338,7 @@ where
         )
     }
 
-    /// `POST /v2/crews/{crew_id}/update`: the record's charter URI or
+    /// `POST /v2/crews/{crew}/update`: the record's charter URI or
     /// external manager, at least one, journalled `crew.updated`. The body
     /// is closed, so a `name` is refused, never dropped: a crew's name
     /// never changes (http-api.md crews; ADR-0026 d1, d8).
@@ -1353,7 +1351,7 @@ where
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
-        let crew = reference("crew_id", crew_id)?;
+        let crew = reference("crew", crew_id)?;
         let req: CrewUpdateBody = parse_json(headers, body)?;
         let update = CrewUpdate {
             charter_uri: req.charter_uri,
@@ -1378,7 +1376,7 @@ where
         )
     }
 
-    /// `POST /v2/workareas/{workarea_id}/crew`: points the workarea at a
+    /// `POST /v2/workareas/{workarea}/crew`: points the workarea at a
     /// crew record, each by id or name, admin by key role, journalled
     /// `workarea.crew_updated`; a workarea the tenant does not hold is
     /// absent, and so, checked after it, is a crew (http-api.md workareas;
@@ -1393,7 +1391,7 @@ where
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
-        let workarea = reference("workarea_id", workarea_id)?;
+        let workarea = reference("workarea", workarea_id)?;
         let req: WorkareaCrewBody = parse_json(headers, body)?;
         let crew = reference("/crew", &req.crew)?;
         let updated = retry_chain(|| {
@@ -1510,13 +1508,13 @@ struct VerdictBody {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DenyBody {
-    subtree_node_id: String,
+    workarea: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GrantBody {
-    workarea_node_id: String,
+    workarea: String,
     role: String,
     #[serde(default)]
     deny: Vec<DenyBody>,
@@ -1538,16 +1536,20 @@ struct KeyIssueBody {
     #[serde(default)]
     expiry: Option<String>,
     held_by: Option<String>,
-    default_workarea_id: Option<String>,
+    default_workarea: Option<String>,
     /// The key's crew record, by id or name (ADR-0026 d8).
     crew: Option<String>,
-    tenant_id: Option<String>,
+    /// Parsed only to be refused while the first-admin-key path is unbuilt
+    /// (ADR-0039 d9).
+    tenant: Option<String>,
 }
 
-/// openapi.yaml `DenialRequest`, which the contract leaves open.
+/// openapi.yaml `DenialRequest`, closed, so a v0.3.0 spelling is refused
+/// naming its successor rather than dropped (ADR-0039 d7).
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DenialBody {
-    workarea_node_id: String,
+    workarea: String,
     #[serde(default)]
     #[allow(
         dead_code,
@@ -1556,9 +1558,12 @@ struct DenialBody {
     reason: Option<String>,
 }
 
+/// openapi.yaml `WorkareaCreate`, closed, so a v0.3.0 spelling is refused
+/// naming its successor rather than dropped (ADR-0039 d7).
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkareaCreateBody {
-    parent_id: String,
+    parent: String,
     name: String,
     /// A crew record's id or name (ADR-0026 d8).
     #[serde(default)]
@@ -1793,6 +1798,71 @@ fn parse_json<T: serde::de::DeserializeOwned>(
     headers: &HeaderMap,
     body: &Bytes,
 ) -> Result<T, ApiError> {
+    require_json(headers)?;
+    serde_json::from_slice(body).map_err(not_the_shape)
+}
+
+/// [`parse_json`] for a body v0.4.0 renamed fields of: `renamed` sees the
+/// body as JSON before it is read as `T`, so a v0.3.0 spelling is refused
+/// naming its successor ([`ApiError::renamed`]) where the closed `T` would
+/// refuse it only as an unknown field (ADR-0039 d7, d11).
+fn parse_json_renamed<T: serde::de::DeserializeOwned>(
+    headers: &HeaderMap,
+    body: &Bytes,
+    renamed: impl Fn(&Value) -> Result<(), ApiError>,
+) -> Result<T, ApiError> {
+    require_json(headers)?;
+    let value: Value = serde_json::from_slice(body).map_err(not_the_shape)?;
+    renamed(&value)?;
+    serde_json::from_value(value).map_err(not_the_shape)
+}
+
+/// The JSON object at `pointer`, when `body` is one: each v0.3.0 member
+/// name in `renames` it carries is refused naming its successor, both as
+/// JSON Pointers under `pointer` (ADR-0039 d7).
+fn refuse_renamed(body: &Value, pointer: &str, renames: &[(&str, &str)]) -> Result<(), ApiError> {
+    let Some(object) = body.as_object() else {
+        return Ok(());
+    };
+    match renames.iter().find(|(old, _)| object.contains_key(*old)) {
+        Some((old, new)) => Err(ApiError::renamed(
+            &format!("{pointer}/{old}"),
+            &format!("{pointer}/{new}"),
+        )),
+        None => Ok(()),
+    }
+}
+
+/// `POST /v2/keys`'s v0.3.0 spellings, at the top, in each grant and in
+/// each grant's deny entries (ADR-0039 d7).
+fn key_issue_renamed(body: &Value) -> Result<(), ApiError> {
+    refuse_renamed(
+        body,
+        "",
+        &[
+            ("default_workarea_id", "default_workarea"),
+            ("tenant_id", "tenant"),
+        ],
+    )?;
+    let grants = body.get("grants").and_then(Value::as_array);
+    for (i, grant) in grants.into_iter().flatten().enumerate() {
+        let at = format!("/grants/{i}");
+        refuse_renamed(grant, &at, &[("workarea_node_id", "workarea")])?;
+        let deny = grant.get("deny").and_then(Value::as_array);
+        for (j, entry) in deny.into_iter().flatten().enumerate() {
+            refuse_renamed(
+                entry,
+                &format!("{at}/deny/{j}"),
+                &[("subtree_node_id", "workarea")],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// A body sent under any media type but `application/json` is refused
+/// before it is parsed (errors.md `request.unsupported_media`).
+fn require_json(headers: &HeaderMap) -> Result<(), ApiError> {
     if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
         let essence = content_type
             .to_str()
@@ -1806,11 +1876,13 @@ fn parse_json<T: serde::de::DeserializeOwned>(
             return Err(ApiError::unsupported_media(&essence));
         }
     }
-    serde_json::from_slice(body).map_err(|e| {
-        ApiError::validation(format!(
-            "the request body is not this operation's shape: {e}"
-        ))
-    })
+    Ok(())
+}
+
+fn not_the_shape(e: serde_json::Error) -> ApiError {
+    ApiError::validation(format!(
+        "the request body is not this operation's shape: {e}"
+    ))
 }
 
 fn parse_role(role: &str) -> Result<Role, ApiError> {

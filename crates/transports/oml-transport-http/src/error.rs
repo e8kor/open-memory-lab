@@ -84,8 +84,9 @@ impl ApiError {
     /// `details.renamed_to`, a body field as its JSON pointer
     /// (`/include_own_held`) and a header by its name, the convention of
     /// every other `details.field`; no code is added for it (errors.md
-    /// `request.validation`; ADR-0039 d11). Designed: no route calls it
-    /// until ADR-0039 d7's renames are built.
+    /// `request.validation`; ADR-0039 d11). The key and workarea routes
+    /// call it for ADR-0039 d7's admin renames; the provider ring's renames
+    /// are not built yet.
     pub fn renamed(field: &str, renamed_to: &str) -> Self {
         Self::validation(format!(
             "{field} is renamed {renamed_to}: send {renamed_to}"
@@ -433,7 +434,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::DenialOnAdminKey => ApiError::validation(
             "a global denial on an admin key is refused: an admin key carries no grant for a denial to attenuate",
         )
-        .with_details(json!({ "field": "key_id" })),
+        .with_details(json!({ "field": "key" })),
         AppError::EmptyCrewUpdate => ApiError::validation(
             "a crew update sends charter_uri or external_manager, at least one",
         ),

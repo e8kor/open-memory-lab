@@ -73,11 +73,12 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | Workarea]:
     """Create a child workarea in development.
 
-     Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew
-    record of the tenant answers access.not_found, checked after the parent and before name.taken. name
-    must be unique in the tenant (409 name.taken, checked after every other check; universe is always
-    taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created
-    or deleted.
+     Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0
+    spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that
+    names no crew record of the tenant answers access.not_found, checked after the parent and before
+    name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
+    universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
+    cannot be created or deleted.
 
     Args:
         idempotency_key (str):
@@ -111,11 +112,12 @@ def sync(
 ) -> ErrorEnvelope | Workarea | None:
     """Create a child workarea in development.
 
-     Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew
-    record of the tenant answers access.not_found, checked after the parent and before name.taken. name
-    must be unique in the tenant (409 name.taken, checked after every other check; universe is always
-    taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created
-    or deleted.
+     Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0
+    spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that
+    names no crew record of the tenant answers access.not_found, checked after the parent and before
+    name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
+    universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
+    cannot be created or deleted.
 
     Args:
         idempotency_key (str):
@@ -144,11 +146,12 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | Workarea]:
     """Create a child workarea in development.
 
-     Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew
-    record of the tenant answers access.not_found, checked after the parent and before name.taken. name
-    must be unique in the tenant (409 name.taken, checked after every other check; universe is always
-    taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created
-    or deleted.
+     Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0
+    spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that
+    names no crew record of the tenant answers access.not_found, checked after the parent and before
+    name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
+    universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
+    cannot be created or deleted.
 
     Args:
         idempotency_key (str):
@@ -180,11 +183,12 @@ async def asyncio(
 ) -> ErrorEnvelope | Workarea | None:
     """Create a child workarea in development.
 
-     Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew
-    record of the tenant answers access.not_found, checked after the parent and before name.taken. name
-    must be unique in the tenant (409 name.taken, checked after every other check; universe is always
-    taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created
-    or deleted.
+     Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0
+    spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that
+    names no crew record of the tenant answers access.not_found, checked after the parent and before
+    name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
+    universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
+    cannot be created or deleted.
 
     Args:
         idempotency_key (str):

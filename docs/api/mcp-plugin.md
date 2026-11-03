@@ -988,7 +988,7 @@ the decision trail belongs to the evidence export, an admin surface.
 One workarea as the calling key is allowed to see it: identity, derived path,
 status, crew record, immediate structure, and — the part an agent actually
 needs before writing — the verbs this key's effective access carries there.
-(Rides `GET /v2/workareas/{id}`, one call — the lab ring.)
+(Rides `GET /v2/workareas/{workarea}`, one call — the lab ring.)
 
 **Who may call:** keys with reader effective access on the node.
 

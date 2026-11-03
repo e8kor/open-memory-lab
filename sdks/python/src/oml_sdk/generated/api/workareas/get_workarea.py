@@ -11,13 +11,13 @@ from ...types import Response
 
 
 def _get_kwargs(
-    workarea_id: str,
+    workarea: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v2/workareas/{workarea_id}".format(
-            workarea_id=quote(str(workarea_id), safe=""),
+        "url": "/v2/workareas/{workarea}".format(
+            workarea=quote(str(workarea), safe=""),
         ),
     }
 
@@ -54,7 +54,7 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | WorkareaView]:
@@ -71,7 +71,7 @@ def sync_detailed(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
 
@@ -84,7 +84,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
     )
 
     response = client.get_httpx_client().request(
@@ -95,7 +95,7 @@ def sync_detailed(
 
 
 def sync(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | WorkareaView | None:
@@ -112,7 +112,7 @@ def sync(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
 
@@ -125,13 +125,13 @@ def sync(
     """
 
     return sync_detailed(
-        workarea_id=workarea_id,
+        workarea=workarea,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | WorkareaView]:
@@ -148,7 +148,7 @@ async def asyncio_detailed(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
 
@@ -161,7 +161,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -170,7 +170,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | WorkareaView | None:
@@ -187,7 +187,7 @@ async def asyncio(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
 
@@ -201,7 +201,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            workarea_id=workarea_id,
+            workarea=workarea,
             client=client,
         )
     ).parsed

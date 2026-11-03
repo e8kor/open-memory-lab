@@ -457,7 +457,7 @@ paths:
         '404': { $ref: 'openapi.yaml#/components/responses/NotFound' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/workareas/{workarea_id}/reparent:
+  /v2/workareas/{workarea}/reparent:
     post:
       tags: [workareas]
       operationId: reparentWorkarea
@@ -493,7 +493,7 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/workareas/{workarea_id}/transitions:
+  /v2/workareas/{workarea}/transitions:
     post:
       tags: [workareas]
       operationId: proposeTransition
@@ -528,7 +528,7 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/workareas/{workarea_id}/transitions/{transition_id}/ratify:
+  /v2/workareas/{workarea}/transitions/{transition_id}/ratify:
     post:
       tags: [workareas]
       operationId: ratifyTransition
@@ -786,7 +786,7 @@ paths:
               schema: { $ref: '#/components/schemas/KeyPage' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key_id}/revoke:
+  /v2/keys/{key}/revoke:
     post:
       tags: [keys]
       operationId: revokeKey
@@ -820,7 +820,7 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key_id}/rotate:
+  /v2/keys/{key}/rotate:
     post:
       tags: [keys]
       operationId: rotateKey
@@ -868,7 +868,7 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key_id}/grants:
+  /v2/keys/{key}/grants:
     post:
       tags: [keys]
       operationId: addGrant
@@ -882,7 +882,7 @@ paths:
         content:
           application/json:
             example:
-              workarea_node_id: q1-2027
+              workarea: q1-2027
               role: writer
             schema: { $ref: 'openapi.yaml#/components/schemas/GrantRequest' }
       responses:
@@ -901,7 +901,7 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key_id}/grants/{grant_id}/revoke:
+  /v2/keys/{key}/grants/{grant_id}/revoke:
     post:
       tags: [keys]
       operationId: revokeGrant
@@ -925,7 +925,7 @@ paths:
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key_id}/denials/{denial_id}/lift:
+  /v2/keys/{key}/denials/{denial_id}/lift:
     post:
       tags: [keys]
       operationId: liftDenial
@@ -949,7 +949,7 @@ paths:
               schema: { $ref: '#/components/schemas/ActResult' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key_id}/effective-access:
+  /v2/keys/{key}/effective-access:
     get:
       tags: [keys]
       operationId: getEffectiveAccess
@@ -2090,7 +2090,7 @@ x-oml-designed-fields:
   issueKey:
     request:
       expiry: { type: string, format: date-time, description: 'When the issued key stops authenticating. Refused with request.validation until key expiry is built: a key minted without it would keep its access past the issuer''s date (ADR-0025 d2, d16).' }
-      tenant_id: { $ref: 'openapi.yaml#/components/schemas/TenantRef', description: "Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant_id, and its name is in the provider's namespace (ADR-0026 d4, d5). Refused with request.validation until the first-admin-key path is built." }
+      tenant: { $ref: 'openapi.yaml#/components/schemas/TenantRef', description: "Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant, and its name is in the provider's namespace (ADR-0026 d4, d5). Refused with request.validation until the first-admin-key path is built." }
   reviewNext:
     request:
       workarea: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: 'Serve only from this subtree, by id or name. Refused with request.validation until the subtree filter is built: the queue is served whole, so the filter is refused, never ignored (ADR-0026 d4).' }

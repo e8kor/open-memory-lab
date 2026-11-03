@@ -569,7 +569,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 "grants": grants_json(&grants),
             });
             if let Some(wa) = &args.default_workarea {
-                body["default_workarea_id"] = json!(wa);
+                body["default_workarea"] = json!(wa);
             }
             if let Some(crew) = &args.crew {
                 body["crew"] = json!(crew);
@@ -662,7 +662,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 },
         } => {
             let client = resolve(cli, &stored)?;
-            let mut body = json!({ "workarea_node_id": subtree });
+            let mut body = json!({ "workarea": subtree });
             if let Some(reason) = reason {
                 body["reason"] = json!(reason);
             }
@@ -688,7 +688,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: WorkareasCommand::Create { parent, name, crew },
         } => {
             let client = resolve(cli, &stored)?;
-            let mut body = json!({ "parent_id": parent, "name": name });
+            let mut body = json!({ "parent": parent, "name": name });
             if let Some(crew) = crew {
                 body["crew"] = json!(crew);
             }
@@ -1019,7 +1019,7 @@ fn crew_line(crew: &Value) -> String {
 fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
     grants
         .iter()
-        .map(|(node, role)| json!({ "workarea_node_id": node, "role": role }))
+        .map(|(node, role)| json!({ "workarea": node, "role": role }))
         .collect()
 }
 
@@ -1060,7 +1060,7 @@ fn run_issue_agent(
         "name": args.key_name,
         "held_by": args.held_by,
         "principal": args.principal,
-        "default_workarea_id": args.workarea,
+        "default_workarea": args.workarea,
         "grants": grants_json(&grants),
     });
     if let Some(crew) = &args.crew {

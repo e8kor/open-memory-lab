@@ -36,7 +36,7 @@ one taxonomy ([ADR-0022](../adr/ADR-0022-two-ring-api.md)):
     "code": "access.verb_ceiling",
     "message": "a writer key cannot transition a workarea",
     "rule": "R1: the surface an agent can call never promotes, signs, demotes or deletes.",
-    "details": {"verb": "POST /v2/workareas/{id}/transitions", "role": "writer"},
+    "details": {"verb": "POST /v2/workareas/{workarea}/transitions", "role": "writer"},
     "retryable": false
   },
   "request_id": "req_01J…"
@@ -59,13 +59,16 @@ carrying the envelope both as `structuredContent` and as its one text content, i
 mirroring the `X-Request-Id` of the `/mcp` response; a JSON-RPC error is a protocol fault, and a
 tool the server does not serve is -32602. The CLI prints the envelope's `code` and `message` and
 exits 1 ([CLI reference](../cli/reference.md)), and the SDKs raise one error type, `ApiError`,
-carrying `code`, `message` and `details`. No code exists for a renamed spelling. Designed, with
-[ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7's renames: a field or header sent
-under the name v0.4.0 replaced is `request.validation`, `details.field` naming what was sent and
-`details.renamed_to` what to send, a body field as its JSON pointer and a header by its name. No
-rename is served yet, so the v0.3.0 spellings are the ones this server accepts, and a v0.4.0
-spelling sent today is an unknown field, refused as `request.validation` without
-`details.renamed_to`.
+carrying `code`, `message` and `details`. No code exists for a renamed spelling: a field or
+header sent under the name [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7
+replaced is `request.validation`, `details.field` naming what was sent and `details.renamed_to`
+what to send, a body field as its JSON pointer and a header by its name. Served on the key and
+workarea routes: `POST /v2/keys` (`/default_workarea_id`, `/tenant_id`,
+`/grants/{i}/workarea_node_id`, `/grants/{i}/deny/{j}/subtree_node_id`),
+`POST /v2/keys/{key}/denials` (`/workarea_node_id`) and `POST /v2/workareas` (`/parent_id`).
+Designed for the provider ring and the agent plugin, whose v0.3.0 spellings are the ones this
+server still accepts: a v0.4.0 spelling sent there today is an unknown field, refused as
+`request.validation` without `details.renamed_to`.
 
 ## `auth` — who is calling
 
@@ -90,7 +93,7 @@ spelling sent today is an unknown field, refused as `request.validation` without
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `request.validation` | 400 | Malformed JSON, missing or ill-typed fields, unknown enum values, a stale or foreign pagination cursor. Also: an unknown field in a recall, supersede, key-issuance or grant body; `max_tokens` with `include_bodies: false`; an empty `kinds` or `terms` array in a recall; `terms` or `expand_terms` sent to a server that does not yet serve them (refused by name, never ignored); an events-tail `after_seq` beyond `head_seq`; a deny outside its own grant's subtree; a `default_workarea_id` no grant of the key covers; a key issuance whose `tenant_id` is absent where an operator key issues an admin key, or present on any other issuance — an operator key issuing an operator key, or an admin key issuing any key; `held_by` on an operator key's issuance (only an admin attests it); an `X-OML-Workarea` that differs from a supersede target's workarea, or sent with get or the own-work listing (`own=true`), which resolve no workarea; a successor `kind` the [kind-change rule](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip) does not admit; `retirement: true` when the target's kind is `term`, or when a `kind` is sent that differs from the target's; an `oml_supersede` call whose target is of a vocabulary kind (`term`, `term_mapping`, `vocab_release`), which is superseded on the HTTP API; a value naming a workarea, crew, key or tenant that is neither an id nor a name under the [reference grammar](http-api.md#names-and-ids) — a derived path among them, and a hex-and-dash value of version 8, which no id carries — and a name at creation that the creation grammar refuses, the derived form `<prefix>-<32 hex>` among them (`details.field` names the field); a submitted `claim_key` starting `auto-`, the prefix of the keys the server derives (`details.field: /claim_key`; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d6); a global denial on an admin key (`details.field: key_id`; [admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). Designed, with [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7's renames and not yet served: a field or header sent under a spelling v0.4.0 renamed (`details.field` names it, a body field as its JSON pointer and a header by its name, and `details.renamed_to` the spelling to send; d11). | The contract is [openapi.yaml](openapi.yaml); what it does not admit is refused, not coerced. |
+| `request.validation` | 400 | Malformed JSON, missing or ill-typed fields, unknown enum values, a stale or foreign pagination cursor. Also: an unknown field in a recall, supersede, key-issuance, grant, denial or workarea-create body; `max_tokens` with `include_bodies: false`; an empty `kinds` or `terms` array in a recall; `terms` or `expand_terms` sent to a server that does not yet serve them (refused by name, never ignored); an events-tail `after_seq` beyond `head_seq`; a deny outside its own grant's subtree; a `default_workarea` no grant of the key covers; a key issuance whose `tenant` is absent where an operator key issues an admin key, or present on any other issuance — an operator key issuing an operator key, or an admin key issuing any key; `held_by` on an operator key's issuance (only an admin attests it); an `X-OML-Workarea` that differs from a supersede target's workarea, or sent with get or the own-work listing (`own=true`), which resolve no workarea; a successor `kind` the [kind-change rule](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip) does not admit; `retirement: true` when the target's kind is `term`, or when a `kind` is sent that differs from the target's; an `oml_supersede` call whose target is of a vocabulary kind (`term`, `term_mapping`, `vocab_release`), which is superseded on the HTTP API; a value naming a workarea, crew, key or tenant that is neither an id nor a name under the [reference grammar](http-api.md#names-and-ids) — a derived path among them, and a hex-and-dash value of version 8, which no id carries — and a name at creation that the creation grammar refuses, the derived form `<prefix>-<32 hex>` among them (`details.field` names the field); a submitted `claim_key` starting `auto-`, the prefix of the keys the server derives (`details.field: /claim_key`; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d6); a global denial on an admin key (`details.field: key`; [admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). A field or header sent under a spelling [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7 renamed (`details.field` names it, a body field as its JSON pointer and a header by its name, and `details.renamed_to` the spelling to send; d11), served on the key and workarea routes and designed for the rest ([above](#the-envelope)). | The contract is [openapi.yaml](openapi.yaml); what it does not admit is refused, not coerced. |
 | `request.idempotency_key_required` | 400 | A state-creating `POST` arrives without `Idempotency-Key`. | Every side-effecting request is replayable exactly once by construction (D13); the service refuses to guess whether a retry is a duplicate. |
 | `request.payload_too_large` | 413 | Body or part exceeds the admitted size. | Size bounds are admission policy, enforced before bytes are stored. |
 | `request.unsupported_media` | 415 | The request `Content-Type` is not supported by this operation (`details.supported` names what is). | Each operation's request media type is fixed by the contract — `application/json` everywhere except attachment part upload (`application/octet-stream`); a body in any other type is refused before parsing, never sniffed into shape. |
@@ -98,9 +101,10 @@ spelling sent today is an unknown field, refused as `request.validation` without
 
 `details.field`, wherever a code carries it, names the refused value's place as the contract
 spells it: the parameter's name as [openapi.yaml](openapi.yaml) spells it for a path or query
-parameter (`workarea_id`, `key_id`, `crew_id`), the header name for a header (`X-OML-Workarea`),
-and an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer for a body member
-(`/grants/1/deny/0/subtree_node_id`). An MCP tool reports the HTTP field its argument maps to.
+parameter (`workarea`, `key`, `crew` for a path parameter, `workarea_id` for the listing's and
+the events tail's query parameter), the header name for a header (`X-OML-Workarea`), and an
+[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer for a body member
+(`/grants/1/deny/0/workarea`). An MCP tool reports the HTTP field its argument maps to.
 
 Response media types are not negotiated in v1: servers emit `application/json` (the binary
 downloads excepted, [http-api.md](http-api.md)), and the `Accept` header never varies a response.

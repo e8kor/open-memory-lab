@@ -654,7 +654,7 @@ fn routes(seen: &[Seen]) -> Vec<String> {
 }
 
 fn grant(workarea: &str, role: &str) -> Value {
-    json!({ "workarea_node_id": workarea, "role": role })
+    json!({ "workarea": workarea, "role": role })
 }
 
 /// The (workarea, role) pairs a `201` lists, in its order.
@@ -808,7 +808,7 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
             "name": "agent-7",
             "held_by": "agent",
             "principal": "crew/agent-7",
-            "default_workarea_id": wa,
+            "default_workarea": wa,
             "grants": [grant(&wa, "writer"), grant(&wa, "reader")],
         })
     );
@@ -1123,6 +1123,64 @@ async fn issue_agent_says_a_key_may_have_been_issued_when_the_connection_closes_
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `oml keys issue-agent` sends v0.4.0's spellings, `default_workarea` and
+/// each grant's `workarea`, and none of v0.3.0's, against a stub that needs
+/// no database and records the body it was sent (ADR-0039 d7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
+    let sent: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let seen = Arc::clone(&sent);
+    let router = axum::Router::new().route(
+        "/v2/keys",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let seen = Arc::clone(&seen);
+            async move {
+                seen.lock().expect("the recorder").push(body);
+                (
+                    axum::http::StatusCode::CREATED,
+                    axum::Json(json!({
+                        "key_id": "00000000-0000-4000-8000-000000000009",
+                        "name": "agent-7",
+                        "value": STUB_VALUE,
+                        "role": "writer",
+                        "default_workarea_id": "00000000-0000-4000-8000-000000000007",
+                        "grants": [],
+                    })),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("stub bind");
+    let server = format!("http://{}", listener.local_addr().expect("stub addr"));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("stub serve");
+    });
+    let (dir, path) = stub_paths("v0-4-0-names");
+
+    let (code, stdout, stderr) = issue_agent_to_stub(&server, &dir, &path);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let wa = "00000000-0000-4000-8000-000000000007";
+    assert_eq!(
+        *sent.lock().expect("the recorder"),
+        [json!({
+            "role": "writer",
+            "name": "agent-7",
+            "held_by": "agent",
+            "principal": "crew/agent-7",
+            "default_workarea": wa,
+            "grants": [
+                { "workarea": wa, "role": "writer" },
+                { "workarea": wa, "role": "reader" },
+            ],
+        })]
+    );
+
+    task.abort();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its_workarea() {
     let Some(lab) = Lab::start().await else {
@@ -1310,7 +1368,7 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
             "name": "claude-laptop",
             "held_by": "agent",
             "principal": "claude/laptop",
-            "default_workarea_id": "metals",
+            "default_workarea": "metals",
             "crew": "metals-crew",
             "grants": [grant("metals", "writer"), grant("metals", "reader")],
         }),
@@ -1494,7 +1552,7 @@ async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
         json!([grant("metals", "writer"), grant("metals", "reader")]),
         "the name goes as spelled, with its reader grant beside it"
     );
-    assert_eq!(seen[1].body["default_workarea_id"], "metals");
+    assert_eq!(seen[1].body["default_workarea"], "metals");
     assert_eq!(
         granted(&by_id),
         [

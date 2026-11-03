@@ -949,7 +949,7 @@ pub enum AppError {
     /// Denials attenuate grants and an admin key holds none, so no denial on
     /// one is journalled (http-api.md keys, grants, denials; ADR-0026 d15).
     #[error(
-        "a global denial on an admin key is refused: an admin key carries no grant for it to attenuate (roles-and-keys.md permission matrix footnote 6, request.validation, field key_id)"
+        "a global denial on an admin key is refused: an admin key carries no grant for it to attenuate (roles-and-keys.md permission matrix footnote 6, request.validation, field key)"
     )]
     DenialOnAdminKey,
     #[error(

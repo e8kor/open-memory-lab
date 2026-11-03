@@ -99,7 +99,7 @@ export interface paths {
         put?: never;
         /**
          * Create a child workarea in development.
-         * @description Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.
+         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.
          */
         post: operations["createWorkarea"];
         delete?: never;
@@ -108,7 +108,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea_id}": {
+    "/v2/workareas/{workarea}": {
         parameters: {
             query?: never;
             header?: never;
@@ -128,7 +128,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea_id}/tree": {
+    "/v2/workareas/{workarea}/tree": {
         parameters: {
             query?: never;
             header?: never;
@@ -148,7 +148,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea_id}/crew": {
+    "/v2/workareas/{workarea}/crew": {
         parameters: {
             query?: never;
             header?: never;
@@ -159,7 +159,7 @@ export interface paths {
         put?: never;
         /**
          * Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on validated areas (freeze covers claims, not metadata).
-         * @description Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew that names no crew record of the tenant answers access.not_found, checked after the workarea. The crew record itself is updated at POST /v2/crews/{crew_id}/update.
+         * @description Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew that names no crew record of the tenant answers access.not_found, checked after the workarea. The crew record itself is updated at POST /v2/crews/{crew}/update.
          */
         post: operations["setWorkareaCrew"];
         delete?: never;
@@ -192,7 +192,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/crews/{crew_id}": {
+    "/v2/crews/{crew}": {
         parameters: {
             query?: never;
             header?: never;
@@ -212,7 +212,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/crews/{crew_id}/update": {
+    "/v2/crews/{crew}/update": {
         parameters: {
             query?: never;
             header?: never;
@@ -303,7 +303,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a tenant's first admin key, sent with tenant_id (step 0 of the issuance order). expiry and tenant_id are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).
          */
         post: operations["issueKey"];
         delete?: never;
@@ -332,7 +332,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/keys/{key_id}": {
+    "/v2/keys/{key}": {
         parameters: {
             query?: never;
             header?: never;
@@ -352,7 +352,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/keys/{key_id}/denials": {
+    "/v2/keys/{key}/denials": {
         parameters: {
             query?: never;
             header?: never;
@@ -363,7 +363,7 @@ export interface paths {
         put?: never;
         /**
          * Create or extend the key's global deny object — deny-wins across all its grants.
-         * @description Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. A denial on an admin key is refused with request.validation, details.field key_id: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+         * @description Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
         delete?: never;
@@ -714,7 +714,7 @@ export interface components {
             permission_epoch: number;
         };
         WorkareaCreate: {
-            parent_id: components["schemas"]["WorkareaRef"];
+            parent: components["schemas"]["WorkareaRef"];
             name: components["schemas"]["Name"];
             crew?: components["schemas"]["CrewRef"];
         };
@@ -783,7 +783,7 @@ export interface components {
         };
         GrantRequest: {
             /** @description The node, by id or name, never a path; stored as the id. */
-            workarea_node_id: components["schemas"]["WorkareaRef"];
+            workarea: components["schemas"]["WorkareaRef"];
             /**
              * @description A grant role, admissible under the key's role (the admissibility table in docs/architecture/roles-and-keys.md); never admin or operator.
              * @enum {string}
@@ -791,7 +791,7 @@ export interface components {
             role: "reader" | "writer" | "dreamer";
             /** @description Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise). */
             deny?: {
-                subtree_node_id: components["schemas"]["WorkareaRef"];
+                workarea: components["schemas"]["WorkareaRef"];
             }[];
         };
         /** @description A stored grant, as echoed at issuance and listed on a key. */
@@ -808,7 +808,7 @@ export interface components {
             epoch: number;
         };
         DenialRequest: {
-            workarea_node_id: components["schemas"]["WorkareaRef"];
+            workarea: components["schemas"]["WorkareaRef"];
             reason?: string;
         };
         Denial: {
@@ -824,7 +824,7 @@ export interface components {
             /** @description Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2). */
             grants?: components["schemas"]["GrantRequest"][];
             /** @description The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md. */
-            default_workarea_id?: components["schemas"]["WorkareaRef"];
+            default_workarea?: components["schemas"]["WorkareaRef"];
             /**
              * @description The issuing admin's journalled attestation (ADR-0021); never verified as fact.
              * @enum {string}
@@ -1423,7 +1423,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "parent_id": "metals-crew",
+                 *       "parent": "metals-crew",
                  *       "name": "q1-2027",
                  *       "crew": "metals-crew"
                  *     }
@@ -1468,7 +1468,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                workarea_id: components["parameters"]["WorkareaId"];
+                workarea: components["parameters"]["WorkareaId"];
             };
             cookie?: never;
         };
@@ -1541,7 +1541,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                workarea_id: components["parameters"]["WorkareaId"];
+                workarea: components["parameters"]["WorkareaId"];
             };
             cookie?: never;
         };
@@ -1603,7 +1603,7 @@ export interface operations {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                workarea_id: components["parameters"]["WorkareaId"];
+                workarea: components["parameters"]["WorkareaId"];
             };
             cookie?: never;
         };
@@ -1741,7 +1741,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                crew_id: components["parameters"]["CrewId"];
+                crew: components["parameters"]["CrewId"];
             };
             cookie?: never;
         };
@@ -1778,7 +1778,7 @@ export interface operations {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                crew_id: components["parameters"]["CrewId"];
+                crew: components["parameters"]["CrewId"];
             };
             cookie?: never;
         };
@@ -2017,15 +2017,15 @@ export interface operations {
                  *       "name": "procure-agent-7",
                  *       "grants": [
                  *         {
-                 *           "workarea_node_id": "metals-crew",
+                 *           "workarea": "metals-crew",
                  *           "role": "writer"
                  *         },
                  *         {
-                 *           "workarea_node_id": "metals-crew",
+                 *           "workarea": "metals-crew",
                  *           "role": "reader"
                  *         }
                  *       ],
-                 *       "default_workarea_id": "metals-crew",
+                 *       "default_workarea": "metals-crew",
                  *       "held_by": "agent",
                  *       "crew": "metals-crew",
                  *       "label": "procure agent 7",
@@ -2141,7 +2141,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                key_id: components["parameters"]["KeyId"];
+                key: components["parameters"]["KeyId"];
             };
             cookie?: never;
         };
@@ -2194,7 +2194,7 @@ export interface operations {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                key_id: components["parameters"]["KeyId"];
+                key: components["parameters"]["KeyId"];
             };
             cookie?: never;
         };
@@ -2202,7 +2202,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                 *       "workarea": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                  *       "reason": "quarantine the q1-2027 subtree during incident 44"
                  *     }
                  */

@@ -11,7 +11,7 @@ from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    workarea_id: str,
+    workarea: str,
     *,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
@@ -27,8 +27,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v2/workareas/{workarea_id}/tree".format(
-            workarea_id=quote(str(workarea_id), safe=""),
+        "url": "/v2/workareas/{workarea}/tree".format(
+            workarea=quote(str(workarea), safe=""),
         ),
         "params": params,
     }
@@ -61,7 +61,7 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
@@ -74,7 +74,7 @@ def sync_detailed(
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
@@ -89,7 +89,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
         limit=limit,
         cursor=cursor,
     )
@@ -102,7 +102,7 @@ def sync_detailed(
 
 
 def sync(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
@@ -115,7 +115,7 @@ def sync(
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
@@ -130,7 +130,7 @@ def sync(
     """
 
     return sync_detailed(
-        workarea_id=workarea_id,
+        workarea=workarea,
         client=client,
         limit=limit,
         cursor=cursor,
@@ -138,7 +138,7 @@ def sync(
 
 
 async def asyncio_detailed(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
@@ -151,7 +151,7 @@ async def asyncio_detailed(
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
@@ -166,7 +166,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
         limit=limit,
         cursor=cursor,
     )
@@ -177,7 +177,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
@@ -190,7 +190,7 @@ async def asyncio(
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
@@ -206,7 +206,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            workarea_id=workarea_id,
+            workarea=workarea,
             client=client,
             limit=limit,
             cursor=cursor,

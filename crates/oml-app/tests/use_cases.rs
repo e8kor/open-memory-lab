@@ -5636,11 +5636,11 @@ async fn an_admin_keys_recall_is_refused() {
 }
 
 /// Denials attenuate grants and an admin key holds none, so a global denial
-/// on an admin key is refused, `request.validation` naming `key_id`, and
+/// on an admin key is refused, `request.validation` naming `key`, and
 /// journals nothing: no structure read would honour it (http-api.md keys,
 /// grants, denials; ADR-0026 d15).
 #[tokio::test]
-async fn a_global_denial_on_an_admin_key_is_refused_naming_key_id() {
+async fn a_global_denial_on_an_admin_key_is_refused_naming_key() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;

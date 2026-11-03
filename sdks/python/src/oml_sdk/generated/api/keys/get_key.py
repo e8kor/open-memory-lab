@@ -11,13 +11,13 @@ from ...types import Response
 
 
 def _get_kwargs(
-    key_id: str,
+    key: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v2/keys/{key_id}".format(
-            key_id=quote(str(key_id), safe=""),
+        "url": "/v2/keys/{key}".format(
+            key=quote(str(key), safe=""),
         ),
     }
 
@@ -54,7 +54,7 @@ def _build_response(
 
 
 def sync_detailed(
-    key_id: str,
+    key: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | Key]:
@@ -63,7 +63,7 @@ def sync_detailed(
      Requires: admin key role.
 
     Args:
-        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+        key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
 
     Raises:
@@ -75,7 +75,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        key_id=key_id,
+        key=key,
     )
 
     response = client.get_httpx_client().request(
@@ -86,7 +86,7 @@ def sync_detailed(
 
 
 def sync(
-    key_id: str,
+    key: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | Key | None:
@@ -95,7 +95,7 @@ def sync(
      Requires: admin key role.
 
     Args:
-        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+        key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
 
     Raises:
@@ -107,13 +107,13 @@ def sync(
     """
 
     return sync_detailed(
-        key_id=key_id,
+        key=key,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
-    key_id: str,
+    key: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | Key]:
@@ -122,7 +122,7 @@ async def asyncio_detailed(
      Requires: admin key role.
 
     Args:
-        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+        key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
 
     Raises:
@@ -134,7 +134,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        key_id=key_id,
+        key=key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -143,7 +143,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    key_id: str,
+    key: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | Key | None:
@@ -152,7 +152,7 @@ async def asyncio(
      Requires: admin key role.
 
     Args:
-        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+        key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
 
     Raises:
@@ -165,7 +165,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            key_id=key_id,
+            key=key,
             client=client,
         )
     ).parsed

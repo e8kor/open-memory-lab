@@ -262,7 +262,7 @@ async fn crew_with_writer_grants(
         "/v2/workareas",
         Some(&admin),
         Some("wa-1"),
-        Some(&json!({"parent_id": root, "name": "metals-crew"})),
+        Some(&json!({"parent": root, "name": "metals-crew"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{wa}");
@@ -275,7 +275,7 @@ async fn crew_with_writer_grants(
     ] {
         let grants: Vec<Value> = grants
             .iter()
-            .map(|grant| json!({"workarea_node_id": crew, "role": grant}))
+            .map(|grant| json!({"workarea": crew, "role": grant}))
             .collect();
         let (status, key) = send(
             router,
@@ -1453,7 +1453,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         // A workarea names at most one crew record (ADR-0026 d8); this one
         // names none, so `crew` is null.
         Some(&json!({
-            "parent_id": root,
+            "parent": root,
             "name": "metals-crew",
         })),
     )
@@ -1480,15 +1480,15 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
         "agent",
         "writer",
         json!([
-            {"workarea_node_id": crew, "role": "writer"},
-            {"workarea_node_id": crew, "role": "reader"},
+            {"workarea": crew, "role": "writer"},
+            {"workarea": crew, "role": "reader"},
         ]),
     )
     .await;
     let writer = issue(
         "writer",
         "writer",
-        json!([{"workarea_node_id": crew, "role": "writer"}]),
+        json!([{"workarea": crew, "role": "writer"}]),
     )
     .await;
     let unscoped = issue("unscoped", "reader", json!([])).await;

@@ -121,7 +121,7 @@ Every request on either ring carries `Authorization: Bearer <api-key>`. Only `/h
 
 - **Tenant is derived server-side from the key, never from the request** (D6;
   [security.md](../architecture/security.md)). No endpoint takes a tenant parameter, with one
-  exception: an operator key may name `tenant_id` when creating a tenant's first admin key —
+  exception: an operator key may name `tenant` when creating a tenant's first admin key —
   operator keys are provider-level and have no tenant of their own.
 - **Roles do not nest.** A key is issued with one role — `reader`, `writer`, `dreamer`, `admin`,
   `operator` — which names the grant roles it may carry (the
@@ -168,7 +168,7 @@ expired key keeps its name, and no other key may take it.
 |---|---|---|
 | workarea | its tenant, the whole tree | `POST /v2/workareas`; the root is `universe`, created with its tenant ([workareas](../architecture/workareas.md#the-tree-one-universe-per-tenant)) |
 | crew | its tenant | `POST /v2/crews` |
-| key | its tenant; operator keys share the provider's | `POST /v2/keys`, `POST /v2/keys/{key_id}/rotate` (the successor), `POST /v2/bootstrap/claim` |
+| key | its tenant; operator keys share the provider's | `POST /v2/keys`, `POST /v2/keys/{key}/rotate` (the successor), `POST /v2/bootstrap/claim` |
 | tenant | the deployment | `POST /v2/tenants` |
 
 The reserved provider tenant ([storage](../architecture/storage.md)) carries no name: it is not a
@@ -200,16 +200,22 @@ allowed character is ASCII, and names compare byte for byte. `Metals-Crew` is re
 as `metals-crew`.
 
 **Where a name is accepted.** Every request field, path parameter, query parameter and header
-that names one of the four kinds takes its id or its name. Field names do not change: a request
-field called `workarea_id` takes either, a response field called `workarea_id` always carries the
-id, and each object of the four kinds carries its `name`.
+that names one of the four kinds takes its id or its name. On the key and workarea routes a
+request field or path parameter is named after the kind it references, `workarea`, `crew`, `key`
+or `tenant`, and the v0.3.0 spelling (`parent_id`, `default_workarea_id`, `tenant_id`, a grant's
+`workarea_node_id`, a deny entry's `subtree_node_id`, a denial's `workarea_node_id`) is refused
+with `request.validation`, `details.field` naming the spelling sent and `details.renamed_to` the
+one to send ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). The provider
+ring's fields keep their v0.3.0 names until d7's renames reach it. A response keeps its v0.3.0
+names: a response field called `workarea_id` always carries the id, and each object of the four
+kinds carries its `name`.
 
 | Kind | Accepted in |
 |---|---|
-| workarea | `X-OML-Workarea`; the `{id}` of every `/v2/workareas/{id}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue`, on `POST /v2/review/next` and on `GET /v2/keys/{key_id}/effective-access`; `parent_id` on create, `new_parent_id` on re-parent, `from_workarea_id` and `to_workarea_id` on a workarea edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea_node_id` and its denies' `subtree_node_id`, a denial's `workarea_node_id`, and `default_workarea_id` on issuance |
-| crew | the `{crew_id}` of every `/v2/crews/{crew_id}` route; `crew` on workarea create, on `POST /v2/workareas/{id}/crew` and on issuance |
-| key | the `{key_id}` of every `/v2/keys/{key_id}` route; `key_id` in a simulation audience entry |
-| tenant | `tenant_id` on an operator key's issuance of a tenant's first admin key |
+| workarea | `X-OML-Workarea`; the `{workarea}` of every `/v2/workareas/{workarea}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue`, on `POST /v2/review/next` and on `GET /v2/keys/{key}/effective-access`; `parent` on create, `new_parent_id` on re-parent, `from_workarea_id` and `to_workarea_id` on a workarea edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea` and its denies' `workarea`, a denial's `workarea`, and `default_workarea` on issuance |
+| crew | the `{crew}` of every `/v2/crews/{crew}` route; `crew` on workarea create, on `POST /v2/workareas/{workarea}/crew` and on issuance |
+| key | the `{key}` of every `/v2/keys/{key}` route; `key_id` in a simulation audience entry |
+| tenant | `tenant` on an operator key's issuance of a tenant's first admin key |
 
 The MCP tools pass their workarea arguments through to these fields
 ([agent plugin](mcp-plugin.md)), and every CLI argument that names one of the four kinds takes
@@ -236,9 +242,9 @@ The namespace is fixed by the caller and the kind:
 - An operator key resolves a tenant name in the deployment, and a key name in the provider's
   namespace, which holds operator keys only, so a key name an operator sends never resolves to a
   tenant's key.
-- An operator key's issuance of an operator key carries no `tenant_id`, and its `name` is in the
+- An operator key's issuance of an operator key carries no `tenant`, and its `name` is in the
   provider's namespace, where `name.taken` checks it. Only its issuance of a tenant's first admin
-  key resolves `tenant_id` first, in the deployment, and then the key's `name`, its `crew` and
+  key resolves `tenant` first, in the deployment, and then the key's `name`, its `crew` and
   every other reference of the body in that tenant.
 - The bootstrap claim's `name` is in the provider's namespace.
 
@@ -457,20 +463,20 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v2/edges` | `kind=claim`: reader; `kind=workarea`: reader, or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | designed |
 | `POST /v2/edges` | `kind=claim`: dreamer(propose); `kind=workarea`: dreamer(propose) on ≥1 endpoint, reader on both (edge-authority rule, [workareas.md](../architecture/workareas.md)) | designed |
 | `POST /v2/edges/{edge_id}/ratify` | dreamer(review), on both endpoints for `kind=workarea`; never the proposer (R2) | designed |
-| `GET /v2/workareas/{id}` · `/tree` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | served |
+| `GET /v2/workareas/{workarea}` · `/tree` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | served |
 | `GET /v2/workareas` | reader; or admin (key role), structure only and tenant-wide | designed |
 | `POST /v2/workareas` | admin (key role) | served |
-| `POST /v2/workareas/{id}/reparent` | admin (key role) | designed |
-| `POST /v2/workareas/{id}/crew` | admin (key role) | served |
-| `GET /v2/crews` · `GET /v2/crews/{crew_id}` · `POST /v2/crews` · `POST /v2/crews/{crew_id}/update` | admin (key role) | served |
-| `POST /v2/workareas/{id}/transitions` | dreamer or admin | designed |
-| `POST /v2/workareas/{id}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin | designed |
+| `POST /v2/workareas/{workarea}/reparent` | admin (key role) | designed |
+| `POST /v2/workareas/{workarea}/crew` | admin (key role) | served |
+| `GET /v2/crews` · `GET /v2/crews/{crew}` · `POST /v2/crews` · `POST /v2/crews/{crew}/update` | admin (key role) | served |
+| `POST /v2/workareas/{workarea}/transitions` | dreamer or admin | designed |
+| `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin | designed |
 | `GET /v2/events` | reader | served |
 | `GET /v2/vocab/suggest` · `GET /v2/vocab/terms/{curie}` · `GET /v2/vocab/terms/{curie}/hierarchy` · `GET /v2/vocab/mappings` | reader | designed |
 | `POST /v2/review/next` · `POST /v2/review/verdicts` | dreamer(review); refused per row by lineage-closure exclusion | served |
 | `GET /v2/review/queue` · `POST /v2/review/reopen` | dreamer(review); refused per row by lineage-closure exclusion | designed |
-| `POST /v2/keys` · `GET /v2/keys/{key_id}` · `POST /v2/keys/{key_id}/denials` | admin (key role); operator only for operator keys and a tenant's first admin key | served |
-| `GET /v2/keys` · `POST /v2/keys/{key_id}/revoke` · `/rotate` · `/grants` · `GET /v2/keys/{key_id}/effective-access` · `POST /v2/keys/{key_id}/grants/{grant_id}/revoke` · `POST /v2/keys/{key_id}/denials/{denial_id}/lift` | admin (key role) | designed |
+| `POST /v2/keys` · `GET /v2/keys/{key}` · `POST /v2/keys/{key}/denials` | admin (key role); operator only for operator keys and a tenant's first admin key | served |
+| `GET /v2/keys` · `POST /v2/keys/{key}/revoke` · `/rotate` · `/grants` · `GET /v2/keys/{key}/effective-access` · `POST /v2/keys/{key}/grants/{grant_id}/revoke` · `POST /v2/keys/{key}/denials/{denial_id}/lift` | admin (key role) | designed |
 | `GET /v2/whoami` | any live key, of any role; its own record only ([Whoami](#whoami-get-v2whoami)) | served |
 | `GET /v2/bans` · `POST /v2/bans` · `POST /v2/bans/{ban_id}/lift` | admin (key role) | designed |
 | `GET /v2/simulations` · `GET /v2/simulations/{id}` · `POST /v2/simulations` · `POST /v2/simulations/{id}/audience` · `POST /v2/simulations/{id}/end` | admin (key role) | designed |
@@ -791,13 +797,13 @@ edges touching a node are read, proposed and ratified on the [edges](#edges) fam
 | Endpoint | Returns / does |
 |---|---|
 | `GET /v2/workareas?path=<ltree>` | Resolve a node by derived path. Grants bind to node ids, never paths, and no reference field accepts a path ([names](#names-and-ids)); this is the lookup that bridges the two. |
-| `GET /v2/workareas/{id}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. The review policy in force and the pending transitions are designed fields of this read (`policy`, `pending_transitions` under `x-oml-designed-fields`); the status route `/v2/workareas/{id}/status`, which carried them as a second read of the same node, is removed ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
-| `GET /v2/workareas/{id}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
-| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}` — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `prefix` is a designed field, refused with `request.validation` until vocabulary workareas are built. Refused under a `validated` parent (`workarea.frozen`). |
-| `POST /v2/workareas/{id}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
-| `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the workarea. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
-| `POST /v2/workareas/{id}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
-| `POST /v2/workareas/{id}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot ([workareas.md](../architecture/workareas.md) transition matrix). |
+| `GET /v2/workareas/{workarea}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. The review policy in force and the pending transitions are designed fields of this read (`policy`, `pending_transitions` under `x-oml-designed-fields`); the status route `/v2/workareas/{workarea}/status`, which carried them as a second read of the same node, is removed ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
+| `GET /v2/workareas/{workarea}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
+| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent, name, crew?, prefix?}`, `parent_id` refused naming `parent` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7) — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `prefix` is a designed field, refused with `request.validation` until vocabulary workareas are built. Refused under a `validated` parent (`workarea.frozen`). |
+| `POST /v2/workareas/{workarea}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
+| `POST /v2/workareas/{workarea}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the workarea. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
+| `POST /v2/workareas/{workarea}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
+| `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot ([workareas.md](../architecture/workareas.md) transition matrix). |
 
 ## Crews
 
@@ -812,8 +818,8 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 |---|---|
 | `POST /v2/crews` | Create: `{name, charter_uri?, external_manager?}` → `201` with the record. `name` is unique in the tenant (`name.taken`) and never changes. Journalled `crew.created`. |
 | `GET /v2/crews` | The tenant's crew records, paginated. |
-| `GET /v2/crews/{crew_id}` | One crew record, by id or name. |
-| `POST /v2/crews/{crew_id}/update` | `{charter_uri?, external_manager?}`, at least one present — a journalled crew-record update (`crew.updated`). The name is not updatable. A crew record has no status, so an update is admitted whatever the status of the workareas that name it. |
+| `GET /v2/crews/{crew}` | One crew record, by id or name. |
+| `POST /v2/crews/{crew}/update` | `{charter_uri?, external_manager?}`, at least one present — a journalled crew-record update (`crew.updated`). The name is not updatable. A crew record has no status, so an update is admitted whatever the status of the workareas that name it. |
 
 ## Edges
 
@@ -969,15 +975,15 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 | Endpoint | Does |
 |---|---|
-| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea_node_id, role, deny: [{subtree_node_id}]}], default_workarea_id?, held_by?, crew?, expiry?, label?, principal?, tenant_id?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused; the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant_id`, and a tenant's first admin key, with `tenant_id` naming the tenant; an admin key never sends `tenant_id` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant_id` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
-| `GET /v2/keys` · `GET /v2/keys/{key_id}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events. Never values. A revoked or expired key's name still resolves here. |
-| `POST /v2/keys/{key_id}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
-| `POST /v2/keys/{key_id}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
-| `POST /v2/keys/{key_id}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
-| `POST /v2/keys/{key_id}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
-| `POST /v2/keys/{key_id}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. A denial on an admin key is refused, `request.validation` with `details.field: key_id`: denials attenuate grants, and an admin key carries none ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). |
-| `POST /v2/keys/{key_id}/denials/{denial_id}/lift` | Journalled lift. |
-| `GET /v2/keys/{key_id}/effective-access?workarea=…` | The resolved answer: what this key may do where, and which deny produced each hole — reproducible from journalled grants by construction (permission epoch). |
+| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea, role, deny: [{workarea}]}], default_workarea?, held_by?, crew?, expiry?, label?, principal?, tenant?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused, and a v0.3.0 spelling names its successor in `details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7); the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant`, and a tenant's first admin key, with `tenant` naming the tenant; an admin key never sends `tenant` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
+| `GET /v2/keys` · `GET /v2/keys/{key}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events. Never values. A revoked or expired key's name still resolves here. |
+| `POST /v2/keys/{key}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
+| `POST /v2/keys/{key}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
+| `POST /v2/keys/{key}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
+| `POST /v2/keys/{key}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
+| `POST /v2/keys/{key}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. `{workarea, reason?}`, `workarea_node_id` refused naming `workarea` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). A denial on an admin key is refused, `request.validation` with `details.field: key`: denials attenuate grants, and an admin key carries none ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). |
+| `POST /v2/keys/{key}/denials/{denial_id}/lift` | Journalled lift. |
+| `GET /v2/keys/{key}/effective-access?workarea=…` | The resolved answer: what this key may do where, and which deny produced each hole — reproducible from journalled grants by construction (permission epoch). |
 
 ### Whoami — `GET /v2/whoami`
 
@@ -987,7 +993,7 @@ d15): `getKey` is admin-only and needs the key's own reference, and the workarea
 tenant, role or key. The answer is `{key_id, name, role, principal, held_by, tenant,
 default_workarea, crew, grants}`: each reference is `{id, name}`, the default workarea also carries
 its derived `path`, `held_by` is the attestation as the key's row stores it, and `grants` are the
-key's stored grants as `GET /v2/keys/{key_id}` lists them, each `{grant_id, workarea_node_id, role,
+key's stored grants as `GET /v2/keys/{key}` lists them, each `{grant_id, workarea_node_id, role,
 epoch}` without its per-grant `deny` masks. `tenant`, `default_workarea` and `crew`
 are null where the key names none; an operator key, which no tenant holds, has all three null and
 no grants.

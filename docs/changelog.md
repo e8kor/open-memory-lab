@@ -34,6 +34,17 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-03 — The key and workarea routes take v0.4.0's request spellings and refuse v0.3.0's by name (ADR-0039 d7, admin half, implementation)
+
+`POST /v2/keys` takes `default_workarea`, `tenant`, each grant's `workarea` and each deny entry's
+`workarea`; `POST /v2/keys/{key}/denials` takes `workarea`; `POST /v2/workareas` takes `parent`.
+The path parameters are `{workarea}`, `{crew}` and `{key}`, in openapi-designed.yaml too. Each
+takes an id or a name. A v0.3.0 spelling is `request.validation` with `details.field` naming it
+and `details.renamed_to` its successor, as JSON Pointers, and the denial and workarea-create
+bodies are now closed, so no field is dropped. Responses keep their v0.3.0 names. The CLI's
+`keys issue`, `keys issue-agent`, `deny set` and `workareas create` send the new spellings, and
+the SDKs are regenerated. The provider ring's renames and the MCP arguments are not built yet.
+
 ### 2026-11-03 — openapi.yaml declares only what the server routes; the rest is a designed annex (ADR-0039 d9, implementation)
 
 [openapi.yaml](api/openapi.yaml) now holds exactly the 23 routed operations, the 22 of v0.3.0 and

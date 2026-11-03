@@ -28,7 +28,7 @@ class KeyIssueRequest:
             References use NameRef.
         grants (list[GrantRequest] | Unset): Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's
             reader grant beside a writer grant is sent here like any other (ADR-0028 d2).
-        default_workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check
+        default_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check
             that reads state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is
             refused (request.validation).
         held_by (KeyIssueRequestHeldBy | Unset): The issuing admin's journalled attestation (ADR-0021); never verified
@@ -42,7 +42,7 @@ class KeyIssueRequest:
     role: Role
     name: str
     grants: list[GrantRequest] | Unset = UNSET
-    default_workarea_id: str | Unset = UNSET
+    default_workarea: str | Unset = UNSET
     held_by: KeyIssueRequestHeldBy | Unset = UNSET
     crew: str | Unset = UNSET
     label: str | Unset = UNSET
@@ -60,11 +60,11 @@ class KeyIssueRequest:
                 grants_item = grants_item_data.to_dict()
                 grants.append(grants_item)
 
-        default_workarea_id: str | Unset
-        if isinstance(self.default_workarea_id, Unset):
-            default_workarea_id = UNSET
+        default_workarea: str | Unset
+        if isinstance(self.default_workarea, Unset):
+            default_workarea = UNSET
         else:
-            default_workarea_id = self.default_workarea_id
+            default_workarea = self.default_workarea
 
         held_by: str | Unset = UNSET
         if not isinstance(self.held_by, Unset):
@@ -90,8 +90,8 @@ class KeyIssueRequest:
         )
         if grants is not UNSET:
             field_dict["grants"] = grants
-        if default_workarea_id is not UNSET:
-            field_dict["default_workarea_id"] = default_workarea_id
+        if default_workarea is not UNSET:
+            field_dict["default_workarea"] = default_workarea
         if held_by is not UNSET:
             field_dict["held_by"] = held_by
         if crew is not UNSET:
@@ -121,14 +121,12 @@ class KeyIssueRequest:
 
                 grants.append(grants_item)
 
-        def _parse_default_workarea_id(data: object) -> str | Unset:
+        def _parse_default_workarea(data: object) -> str | Unset:
             if isinstance(data, Unset):
                 return data
             return cast(str | Unset, data)
 
-        default_workarea_id = _parse_default_workarea_id(
-            d.pop("default_workarea_id", UNSET)
-        )
+        default_workarea = _parse_default_workarea(d.pop("default_workarea", UNSET))
 
         _held_by = d.pop("held_by", UNSET)
         held_by: KeyIssueRequestHeldBy | Unset
@@ -152,7 +150,7 @@ class KeyIssueRequest:
             role=role,
             name=name,
             grants=grants,
-            default_workarea_id=default_workarea_id,
+            default_workarea=default_workarea,
             held_by=held_by,
             crew=crew,
             label=label,
