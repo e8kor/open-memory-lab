@@ -12,22 +12,24 @@
 
 use core::future::Future;
 
+use oml_app::domain::Sha256Hash;
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
+use oml_app::domain::oauth::{ConnectionState, RevokedCause};
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
     event_types, key_fingerprint, next_envelope, sha256_digest_string, sign, verify_chain,
 };
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
+    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, KeyringStore, MetadataFold, OutboxRow,
     Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
-    ClaimKeyState, Crew, CrewRecord, DenialRecord, GrantRecord, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, RecallCandidate, UnnamedRows,
-    WorkareaRecord,
+    ClaimKeyState, ClientKind, ConnectCode, ConnectionRecord, Credential, Crew, CrewRecord,
+    DenialRecord, GrantRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
+    MemoryRecord, RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -498,7 +500,8 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         held_by: HeldBy::Agent,
         default_workarea: None,
         issued_by,
-        key_hash: sha256_digest_string(key_id.as_bytes()),
+        credential: Credential::Bearer,
+        key_hash: Some(sha256_digest_string(key_id.as_bytes())),
         name: None,
         crew_id: None,
         revoked_at: None,
@@ -1425,7 +1428,8 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         held_by: oml_app::domain::HeldBy::Agent,
         default_workarea: None,
         issued_by: None,
-        key_hash: "sha256:feed".to_owned(),
+        credential: Credential::Bearer,
+        key_hash: Some("sha256:feed".to_owned()),
         name: Some(name("wanda-laptop")),
         crew_id: None,
         revoked_at: None,
@@ -1462,13 +1466,19 @@ pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store
     let key = key_record(rig.tenant_id, Uuid::from_u128(0xDA), Role::Writer, None);
     rig.issue_key(store, key.clone()).await;
     assert_eq!(
-        store.key_by_hash(&key.key_hash).await.expect("lookup"),
+        store
+            .key_by_hash(key.key_hash.as_deref().expect("a bearer key"))
+            .await
+            .expect("lookup"),
         Some(key.clone())
     );
 
     rig.revoke_key(store, key.key_id).await.expect("revoke");
     assert_eq!(
-        store.key_by_hash(&key.key_hash).await.expect("lookup"),
+        store
+            .key_by_hash(key.key_hash.as_deref().expect("a bearer key"))
+            .await
+            .expect("lookup"),
         None,
         "a revoked key authenticates nothing"
     );
@@ -1723,7 +1733,10 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
         "a key with no grant reads back empty lists, never nothing"
     );
     assert_eq!(
-        store.key_by_hash(&agent.key_hash).await.expect("lookup"),
+        store
+            .key_by_hash(agent.key_hash.as_deref().expect("a bearer key"))
+            .await
+            .expect("lookup"),
         Some(agent.clone()),
         "the key row carries the key that issued it"
     );
@@ -3484,7 +3497,10 @@ pub async fn a_revoked_keys_name_still_resolves<S: JournalStore>(store: &S) {
     rig.issue_key(store, laptop.clone()).await;
     rig.revoke_key(store, laptop.key_id).await.expect("revoke");
     assert_eq!(
-        store.key_by_hash(&laptop.key_hash).await.expect("lookup"),
+        store
+            .key_by_hash(laptop.key_hash.as_deref().expect("a bearer key"))
+            .await
+            .expect("lookup"),
         None,
         "a revoked key authenticates nothing"
     );
@@ -3518,7 +3534,10 @@ pub async fn a_revoked_keys_name_still_resolves<S: JournalStore>(store: &S) {
     );
     assert_eq!(store.chain_head(t).await.expect("head"), head);
     assert_eq!(
-        store.key_by_hash(&reissued.key_hash).await.expect("lookup"),
+        store
+            .key_by_hash(reissued.key_hash.as_deref().expect("a bearer key"))
+            .await
+            .expect("lookup"),
         None
     );
 
@@ -3528,7 +3547,10 @@ pub async fn a_revoked_keys_name_still_resolves<S: JournalStore>(store: &S) {
     };
     rig.issue_key(store, renamed.clone()).await;
     assert_eq!(
-        store.key_by_hash(&renamed.key_hash).await.expect("lookup"),
+        store
+            .key_by_hash(renamed.key_hash.as_deref().expect("a bearer key"))
+            .await
+            .expect("lookup"),
         Some(renamed.clone())
     );
     assert_eq!(
@@ -3611,7 +3633,10 @@ pub async fn a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it<S: 
     };
     a.issue_key(store, member.clone()).await;
     assert_eq!(
-        store.key_by_hash(&member.key_hash).await.expect("lookup"),
+        store
+            .key_by_hash(member.key_hash.as_deref().expect("a bearer key"))
+            .await
+            .expect("lookup"),
         Some(member)
     );
 
@@ -3998,6 +4023,551 @@ where
     )
     .await;
     every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed(&new_store().await).await;
+}
+
+// ---------------------------------------------------------------------------
+// ConnectionStore contracts (ADR-0031 d7, d8, d12)
+// ---------------------------------------------------------------------------
+
+/// A fixture connector key: credential `connection` and no hash, since the
+/// server mints no value for it (roles-and-keys.md connections; ADR-0031
+/// d7).
+#[must_use]
+pub fn connector_key(tenant_id: Uuid, key_id: Uuid) -> KeyRecord {
+    KeyRecord {
+        credential: Credential::Connection,
+        key_hash: None,
+        ..key_record(tenant_id, key_id, Role::Writer, None)
+    }
+}
+
+/// A fixture connect code of `key_id`, its digest derived from its id.
+#[must_use]
+pub fn connect_code(code_id: Uuid, key_id: Uuid) -> ConnectCode {
+    ConnectCode {
+        code_id,
+        key_id,
+        code_hash: Sha256Hash::digest(code_id.as_bytes()),
+        expires_at: fixture_time("2026-10-29T13:10:00.000000Z"),
+    }
+}
+
+/// A fixture `authorized` connection of `key_id` from `code_id`, as Connect
+/// creates it (roles-and-keys.md connections lifecycle).
+#[must_use]
+pub fn authorized_connection(connection_id: Uuid, key_id: Uuid, code_id: Uuid) -> ConnectionRecord {
+    ConnectionRecord {
+        connection_id,
+        key_id,
+        code_id,
+        client_id: "https://claude.ai/oauth/mcp-oauth-client-metadata".to_owned(),
+        client_kind: ClientKind::Cimd,
+        client_metadata_digest: Sha256Hash::digest(b"client metadata"),
+        redirect_uri: "https://claude.ai/api/mcp/auth_callback".to_owned(),
+        redirect_uri_sent: true,
+        resource: "https://oml.example.com/mcp".to_owned(),
+        code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_owned(),
+        auth_code_hash: Some(Sha256Hash::digest(connection_id.as_bytes())),
+        auth_code_expires_at: Some(fixture_time("2026-10-29T13:01:00.000000Z")),
+        auth_code_redeemed_at: None,
+        state: ConnectionState::Authorized,
+        opened_seq: None,
+        revoked_seq: None,
+        created_at: fixture_time("2026-10-29T13:00:30.000000Z"),
+    }
+}
+
+fn fixture_time(at: &str) -> EventTime {
+    EventTime::parse(at).expect("fixed-width fixture time")
+}
+
+impl ChainRig {
+    /// Commit one `connection.code_issued` folding `code`, naming `voids`
+    /// as the unredeemed code it replaces. Its payload carries ids and the
+    /// expiry only, never the code's digest (event-catalog.md; ADR-0031 d8).
+    pub async fn mint_code<S: JournalStore>(
+        &mut self,
+        store: &S,
+        code: ConnectCode,
+        voids: Option<Uuid>,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.commit(
+            store,
+            event_types::CONNECTION_CODE_ISSUED,
+            json!({
+                "code_id": code.code_id.to_string(),
+                "key_id": code.key_id.to_string(),
+                "issued_by_key_id": Value::Null,
+                "expires_at": code.expires_at.as_str(),
+                "voids_code_id": voids.map(|v| v.to_string()),
+            }),
+            MetadataFold::ConnectCodeIssued { code, voids },
+            None,
+        )
+        .await
+    }
+
+    /// Commit one `connection.opened` of `connection_id`, naming `replaces`
+    /// as the key's earlier open connection (ADR-0031 d12).
+    pub async fn open_connection<S: JournalStore>(
+        &mut self,
+        store: &S,
+        connection_id: Uuid,
+        replaces: Option<Uuid>,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.commit(
+            store,
+            event_types::CONNECTION_OPENED,
+            json!({
+                "connection_id": connection_id.to_string(),
+                "replaces_connection_id": replaces.map(|r| r.to_string()),
+            }),
+            MetadataFold::ConnectionOpened {
+                connection_id,
+                replaces,
+            },
+            None,
+        )
+        .await
+    }
+
+    /// Commit one `connection.revoked` of `connection_id` with `cause`.
+    pub async fn revoke_connection<S: JournalStore>(
+        &mut self,
+        store: &S,
+        connection_id: Uuid,
+        cause: RevokedCause,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.commit(
+            store,
+            event_types::CONNECTION_REVOKED,
+            json!({
+                "connection_id": connection_id.to_string(),
+                "cause": cause.as_str(),
+            }),
+            MetadataFold::ConnectionRevoked {
+                connection_id,
+                cause,
+            },
+            None,
+        )
+        .await
+    }
+
+    /// Mint `code_id` for `key_id`, spend it, create its `authorized`
+    /// connection and open it: the key's open connection from that code.
+    async fn opened_connection<S: ConnectionStore>(
+        &mut self,
+        store: &S,
+        key_id: Uuid,
+        code_id: Uuid,
+        connection_id: Uuid,
+        voids: Option<Uuid>,
+        replaces: Option<Uuid>,
+    ) -> CommitReceipt {
+        self.authorized_connection(store, key_id, code_id, connection_id, voids)
+            .await;
+        self.open_connection(store, connection_id, replaces)
+            .await
+            .expect("open")
+    }
+
+    /// Mint `code_id` for `key_id`, spend it and create its `authorized`
+    /// connection, as code entry and Connect do.
+    async fn authorized_connection<S: ConnectionStore>(
+        &mut self,
+        store: &S,
+        key_id: Uuid,
+        code_id: Uuid,
+        connection_id: Uuid,
+        voids: Option<Uuid>,
+    ) {
+        self.mint_code(store, connect_code(code_id, key_id), voids)
+            .await
+            .expect("mint");
+        assert!(
+            store
+                .connect_code_redeem(
+                    self.tenant_id,
+                    code_id,
+                    &fixture_time("2026-10-29T13:00:20.000000Z")
+                )
+                .await
+                .expect("redeem"),
+            "a live code is spent by its first correct entry"
+        );
+        store
+            .connection_authorize(
+                self.tenant_id,
+                authorized_connection(connection_id, key_id, code_id),
+            )
+            .await
+            .expect("authorize");
+    }
+}
+
+/// The key's codes keyed by id, each as its `voided_seq`.
+async fn voided_seqs<S: ConnectionStore>(
+    store: &S,
+    tenant_id: Uuid,
+    key_id: Uuid,
+) -> Vec<(Uuid, Option<u64>)> {
+    store
+        .connect_codes(tenant_id, key_id)
+        .await
+        .expect("codes")
+        .into_iter()
+        .map(|c| (c.code_id, c.voided_seq))
+        .collect()
+}
+
+/// `key.issued` with credential `connection` stores no hash: the key reads
+/// back by its id as a connector key with none, so `key_by_hash` resolves
+/// it by no value, and a connector key carrying a hash is refused and
+/// commits nothing (roles-and-keys.md connections; postgres-schema.md
+/// `api_keys_connector_has_no_hash`; ADR-0031 d7).
+pub async fn key_issued_with_credential_connection_stores_no_hash<S: ConnectionStore>(store: &S) {
+    let mut rig = ChainRig::new(310);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3100));
+    rig.issue_key(store, key.clone()).await;
+    let read = store.key(t, key.key_id).await.expect("read");
+    assert_eq!(read, Some(key.clone()));
+    let read = read.expect("the connector key reads back");
+    assert_eq!(read.credential, Credential::Connection);
+    assert_eq!(read.key_hash, None, "a connector key stores no hash");
+    assert_eq!(
+        store
+            .key_by_hash(&sha256_digest_string(key.key_id.as_bytes()))
+            .await
+            .expect("lookup"),
+        None,
+        "no value resolves a connector key"
+    );
+
+    let head = store.chain_head(t).await.expect("head");
+    let hashed = KeyRecord {
+        key_hash: Some(sha256_digest_string(b"a connector value")),
+        ..connector_key(t, Uuid::from_u128(0xD3101))
+    };
+    rig.commit(
+        store,
+        event_types::KEY_ISSUED,
+        json!({ "key_id": hashed.key_id.to_string(), "credential": "connection" }),
+        MetadataFold::KeyIssued(hashed.clone()),
+        None,
+    )
+    .await
+    .expect_err("a connector key with a hash is refused");
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(store.key(t, hashed.key_id).await.expect("read"), None);
+    assert_eq!(
+        store
+            .key_by_hash(&sha256_digest_string(b"a connector value"))
+            .await
+            .expect("lookup"),
+        None
+    );
+}
+
+/// Minting a code voids the key's earlier unredeemed code in the same
+/// commit, its `voided_seq` that commit's seq; a spent code from which no
+/// connection opened is voided with it; and a mint whose `voids` does not
+/// name the key's unredeemed code is refused and commits nothing
+/// (roles-and-keys.md connect codes; event-catalog.md
+/// `connection.code_issued`; ADR-0031 d8).
+pub async fn minting_a_code_voids_the_keys_earlier_unredeemed_code_in_the_same_commit<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(311);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3110));
+    rig.issue_key(store, key.clone()).await;
+    let (c1, c2, c3) = (
+        Uuid::from_u128(0xC3111),
+        Uuid::from_u128(0xC3112),
+        Uuid::from_u128(0xC3113),
+    );
+
+    let r1 = rig
+        .mint_code(store, connect_code(c1, key.key_id), None)
+        .await
+        .expect("first mint");
+    let codes = store.connect_codes(t, key.key_id).await.expect("codes");
+    assert_eq!(codes.len(), 1);
+    assert_eq!(
+        codes[0].issued_seq, r1.seq,
+        "a code's issued_seq is its event's seq"
+    );
+    assert_eq!(codes[0].code_hash, connect_code(c1, key.key_id).code_hash);
+    assert_eq!(codes[0].redeemed_at, None);
+    assert_eq!(codes[0].voided_seq, None);
+
+    let r2 = rig
+        .mint_code(store, connect_code(c2, key.key_id), Some(c1))
+        .await
+        .expect("second mint");
+    assert_eq!(
+        voided_seqs(store, t, key.key_id).await,
+        vec![(c1, Some(r2.seq)), (c2, None)],
+        "the newer code voids the unredeemed one in its own commit"
+    );
+
+    let head = store.chain_head(t).await.expect("head");
+    rig.mint_code(store, connect_code(c3, key.key_id), None)
+        .await
+        .expect_err("a mint that does not name the unredeemed code it voids is refused");
+    rig.mint_code(store, connect_code(c3, key.key_id), Some(c1))
+        .await
+        .expect_err("a mint naming a code already voided is refused");
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        voided_seqs(store, t, key.key_id).await,
+        vec![(c1, Some(r2.seq)), (c2, None)],
+        "a refused mint commits nothing"
+    );
+
+    assert!(
+        store
+            .connect_code_redeem(t, c2, &fixture_time("2026-10-29T13:00:20.000000Z"))
+            .await
+            .expect("redeem")
+    );
+    assert!(
+        !store
+            .connect_code_redeem(t, c2, &fixture_time("2026-10-29T13:00:21.000000Z"))
+            .await
+            .expect("redeem"),
+        "a spent code is spent once"
+    );
+    let r3 = rig
+        .mint_code(store, connect_code(c3, key.key_id), None)
+        .await
+        .expect("third mint");
+    assert_eq!(
+        voided_seqs(store, t, key.key_id).await,
+        vec![(c1, Some(r2.seq)), (c2, Some(r3.seq)), (c3, None)],
+        "a spent code from which no connection opened is voided too"
+    );
+}
+
+/// `connection.revoked` voids every code of the key from which no
+/// connection opened, spent or not, and leaves the code of an opened
+/// connection alone; it revokes an open connection only, never an
+/// `authorized` one, and never with the cause `replaced`, which only a
+/// newer `connection.opened` gives (roles-and-keys.md connections;
+/// event-catalog.md `connection.revoked`; ADR-0031 d8, d12).
+pub async fn connection_revoked_voids_every_code_of_the_key_from_which_no_connection_opened<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(312);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3120));
+    rig.issue_key(store, key.clone()).await;
+    let (c1, c2) = (Uuid::from_u128(0xC3121), Uuid::from_u128(0xC3122));
+    let (open, pending) = (Uuid::from_u128(0xE3121), Uuid::from_u128(0xE3122));
+    rig.opened_connection(store, key.key_id, c1, open, None, None)
+        .await;
+    rig.authorized_connection(store, key.key_id, c2, pending, None)
+        .await;
+    let head = store.chain_head(t).await.expect("head");
+
+    rig.revoke_connection(store, pending, RevokedCause::Admin)
+        .await
+        .expect_err("an authorized connection is never revoked by name");
+    rig.revoke_connection(store, open, RevokedCause::Replaced)
+        .await
+        .expect_err("only a newer connection.opened replaces a connection");
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+
+    let r = rig
+        .revoke_connection(store, open, RevokedCause::Admin)
+        .await
+        .expect("revoke");
+    let revoked = store
+        .connection(t, open)
+        .await
+        .expect("read")
+        .expect("the row stays");
+    assert_eq!(revoked.state, ConnectionState::Revoked(RevokedCause::Admin));
+    assert_eq!(revoked.revoked_seq, Some(r.seq));
+    assert_eq!(
+        voided_seqs(store, t, key.key_id).await,
+        vec![(c1, None), (c2, Some(r.seq))],
+        "the opened connection's code is kept; the spent code with no opened connection is voided"
+    );
+    assert_eq!(
+        store
+            .connection(t, pending)
+            .await
+            .expect("read")
+            .expect("the authorized row stays")
+            .state,
+        ConnectionState::Authorized,
+        "its voided code ends it at the exchange; the revocation names it nowhere"
+    );
+    rig.revoke_connection(store, open, RevokedCause::Admin)
+        .await
+        .expect_err("a connection is revoked once");
+}
+
+/// `key.revoked` voids the key's unredeemed codes in its own commit, and
+/// leaves a spent code alone (roles-and-keys.md connect codes; ADR-0031
+/// d8).
+pub async fn key_revoked_voids_the_keys_unredeemed_codes<S: ConnectionStore>(store: &S) {
+    let mut rig = ChainRig::new(313);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3130));
+    rig.issue_key(store, key.clone()).await;
+    let (c1, c2) = (Uuid::from_u128(0xC3131), Uuid::from_u128(0xC3132));
+    rig.opened_connection(store, key.key_id, c1, Uuid::from_u128(0xE3131), None, None)
+        .await;
+    rig.mint_code(store, connect_code(c2, key.key_id), None)
+        .await
+        .expect("mint");
+    let r = rig.revoke_key(store, key.key_id).await.expect("revoke");
+    assert_eq!(
+        voided_seqs(store, t, key.key_id).await,
+        vec![(c1, None), (c2, Some(r.seq))],
+        "the unredeemed code is voided by the key's revocation; the spent one is kept"
+    );
+}
+
+/// `connection.opened` opens its `authorized` connection, its `opened_seq`
+/// the commit's seq, and revokes the key's earlier open connection as
+/// `replaced` with its `revoked_seq` that seq, stamping nothing else; one
+/// whose `replaces` does not name the key's open connection is refused and
+/// commits nothing (roles-and-keys.md connections; event-catalog.md
+/// `connection.opened`; ADR-0031 d7, d12).
+pub async fn connection_opened_revokes_the_keys_earlier_open_connection_as_replaced<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(314);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3140));
+    rig.issue_key(store, key.clone()).await;
+    let (c1, c2) = (Uuid::from_u128(0xC3141), Uuid::from_u128(0xC3142));
+    let (first, second) = (Uuid::from_u128(0xE3141), Uuid::from_u128(0xE3142));
+    let r1 = rig
+        .opened_connection(store, key.key_id, c1, first, None, None)
+        .await;
+    let opened = store
+        .connection(t, first)
+        .await
+        .expect("read")
+        .expect("row");
+    assert_eq!(
+        opened,
+        ConnectionRecord {
+            state: ConnectionState::Open,
+            opened_seq: Some(r1.seq),
+            ..authorized_connection(first, key.key_id, c1)
+        },
+        "the exchange opens the row and stamps its opened_seq, nothing else"
+    );
+
+    rig.authorized_connection(store, key.key_id, c2, second, None)
+        .await;
+    let head = store.chain_head(t).await.expect("head");
+    rig.open_connection(store, second, None)
+        .await
+        .expect_err("an opening that names no replaced connection while one is open is refused");
+    rig.open_connection(store, second, Some(second))
+        .await
+        .expect_err("an opening that names another connection than the open one is refused");
+    rig.open_connection(store, first, None)
+        .await
+        .expect_err("an open connection opens once");
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+
+    let r2 = rig
+        .open_connection(store, second, Some(first))
+        .await
+        .expect("open the second");
+    assert_eq!(
+        store.connection(t, first).await.expect("read"),
+        Some(ConnectionRecord {
+            state: ConnectionState::Revoked(RevokedCause::Replaced),
+            opened_seq: Some(r1.seq),
+            revoked_seq: Some(r2.seq),
+            ..authorized_connection(first, key.key_id, c1)
+        }),
+        "the earlier open connection is revoked as replaced in the same commit"
+    );
+    assert_eq!(
+        store.connection(t, second).await.expect("read"),
+        Some(ConnectionRecord {
+            state: ConnectionState::Open,
+            opened_seq: Some(r2.seq),
+            ..authorized_connection(second, key.key_id, c2)
+        })
+    );
+    assert_eq!(
+        voided_seqs(store, t, key.key_id).await,
+        vec![(c1, None), (c2, None)],
+        "an opening voids no code"
+    );
+}
+
+/// `connection.opened` for a revoked key is refused and commits nothing:
+/// the fold reads the key's state in the transaction that holds the chain
+/// lock, so no connection opens after its key's `key.revoked`
+/// (roles-and-keys.md connections; ADR-0031 d11).
+pub async fn connection_opened_for_a_revoked_key_is_refused_and_commits_nothing<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(315);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3150));
+    rig.issue_key(store, key.clone()).await;
+    let (code, connection) = (Uuid::from_u128(0xC3151), Uuid::from_u128(0xE3151));
+    rig.authorized_connection(store, key.key_id, code, connection, None)
+        .await;
+    rig.revoke_key(store, key.key_id).await.expect("revoke");
+    let head = store.chain_head(t).await.expect("head");
+    rig.open_connection(store, connection, None)
+        .await
+        .expect_err("no connection opens for a revoked key");
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        store.connection(t, connection).await.expect("read"),
+        Some(authorized_connection(connection, key.key_id, code)),
+        "the refused opening stamps nothing"
+    );
+}
+
+/// Every connection-store law in one call, each against a fresh store.
+pub async fn run_connection_store_suite<S, F, Fut>(new_store: F)
+where
+    S: ConnectionStore,
+    F: Fn() -> Fut,
+    Fut: Future<Output = S>,
+{
+    key_issued_with_credential_connection_stores_no_hash(&new_store().await).await;
+    minting_a_code_voids_the_keys_earlier_unredeemed_code_in_the_same_commit(&new_store().await)
+        .await;
+    connection_revoked_voids_every_code_of_the_key_from_which_no_connection_opened(
+        &new_store().await,
+    )
+    .await;
+    key_revoked_voids_the_keys_unredeemed_codes(&new_store().await).await;
+    connection_opened_revokes_the_keys_earlier_open_connection_as_replaced(&new_store().await)
+        .await;
+    connection_opened_for_a_revoked_key_is_refused_and_commits_nothing(&new_store().await).await;
 }
 
 // ---------------------------------------------------------------------------

@@ -22,9 +22,9 @@ use oml_app::ports::{
     StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
-    ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
-    UnnamedRows, WorkareaRecord,
+    ClaimKeyState, Credential, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess,
+    KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT,
+    RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -878,7 +878,7 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
 /// through `to_char` in the fixed-width signed form, as a memory's
 /// `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_workarea_id, \
-     issued_by, hash, name, crew_id, \
+     issued_by, hash, credential, name, crew_id, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed";
 
@@ -890,7 +890,8 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
     let tenant_id: Option<Uuid> = row.try_get("tenant_id").map_err(backend)?;
     let role: String = row.try_get("role").map_err(backend)?;
     let held_by: String = row.try_get("held_by").map_err(backend)?;
-    let stored_hash: Vec<u8> = row.try_get("hash").map_err(backend)?;
+    let stored_hash: Option<Vec<u8>> = row.try_get("hash").map_err(backend)?;
+    let credential: String = row.try_get("credential").map_err(backend)?;
     let revoked: Option<String> = row.try_get("revoked_at_signed").map_err(backend)?;
     Ok(KeyRecord {
         key_id: row.try_get("id").map_err(backend)?,
@@ -900,7 +901,12 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         held_by: held_by_from_str(&held_by)?,
         default_workarea: row.try_get("default_workarea_id").map_err(backend)?,
         issued_by: row.try_get("issued_by").map_err(backend)?,
-        key_hash: format!("sha256:{}", hex::encode(stored_hash)),
+        credential: Credential::parse(&credential).ok_or_else(|| {
+            StoreError::Backend(format!(
+                "api_keys.credential {credential:?} is not a credential"
+            ))
+        })?,
+        key_hash: stored_hash.map(|h| format!("sha256:{}", hex::encode(h))),
         name: stored_name(row, "name")?,
         crew_id: row.try_get("crew_id").map_err(backend)?,
         revoked_at: revoked
@@ -1410,22 +1416,26 @@ async fn apply_fold(
             fold_names_assigned(tx, tenant_id, at, &naming).await?;
         }
         MetadataFold::KeyIssued(k) => {
-            let hash = key_hash_bytes(&k.key_hash).ok_or_else(|| {
-                StoreError::Backend(format!(
-                    "key_hash {:?} is not a sha256:<hex> string",
-                    k.key_hash
-                ))
-            })?;
+            let hash = k
+                .key_hash
+                .as_deref()
+                .map(|h| {
+                    key_hash_bytes(h).ok_or_else(|| {
+                        StoreError::Backend(format!("key_hash {h:?} is not a sha256:<hex> string"))
+                    })
+                })
+                .transpose()?;
             sqlx::query(
-                // Every key the fold writes is a bearer key, with its hash
-                // (0012; ADR-0031 d7).
+                // A connector key has no hash, which
+                // api_keys_connector_has_no_hash holds (0012; ADR-0031 d7).
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  held_by, default_workarea_id, issued_by, issued_seq, name, crew_id) \
-                 VALUES ($1, $2, $3, 'bearer', $4, $5, $6, $7, $8, $9, $10, $11)",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .bind(k.key_id)
             .bind(k.tenant_id)
             .bind(hash)
+            .bind(k.credential.as_str())
             .bind(k.role.as_str())
             .bind(&k.principal)
             .bind(k.held_by.as_str())
@@ -1528,6 +1538,28 @@ async fn apply_fold(
                     "key {key_id} is not a live key of this tenant"
                 )));
             }
+            // Its unredeemed codes are voided in this commit (ADR-0031 d8).
+            sqlx::query(
+                "UPDATE connect_codes SET voided_seq = $3 \
+                 WHERE tenant_id = $1 AND key_id = $2 \
+                 AND redeemed_at IS NULL AND voided_seq IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        // The connection folds are the double's laws until this store
+        // serves connector keys; until then no use-case journals one, and
+        // a commit carrying one is refused whole (ADR-0031, proposed).
+        MetadataFold::ConnectCodeIssued { .. }
+        | MetadataFold::ConnectionOpened { .. }
+        | MetadataFold::ConnectionRevoked { .. } => {
+            return Err(StoreError::Backend(
+                "this store folds no connection.* event yet (ADR-0031, proposed)".to_owned(),
+            ));
         }
         MetadataFold::MemoryHeld { memory, enqueue } => {
             insert_memory(tx, event_id, &memory).await?;

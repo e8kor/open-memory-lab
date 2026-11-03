@@ -16,19 +16,21 @@ use uuid::Uuid;
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::{hit_order, steering_order};
 use oml_domain::name::{Name, NamedKind, Naming, UNIVERSE};
+use oml_domain::oauth::{ConnectionAct, ConnectionState, RevokedCause, connection_transition};
 use oml_domain::{
     ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types,
 };
 
 use crate::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyRecord,
-    IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
-    ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
+    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen,
+    IdempotencyRecord, IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold,
+    OutboxRow, ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan,
+    claim_subject,
 };
 use crate::types::{
-    ClaimKeyState, Crew, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
-    UnnamedRows, WorkareaRecord,
+    ClaimKeyState, ConnectCodeRecord, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord,
+    GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
+    MemoryRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -107,10 +109,14 @@ struct TenantState {
     workareas: BTreeMap<Uuid, WorkareaRecord>,
     unnamed_workareas: BTreeMap<Uuid, UnnamedWorkarea>,
     crews: BTreeMap<Uuid, CrewRecord>,
-    /// Every key the tenant was issued, revoked ones included, so their
-    /// names stay held (ADR-0026 d10); a key `key.revoked` folded carries
-    /// its `revoked_at` and resolves by hash no more.
-    keys_by_hash: BTreeMap<String, KeyRecord>,
+    /// Every key the tenant was issued, by id, revoked ones included, so
+    /// their names stay held (ADR-0026 d10); a key `key.revoked` folded
+    /// carries its `revoked_at` and resolves by hash no more.
+    keys: BTreeMap<Uuid, KeyRecord>,
+    /// Connect codes by id (postgres-schema.md `connect_codes`).
+    connect_codes: BTreeMap<Uuid, ConnectCodeRecord>,
+    /// Connections by id (postgres-schema.md `oauth_connections`).
+    connections: BTreeMap<Uuid, ConnectionRecord>,
     /// Per key id, in commit order — which is epoch order.
     access: BTreeMap<Uuid, KeyAccess>,
     queue: Vec<QueueEntry>,
@@ -343,8 +349,8 @@ fn fold_poc_event(
                     lift_epochs: Vec::new(),
                 },
             );
-            state.keys_by_hash.insert(
-                format!("poc-unhashed:{key_id}"),
+            state.keys.insert(
+                key_id,
                 KeyRecord {
                     key_id,
                     tenant_id,
@@ -357,7 +363,8 @@ fn fold_poc_event(
                     held_by: HeldBy::Agent,
                     default_workarea: poc_id(payload, "default_workarea_id"),
                     issued_by: poc_id(payload, "issued_by_key_id"),
-                    key_hash: format!("poc-unhashed:{key_id}"),
+                    credential: Credential::Bearer,
+                    key_hash: None,
                     name: None,
                     crew_id: None,
                     revoked_at: None,
@@ -395,7 +402,7 @@ fn fold_poc_event(
         }
         event_types::KEY_REVOKED => {
             let key_id = poc_required_id(payload, "key_id")?;
-            if let Some(key) = state.keys_by_hash.values_mut().find(|k| k.key_id == key_id) {
+            if let Some(key) = state.keys.get_mut(&key_id) {
                 key.revoked_at = Some(env.at.clone());
             }
         }
@@ -556,6 +563,25 @@ fn require_free_ordinal(state: &TenantState, memory: &MemoryRecord) -> Result<()
     Ok(())
 }
 
+/// Voids, in the commit of `seq`, every code of `key_id` from which no
+/// connection has opened, spent or not, and not voided already
+/// (roles-and-keys.md connect codes; ADR-0031 d8).
+fn void_unopened_codes(state: &mut TenantState, key_id: Uuid, seq: u64) {
+    let opened: BTreeSet<Uuid> = state
+        .connections
+        .values()
+        .filter(|c| c.key_id == key_id && c.opened_seq.is_some())
+        .map(|c| c.code_id)
+        .collect();
+    for code in state
+        .connect_codes
+        .values_mut()
+        .filter(|c| c.key_id == key_id && c.voided_seq.is_none() && !opened.contains(&c.code_id))
+    {
+        code.voided_seq = Some(seq);
+    }
+}
+
 /// Applies one fold, or refuses it before changing anything — what the
 /// schema refuses, the double refuses, so the commit stays all or nothing.
 /// `seq` and `at` are the commit's event seq and time: a key's
@@ -622,9 +648,16 @@ fn apply_fold(
             assign_names_fold(state, tenant_id, &naming)?;
         }
         MetadataFold::KeyIssued(key) => {
+            // api_keys_connector_has_no_hash (ADR-0031 d7).
+            if key.credential == Credential::Connection && key.key_hash.is_some() {
+                return Err(StoreError::Backend(format!(
+                    "connector key {} carries a hash; a connector key has no value",
+                    key.key_id
+                )));
+            }
             if let Some(name) = &key.name {
                 require_free_name(
-                    state.keys_by_hash.values().filter_map(|k| k.name.as_ref()),
+                    state.keys.values().filter_map(|k| k.name.as_ref()),
                     NamedKind::Key,
                     name,
                 )?;
@@ -639,7 +672,7 @@ fn apply_fold(
                     lift_epochs: Vec::new(),
                 },
             );
-            state.keys_by_hash.insert(key.key_hash.clone(), key);
+            state.keys.insert(key.key_id, key);
         }
         MetadataFold::GrantIssued { key_id, grant } => {
             require_held(state, key_id, grant.node)?;
@@ -691,15 +724,134 @@ fn apply_fold(
         // or one already revoked, is refused.
         MetadataFold::KeyRevoked { key_id } => {
             let Some(key) = state
-                .keys_by_hash
-                .values_mut()
-                .find(|k| k.key_id == key_id && k.revoked_at.is_none())
+                .keys
+                .get_mut(&key_id)
+                .filter(|k| k.revoked_at.is_none())
             else {
                 return Err(StoreError::Backend(format!(
                     "key {key_id} is not a live key of this tenant"
                 )));
             };
             key.revoked_at = Some(at.clone());
+            // Its unredeemed codes are voided in this commit (ADR-0031 d8).
+            for code in state
+                .connect_codes
+                .values_mut()
+                .filter(|c| c.key_id == key_id && c.redeemed_at.is_none() && c.voided_seq.is_none())
+            {
+                code.voided_seq = Some(seq);
+            }
+        }
+        MetadataFold::ConnectCodeIssued { code, voids } => {
+            if !state.keys.contains_key(&code.key_id) {
+                return Err(StoreError::Backend(format!(
+                    "key {} is not held by this tenant",
+                    code.key_id
+                )));
+            }
+            if state.connect_codes.contains_key(&code.code_id)
+                || state
+                    .connect_codes
+                    .values()
+                    .any(|c| c.code_hash == code.code_hash)
+            {
+                return Err(StoreError::Backend(format!(
+                    "connect code {} is held already",
+                    code.code_id
+                )));
+            }
+            let unredeemed = state
+                .connect_codes
+                .values()
+                .find(|c| {
+                    c.key_id == code.key_id && c.redeemed_at.is_none() && c.voided_seq.is_none()
+                })
+                .map(|c| c.code_id);
+            if unredeemed != voids {
+                return Err(StoreError::Backend(format!(
+                    "the mint names {voids:?} as the unredeemed code it voids, and the key's is {unredeemed:?}"
+                )));
+            }
+            void_unopened_codes(state, code.key_id, seq);
+            state.connect_codes.insert(
+                code.code_id,
+                ConnectCodeRecord {
+                    code_id: code.code_id,
+                    key_id: code.key_id,
+                    code_hash: code.code_hash,
+                    expires_at: code.expires_at,
+                    issued_seq: seq,
+                    redeemed_at: None,
+                    voided_seq: None,
+                },
+            );
+        }
+        MetadataFold::ConnectionOpened {
+            connection_id,
+            replaces,
+        } => {
+            let Some(connection) = state.connections.get(&connection_id) else {
+                return Err(StoreError::Backend(format!(
+                    "connection {connection_id} is not held by this tenant"
+                )));
+            };
+            let key_id = connection.key_id;
+            connection_transition(connection.state, ConnectionAct::Exchange)
+                .map_err(|e| StoreError::Backend(e.to_string()))?;
+            // The key's state is read under the chain lock, so no
+            // connection opens after its key's key.revoked (ADR-0031 d11).
+            if !state
+                .keys
+                .get(&key_id)
+                .is_some_and(|k| k.revoked_at.is_none())
+            {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant"
+                )));
+            }
+            let open = state
+                .connections
+                .values()
+                .find(|c| c.key_id == key_id && c.state == ConnectionState::Open)
+                .map(|c| c.connection_id);
+            if open != replaces {
+                return Err(StoreError::Backend(format!(
+                    "the opening names {replaces:?} as the open connection it replaces, and the key's is {open:?}"
+                )));
+            }
+            if let Some(earlier) = open.and_then(|id| state.connections.get_mut(&id)) {
+                earlier.state = ConnectionState::Revoked(RevokedCause::Replaced);
+                earlier.revoked_seq = Some(seq);
+            }
+            if let Some(connection) = state.connections.get_mut(&connection_id) {
+                connection.state = ConnectionState::Open;
+                connection.opened_seq = Some(seq);
+            }
+        }
+        MetadataFold::ConnectionRevoked {
+            connection_id,
+            cause,
+        } => {
+            let act = match cause {
+                RevokedCause::Admin => ConnectionAct::AdminRevoke,
+                RevokedCause::RefreshReuse => ConnectionAct::RefreshReuse,
+                RevokedCause::CodeReuse => ConnectionAct::CodeReuse,
+                RevokedCause::Replaced => {
+                    return Err(StoreError::Backend(
+                        "only a newer connection.opened replaces a connection".to_owned(),
+                    ));
+                }
+            };
+            let Some(connection) = state.connections.get_mut(&connection_id) else {
+                return Err(StoreError::Backend(format!(
+                    "connection {connection_id} is not held by this tenant"
+                )));
+            };
+            connection.state = connection_transition(connection.state, act)
+                .map_err(|e| StoreError::Backend(e.to_string()))?;
+            connection.revoked_seq = Some(seq);
+            let key_id = connection.key_id;
+            void_unopened_codes(state, key_id, seq);
         }
         MetadataFold::MemoryHeld { memory, enqueue } => {
             require_free_ordinal(state, &memory)?;
@@ -839,15 +991,11 @@ fn assign_names_fold(
             }
             NamedKind::Key => {
                 require_free_name(
-                    state.keys_by_hash.values().filter_map(|k| k.name.as_ref()),
+                    state.keys.values().filter_map(|k| k.name.as_ref()),
                     NamedKind::Key,
                     &assignment.name,
                 )?;
-                let Some(key) = state
-                    .keys_by_hash
-                    .values_mut()
-                    .find(|k| k.key_id == id && k.name.is_none())
-                else {
+                let Some(key) = state.keys.get_mut(&id).filter(|k| k.name.is_none()) else {
                     return Err(StoreError::Backend(format!(
                         "key {id} is not a row without a name"
                     )));
@@ -1365,7 +1513,12 @@ impl JournalStore for MemStore {
             .collect();
         for tenant in tenants {
             let state = tenant.lock().expect("tenant lock");
-            if let Some(key) = state.keys_by_hash.get(key_hash) {
+            // One equality lookup on a hash: a connector key has none.
+            if let Some(key) = state
+                .keys
+                .values()
+                .find(|k| k.key_hash.as_deref() == Some(key_hash))
+            {
                 if key.revoked_at.is_some() {
                     return Ok(None);
                 }
@@ -1416,7 +1569,7 @@ impl JournalStore for MemStore {
                 .find(|c| &c.name == name)
                 .map(|c| c.crew_id),
             NamedKind::Key => state
-                .keys_by_hash
+                .keys
                 .values()
                 .find(|k| k.name.as_ref() == Some(name))
                 .map(|k| k.key_id),
@@ -1449,11 +1602,7 @@ impl JournalStore for MemStore {
             return Ok(None);
         };
         let state = tenant.lock().expect("tenant lock");
-        Ok(state
-            .keys_by_hash
-            .values()
-            .find(|k| k.key_id == key_id)
-            .cloned())
+        Ok(state.keys.get(&key_id).cloned())
     }
 
     async fn unnamed_rows(&self, tenant_id: Uuid) -> Result<UnnamedRows, StoreError> {
@@ -1462,7 +1611,7 @@ impl JournalStore for MemStore {
         };
         let state = tenant.lock().expect("tenant lock");
         let mut keys: Vec<Uuid> = state
-            .keys_by_hash
+            .keys
             .values()
             .filter(|k| k.name.is_none())
             .map(|k| k.key_id)
@@ -1593,6 +1742,103 @@ impl JournalStore for MemStore {
             .idempotency
             .get(&(scope.key_id, scope.workarea_id, scope.idem_key.clone()))
             .cloned())
+    }
+}
+
+impl ConnectionStore for MemStore {
+    async fn connect_code_redeem(
+        &self,
+        tenant_id: Uuid,
+        code_id: Uuid,
+        at: &EventTime,
+    ) -> Result<bool, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(false);
+        };
+        let mut state = tenant.lock().expect("tenant lock");
+        // The one conditional update two racing entries cannot both pass.
+        match state
+            .connect_codes
+            .get_mut(&code_id)
+            .filter(|c| c.redeemed_at.is_none() && c.voided_seq.is_none())
+        {
+            Some(code) => {
+                code.redeemed_at = Some(at.clone());
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    async fn connection_authorize(
+        &self,
+        tenant_id: Uuid,
+        record: ConnectionRecord,
+    ) -> Result<(), StoreError> {
+        let tenant = self.tenant(tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        if record.state != ConnectionState::Authorized
+            || record.opened_seq.is_some()
+            || record.revoked_seq.is_some()
+        {
+            return Err(StoreError::Backend(format!(
+                "connection {} is created authorized, never {}",
+                record.connection_id,
+                record.state.as_str()
+            )));
+        }
+        if !state.keys.contains_key(&record.key_id)
+            || !state.connect_codes.contains_key(&record.code_id)
+        {
+            return Err(StoreError::Backend(format!(
+                "connection {} names a key or code this tenant does not hold",
+                record.connection_id
+            )));
+        }
+        if state.connections.contains_key(&record.connection_id)
+            || state
+                .connections
+                .values()
+                .any(|c| c.code_id == record.code_id)
+        {
+            return Err(StoreError::Backend(format!(
+                "code {} has its connection already",
+                record.code_id
+            )));
+        }
+        state.connections.insert(record.connection_id, record);
+        Ok(())
+    }
+
+    async fn connect_codes(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Vec<ConnectCodeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut codes: Vec<ConnectCodeRecord> = state
+            .connect_codes
+            .values()
+            .filter(|c| c.key_id == key_id)
+            .cloned()
+            .collect();
+        codes.sort_by_key(|c| c.issued_seq);
+        Ok(codes)
+    }
+
+    async fn connection(
+        &self,
+        tenant_id: Uuid,
+        connection_id: Uuid,
+    ) -> Result<Option<ConnectionRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.connections.get(&connection_id).cloned())
     }
 }
 

@@ -13,11 +13,13 @@ use uuid::Uuid;
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
+use oml_domain::oauth::RevokedCause;
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{
-    ClaimKeyState, CrewRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
-    RecallCandidate, UnnamedRows, WorkareaRecord,
+    ClaimKeyState, ConnectCode, ConnectCodeRecord, ConnectionRecord, CrewRecord, KeyAccess,
+    KeyRecord, ListingFilter, ListingPosition, MemoryRecord, RecallCandidate, UnnamedRows,
+    WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -84,7 +86,11 @@ pub enum MetadataFold {
     /// `workarea.create`: the node, its path derived from its parent's path
     /// and its name (postgres-schema.md `workareas`).
     WorkareaCreated(WorkareaRecord),
-    /// `key.issued`: the key row, its `issued_seq` this commit's seq.
+    /// `key.issued`: the key row, its `issued_seq` this commit's seq, with
+    /// its credential. A connector key (`Credential::Connection`) carries no
+    /// hash, or the store refuses it, so it never resolves through
+    /// [`JournalStore::key_by_hash`] (postgres-schema.md
+    /// `api_keys_connector_has_no_hash`; ADR-0031 d7).
     KeyIssued(KeyRecord),
     /// `crew.created`: one crew record (ADR-0026 d8).
     CrewCreated(CrewRecord),
@@ -135,9 +141,44 @@ pub enum MetadataFold {
     },
     /// `key.revoked`: the key resolves by its hash no more; its row, grants
     /// and denials stay as history. The store refuses a revocation of a key
-    /// it does not hold (roles-and-keys.md key lifecycle; ADR-0025 d2).
+    /// it does not hold (roles-and-keys.md key lifecycle; ADR-0025 d2). It
+    /// voids the key's unredeemed codes, their `voided_seq` this commit's
+    /// seq (roles-and-keys.md connect codes; ADR-0031 d8).
     KeyRevoked {
         key_id: Uuid,
+    },
+    /// `connection.code_issued`: the code's row, its `issued_seq` this
+    /// commit's seq. The commit voids every code of the key from which no
+    /// connection has opened, spent or not, their `voided_seq` this seq.
+    /// `voids` is the key's unredeemed code the event names as replaced,
+    /// else `None`; the store refuses a commit whose `voids` is not the
+    /// key's one unredeemed, unvoided code, and a code of a key it does not
+    /// hold (event-catalog.md `connection.code_issued`; ADR-0031 d8).
+    ConnectCodeIssued {
+        code: ConnectCode,
+        voids: Option<Uuid>,
+    },
+    /// `connection.opened`: the `authorized` connection opens, its
+    /// `opened_seq` this commit's seq, and the key's earlier open
+    /// connection, which `replaces` names, is revoked with the cause
+    /// `replaced` and its `revoked_seq` this seq; nothing else is stamped.
+    /// The store refuses a connection that is not `authorized`, a `replaces`
+    /// that is not the key's open connection, and a key that is revoked, so
+    /// no connection opens after its key's `key.revoked` (event-catalog.md
+    /// `connection.opened`; ADR-0031 d7, d11, d12).
+    ConnectionOpened {
+        connection_id: Uuid,
+        replaces: Option<Uuid>,
+    },
+    /// `connection.revoked`: the open connection is revoked with `cause`,
+    /// its `revoked_seq` this commit's seq, and every code of its key from
+    /// which no connection has opened, spent or not, is voided, their
+    /// `voided_seq` this seq. The store refuses a connection that is not
+    /// open and the cause `replaced`, which only a newer `connection.opened`
+    /// gives (event-catalog.md `connection.revoked`; ADR-0031 d8, d12).
+    ConnectionRevoked {
+        connection_id: Uuid,
+        cause: RevokedCause,
     },
     /// A captured submission: the row lands `held` and, with `enqueue`,
     /// waits in the review queue. The store refuses a second held, promoted
@@ -589,6 +630,51 @@ pub trait JournalStore: Send + Sync {
         &self,
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send;
+}
+
+/// The connection rows of a store that serves connector keys
+/// (postgres-schema.md "connections (ADR-0031)"): the operational writes
+/// that journal nothing — code entry spending a code, Connect creating an
+/// `authorized` connection — and the reads. The journalled acts are folds
+/// of [`MetadataFold`] (ADR-0031 d8, d12; event-catalog.md, operational
+/// state).
+pub trait ConnectionStore: JournalStore {
+    /// Spends the code by its first correct entry, `redeemed_at` = `at`:
+    /// `true` when this call spent it, `false` for a code the tenant does
+    /// not hold or one already spent or voided, which it leaves unchanged.
+    /// Expiry and the key's state are the caller's check (ADR-0031 d8, d9).
+    fn connect_code_redeem(
+        &self,
+        tenant_id: Uuid,
+        code_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// Connect's row, `authorized`. The store refuses a record in any other
+    /// state, a key or code the tenant does not hold, and a second
+    /// connection of one code (postgres-schema.md
+    /// `oauth_connections_tenant_id_code_id`; ADR-0031 d9).
+    fn connection_authorize(
+        &self,
+        tenant_id: Uuid,
+        record: ConnectionRecord,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The key's codes in the order they were issued, voided and spent ones
+    /// included; empty for a key the tenant does not hold.
+    fn connect_codes(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<ConnectCodeRecord>, StoreError>> + Send;
+
+    /// One connection of the tenant, in any state; `None` for one it does
+    /// not hold.
+    fn connection(
+        &self,
+        tenant_id: Uuid,
+        connection_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ConnectionRecord>, StoreError>> + Send;
 }
 
 /// The signer port — the lead/follower split as a trait: only the lead

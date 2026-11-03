@@ -35,13 +35,14 @@ use crate::ports::{
     Scanner, Signer, StoreError, SubjectRow, TailEvent,
 };
 use crate::types::{
-    AppError, AssignedNames, BootstrapRequest, BootstrapResult, CreatedWorkarea, CrewCreateRequest,
-    CrewPage, CrewRecord, CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS, IssueKeyRequest,
-    IssuedKey, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
-    ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
-    RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    AppError, AssignedNames, BootstrapRequest, BootstrapResult, CreatedWorkarea, Credential,
+    CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS,
+    IssueKeyRequest, IssuedKey, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter,
+    ListingPosition, ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT,
+    RecallHit, RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt,
+    SubmitRequest, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo,
+    WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -913,7 +914,8 @@ where
             held_by: req.held_by.unwrap_or(HeldBy::Agent),
             default_workarea,
             issued_by,
-            key_hash: sha256_digest_string(value.as_bytes()),
+            credential: Credential::Bearer,
+            key_hash: Some(sha256_digest_string(value.as_bytes())),
             name: Some(req.name.clone()),
             crew_id,
             revoked_at: None,

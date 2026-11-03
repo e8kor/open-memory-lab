@@ -3,9 +3,10 @@
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
+use oml_domain::oauth::{ConnectionState, Refusal};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
-    SignedEnvelope, TransitionError, VerdictError, VerifyError,
+    Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -19,8 +20,40 @@ use crate::ports::StoreError;
 /// grant or denial can name the key (ADR-0025 d13).
 pub const PROVIDER_TENANT: Uuid = Uuid::nil();
 
-/// A stored API key row: everything about a key is looked up by the value's
-/// hash; the value itself is never stored (roles-and-keys.md key format).
+/// How a key authenticates, fixed for its life (postgres-schema.md
+/// `api_keys.credential`; roles-and-keys.md connections; ADR-0031 d7): a
+/// bearer key has a value, and a connector key has none and acts only
+/// through a connection. A key is one or the other, never both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Credential {
+    Bearer,
+    Connection,
+}
+
+impl Credential {
+    /// The spelling of `key.issued.credential` and of the column.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Credential::Bearer => "bearer",
+            Credential::Connection => "connection",
+        }
+    }
+
+    /// The credential a spelling names; `None` for any other string.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "bearer" => Some(Credential::Bearer),
+            "connection" => Some(Credential::Connection),
+            _ => None,
+        }
+    }
+}
+
+/// A stored API key row: everything about a bearer key is looked up by the
+/// value's hash; the value itself is never stored (roles-and-keys.md key
+/// format).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyRecord {
     pub key_id: Uuid,
@@ -34,8 +67,14 @@ pub struct KeyRecord {
     /// first admin key, which no key issues (postgres-schema.md
     /// `api_keys.issued_by`).
     pub issued_by: Option<Uuid>,
-    /// `sha256:<hex>` of the full key string, prefix included.
-    pub key_hash: String,
+    /// `bearer` or `connection` (ADR-0031 d7).
+    pub credential: Credential,
+    /// `sha256:<hex>` of the full key string, prefix included. A connector
+    /// key has none, and the store refuses one that carries a hash, so no
+    /// value ever resolves it through `key_by_hash`; a bearer key has none
+    /// only when it predates its hash, as a PoC key does (postgres-schema.md
+    /// `api_keys_connector_has_no_hash`; ADR-0026 d11).
+    pub key_hash: Option<String>,
     /// The key's name: unique in its tenant, operator keys sharing the
     /// provider's one namespace, and never released, a revoked key's
     /// included (roles-and-keys.md key names; ADR-0026 d1, d9, d10). Every
@@ -50,6 +89,91 @@ pub struct KeyRecord {
     /// issuance folds one (postgres-schema.md `api_keys.revoked_at`;
     /// ADR-0026 d10).
     pub revoked_at: Option<EventTime>,
+}
+
+/// A connect code as `connection.code_issued` mints it, for the commit's
+/// tenant: the code is shown once and never stored, so the row holds only
+/// the SHA-256 of its twelve decoded symbols, which no journal payload
+/// carries (roles-and-keys.md connect codes; ADR-0031 d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectCode {
+    pub code_id: Uuid,
+    /// The connector key the code opens a connection for.
+    pub key_id: Uuid,
+    pub code_hash: Sha256Hash,
+    pub expires_at: EventTime,
+}
+
+/// A stored connect code (postgres-schema.md `connect_codes`; ADR-0031 d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectCodeRecord {
+    pub code_id: Uuid,
+    pub key_id: Uuid,
+    pub code_hash: Sha256Hash,
+    pub expires_at: EventTime,
+    /// The seq of its `connection.code_issued`.
+    pub issued_seq: u64,
+    /// Its first correct entry on the authorization page.
+    pub redeemed_at: Option<EventTime>,
+    /// The seq of the `connection.code_issued`, `connection.revoked` or
+    /// `key.revoked` that voided it.
+    pub voided_seq: Option<u64>,
+}
+
+/// How a connection's client was identified (postgres-schema.md
+/// `oauth_connections.client_kind`; ADR-0031 d5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientKind {
+    /// A client ID metadata document, fetched and verified.
+    Cimd,
+    /// A dynamic client registration.
+    Dcr,
+}
+
+impl ClientKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ClientKind::Cimd => "cimd",
+            ClientKind::Dcr => "dcr",
+        }
+    }
+}
+
+/// A stored connection: one OAuth client's standing authority to act as one
+/// connector key at `/mcp`. Connect creates it `authorized`, the token
+/// exchange's `connection.opened` opens it, and it ends `revoked`, once
+/// (postgres-schema.md `oauth_connections`; roles-and-keys.md connections;
+/// ADR-0031 d7, d10, d12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionRecord {
+    pub connection_id: Uuid,
+    pub key_id: Uuid,
+    /// The connect code it came from; one code yields at most one.
+    pub code_id: Uuid,
+    pub client_id: String,
+    pub client_kind: ClientKind,
+    /// SHA-256 of the client's document or registration.
+    pub client_metadata_digest: Sha256Hash,
+    pub redirect_uri: String,
+    /// Whether the authorize request named `redirect_uri`.
+    pub redirect_uri_sent: bool,
+    /// `<issuer>/mcp` at Connect, which its tokens are bound to.
+    pub resource: String,
+    /// The S256 PKCE challenge.
+    pub code_challenge: String,
+    /// The authorization code's SHA-256, kept after redemption so a second
+    /// redemption is recognized.
+    pub auth_code_hash: Option<Sha256Hash>,
+    pub auth_code_expires_at: Option<EventTime>,
+    pub auth_code_redeemed_at: Option<EventTime>,
+    pub state: ConnectionState,
+    /// The seq of its `connection.opened`.
+    pub opened_seq: Option<u64>,
+    /// The seq of its `connection.revoked`, or of the `connection.opened`
+    /// that replaced it.
+    pub revoked_seq: Option<u64>,
+    pub created_at: EventTime,
 }
 
 /// A stored grant row: the domain grant and its epoch, the journal seq of
@@ -910,6 +1034,11 @@ pub enum AppError {
     ChainVerify(#[from] VerifyError),
     #[error(transparent)]
     Jcs(#[from] JcsError),
+    /// A refusal of the connection flow, one `oauth` code or
+    /// `request.validation`; its status and shape are the edge's
+    /// (errors.md "`oauth` — connections"; ADR-0031 d13).
+    #[error(transparent)]
+    OAuth(#[from] Refusal),
     #[error(transparent)]
     Store(StoreError),
 }

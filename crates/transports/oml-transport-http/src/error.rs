@@ -7,6 +7,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 
 use oml_app::domain::VerdictError;
+use oml_app::domain::oauth::Refusal;
 use oml_app::ports::StoreError;
 use oml_app::types::AppError;
 
@@ -428,5 +429,105 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::Chain(e) => ApiError::internal(e.to_string()),
         AppError::ChainVerify(e) => ApiError::internal(e.to_string()),
         AppError::Jcs(e) => ApiError::internal(e.to_string()),
+        AppError::OAuth(refusal) => oauth_refusal(refusal),
+    }
+}
+
+/// A connection-flow refusal in the envelope: its errors.md status, its
+/// code, and the `details.reason` errors.md declares for it, where it
+/// declares one. The `/oauth/*` endpoints answer in the RFC's shapes
+/// instead; this is the shape on `/v2` and `/mcp` (errors.md "`oauth` —
+/// connections"; ADR-0031 d13).
+fn oauth_refusal(refusal: Refusal) -> ApiError {
+    let (status, rule) = match refusal {
+        Refusal::ClientInvalid(_) => (
+            StatusCode::BAD_REQUEST,
+            "Clients are public and identified by a verified document or a registration (ADR-0031 d5).",
+        ),
+        Refusal::RedirectRefused(_) => (
+            StatusCode::BAD_REQUEST,
+            "An authorization code goes only to https://claude.ai/api/mcp/auth_callback or a loopback address, by exact match (ADR-0031 d6).",
+        ),
+        Refusal::PkceRequired(_) => (
+            StatusCode::BAD_REQUEST,
+            "Every authorization request is bound by S256 PKCE to the client that started it (ADR-0031 d4).",
+        ),
+        Refusal::ResourceMismatch => (
+            StatusCode::BAD_REQUEST,
+            "A token is issued for the one protected resource and accepted nowhere else (ADR-0031 d10).",
+        ),
+        Refusal::AuthorizationExpired(_) => (
+            StatusCode::BAD_REQUEST,
+            "A page acts only on a live request it rendered, for a bounded number of tries (ADR-0031 d9).",
+        ),
+        Refusal::ConnectCodeInvalid => (
+            StatusCode::BAD_REQUEST,
+            "A connect code is single-use and short-lived, and the page never tells a guesser that a code existed (ADR-0031 d8, d9).",
+        ),
+        Refusal::AuthorizationCodeInvalid(_) => (
+            StatusCode::BAD_REQUEST,
+            "An authorization code is redeemed once, by the client that holds the verifier, within its sixty seconds (ADR-0031 d9, d10).",
+        ),
+        Refusal::RefreshInvalid(_) => (
+            StatusCode::BAD_REQUEST,
+            "A refresh token is used once; a reused one ends its connection (ADR-0031 d10).",
+        ),
+        Refusal::OriginRefused => (
+            StatusCode::FORBIDDEN,
+            "The page acts only on its own form; a cross-site submission is refused before its fields are read (ADR-0031 d9).",
+        ),
+        Refusal::AttachRefused => (
+            StatusCode::FORBIDDEN,
+            "An upload's parts travel on /v1 under a key value, which a connector key does not have (ADR-0031 d11).",
+        ),
+        Refusal::ConnectRefused(_) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A key that cannot act on the agent-safe surface, or already has a value, gets no connect code, and a connector key never gains a value by rotation (ADR-0031 d7, d8).",
+        ),
+        Refusal::RequestValidation(_) => (
+            StatusCode::BAD_REQUEST,
+            "The contract is openapi.yaml; what it does not admit is refused, not coerced.",
+        ),
+    };
+    let reason = match refusal {
+        Refusal::ConnectRefused(reason) => Some(reason.as_str()),
+        Refusal::ClientInvalid(reason) => reason.details_reason(),
+        _ => None,
+    };
+    let error = ApiError::new(status, refusal.code(), rule, refusal.to_string());
+    match reason {
+        Some(reason) => error.with_details(json!({ "reason": reason })),
+        None => error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use oml_app::domain::oauth::{ConnectRefused, OAUTH_CODES};
+
+    use super::*;
+
+    #[test]
+    fn an_oauth_refusal_answers_its_errors_md_status_code_and_declared_reason() {
+        let refused = map_app_error(
+            AppError::OAuth(Refusal::ConnectRefused(ConnectRefused::BearerKey)),
+            ErrorContext::Write,
+        );
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(refused.code, OAUTH_CODES[10]);
+        assert_eq!(refused.details, Some(json!({ "reason": "bearer_key" })));
+
+        let attach = map_app_error(AppError::OAuth(Refusal::AttachRefused), ErrorContext::Write);
+        assert_eq!(attach.status, StatusCode::FORBIDDEN);
+        assert_eq!(attach.code, "oauth.attach_refused");
+        assert_eq!(attach.details, None);
+
+        let code = map_app_error(
+            AppError::OAuth(Refusal::ConnectCodeInvalid),
+            ErrorContext::Write,
+        );
+        assert_eq!(code.status, StatusCode::BAD_REQUEST);
+        assert_eq!(code.code, "oauth.connect_code_invalid");
+        assert_eq!(code.details, None, "a code's refusal names no reason");
     }
 }

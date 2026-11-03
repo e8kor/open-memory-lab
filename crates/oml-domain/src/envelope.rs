@@ -61,6 +61,16 @@ pub mod event_types {
     /// made from their crew objects, journalled once per chain by the lead
     /// (ADR-0026 d11).
     pub const SYSTEM_NAMES_ASSIGNED: &str = "system.names_assigned";
+    /// A connect code minted for a connector key: its id and expiry, never
+    /// the code nor its digest; the commit voids the key's codes from which
+    /// no connection opened (ADR-0031 d8).
+    pub const CONNECTION_CODE_ISSUED: &str = "connection.code_issued";
+    /// A connection opens at the token exchange and replaces the key's
+    /// earlier open connection in the same commit (ADR-0031 d7, d12).
+    pub const CONNECTION_OPENED: &str = "connection.opened";
+    /// A connection ends, by an admin or a reuse; the commit voids the
+    /// key's codes from which no connection opened (ADR-0031 d8, d12).
+    pub const CONNECTION_REVOKED: &str = "connection.revoked";
 }
 
 /// A SHA-256 value. Displayed and journalled as `sha256:` + 64 lowercase hex
