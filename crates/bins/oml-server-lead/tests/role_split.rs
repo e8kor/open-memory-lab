@@ -287,9 +287,10 @@ impl Drop for Lead {
     }
 }
 
-/// The lead exited non-zero, logged `postgres.role_split` with `reason`,
-/// never logged that it serves, and nothing accepts a connection on its
-/// port (ADR-0034 d5, d8).
+/// The lead exited non-zero, logged `postgres.role_split` with `reason`
+/// as the stable structured fields `event`, `code` and `reason`
+/// (observability.md, structured logging), never logged that it serves,
+/// and nothing accepts a connection on its port (ADR-0034 d5, d8).
 async fn assert_refused(lead: &mut Lead, reason: &str) {
     let status = lead.exit().await;
     let stderr = lead.stderr();
@@ -301,10 +302,16 @@ async fn assert_refused(lead: &mut Lead, reason: &str) {
         .lines()
         .find(|l| l.contains("postgres.role_split"))
         .unwrap_or_else(|| panic!("no postgres.role_split line; stderr:\n{stderr}"));
-    assert!(
-        line.contains(reason),
-        "the refusal names {reason}; got: {line}"
-    );
+    for field in [
+        "event=\"role_split_refused\"".to_owned(),
+        "code=\"postgres.role_split\"".to_owned(),
+        format!("reason=\"{reason}\""),
+    ] {
+        assert!(
+            line.split_whitespace().any(|f| f == field),
+            "the refusal carries the stable field {field}; got: {line}"
+        );
+    }
     assert!(
         !stderr.contains("serving both rings"),
         "a refused boot never reaches the listener; stderr:\n{stderr}"
@@ -442,10 +449,17 @@ async fn once_the_listener_binds_pg_stat_activity_shows_no_owner_connection() {
         "the serving pool's connections show, so the read sees the lead's backends"
     );
     let stderr = lead.stderr();
-    for role in [format!("{db}_owner"), format!("{db}_serving")] {
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("event=\"role_split_booted\""))
+        .unwrap_or_else(|| panic!("no role_split_booted line; stderr:\n{stderr}"));
+    for field in [
+        format!("owner_role=\"{db}_owner\""),
+        format!("serving_role=\"{db}_serving\""),
+    ] {
         assert!(
-            stderr.contains(&role),
-            "the boot logs both role names (ADR-0034 d4); missing {role} in:\n{stderr}"
+            line.split_whitespace().any(|f| f == field),
+            "the boot logs both role names as fields (ADR-0034 d4); missing {field} in: {line}"
         );
     }
     drop(lead);

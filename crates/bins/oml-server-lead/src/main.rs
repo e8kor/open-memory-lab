@@ -15,17 +15,35 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oml_app::ports::{KeyringStore as _, Signer as _};
-use oml_pg::PgStore;
+use oml_pg::{PgStore, RoleSplitReason};
 use oml_server_lead::{
     Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot, start_lead,
 };
 
+/// The stable `event` of the line `main` logs when the role split refuses
+/// the boot, beside `code` `postgres.role_split` and the d5 `reason`
+/// (observability.md, structured logging; ADR-0034 d5).
+const EVENT_ROLE_SPLIT_REFUSED: &str = "role_split_refused";
+
+/// The stable `event` of the line that logs both role names once the owner
+/// pool is closed (observability.md, structured logging; ADR-0034 d4).
+const EVENT_ROLE_SPLIT_BOOTED: &str = "role_split_booted";
+
 /// Why the boot stopped: a `postgres.role_split` refusal, which `main`
-/// logs under that code with its reason (ADR-0034 d5), or another fatal
-/// failure.
+/// logs under that code (ADR-0034 d5), or another fatal failure.
 enum BootError {
-    RoleSplit(String),
+    RoleSplit(Refusal),
     Fatal(String),
+}
+
+/// A `postgres.role_split` refusal as `main` logs it: by one of d5's
+/// reasons, whose name is the stable `reason` field, or as a catalog read
+/// that did not complete, which proves nothing and refuses as well but
+/// names no d5 reason, so its error goes in its own field (ADR-0034 d5).
+#[derive(Debug, PartialEq, Eq)]
+enum Refusal {
+    Reason(RoleSplitReason),
+    CatalogUnread(String),
 }
 
 impl From<String> for BootError {
@@ -37,7 +55,7 @@ impl From<String> for BootError {
 impl From<ConfigError> for BootError {
     fn from(e: ConfigError) -> Self {
         match e {
-            ConfigError::RoleSplit(e) => Self::RoleSplit(e.reason.to_string()),
+            ConfigError::RoleSplit(e) => Self::RoleSplit(Refusal::Reason(e.reason)),
             ConfigError::Invalid(e) => Self::Fatal(e),
         }
     }
@@ -47,10 +65,8 @@ impl From<SplitBootError> for BootError {
     fn from(e: SplitBootError) -> Self {
         match e {
             SplitBootError::RoleSplit(check) => Self::RoleSplit(check.reason().map_or_else(
-                // A catalog read that failed proves nothing and refuses as
-                // well (ADR-0034 d5).
-                || check.to_string(),
-                |reason| reason.to_string(),
+                || Refusal::CatalogUnread(check.to_string()),
+                Refusal::Reason,
             )),
             other => Self::Fatal(other.to_string()),
         }
@@ -90,7 +106,12 @@ async fn run() -> Result<(), BootError> {
         .map_err(|e| format!("postgres connect: {e}"))?
         .with_owner_url(&config.postgres_owner_url);
     let roles = split_boot(&store, &config.postgres_owner_url).await?;
-    tracing::info!(owner_role = %roles.owner, serving_role = %roles.serving, "migrations applied as the owner; owner pool closed; serving as the serving role (ADR-0034 d4)");
+    tracing::info!(
+        event = EVENT_ROLE_SPLIT_BOOTED,
+        owner_role = roles.owner.as_str(),
+        serving_role = roles.serving.as_str(),
+        "migrations applied as the owner; owner pool closed; serving as the serving role (ADR-0034 d4)"
+    );
 
     let keyring = FileKeyring::new(config.keyring_path.clone());
     let signing_key = keyring
@@ -177,13 +198,69 @@ async fn main() -> ExitCode {
         .init();
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
-        Err(BootError::RoleSplit(reason)) => {
-            tracing::error!(code = "postgres.role_split", %reason, "postgres.role_split: refusing to serve before any listener binds (ADR-0034 d5)");
+        Err(BootError::RoleSplit(Refusal::Reason(reason))) => {
+            tracing::error!(
+                event = EVENT_ROLE_SPLIT_REFUSED,
+                code = "postgres.role_split",
+                reason = reason.as_str(),
+                "postgres.role_split: refusing to serve before any listener binds (ADR-0034 d5)"
+            );
+            ExitCode::FAILURE
+        }
+        Err(BootError::RoleSplit(Refusal::CatalogUnread(error))) => {
+            tracing::error!(event = EVENT_ROLE_SPLIT_REFUSED, code = "postgres.role_split", %error, "postgres.role_split: the check could not read the catalog; refusing to serve before any listener binds (ADR-0034 d5)");
             ExitCode::FAILURE
         }
         Err(BootError::Fatal(e)) => {
             tracing::error!("fatal: {e}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BootError, Refusal};
+    use oml_pg::{RoleSplitCheckError, RoleSplitError, RoleSplitReason};
+    use oml_server_lead::{ConfigError, SplitBootError};
+
+    fn refusal(e: BootError) -> Refusal {
+        match e {
+            BootError::RoleSplit(refusal) => refusal,
+            BootError::Fatal(e) => panic!("a role-split failure is no fatal error: {e}"),
+        }
+    }
+
+    #[test]
+    fn a_role_split_refusal_logs_its_reason_as_the_stable_d5_name() {
+        let refused = SplitBootError::RoleSplit(RoleSplitCheckError::Refused(RoleSplitError {
+            reason: RoleSplitReason::SameRole,
+        }));
+        assert_eq!(
+            refusal(refused.into()),
+            Refusal::Reason(RoleSplitReason::SameRole)
+        );
+        let missing = ConfigError::RoleSplit(RoleSplitError {
+            reason: RoleSplitReason::OwnerUrlMissing,
+        });
+        assert_eq!(
+            refusal(missing.into()),
+            Refusal::Reason(RoleSplitReason::OwnerUrlMissing)
+        );
+    }
+
+    #[test]
+    fn a_catalog_read_that_failed_refuses_with_no_reason_and_its_error_apart() {
+        let unread =
+            SplitBootError::RoleSplit(RoleSplitCheckError::Backend(sqlx::Error::PoolTimedOut));
+        match refusal(unread.into()) {
+            Refusal::CatalogUnread(error) => assert!(
+                error.contains("could not read the catalog"),
+                "the error says what failed: {error}"
+            ),
+            other @ Refusal::Reason(_) => {
+                panic!("a catalog read that failed names no d5 reason; got {other:?}")
+            }
         }
     }
 }
