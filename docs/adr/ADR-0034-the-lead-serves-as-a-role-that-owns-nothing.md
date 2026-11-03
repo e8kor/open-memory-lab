@@ -2,7 +2,7 @@
 id: adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing
 tier: engineering
 status: proposed
-answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role split fences instead; the two Postgres roles and their privileges; how the lead migrates under postgres.owner_url and serves under postgres.url; why one URL is refused at startup; why _sqlx_migrations is the one table without row-level security; how a single-role install, the live host among them, is split; the per-tenant FTS index, how a read reaches its tenant's partition, who creates a partition and which channels stay open; foreign keys that carry tenant_id; the checks and the CI change that close it; the build order after iteration 3
+answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role split fences instead; the two Postgres roles and their privileges; how the lead migrates under postgres.owner_url and serves under postgres.url; why one URL is refused at startup; why _sqlx_migrations is the one table without row-level security; how a single-role install, the live host among them, is split; the per-tenant FTS index, how a read reaches its tenant's partition, who creates a partition and which channels stay open; foreign keys that carry tenant_id; the checks and the CI change that close it; the build order after iteration 3; why v0.3.1 ships the partitions with no LEAKPROOF wrapper and what decides the wrapper later
 -->
 
 # ADR-0034 — The lead migrates as an owner role and serves as a role that owns nothing; `_sqlx_migrations` is the one table without row-level security
@@ -31,7 +31,10 @@ creates `_sqlx_migrations` with no row-level security, and ADR-0007 d2 exempts n
 The maintainer decided on 2026-10-31 what d1 and d6 state and that the split is built, and after the
 pg17 run that the FTS index becomes per tenant (d11) and keys into tenant tables carry `tenant_id`
 (d12), as ADR-0007 d4 and security.md's STRIDE row already promise ("no cross-tenant index to leak
-through"): implementation fixes, not amendments. Decided, not built.
+through"): implementation fixes, not amendments. On 2026-11-03 the maintainer decided that v0.3.1
+ships d11's per-tenant partitions with no superuser `LEAKPROOF` wrapper: search latency per tenant
+size is measured first (FR-25), and the `LEAKPROOF` step is decided later on those numbers (d13).
+Decided, not built.
 
 ## Decision
 
@@ -148,7 +151,8 @@ through"): implementation fixes, not amendments. Decided, not built.
        fenced partition exists before its row commits, and a failed creation commits no tenant; the
        adapter's FTS read scans its tenant's partition alone; the serving role sees no partition's
        `pg_stats`; d5 holds over partitions; `rls-spike` as in step 2.
-    5. A release, then the live host's split. Check: its output, recorded in d7.
+    5. v0.3.1, which carries steps 2–4 with no `LEAKPROOF` wrapper (d13), then the live host's
+       split. Check: its output, recorded in d7.
 
 - **d11 — The FTS index is per tenant: `memories` is list-partitioned by `tenant_id`, each partition
   with its own GIN index.** The migration rebuilds `memories` as `PARTITION BY LIST (tenant_id)`, a
@@ -183,6 +187,17 @@ through"): implementation fixes, not amendments. Decided, not built.
   keys, and each holds the id of the key its request authenticated with, which the use case has read
   and no client names.
 
+- **d13 — v0.3.1 ships d11's partitions with no `LEAKPROOF` wrapper; search latency per tenant size
+  is measured first, and the wrapper is decided on those numbers.** The maintainer decided this on
+  2026-11-03. Only a superuser can mark a function `LEAKPROOF` (S3.4), and d2's owner, which runs
+  every migration, is not one, so a wrapper over `@@` that let each partition's GIN index serve
+  RLS-bound reads would add a superuser step outside the migrations to every install.
+  v0.3.1 adds no such step and creates no function marked `LEAKPROOF`: an FTS read scans its
+  tenant's partition under RLS, as d11 states. FR-25's harness measures search latency at stated
+  tenant sizes over those partitions, published with date, hardware and settings, and a later
+  record decides the `LEAKPROOF` step on those numbers. The cost, until then: an FTS read's latency
+  as its tenant grows is unmeasured — FR-25.
+
 ## Consequences
 
 - **FR-44 and FR-45 open** on the [roadmap](../product/roadmap.md), marked proposed: FR-44 for the
@@ -194,7 +209,8 @@ through"): implementation fixes, not amendments. Decided, not built.
   `_sqlx_migrations` is the one exemption, fenced by privilege; its STRIDE information-disclosure
   row adds FR-45's channels. configuration.md, deployment.md's lead row, upgrades.md,
   postgres-schema.md, retrieval.md's FTS paragraph, the critical path's S3.1 row and the register's
-  D6 cell follow.
+  D6 cell follow. FR-25's exit criterion names search latency at stated tenant sizes, the numbers
+  d13's later record waits on.
 - **Costs** beyond those the decisions state: a superuser for the test suites and the demo (d8);
   planning that grows with tenants where a statement is not pruned at planning (d11). `read_events`
   partition creation and `DROP`, its retention act ([postgres-schema](../data/postgres-schema.md)),
@@ -216,4 +232,4 @@ through"): implementation fixes, not amendments. Decided, not built.
 | **Statistics target 0 on the one FTS index, instead of partitions** | Target 0 "disables collection of statistics for that column" ([ANALYZE](https://www.postgresql.org/docs/17/sql-analyze.html), fetched 2026-10-31), which would leave every role FTS's default selectivity, unmeasured, but one index would still span tenants, which ADR-0007 d4 and the STRIDE row rule out; it stays FR-45's candidate beside the partitions. |
 | **A `DEFAULT` partition for tenants without one of their own** | The tenants in it share one index again, and a later partition for one of them must first move its rows out. |
 | **A `SECURITY DEFINER` function the serving role calls to create a partition** | Any serving connection could call it, an injection included; d5 refuses definer functions for that reason. d11's owner connection is reachable from the tenant-creating act alone. |
-| **A leakproof `@@` wrapper, so the GIN index serves RLS-bound queries** | Only a superuser can mark a function `LEAKPROOF` (S3.4), PostgreSQL does not mark `ts_match_vq` so, and d2's roles hold no superuser; it is FR-4's and FR-7's question, with numbers. |
+| **A leakproof `@@` wrapper, so the GIN index serves RLS-bound queries** — deferred, not rejected (d13) | Only a superuser can mark a function `LEAKPROOF` (S3.4), PostgreSQL does not mark `ts_match_vq` so, and d2's roles hold no superuser, so the wrapper adds a superuser step to every install. The maintainer deferred it on 2026-11-03: v0.3.1 ships d11's partitions without it, search latency per tenant size is measured first (FR-25), and the `LEAKPROOF` step is decided later on those numbers, beside FR-4's and FR-7's. |

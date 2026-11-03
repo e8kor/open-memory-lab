@@ -29,6 +29,23 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — v0.3.1 ships per-tenant FTS partitions with no `LEAKPROOF` wrapper (ADR-0034, proposed)
+
+[ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), still proposed, joins the
+v0.3.1 work and records as d13 what the maintainer decided on 2026-11-03: v0.3.1 ships d11's
+per-tenant partitions with no superuser `LEAKPROOF` wrapper; search latency per tenant size is
+measured first (FR-25), and the `LEAKPROOF` step is decided later on those numbers. The wrapper,
+until now a rejected alternative, is deferred with that reason. d10's step 1 is recorded as done
+by #8 and #9, released as v0.3.0, and its step 5 names v0.3.1 as the release that carries steps 2
+to 4. The record's Context links the spike 3 findings, now in this tree, and d9 names the harness
+by its path.
+
+- **Roadmap:** no row opens or closes. At the record's acceptance FR-25's exit criterion names
+  search latency at stated tenant sizes.
+- **No surface change:** `info.version` stays `0.3.0-design`.
+- **Pages touched:** the record, its [register](adr/index.md) row and this page.
+- **Not built.**
+
 ### 2026-10-31 — The lead serves as a role that owns nothing (ADR-0034, proposed)
 
 [ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), proposed on 2026-10-31,
