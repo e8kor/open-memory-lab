@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-03
 answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role split fences instead; the two Postgres roles and their privileges; how the lead migrates under postgres.owner_url and serves under postgres.url; why one URL is refused at startup; why _sqlx_migrations is the one table without row-level security; how a single-role install, the live host among them, is split; the per-tenant FTS index, how a read reaches its tenant's partition, who creates a partition, with which DDL and locks, and which channels stay open; foreign keys that carry tenant_id; the checks and the CI change that close it; the build order after iteration 3; why v0.3.1 ships the partitions with no LEAKPROOF wrapper and what decides the wrapper later
 -->
 
 # ADR-0034 — The lead migrates as an owner role and serves as a role that owns nothing; `_sqlx_migrations` is the one table without row-level security
 
-**Status:** proposed · 2026-10-31
+**Status:** accepted design · 2026-11-03
 
 **Amends:** ADR-0007 (d2), naming `_sqlx_migrations` as the one table without row-level security
 (d6); no other decision here amends a record

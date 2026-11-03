@@ -132,8 +132,8 @@ decided on 2026-10-31 that the `oml` CLI ships as release artifacts of its own.
 
 ### 2026-10-31 — The lead serves as a role that owns nothing (ADR-0034, proposed)
 
-[ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), proposed on 2026-10-31,
-records what the maintainer decided that day on M0 spike 3's findings: `FORCE ROW LEVEL SECURITY`
+[ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), proposed on 2026-10-31 and accepted
+by the maintainer on 2026-11-03 with release v0.3.1, records what the maintainer decided that day on M0 spike 3's findings: `FORCE ROW LEVEL SECURITY`
 fences table reads only, an owner/serving role split keeps the `pg_stats` view and DDL from every
 workload, and `_sqlx_migrations` is ADR-0007 d2's one named exemption, reachable by the owner
 alone. After the spike's first pinned PostgreSQL 17.11 run, the maintainer added that the FTS
@@ -155,7 +155,8 @@ back-pointer at acceptance; it binds nothing before then.
 - **Pages touched:** the record, its [register](adr/index.md) row, `mkdocs.yml`, `llms.txt`,
   the roadmap and this page.
   security.md, configuration.md, deployment.md, upgrades.md, postgres-schema.md, retrieval.md,
-  the critical path and ADR-0007 change at the record's acceptance.
+  the critical path and ADR-0007 change at the record's acceptance, and did on 2026-11-03 with
+  the register's D6 cell, FR-25's exit criterion and errors.md's `system.unavailable` row.
 - **Not built.**
 
 ### 2026-10-31 — Names as keys (implementation)

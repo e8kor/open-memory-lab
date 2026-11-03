@@ -72,7 +72,7 @@ by exactly one process, the lead.
 
 | Workload | Runs as (kubernetes / docker / standalone) | Replication | State it holds | Credentials it holds |
 |---|---|---|---|---|
-| `oml-server` (lead) | Deployment `oml-server-lead`, replicas 1, lease-guarded / compose service / supervised process | Exactly one (the lead lease, see below) | None in the process. All state is Postgres; chain-head assignment is serialized in Postgres, not in any process. | The **deployment signing key** — the only process in the deployment that loads it. A Postgres application role (RLS-governed, write). KMS decrypt and generate-data-key (admission and serving paths). Object-store credentials for the quarantine and bodies prefixes. In the non-KMS profiles, the keyring file mount. |
+| `oml-server` (lead) | Deployment `oml-server-lead`, replicas 1, lease-guarded / compose service / supervised process | Exactly one (the lead lease, see below) | None in the process. All state is Postgres; chain-head assignment is serialized in Postgres, not in any process. | The **deployment signing key** — the only process in the deployment that loads it. A Postgres serving role (RLS-governed, write) that owns nothing and holds only the DML its statements use, through `postgres.url`; until the bootstrap workload is built, also the owner role through `postgres.owner_url`, under which it migrates at boot and then creates each new tenant's partition, and nothing else; it refuses to start when the two log in as one role ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4, d5). KMS decrypt and generate-data-key (admission and serving paths). Object-store credentials for the quarantine and bodies prefixes. In the non-KMS profiles, the keyring file mount. |
 | `oml-server` (follower) | Deployment `oml-server-follower`, replicas N (default **0**), HPA on the read path / compose service under `--profile followers` / not available | Scale-out for reads; forwards every write verb to the lead | None in the process. | **Never the signing key.** KMS decrypt for the serving path only — never generate-data-key. An RLS-scoped **read** role plus read-log append. No keyring mount beyond serving-path unwrap. |
 | `oml-lakewriter` | Deployment, 1 replica (lease + store fence, see below) / compose service, 1 replica / supervised process, 1 child | Singleton | None in the process. Recovery authority is the Delta log's per-table transaction versions; the Postgres frontier column is a cache. | A SET-tenant, RLS-scoped Postgres session role (no BYPASSRLS). A KMS grant limited to generate-data-key / encrypt — **never decrypt** (in the non-KMS profiles the keyring is simply not mounted / not readable). Object-store write credentials for the per-tenant lake prefixes. Never the signing key. |
 | `oml-reconciler` | CronJob (`--once`) / compose service (`--every`) / supervised process (`--every`) — three schedulers, one binary (below) | One pass at a time, by scheduler contract or by construction | Its persisted cursor (last reconciled seq + running chain hash) lives in Postgres and is itself journalled — nothing in the process. | Read-only Postgres credentials. Object-store read access — it verifies ciphertext digests and needs no key. A service credential to `oml-server` for journalled repair re-enqueues. No KMS decrypt, no signing key. |
@@ -186,7 +186,7 @@ chart:
 | Server | `oml-server-lead`, lease-guarded, and `oml-server-follower`, default 0 | `oml-server-lead` alone: one replica under `Recreate`, which stops the old lead before the new one starts; the chain lock stays the fence (ADR-0033 d2) |
 | Other workloads | lake-writer, reconciler CronJob, indexer, bootstrap hook Job | none — decided, not built |
 | Signing key | a Secret or KMS; no volume holds the deployment's identity | the `kms-file` keyring on a ReadWriteOnce claim that `helm uninstall` keeps (ADR-0033 d3) |
-| Migrations | the bootstrap Job, under the owner role | the lead, at boot, under its one Postgres URL (ADR-0033 d6) |
+| Migrations | the bootstrap Job, under the owner role | the lead, at boot, under `postgres.owner_url`, before it serves under `postgres.url` ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d4) |
 | Enrollment token | a Secret the bootstrap Job mints | the pod log: the lead prints a fresh token at every boot while no tenant exists (ADR-0033 d8) |
 | Postgres | CloudNativePG (`local`) or a managed service (`scaled`) | external, through an existing Secret's key (ADR-0033 d6) |
 | Object store | MinIO at the pinned tag (`local`) or S3 (`scaled`) | none: the build has no attachments |
@@ -206,15 +206,19 @@ Postgres comes first, as a Secret the chart reads and never writes:
 ```console
 $ kubectl create namespace oml
 $ kubectl --namespace oml create secret generic oml-postgres \
-    --from-literal=OML_POSTGRES__URL='postgres://USER:PASSWORD@HOST:5432/DATABASE'
+    --from-literal=OML_POSTGRES__URL='postgres://SERVING_ROLE:PASSWORD@HOST:5432/DATABASE' \
+    --from-literal=OML_POSTGRES__OWNER_URL='postgres://OWNER_ROLE:PASSWORD@HOST:5432/DATABASE'
 $ helm install oml deploy/helm/oml --namespace oml
 $ kubectl --namespace oml rollout status deployment/oml-server-lead
 ```
 
 From a release that carries the chart, the archive's URL replaces the checkout path:
 `helm install oml https://github.com/e8kor/open-memory-lab/releases/download/vX.Y.Z/oml-X.Y.Z.tgz`,
-with `--set image.digest=sha256:…` from that release's notes to pin the image. The lead applies
-migrations at boot with that URL, so its role needs the rights to migrate.
+with `--set image.digest=sha256:…` from that release's notes to pin the image. The two roles each
+hold `LOGIN` and no other attribute; the owner role owns the database, and the serving role owns
+nothing. The lead applies migrations at boot under the owner URL, which grant the serving role its
+privileges, then serves under the serving URL, and refuses to start when both log in as one role
+(ADR-0034 d2, d4, d5).
 
 #### Claiming the first admin key: the bootstrap race
 
