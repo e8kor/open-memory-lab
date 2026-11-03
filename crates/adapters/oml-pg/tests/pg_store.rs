@@ -457,10 +457,11 @@ async fn two_racing_connection_opened_commits_for_one_key_leave_exactly_one_open
     let opened: Vec<&CommitReceipt> = outcomes.iter().filter_map(|o| o.as_ref().ok()).collect();
     assert_eq!(opened.len(), 1, "exactly one exchange opens: {outcomes:?}");
     assert!(
-        outcomes
-            .iter()
-            .any(|o| matches!(o, Err(StoreError::Backend(_)))),
-        "the other is refused by the fold: {outcomes:?}"
+        outcomes.iter().any(|o| o.as_ref().err()
+            == Some(&StoreError::ConnectionNotOpenable {
+                connection_id: connection
+            })),
+        "the other is refused by the fold, by name: {outcomes:?}"
     );
     assert_eq!(
         store.chain_head(t).await.expect("head").map(|h| h.seq),

@@ -4328,12 +4328,20 @@ pub async fn minting_a_code_voids_the_keys_earlier_unredeemed_code_in_the_same_c
     );
 
     let head = store.chain_head(t).await.expect("head");
-    rig.mint_code(store, connect_code(c3, key.key_id), None)
-        .await
-        .expect_err("a mint that does not name the unredeemed code it voids is refused");
-    rig.mint_code(store, connect_code(c3, key.key_id), Some(c1))
-        .await
-        .expect_err("a mint naming a code already voided is refused");
+    assert_eq!(
+        rig.mint_code(store, connect_code(c3, key.key_id), None)
+            .await
+            .map(|r| r.seq),
+        Err(StoreError::ConnectCodeMoved { key_id: key.key_id }),
+        "a mint that does not name the unredeemed code it voids is refused by name"
+    );
+    assert_eq!(
+        rig.mint_code(store, connect_code(c3, key.key_id), Some(c1))
+            .await
+            .map(|r| r.seq),
+        Err(StoreError::ConnectCodeMoved { key_id: key.key_id }),
+        "a mint naming a code already voided is refused by name"
+    );
     assert_eq!(store.chain_head(t).await.expect("head"), head);
     assert_eq!(
         voided_seqs(store, t, key.key_id).await,
@@ -4493,15 +4501,31 @@ pub async fn connection_opened_revokes_the_keys_earlier_open_connection_as_repla
     rig.authorized_connection(store, key.key_id, c2, second, None)
         .await;
     let head = store.chain_head(t).await.expect("head");
-    rig.open_connection(store, second, None)
-        .await
-        .expect_err("an opening that names no replaced connection while one is open is refused");
-    rig.open_connection(store, second, Some(second))
-        .await
-        .expect_err("an opening that names another connection than the open one is refused");
-    rig.open_connection(store, first, None)
-        .await
-        .expect_err("an open connection opens once");
+    assert_eq!(
+        rig.open_connection(store, second, None)
+            .await
+            .map(|r| r.seq),
+        Err(StoreError::ConnectionNotOpenable {
+            connection_id: second
+        }),
+        "an opening that names no replaced connection while one is open is refused by name"
+    );
+    assert_eq!(
+        rig.open_connection(store, second, Some(second))
+            .await
+            .map(|r| r.seq),
+        Err(StoreError::ConnectionNotOpenable {
+            connection_id: second
+        }),
+        "an opening that names another connection than the open one is refused by name"
+    );
+    assert_eq!(
+        rig.open_connection(store, first, None).await.map(|r| r.seq),
+        Err(StoreError::ConnectionNotOpenable {
+            connection_id: first
+        }),
+        "an open connection opens once"
+    );
     assert_eq!(store.chain_head(t).await.expect("head"), head);
 
     let r2 = rig
@@ -4555,9 +4579,15 @@ pub async fn connection_opened_for_a_revoked_key_is_refused_and_commits_nothing<
         .await;
     rig.revoke_key(store, key.key_id).await.expect("revoke");
     let head = store.chain_head(t).await.expect("head");
-    rig.open_connection(store, connection, None)
-        .await
-        .expect_err("no connection opens for a revoked key");
+    assert_eq!(
+        rig.open_connection(store, connection, None)
+            .await
+            .map(|r| r.seq),
+        Err(StoreError::ConnectionNotOpenable {
+            connection_id: connection
+        }),
+        "no connection opens for a revoked key"
+    );
     assert_eq!(store.chain_head(t).await.expect("head"), head);
     assert_eq!(
         store.connection(t, connection).await.expect("read"),
@@ -4597,9 +4627,15 @@ pub async fn connection_opened_for_a_voided_code_is_refused_and_commits_nothing<
         vec![(spent, Some(r.seq)), (newer, None)]
     );
     let head = store.chain_head(t).await.expect("head");
-    rig.open_connection(store, connection, None)
-        .await
-        .expect_err("no connection opens from a voided code");
+    assert_eq!(
+        rig.open_connection(store, connection, None)
+            .await
+            .map(|r| r.seq),
+        Err(StoreError::ConnectionNotOpenable {
+            connection_id: connection
+        }),
+        "no connection opens from a voided code"
+    );
     assert_eq!(store.chain_head(t).await.expect("head"), head);
     assert_eq!(
         store.connection(t, connection).await.expect("read"),
@@ -4642,9 +4678,15 @@ pub async fn connection_opened_for_an_expired_authorization_code_is_refused_and_
         .await
         .expect("authorize");
     let head = store.chain_head(t).await.expect("head");
-    rig.open_connection(store, connection, None)
-        .await
-        .expect_err("an expired authorization code opens no connection");
+    assert_eq!(
+        rig.open_connection(store, connection, None)
+            .await
+            .map(|r| r.seq),
+        Err(StoreError::ConnectionNotOpenable {
+            connection_id: connection
+        }),
+        "an expired authorization code opens no connection"
+    );
     assert_eq!(store.chain_head(t).await.expect("head"), head);
     assert_eq!(
         store.connection(t, connection).await.expect("read"),
@@ -4712,9 +4754,13 @@ pub async fn a_tenants_codes_and_connections_are_invisible_and_unwritable_from_a
     b.mint_code(store, connect_code(foreign_code, key.key_id), None)
         .await
         .expect_err("a code for another tenant's key is refused");
-    b.open_connection(store, open, None)
-        .await
-        .expect_err("another tenant's connection is not opened from here");
+    assert_eq!(
+        b.open_connection(store, open, None).await.map(|r| r.seq),
+        Err(StoreError::ConnectionNotOpenable {
+            connection_id: open
+        }),
+        "another tenant's connection is not opened from here"
+    );
     b.revoke_connection(store, open, RevokedCause::Admin)
         .await
         .expect_err("another tenant's connection is not revoked from here");

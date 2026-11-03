@@ -1640,9 +1640,9 @@ async fn fold_code_issued(
     .await
     .map_err(backend)?;
     if unredeemed != voids {
-        return Err(StoreError::Backend(format!(
-            "the mint names {voids:?} as the unredeemed code it voids, and the key's is {unredeemed:?}"
-        )));
+        return Err(StoreError::ConnectCodeMoved {
+            key_id: code.key_id,
+        });
     }
     void_unopened_codes(tx, tenant_id, code.key_id, seq).await?;
     sqlx::query(
@@ -1686,10 +1686,11 @@ async fn fold_connection_opened(
     .fetch_optional(&mut **tx)
     .await
     .map_err(backend)?;
+    // Every refusal of an opening is one typed refusal, so the exchange can
+    // tell a lost race from a backend failure (ADR-0031 d10).
+    let not_openable = StoreError::ConnectionNotOpenable { connection_id };
     let Some(key_id) = key_id else {
-        return Err(StoreError::Backend(format!(
-            "connection {connection_id} is not held by this tenant"
-        )));
+        return Err(not_openable);
     };
     if let Some(replaced) = replaces {
         let revoked = sqlx::query(
@@ -1705,10 +1706,7 @@ async fn fold_connection_opened(
         .await
         .map_err(backend)?;
         if revoked.rows_affected() != 1 {
-            return Err(StoreError::Backend(format!(
-                "the opening names {replaced} as the open connection it replaces, \
-                 and it is not key {key_id}'s open connection"
-            )));
+            return Err(not_openable);
         }
     }
     let opened = sqlx::query(
@@ -1730,19 +1728,16 @@ async fn fold_connection_opened(
     .execute(&mut **tx)
     .await
     .map_err(|e| match &e {
+        // The key has an open connection the opening does not name.
         sqlx::Error::Database(db) if db.constraint() == Some("oauth_connections_open") => {
-            StoreError::Backend(format!(
-                "key {key_id} has an open connection, which the opening of {connection_id} \
-                 does not name as replaced"
-            ))
+            not_openable.clone()
         }
         _ => backend(e),
     })?;
+    // Not authorized, its authorization code redeemed or expired, its
+    // connect code voided or its key revoked.
     if opened.rows_affected() != 1 {
-        return Err(StoreError::Backend(format!(
-            "connection {connection_id} is not authorized with a live, unredeemed \
-             authorization code from an unvoided connect code of a live key"
-        )));
+        return Err(not_openable);
     }
     Ok(())
 }

@@ -768,9 +768,9 @@ fn apply_fold(
                 })
                 .map(|c| c.code_id);
             if unredeemed != voids {
-                return Err(StoreError::Backend(format!(
-                    "the mint names {voids:?} as the unredeemed code it voids, and the key's is {unredeemed:?}"
-                )));
+                return Err(StoreError::ConnectCodeMoved {
+                    key_id: code.key_id,
+                });
             }
             void_unopened_codes(state, code.key_id, seq);
             state.connect_codes.insert(
@@ -790,14 +790,16 @@ fn apply_fold(
             connection_id,
             replaces,
         } => {
+            // Every refusal of an opening is one typed refusal, as the
+            // store's conditional update is one statement (ADR-0031 d10).
+            let not_openable = StoreError::ConnectionNotOpenable { connection_id };
             let Some(connection) = state.connections.get(&connection_id) else {
-                return Err(StoreError::Backend(format!(
-                    "connection {connection_id} is not held by this tenant"
-                )));
+                return Err(not_openable);
             };
             let (key_id, code_id) = (connection.key_id, connection.code_id);
-            connection_transition(connection.state, ConnectionAct::Exchange)
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+            if connection_transition(connection.state, ConnectionAct::Exchange).is_err() {
+                return Err(not_openable);
+            }
             // The exchange redeems the authorization code once and before
             // its expiry, as the store's conditional update does
             // (postgres-schema.md `oauth_connections`; ADR-0031 d10).
@@ -807,9 +809,7 @@ fn apply_fold(
                     .as_ref()
                     .is_none_or(|expires| expires.as_str() <= at.as_str())
             {
-                return Err(StoreError::Backend(format!(
-                    "connection {connection_id} holds no live, unredeemed authorization code"
-                )));
+                return Err(not_openable);
             }
             // Connect takes no chain lock, so the code's voiding is read
             // here, under it: a mint or revocation since Connect ends the
@@ -819,9 +819,7 @@ fn apply_fold(
                 .get(&code_id)
                 .is_none_or(|c| c.voided_seq.is_some())
             {
-                return Err(StoreError::Backend(format!(
-                    "connection {connection_id} comes from code {code_id}, which is voided"
-                )));
+                return Err(not_openable);
             }
             // The key's state is read under the chain lock, so no
             // connection opens after its key's key.revoked (ADR-0031 d11).
@@ -830,9 +828,7 @@ fn apply_fold(
                 .get(&key_id)
                 .is_some_and(|k| k.revoked_at.is_none())
             {
-                return Err(StoreError::Backend(format!(
-                    "key {key_id} is not a live key of this tenant"
-                )));
+                return Err(not_openable);
             }
             let open = state
                 .connections
@@ -840,9 +836,7 @@ fn apply_fold(
                 .find(|c| c.key_id == key_id && c.state == ConnectionState::Open)
                 .map(|c| c.connection_id);
             if open != replaces {
-                return Err(StoreError::Backend(format!(
-                    "the opening names {replaces:?} as the open connection it replaces, and the key's is {open:?}"
-                )));
+                return Err(not_openable);
             }
             if let Some(earlier) = open.and_then(|id| state.connections.get_mut(&id)) {
                 earlier.state = ConnectionState::Revoked(RevokedCause::Replaced);

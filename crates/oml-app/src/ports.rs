@@ -40,6 +40,28 @@ pub enum StoreError {
     /// and this commit wrote nothing (http-api.md idempotency).
     #[error("an idempotency record already holds this scope")]
     IdempotencyRecorded,
+    /// A `connection.opened` fold found the connection not openable under
+    /// the chain lock: not held by the tenant, not `authorized`, its
+    /// authorization code redeemed already or expired at the commit's `at`,
+    /// its connect code voided, its key revoked, or the key's open
+    /// connection not the one the opening names as replaced. The commit
+    /// wrote nothing. A token exchange that read the row before its fold,
+    /// and lost a race for the code or saw a mint, a connection revocation
+    /// or a `key.revoked` land since, judges the code by the reuse rule and
+    /// otherwise answers `invalid_grant` (`oauth.authorization_code_invalid`)
+    /// (postgres-schema.md `oauth_connections`; roles-and-keys.md
+    /// connections; errors.md; ADR-0031 d8, d10, d11, d12).
+    #[error("connection {connection_id} cannot open at this commit")]
+    ConnectionNotOpenable { connection_id: Uuid },
+    /// A `connection.code_issued` fold found that the code the mint names
+    /// as the one it voids is not the key's one unredeemed, unvoided code:
+    /// a code entry spent it, or another commit voided or minted one, after
+    /// the mint read the key's codes. The commit wrote nothing; it is
+    /// contention, retryable as a head conflict is, and answered
+    /// `system.unavailable` (errors.md; event-catalog.md
+    /// `connection.code_issued`; ADR-0031 d8).
+    #[error("key {key_id}'s unredeemed connect code moved before the mint committed")]
+    ConnectCodeMoved { key_id: Uuid },
     /// A creation named a name its kind already holds in the namespace, a
     /// revoked key's included: the unique index refused it, and the commit
     /// wrote nothing, its event included (postgres-schema.md names and
@@ -152,7 +174,8 @@ pub enum MetadataFold {
     /// connection has opened, spent or not, their `voided_seq` this seq.
     /// `voids` is the key's unredeemed code the event names as replaced,
     /// else `None`; the store refuses a commit whose `voids` is not the
-    /// key's one unredeemed, unvoided code, and a code of a key it does not
+    /// key's one unredeemed, unvoided code with
+    /// [`StoreError::ConnectCodeMoved`], and a code of a key it does not
     /// hold (event-catalog.md `connection.code_issued`; ADR-0031 d8).
     ConnectCodeIssued {
         code: ConnectCode,
@@ -167,7 +190,8 @@ pub enum MetadataFold {
     /// expired at this `at`, one whose connect code is voided, a `replaces`
     /// that is not the key's open connection, and a key that is revoked, so
     /// no connection opens after its key's `key.revoked` or after a mint or
-    /// revocation voided its code since Connect (postgres-schema.md
+    /// revocation voided its code since Connect. Each refusal is
+    /// [`StoreError::ConnectionNotOpenable`] (postgres-schema.md
     /// `oauth_connections`; event-catalog.md `connection.opened`; ADR-0031
     /// d7, d8, d10, d11, d12).
     ConnectionOpened {

@@ -7,7 +7,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 
 use oml_app::domain::VerdictError;
-use oml_app::domain::oauth::Refusal;
+use oml_app::domain::oauth::{AuthorizationCodeInvalid, Refusal};
 use oml_app::ports::StoreError;
 use oml_app::types::AppError;
 
@@ -386,6 +386,18 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             // Surfaces only when the record a concurrent attempt committed
             // was gone again when the use-case read it back to replay it.
             ApiError::unavailable("idempotency record contention")
+        }
+        // A connection.opened fold refused under the chain lock: the token
+        // exchange judged the code by the reuse rule before it reached
+        // here, so what remains revokes nothing and is `invalid_grant`
+        // (errors.md `oauth.authorization_code_invalid`; ADR-0031 d10).
+        AppError::Store(StoreError::ConnectionNotOpenable { .. }) => oauth_refusal(
+            Refusal::AuthorizationCodeInvalid(AuthorizationCodeInvalid::Redeemed),
+        ),
+        // The mint's code moved under it and it committed nothing;
+        // retryable, as a head conflict is (ADR-0031 d8).
+        AppError::Store(StoreError::ConnectCodeMoved { .. }) => {
+            ApiError::unavailable("connect code contention")
         }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
         // A tenant's partition DDL lost a lock contest, a timeout or a
