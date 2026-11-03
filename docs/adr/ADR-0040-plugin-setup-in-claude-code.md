@@ -36,7 +36,9 @@ what the plugin runs and connects to", fetched 2026-11-03). Today's entry meets 
 
 The maintainer chose on 2026-11-03 to configure the plugin in Claude Code with the environment as
 a fallback, and placed it in v0.3.2 beside [ADR-0039](ADR-0039-the-api-rewritten-for-v0-3-2.md).
-Decided, not built.
+This record narrows that choice: the fallback applies to the hooks only, and the MCP entry, which
+serves the tools, reads the plugin's options alone (d2). The reason is in d2; the narrowing is
+recommended, and the maintainer confirms it. Decided, not built.
 
 ## Decision
 
@@ -69,7 +71,10 @@ Decided, not built.
     `CLAUDE_PLUGIN_OPTION_SERVER_URL` and `CLAUDE_PLUGIN_OPTION_API_KEY` sit beside `OML_URL` and
     `OML_API_KEY` without a translation table.
 
-- **d2 — `.mcp.json` reads the two options and nothing from the environment.**
+- **d2 — `.mcp.json` reads the two options and nothing from the environment. Recommended; the
+  maintainer confirms.** As of 2026-11-03 the maintainer has not confirmed that the environment
+  fallback they chose stops at the hooks; d6's check is built only once the confirmation is
+  recorded here with its date.
 
     ```json
     {

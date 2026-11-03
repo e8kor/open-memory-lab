@@ -35,9 +35,9 @@ implementation milestone where it changes what the repository holds.
 maintainer's choice that day to rewrite the API while OML is pre-release instead of layering on it,
 and to ship the rewrite as v0.3.2. It decides the four MCP tools `oml_write`, `oml_read`,
 `oml_workarea` and `oml_events` in place of the eight served ones, with their field rules and
-annotations; a `claim_key` the server derives from the text when it is omitted, beside a required
+annotations; a `claim_key` the server derives from the authoring key and the text when it is omitted, beside a required
 `idempotency_key`; one `workarea` argument and the id-or-name form on every surface; openapi.yaml
-holding only the 22 routed operations, with the 44 designed ones in an annex, two duplicates
+holding only the 22 routed operations, with the 45 designed ones in an annex, one duplicate
 removed and the two edge families merged; the mapping from every served tool, route, CLI verb and
 SDK method to its successor; one error shape; the old MCP tool names and CLI verbs kept as aliases
 for one minor release, which the maintainer is to confirm; the breaking changes and their
@@ -45,7 +45,8 @@ migration; and the build plan. It amends ADR-0014 (d2), ADR-0022 (d2, d6), ADR-0
 and ADR-0029 (d2, d8).
 
 [ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md), proposed the same day, records the
-maintainer's choice to configure the plugin in Claude Code with the environment as a fallback: a
+maintainer's choice to configure the plugin in Claude Code with the environment as a fallback,
+narrowed to the hooks for the maintainer to confirm: a
 `server_url` option and a sensitive `api_key` option kept in the keychain, `.mcp.json` reading
 `${user_config.*}`, the hooks reading `CLAUDE_PLUGIN_OPTION_*` before `OML_URL` and
 `OML_API_KEY`, the key file piped to `claude plugin configure --values-stdin`, and Claude Code
