@@ -193,8 +193,13 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> ExitCode {
     // Tracing to stderr: stdout is reserved for the show-once ceremony.
+    // ANSI only on a terminal: docker, kubectl and journald read stderr
+    // through a pipe, where the stable fields must come out as plain
+    // `key="value"` tokens (observability.md, structured logging;
+    // ADR-0034 d5).
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .init();
     match run().await {
         Ok(()) => ExitCode::SUCCESS,

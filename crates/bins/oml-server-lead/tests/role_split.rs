@@ -182,7 +182,8 @@ impl Lead {
     /// Spawns the lead with `postgres.url` and, when given,
     /// `postgres.owner_url`, on a fresh port and keyring, its environment
     /// cleared so no `OML_` variable of the caller's, a live key among
-    /// them, reaches it.
+    /// them, reaches it, and with no `NO_COLOR`: stderr is a pipe, as under
+    /// docker, kubectl or journald, and the fields must be plain there.
     fn spawn(serving: &str, owner: Option<&str>) -> Self {
         let port = free_port();
         let scratch = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
@@ -193,7 +194,6 @@ impl Lead {
         std::fs::create_dir_all(&scratch).expect("keyring scratch");
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml-server-lead"));
         cmd.env_clear()
-            .env("NO_COLOR", "1")
             .env("OML_POSTGRES__URL", serving)
             .env("OML_SERVER__LISTEN", format!("127.0.0.1:{port}"))
             .env("OML_KMS__KEYRING_PATH", scratch.join("keyring"))
