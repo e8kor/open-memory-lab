@@ -406,9 +406,11 @@ pub enum CodeEntryOutcome {
     /// `400 oauth.connect_code_invalid`, under a new sealed handle carrying
     /// one attempt fewer.
     WrongCode { handle: String, attempts_left: u8 },
-    /// The fifth wrong entry: the request ends, redirected to
+    /// The fifth wrong entry, or an entry on a handle that opens to a
+    /// request past its ten minutes: the request ends, redirected to
     /// `redirect_uri` with `error` ([`Refusal::authorize_error`],
-    /// `access_denied`), the `state` echoed and `iss`.
+    /// `access_denied`), the `state` echoed and `iss`. The code is not
+    /// read, so a lapsed handle spends nothing and counts no failure.
     Denied {
         error: Refusal,
         redirect_uri: String,
@@ -440,6 +442,17 @@ pub enum ConfirmOutcome {
     /// Cancel: the redirect carries `error=access_denied`, the `state` and
     /// `iss`.
     Cancelled {
+        redirect_uri: String,
+        state: Option<String>,
+        iss: String,
+    },
+    /// A handle that names a row whose request outlived its ten minutes or
+    /// whose code is voided: `oauth.authorization_expired`, redirected to
+    /// the row's `redirect_uri` with `error` ([`Refusal::authorize_error`],
+    /// `access_denied`), the `state` echoed and `iss` (errors.md: a page
+    /// only when the handle is unknown). Nothing is connected.
+    Denied {
+        error: Refusal,
         redirect_uri: String,
         state: Option<String>,
         iss: String,

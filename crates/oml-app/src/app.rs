@@ -3491,7 +3491,11 @@ where
 
     /// `POST /oauth/authorize` with `handle` and `connect_code` (http-api.md;
     /// ADR-0031 d8, d9 step 2). The sealed handle must name a live request,
-    /// else `oauth.authorization_expired` on the page. The entry is decoded
+    /// before the code is read: one that does not open is unknown and
+    /// answers `oauth.authorization_expired` on the page; one that opens to
+    /// a request past its ten minutes is known and ends it as
+    /// `access_denied` on its redirect (errors.md). Neither spends the code
+    /// nor counts a failure. The entry is decoded
     /// by Crockford's rule, found by its digest before any tenant is known,
     /// checked against its key's state as `/mcp` reads it, and spent by one
     /// conditional update. A correct code writes the request's row under a
@@ -3509,7 +3513,23 @@ where
     ) -> Result<CodeEntryOutcome, AppError> {
         let issuer = self.oauth_issuer.as_ref().ok_or(AppError::NotFound)?;
         let now = self.clock.now();
-        let request = open_request(sealer.open(handle).as_deref(), &now)?;
+        let opened = sealer.open(handle);
+        let request = match open_request(opened.as_deref(), &now) {
+            Ok(request) => request,
+            Err(error @ Refusal::AuthorizationExpired(AuthorizationExpired::Lapsed)) => {
+                let request = opened
+                    .as_deref()
+                    .and_then(AuthorizationRequest::decode)
+                    .expect("a lapsed request is one that opened and decoded");
+                return Ok(CodeEntryOutcome::Denied {
+                    error,
+                    redirect_uri: request.redirect_uri,
+                    state: request.state,
+                    iss: issuer.as_str().to_owned(),
+                });
+            }
+            Err(error) => return Err(error.into()),
+        };
         let Some((tenant_id, code, key)) = self.spend_entry(entry, &now).await? else {
             self.connect_code_failures.fetch_add(1, Ordering::Relaxed);
             return Ok(match after_wrong_entry(request.attempts_left) {
@@ -3669,9 +3689,11 @@ where
 
     /// `POST /oauth/authorize` with `handle` and `action` (http-api.md;
     /// ADR-0031 d8, d9 step 3). The confirmation's handle must name a
-    /// request row a verified code wrote, within the request's ten
-    /// minutes, whose code is not voided, else `oauth.authorization_expired`
-    /// on the page. Connect, in the store's one transaction, takes the row,
+    /// request row a verified code wrote, else it is unknown and answers
+    /// `oauth.authorization_expired` on the page. A row past the request's
+    /// ten minutes, or whose code is voided, is known: either action
+    /// answers `oauth.authorization_expired` as `access_denied` on the
+    /// row's redirect with its `state` and `iss` (errors.md). Connect, in the store's one transaction, takes the row,
     /// stamps the client's `connected_at` and creates the connection
     /// `authorized` with the digest of a 256-bit authorization code alive 60
     /// seconds, and answers the redirect with that code, the `state` and
@@ -3689,6 +3711,12 @@ where
         let handle_hash = Sha256Hash::digest(handle.as_bytes());
         let iss = issuer.as_str().to_owned();
         let lapsed = |row: &AuthorizationRecord| now.unix_micros() >= row.expires_at.unix_micros();
+        let denied = |reason, row: AuthorizationRecord| ConfirmOutcome::Denied {
+            error: Refusal::AuthorizationExpired(reason),
+            redirect_uri: row.redirect_uri,
+            state: row.state,
+            iss: issuer.as_str().to_owned(),
+        };
         match action {
             ConfirmAction::Cancel => {
                 let row = self
@@ -3697,7 +3725,7 @@ where
                     .await?
                     .ok_or(expired(AuthorizationExpired::NoRequest))?;
                 if lapsed(&row) {
-                    return Err(expired(AuthorizationExpired::Lapsed));
+                    return Ok(denied(AuthorizationExpired::Lapsed, row));
                 }
                 let voided = self
                     .journal
@@ -3706,7 +3734,9 @@ where
                     .iter()
                     .find(|c| c.code_id == row.code_id)
                     .is_none_or(|c| c.voided_seq.is_some());
-                check_confirmation(voided)?;
+                if let Err(Refusal::AuthorizationExpired(reason)) = check_confirmation(voided) {
+                    return Ok(denied(reason, row));
+                }
                 Ok(ConfirmOutcome::Cancelled {
                     redirect_uri: row.redirect_uri,
                     state: row.state,
@@ -3720,7 +3750,7 @@ where
                     .await?
                     .ok_or(expired(AuthorizationExpired::NoRequest))?;
                 if lapsed(&row) {
-                    return Err(expired(AuthorizationExpired::Lapsed));
+                    return Ok(denied(AuthorizationExpired::Lapsed, row));
                 }
                 let code = base62_43(&self.ids.new_secret());
                 let auth_code_expires_at = EventTime::from_unix_micros(
@@ -3742,7 +3772,7 @@ where
                         iss,
                     }),
                     ConnectOutcome::NoRequest => Err(expired(AuthorizationExpired::NoRequest)),
-                    ConnectOutcome::CodeVoided => Err(expired(AuthorizationExpired::CodeVoided)),
+                    ConnectOutcome::CodeVoided => Ok(denied(AuthorizationExpired::CodeVoided, row)),
                 }
             }
         }

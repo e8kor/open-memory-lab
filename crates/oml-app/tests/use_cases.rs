@@ -10,8 +10,8 @@ use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::oauth::{
-    AuthorizationExpired, CLAUDE_CALLBACK, ConnectCode, ConnectRefused, ConnectionState, Issuer,
-    Refusal, RevokedCause, open_request,
+    AuthorizationExpired, AuthorizationRequest, CLAUDE_CALLBACK, ConnectCode, ConnectRefused,
+    ConnectionState, Issuer, Refusal, RevokedCause, open_request,
 };
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
@@ -6558,6 +6558,18 @@ fn attempts_left(handle: &str) -> u8 {
         .attempts_left
 }
 
+/// The redirect a refusal of a known request answers: `access_denied` to
+/// the fixture request's redirect URI with its `state` and `iss` (errors.md
+/// `oauth.authorization_expired`; ADR-0031 d9).
+fn denied_redirect(reason: AuthorizationExpired) -> ConfirmOutcome {
+    ConfirmOutcome::Denied {
+        error: Refusal::AuthorizationExpired(reason),
+        redirect_uri: CLAUDE_CALLBACK.to_owned(),
+        state: Some(STATE.to_owned()),
+        iss: ISSUER.to_owned(),
+    }
+}
+
 fn authorization_expired(err: &AppError) -> Option<AuthorizationExpired> {
     match err {
         AppError::OAuth(Refusal::AuthorizationExpired(reason)) => Some(*reason),
@@ -6799,6 +6811,11 @@ async fn a_revoked_keys_code_answers_connect_code_invalid() {
         .await
         .expect("codes");
     assert!(codes[0].redeemed_at.is_none(), "the code is not spent");
+    assert_eq!(
+        app.connect_code_failures(),
+        1,
+        "the entry counts one failure"
+    );
 }
 
 /// Connect deletes the request's row in its own commit, so a second
@@ -6840,8 +6857,9 @@ async fn connect_twice_with_one_handle_opens_at_most_one_connection() {
 }
 
 /// A newer code voids the key's spent code, so a Connect on the page that
-/// verified it answers `oauth.authorization_expired` and opens nothing
-/// (ADR-0031 d8, d9 step 3).
+/// verified it answers `oauth.authorization_expired` as `access_denied` on
+/// the request's redirect, with its `state` and `iss`, since the handle
+/// names a row, and opens nothing (errors.md; ADR-0031 d8, d9 step 3).
 #[tokio::test]
 async fn connect_after_a_newer_code_was_minted_answers_authorization_expired() {
     let store = MemStore::new();
@@ -6854,15 +6872,15 @@ async fn connect_after_a_newer_code_was_minted_answers_authorization_expired() {
         .await
         .expect("a newer code");
 
-    let err = app
+    let outcome = app
         .confirm(&view.handle, ConfirmAction::Connect)
         .await
-        .unwrap_err();
+        .expect("a known handle is answered on its redirect");
 
     assert_eq!(
-        authorization_expired(&err),
-        Some(AuthorizationExpired::CodeVoided),
-        "{err:?}"
+        outcome,
+        denied_redirect(AuthorizationExpired::CodeVoided),
+        "{outcome:?}"
     );
     assert!(
         store
@@ -6987,4 +7005,304 @@ async fn connect_stamps_the_clients_connected_at() {
         .unix_micros()
         - connection.created_at.unix_micros();
     assert_eq!(lifetime, 60_000_000, "the authorization code lives 60 s");
+}
+
+/// A confirmation row whose request outlived its ten minutes, copied from
+/// the row `view` wrote under a new handle: the handle it answers to.
+async fn lapsed_confirmation(store: &MemStore, view: &ConfirmationView) -> String {
+    let handle = "a-confirmation-past-its-ten-minutes";
+    let row = store
+        .authorization(&Sha256Hash::digest(view.handle.as_bytes()))
+        .await
+        .expect("read")
+        .expect("the request's row");
+    store
+        .authorization_insert(AuthorizationRecord {
+            authorization_id: Uuid::from_u128(0x1A_75ED),
+            handle_hash: Sha256Hash::digest(handle.as_bytes()),
+            expires_at: at("2026-10-29T11:59:59.000000Z"),
+            ..row
+        })
+        .await
+        .expect("a lapsed row");
+    handle.to_owned()
+}
+
+/// A Connect or a Cancel after the request's ten minutes answers
+/// `oauth.authorization_expired` as `access_denied` on the request's
+/// redirect, with its `state` and `iss`, and opens nothing (errors.md;
+/// ADR-0031 d9 step 3).
+#[tokio::test]
+async fn connect_or_cancel_after_ten_minutes_answers_authorization_expired() {
+    for action in [ConfirmAction::Connect, ConfirmAction::Cancel] {
+        let store = MemStore::new();
+        let app = oauth_app_over(store.clone());
+        let (boot, crew) = tenant(&app).await;
+        let (issued, code) =
+            connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Writer)]).await;
+        let view = entered(&app, &code_page(&app).await, &code).await;
+        let handle = lapsed_confirmation(&store, &view).await;
+
+        let outcome = app
+            .confirm(&handle, action)
+            .await
+            .expect("a known handle is answered on its redirect");
+
+        assert_eq!(
+            outcome,
+            denied_redirect(AuthorizationExpired::Lapsed),
+            "{action:?}"
+        );
+        assert!(
+            store
+                .connections(boot.tenant_id, issued.key_id)
+                .await
+                .expect("connections")
+                .is_empty(),
+            "{action:?} opens nothing"
+        );
+    }
+}
+
+/// A Cancel on a confirmation whose code a newer code voided answers
+/// `oauth.authorization_expired` as `access_denied` on the request's
+/// redirect, with its `state` and `iss` (errors.md; ADR-0031 d8, d9 step 3).
+#[tokio::test]
+async fn cancel_after_a_newer_code_answers_authorization_expired() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connector_with_code(&app, admin, vec![grant(crew, Role::Writer)]).await;
+    let view = entered(&app, &code_page(&app).await, &code).await;
+    app.mint_connect_code(admin, issued.key_id.into())
+        .await
+        .expect("a newer code");
+
+    let outcome = app
+        .confirm(&view.handle, ConfirmAction::Cancel)
+        .await
+        .expect("a known handle is answered on its redirect");
+
+    assert_eq!(outcome, denied_redirect(AuthorizationExpired::CodeVoided));
+}
+
+/// A code entered on a handle whose request outlived its ten minutes ends
+/// the request as `access_denied` on its redirect, with its `state` and
+/// `iss`, since the handle opens and so is known; one that does not open
+/// answers `oauth.authorization_expired` on the page. Either is checked
+/// before the code: neither spends it, writes a row nor counts a failure
+/// (errors.md; ADR-0031 d8, d9 steps 1 and 2).
+#[tokio::test]
+async fn a_code_entered_on_a_lapsed_or_unopened_handle_spends_nothing_and_counts_no_failure() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) =
+        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Writer)]).await;
+    let live = code_page(&app).await;
+    let request = open_request(
+        PlainSealer.open(&live).as_deref(),
+        &at("2026-10-29T12:00:01.000000Z"),
+    )
+    .expect("a live request");
+    let lapsed = PlainSealer.seal(
+        &AuthorizationRequest {
+            expires_at: at("2026-10-29T11:59:59.000000Z"),
+            ..request
+        }
+        .encode(),
+    );
+    let rows = store.authorization_count();
+
+    let outcome = app
+        .enter_code(&lapsed, &code, &PlainSealer)
+        .await
+        .expect("a handle that opens is answered on its redirect");
+    let CodeEntryOutcome::Denied {
+        error,
+        redirect_uri,
+        state,
+        iss,
+    } = outcome
+    else {
+        panic!("a lapsed handle is a redirect: {outcome:?}");
+    };
+    assert_eq!(
+        error,
+        Refusal::AuthorizationExpired(AuthorizationExpired::Lapsed)
+    );
+    assert_eq!(error.authorize_error(), "access_denied");
+    assert_eq!(redirect_uri, CLAUDE_CALLBACK);
+    assert_eq!(state.as_deref(), Some(STATE));
+    assert_eq!(iss, ISSUER);
+
+    let err = app
+        .enter_code("not a sealed handle", &code, &PlainSealer)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        authorization_expired(&err),
+        Some(AuthorizationExpired::Unopened),
+        "{err:?}"
+    );
+
+    let codes = store
+        .connect_codes(boot.tenant_id, issued.key_id)
+        .await
+        .expect("codes");
+    assert!(codes[0].redeemed_at.is_none(), "the code is not spent");
+    assert_eq!(store.authorization_count(), rows, "no row is written");
+    assert_eq!(app.connect_code_failures(), 0, "no failure is counted");
+    entered(&app, &live, &code).await;
+}
+
+/// Without `oauth.issuer` the authorization page does not exist: a code
+/// entry and a confirmation answer `access.not_found` (http-api.md;
+/// ADR-0031 d1).
+#[tokio::test]
+async fn the_page_does_not_exist_without_an_issuer() {
+    let store = MemStore::new();
+    let oauth = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&oauth).await;
+    let (_, code) = connector_with_code(
+        &oauth,
+        &boot.admin_key.value,
+        vec![grant(crew, Role::Writer)],
+    )
+    .await;
+    let handle = code_page(&oauth).await;
+    let view = entered(&oauth, &code_page(&oauth).await, &code).await;
+    let app = app_over(store);
+
+    let entry = app.enter_code(&handle, &code, &PlainSealer).await;
+    assert!(matches!(entry, Err(AppError::NotFound)), "{entry:?}");
+    for action in [ConfirmAction::Connect, ConfirmAction::Cancel] {
+        let outcome = app.confirm(&view.handle, action).await;
+        assert!(
+            matches!(outcome, Err(AppError::NotFound)),
+            "{action:?}: {outcome:?}"
+        );
+    }
+}
+
+/// A dreamer connector key's confirmation names its granted workareas in
+/// the propose sentence and in no write or read sentence (http-api.md
+/// "The authorization page"; ADR-0031 d9 step 2).
+#[tokio::test]
+async fn a_dreamer_key_is_shown_as_proposing() {
+    let app = oauth_app_over(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let issued = app
+        .issue_key(
+            &boot.admin_key.value,
+            &IssueKeyRequest {
+                connect_code: true,
+                ..issue_req(
+                    Role::Dreamer,
+                    "crew/claude-mobile",
+                    vec![grant(crew, Role::Dreamer)],
+                )
+            },
+        )
+        .await
+        .expect("a dreamer connector key");
+    let code = issued
+        .connect_code
+        .and_then(|c| c.code)
+        .expect("a fresh answer carries the code");
+
+    let view = entered(&app, &code_page(&app).await, &code).await;
+
+    assert_eq!(view.role, Role::Dreamer);
+    assert_eq!(view.proposes_in, [name("crew")]);
+    assert!(view.writes_in.is_empty(), "{view:?}");
+    assert!(view.reads_in.is_empty(), "{view:?}");
+}
+
+/// A workarea a grant's own deny or a global denial masks is named in no
+/// verb sentence that grant or the denied grant would give, while every
+/// grant is still listed (http-api.md
+/// "The authorization page"; roles-and-keys.md denials; ADR-0031 d9
+/// step 2).
+#[tokio::test]
+async fn a_denied_workarea_is_named_in_no_sentence() {
+    let app = oauth_app_over(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let notes = workarea(&app, admin, "notes", crew).await;
+    let archive = workarea(&app, admin, "archive", boot.root_workarea_id).await;
+    let (issued, code) = connector_with_code(
+        &app,
+        admin,
+        vec![
+            GrantRequest {
+                deny: vec![notes.into()],
+                ..grant(crew, Role::Writer)
+            },
+            grant(notes, Role::Reader),
+            grant(archive, Role::Reader),
+        ],
+    )
+    .await;
+    app.deny_key(admin, issued.key_id.into(), archive.into())
+        .await
+        .expect("a global denial");
+
+    let view = entered(&app, &code_page(&app).await, &code).await;
+
+    let listed: Vec<Name> = view.grants.iter().map(|g| g.workarea.clone()).collect();
+    assert_eq!(listed, [name("crew"), name("notes"), name("archive")]);
+    assert_eq!(view.writes_in, [name("crew")], "crew's deny masks notes");
+    assert_eq!(
+        view.reads_in,
+        [name("notes")],
+        "the global denial masks archive"
+    );
+}
+
+/// A code of one tenant shows that tenant's name and that key's grants and
+/// nothing of another tenant's, and its row is written under the code's
+/// tenant (ADR-0031 d8, d9 step 2, d10).
+#[tokio::test]
+async fn a_code_of_one_tenant_shows_only_that_tenants_name_and_grants() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (acme, acme_crew) = tenant(&app).await;
+    connector_with_code(
+        &app,
+        &acme.admin_key.value,
+        vec![grant(acme_crew, Role::Writer)],
+    )
+    .await;
+    let globex = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("globex"),
+            admin_key_name: name("globex-admin"),
+            admin_principal: "gina-admin".to_owned(),
+        })
+        .await
+        .expect("a second tenant");
+    let admin = &globex.admin_key.value;
+    let lab = workarea(&app, admin, "lab", globex.root_workarea_id).await;
+    let (issued, code) = connector_with_code(&app, admin, vec![grant(lab, Role::Reader)]).await;
+
+    let view = entered(&app, &code_page(&app).await, &code).await;
+
+    assert_eq!(view.tenant_name, name("globex"));
+    let grants: Vec<(Uuid, Name)> = view
+        .grants
+        .iter()
+        .map(|g| (g.workarea_id, g.workarea.clone()))
+        .collect();
+    assert_eq!(grants, [(lab, name("lab"))]);
+    assert_eq!(view.reads_in, [name("lab")]);
+    assert!(view.writes_in.is_empty(), "{view:?}");
+    let row = store
+        .authorization(&Sha256Hash::digest(view.handle.as_bytes()))
+        .await
+        .expect("read")
+        .expect("the request's row");
+    assert_eq!(row.code_tenant_id, globex.tenant_id);
+    assert_eq!(row.key_id, issued.key_id);
 }
