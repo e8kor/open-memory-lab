@@ -14,7 +14,14 @@ name: Release
 #   - ghcr.io/e8kor/open-memory-lab:X.Y.Z (and :latest), one image index for
 #     linux/amd64 and linux/arm64, each built on a native runner with buildx SBOM
 #     and provenance attestations, the index signed by digest;
-#   - the `oml` agent plugin, whose marketplace is this repository at the tag.
+#   - the `oml` agent plugin, whose marketplace is this repository at the tag;
+#   - oml-claude-plugins-X.Y.Z.tar.gz and .zip, the oml and oml-admin plugins
+#     with a marketplace whose sources resolve inside the archive, and
+#     oml-marketplace-X.Y.Z.json, the marketplace pinned to this tag;
+#   - oml-agent-kit-X.Y.Z.tar.gz and .zip, MCP configurations for other agent
+#     tools, an AGENTS.md block and a Gemini CLI session-start hook;
+#     these five, written by scripts/package_agent_artifacts.py, are summed and
+#     signed with the archives above.
 # The verification command the release notes carry is the one that page
 # states; this file's path is the identity it pins.
 
@@ -158,11 +165,37 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The agent artifacts: plain files, so one runner writes them all
+  # (scripts/package_agent_artifacts.py; docs/engineering/ci-and-toolchain.md
+  # "Release artifacts"). The pinned marketplace names this tag and its commit.
+  agents:
+    name: Claude Code plugins and the agent kit
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Package, after the kit check passes
+        run: |
+          python scripts/check_agent_kit.py
+          python scripts/package_agent_artifacts.py --out dist --version "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agents-all
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
   # One job signs everything, so every bundle carries this workflow's identity
   # from one runner, and SHA256SUMS is written once the set is complete.
   binaries:
     name: SBOMs, SHA256SUMS, signatures
-    needs: [version, cli, server]
+    needs: [version, cli, server, agents]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -183,7 +216,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: "{cli,server}-*"
+          pattern: "{cli,server,agents}-*"
           merge-multiple: true
       - name: Every archive is here, and nothing else
         run: |
@@ -195,6 +228,9 @@ jobs:
             esac
           done
           for t in $SERVER_TARGETS; do want="$want oml-server-lead-${VERSION}-$t.tar.gz"; done
+          want="$want oml-claude-plugins-${VERSION}.tar.gz oml-claude-plugins-${VERSION}.zip"
+          want="$want oml-agent-kit-${VERSION}.tar.gz oml-agent-kit-${VERSION}.zip"
+          want="$want oml-marketplace-${VERSION}.json"
           diff <(printf '%s\n' $want | sort) <(ls dist | sort)
       - name: One SBOM per archive, for its own target's dependency graph
         run: |
@@ -208,11 +244,11 @@ jobs:
             cargo cyclonedx --format json --override-filename sbom --target "$t"
             cp crates/bins/oml-server-lead/sbom.json "dist/oml-server-lead-${VERSION}-$t.cdx.json"
           done
-          (cd dist && sha256sum ./*.tar.gz ./*.zip ./*.cdx.json > SHA256SUMS)
+          (cd dist && sha256sum ./*.tar.gz ./*.zip ./*.cdx.json ./oml-marketplace-*.json > SHA256SUMS)
       - name: Sign (keyless, bound to this workflow)
         run: |
           cd dist
-          for f in *.tar.gz *.zip *.cdx.json SHA256SUMS; do
+          for f in *.tar.gz *.zip *.cdx.json oml-marketplace-*.json SHA256SUMS; do
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
           done
       - uses: actions/upload-artifact@v4
@@ -381,6 +417,23 @@ jobs:
               claude plugin marketplace add ${{ github.repository }}
               claude plugin install oml@open-memory-lab
 
+          To install exactly this release, pin the marketplace to its tag with
+          \`claude plugin marketplace add ${{ github.repository }}#v${VERSION}\`, or verify
+          \`oml-marketplace-${VERSION}.json\`, whose sources are this repository at \`v${VERSION}\`
+          and its commit, and add it from a directory:
+
+              mkdir -p oml-marketplace/.claude-plugin
+              cp oml-marketplace-${VERSION}.json oml-marketplace/.claude-plugin/marketplace.json
+              claude plugin marketplace add ./oml-marketplace
+
+          Offline: verify and extract \`oml-claude-plugins-${VERSION}.tar.gz\` (or \`.zip\`), then
+          \`claude plugin marketplace add ./oml-claude-plugins-${VERSION}\` and install as above.
+
+          Other agent tools: \`oml-agent-kit-${VERSION}.tar.gz\` (or \`.zip\`) holds MCP
+          configurations for OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop,
+          an AGENTS.md block, and a Gemini CLI session-start hook; its README says what each
+          tool's documentation does and does not settle.
+
           Image: \`${IMAGE}:${VERSION}\` (\`${IMAGE}@${DIGEST}\`), one index for
           linux/amd64 and linux/arm64.
 
@@ -392,8 +445,8 @@ jobs:
 
           ## Verify
 
-          Every archive, SBOM and \`SHA256SUMS\` here, and the image, are signed keyless by this
-          release workflow; the image's signature is on the index digest, and each platform image
+          Every archive, SBOM, the pinned marketplace and \`SHA256SUMS\` here, and the image, are
+          signed keyless by this release workflow; the image's signature is on the index digest, and each platform image
           is signed too:
 
               cosign verify \\
@@ -419,8 +472,8 @@ jobs:
                 oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip
               Expand-Archive oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip -DestinationPath .
 
-          \`SHA256SUMS\` lists every archive and SBOM; verify its bundle the same way, then
-          \`sha256sum --check --ignore-missing SHA256SUMS\`.
+          \`SHA256SUMS\` lists every archive, SBOM and the pinned marketplace; verify its bundle the
+          same way, then \`sha256sum --check --ignore-missing SHA256SUMS\`.
 
           Each binary has a CycloneDX SBOM (\`*.cdx.json\`), generated from the committed Cargo.lock.
           EOF

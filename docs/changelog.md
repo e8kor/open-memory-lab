@@ -29,6 +29,13 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — Releases ship the Claude Code plugins and an agent kit (implementation)
+
+An implementation milestone with no decision or surface change: each tag also ships the oml and
+oml-admin plugins as an offline marketplace archive and as a marketplace pinned to the tag, and an
+agent kit of MCP configurations for other agent tools, signed and summed with the binaries
+([release artifacts](engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+
 ### 2026-11-03 — The lead serves as a role that owns nothing (implementation)
 
 An implementation milestone; no decision changes. The code now builds d10's steps 2 to 4 of the

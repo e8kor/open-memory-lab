@@ -1,4 +1,4 @@
-"""The release workflow ships one signed image index, the signed chart, and signed CLI and server archives.
+"""The release workflow ships one signed image index, the signed chart, signed CLI and server archives, and the signed agent artifacts.
 
 Run by .github/workflows/ci.yml (job image). Holds .github/workflows/release.yml
 to docs/engineering/ci-and-toolchain.md "Release artifacts", failing with every
@@ -29,6 +29,13 @@ disagreement found:
   archive and SBOM, and only then signs every archive, every SBOM and
   SHA256SUMS with `cosign sign-blob`, and the job that creates the GitHub
   release needs it;
+- a job needing the version job runs scripts/check_agent_kit.py and then
+  scripts/package_agent_artifacts.py with the tag's version, the repository
+  and the tag's commit; the signing job needs it, requires
+  oml-claude-plugins-${VERSION} and oml-agent-kit-${VERSION} as .tar.gz and
+  .zip, and oml-marketplace-${VERSION}.json, among the files it downloads,
+  sums the pinned marketplace in SHA256SUMS beside the archives and signs it
+  (docs/engineering/ci-and-toolchain.md "Release artifacts");
 - ci.yml job cli-matrix runs on the same target and runner pairs and, on each,
   runs `oml --version` and the CLI's unit tests, so a broken platform fails a
   pull request before a tag (docs/engineering/ci-and-toolchain.md "Release
@@ -72,9 +79,22 @@ CLI_ARCHIVE = "oml-cli-${VERSION}-${TARGET}"
 SERVER_ARCHIVE = "oml-server-lead-${VERSION}-${TARGET}"
 CARGO_BUILD = re.compile(r"\bcargo\s+build\b[^\n]*--bin\s+(\S+)")
 CYCLONEDX = re.compile(r"\bcargo\s+cyclonedx\b[^\n]*--target\b")
-SHA256SUMS = re.compile(r"\bsha256sum\b[^\n]*\*\.tar\.gz[^\n]*\*\.zip[^\n]*\*\.cdx\.json[^\n]*>\s*SHA256SUMS")
+SHA256SUMS = re.compile(
+    r"\bsha256sum\b[^\n]*\*\.tar\.gz[^\n]*\*\.zip[^\n]*\*\.cdx\.json[^\n]*oml-marketplace-\*\.json[^\n]*>\s*SHA256SUMS"
+)
 SIGN_EVERY_BLOB = re.compile(
-    r"for\s+f\s+in\s+\*\.tar\.gz\s+\*\.zip\s+\*\.cdx\.json\s+SHA256SUMS;[^\n]*\n[^\n]*cosign\s+sign-blob\b"
+    r"for\s+f\s+in\s+\*\.tar\.gz\s+\*\.zip\s+\*\.cdx\.json\s+oml-marketplace-\*\.json\s+SHA256SUMS;"
+    r"[^\n]*\n[^\n]*cosign\s+sign-blob\b"
+)
+PACKAGE_AGENTS = re.compile(r"\bscripts/package_agent_artifacts\.py\b")
+CHECK_AGENTS = re.compile(r"\bscripts/check_agent_kit\.py\b")
+# The agent artifacts every release carries (scripts/package_agent_artifacts.py).
+AGENT_FILES = (
+    "oml-claude-plugins-${VERSION}.tar.gz",
+    "oml-claude-plugins-${VERSION}.zip",
+    "oml-agent-kit-${VERSION}.tar.gz",
+    "oml-agent-kit-${VERSION}.zip",
+    "oml-marketplace-${VERSION}.json",
 )
 PLATFORMS = {"linux/amd64", "linux/arm64"}
 BUILD_ACTION = "docker/build-push-action@"
@@ -137,6 +157,7 @@ def main() -> int:
 
     check_chart(errors, jobs)
     check_binaries(errors, jobs)
+    check_agents(errors, jobs)
     check_cli_matrix(errors, jobs)
     return report(errors)
 
@@ -224,6 +245,32 @@ def check_binaries(errors: list[str], jobs: dict) -> None:
         for creator in creators:
             if name not in ancestors(jobs, creator):
                 errors.append(f"job {creator}: creates the release without needing job {name}")
+
+
+def check_agents(errors: list[str], jobs: dict) -> None:
+    """One job packages the agent artifacts after their check, and the signing job requires, sums and signs them."""
+    versions = {name for name, job in jobs.items() if "version" in job.get("outputs", {})}
+    packagers = {name: job for name, job in jobs.items() if step_matching(job, PACKAGE_AGENTS) is not None}
+    if len(packagers) != 1:
+        errors.append(f"{len(packagers)} jobs run scripts/package_agent_artifacts.py, not exactly one")
+    for name, job in packagers.items():
+        run = runs(job)[step_matching(job, PACKAGE_AGENTS)]
+        check = step_matching(job, CHECK_AGENTS)
+        if not set(needs(job)) & versions:
+            errors.append(f"job {name}: packages the agent artifacts without needing the job that reads the tag's version")
+        if check is None or check > step_matching(job, PACKAGE_AGENTS):
+            errors.append(f"job {name}: does not run scripts/check_agent_kit.py before packaging")
+        for flag, value in (("--version", '"$VERSION"'), ("--repo", '"$GITHUB_REPOSITORY"'), ("--sha", '"$GITHUB_SHA"')):
+            if f"{flag} {value}" not in run:
+                errors.append(f"job {name}: does not pass {flag} {value} to the packaging script")
+    signers = {name: job for name, job in jobs.items() if any(SIGN_EVERY_BLOB.search(r) for r in runs(job))}
+    for name, job in signers.items():
+        if not set(packagers) <= ancestors(jobs, name):
+            errors.append(f"job {name}: signs without needing the job that packages the agent artifacts")
+        script = "\n".join(runs(job))
+        for want in AGENT_FILES:
+            if want not in script:
+                errors.append(f"job {name}: does not require {want} among the files it signs")
 
 
 def check_cli_matrix(errors: list[str], jobs: dict) -> None:
@@ -351,8 +398,9 @@ def report(errors: list[str]) -> int:
     if not errors:
         print(
             "release check: release.yml builds, merges and signs one index for linux/amd64 and linux/arm64,"
-            " attaches the signed chart, and builds, sums and signs the CLI and server archives of every"
-            " target, which ci.yml's cli-matrix builds and tests first"
+            " attaches the signed chart, builds, sums and signs the CLI and server archives of every"
+            " target, which ci.yml's cli-matrix builds and tests first, and sums and signs the Claude Code"
+            " plugin archive, the pinned marketplace and the agent kit"
         )
     return 1 if errors else 0
 
