@@ -50,7 +50,7 @@ CREATE TABLE connect_codes (
 
 -- One live code per key: minting a code voids every unredeemed one of the
 -- key in its commit (ADR-0031 d8).
-CREATE UNIQUE INDEX connect_codes_live ON connect_codes (key_id)
+CREATE UNIQUE INDEX connect_codes_live ON connect_codes (tenant_id, key_id)
     WHERE redeemed_at IS NULL AND voided_seq IS NULL;
 
 COMMENT ON TABLE connect_codes IS
@@ -66,7 +66,7 @@ CREATE TABLE oauth_connections (
     id                     uuid        PRIMARY KEY,
     tenant_id              uuid        NOT NULL,
     key_id                 uuid        NOT NULL,
-    code_id                uuid        NOT NULL UNIQUE,  -- one connect code, at most one connection
+    code_id                uuid        NOT NULL,
     client_id              text        NOT NULL,
     client_kind            text        NOT NULL CHECK (client_kind IN ('cimd', 'dcr')),
     client_metadata_digest bytea       NOT NULL,
@@ -88,13 +88,15 @@ CREATE TABLE oauth_connections (
     created_at             timestamptz NOT NULL,
     -- the target of oauth_tokens' tenant-scoped connection reference
     CONSTRAINT oauth_connections_tenant_id_id UNIQUE (tenant_id, id),
+    -- one connect code, at most one connection
+    CONSTRAINT oauth_connections_tenant_id_code_id UNIQUE (tenant_id, code_id),
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
     CONSTRAINT oauth_connections_code_id_fkey
         FOREIGN KEY (tenant_id, code_id) REFERENCES connect_codes (tenant_id, id)
 );
 
 -- At most one open connection per key (ADR-0031 d7).
-CREATE UNIQUE INDEX oauth_connections_open ON oauth_connections (key_id)
+CREATE UNIQUE INDEX oauth_connections_open ON oauth_connections (tenant_id, key_id)
     WHERE state = 'open';
 
 COMMENT ON TABLE oauth_connections IS

@@ -585,15 +585,14 @@ CREATE TABLE connect_codes (
 );
 
 -- one live code per key: minting a code voids every unredeemed one of the key in its commit.
-CREATE UNIQUE INDEX connect_codes_live ON connect_codes (key_id)
+CREATE UNIQUE INDEX connect_codes_live ON connect_codes (tenant_id, key_id)
     WHERE redeemed_at IS NULL AND voided_seq IS NULL;
 
 CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'authorized'
     id                   uuid        PRIMARY KEY,
     tenant_id            uuid        NOT NULL,
     key_id               uuid        NOT NULL,
-    code_id              uuid        NOT NULL UNIQUE,
-                                                -- one connect code, at most one connection
+    code_id              uuid        NOT NULL,
     client_id            text        NOT NULL,  -- no reference: oauth_clients is the provider tenant's;
                                                 -- the token endpoint's client (ADR-0031 d5)
     client_kind          text        NOT NULL CHECK (client_kind IN ('cimd', 'dcr')),
@@ -620,12 +619,14 @@ CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'auth
                              ('admin', 'refresh_reuse', 'code_reuse', 'replaced')),
     created_at           timestamptz NOT NULL,
     UNIQUE (tenant_id, id),                     -- target of oauth_tokens' connection reference
+    UNIQUE (tenant_id, code_id),                -- one connect code, at most one connection
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
     FOREIGN KEY (tenant_id, code_id) REFERENCES connect_codes (tenant_id, id)
 );
 
 -- at most one open connection per key (ADR-0031 d7).
-CREATE UNIQUE INDEX oauth_connections_open ON oauth_connections (key_id) WHERE state = 'open';
+CREATE UNIQUE INDEX oauth_connections_open ON oauth_connections (tenant_id, key_id)
+    WHERE state = 'open';
 
 CREATE TABLE oauth_tokens (
     hash          bytea       PRIMARY KEY,      -- SHA-256 of the token string
@@ -640,9 +641,16 @@ CREATE TABLE oauth_tokens (
 ```
 
 `connect_codes`, `oauth_connections` and `oauth_tokens` carry their key's `tenant_id` and the
-tenant's RLS. `oauth_clients` and `oauth_authorizations` hold state from before any code names a
-key, so they belong to the reserved provider tenant, under its RLS, and hold no tenant content: a
-client's self-description and a page's request in progress. The code, authorization-code and token
+tenant's RLS. Each of their uniqueness rules on an id, `connect_codes_live`,
+`oauth_connections_open` and `(tenant_id, code_id)`, leads with `tenant_id`: a unique check reads
+past row security and runs before the foreign-key check, so a rule on the bare id would refuse
+another tenant's insert naming a key with a live code or an open connection, or a redeemed code,
+as `23505`, and show that tenant's state to anyone holding the uuid. Led by `tenant_id`, such an
+insert is refused by the tenant-scoped key, `23503`, exactly as one naming no row is. The
+semantics are unchanged, since a key and a code each belong to one tenant through those keys.
+`oauth_clients` and `oauth_authorizations` hold state from before any code names a key, so they
+belong to the reserved provider tenant, under its RLS, and hold no tenant content: a client's
+self-description and a page's request in progress. The code, authorization-code and token
 digests are found by the same pre-tenant authentication lookup that finds `api_keys.hash`; the
 matched row's `tenant_id` then sets `oml.tenant_id` for everything after. At `/mcp` the lookup
 matches only a row of kind `access`, and at a refresh only a row of kind `refresh`

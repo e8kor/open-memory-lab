@@ -4405,6 +4405,130 @@ async fn a_connection_row_of_one_tenant_is_invisible_to_another_tenants_session(
     drop_dbs(&created).await;
 }
 
+/// Another tenant's code naming a key whose own tenant holds a live code on
+/// it is refused exactly as one naming a key no row holds: `connect_codes_live`
+/// leads with `tenant_id`, so its unique check never sees the other tenant's
+/// code (postgres-schema.md connections, "Keys into tenant tables").
+#[tokio::test]
+async fn a_code_naming_another_tenants_key_with_a_live_code_is_refused_as_one_naming_no_key_is() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, a, key_a) = connector_rig(&created, 127).await;
+    run_under(
+        &store,
+        a,
+        &connect_code_sql(a, Uuid::from_u128(0xCA7), key_a, 0x30),
+        "A's live code",
+    )
+    .await;
+    let mut rig_b = ChainRig::new(128);
+    rig_b.seed_chain(&store, 0).await;
+    let b = rig_b.tenant_id;
+
+    let to_a = attempt_under(
+        &store,
+        b,
+        &connect_code_sql(b, Uuid::from_u128(0xCB7), key_a, 0x31),
+    )
+    .await;
+    let to_none = attempt_under(
+        &store,
+        b,
+        &connect_code_sql(
+            b,
+            Uuid::from_u128(0xCB7),
+            Uuid::from_u128(0x0BAD_0127),
+            0x31,
+        ),
+    )
+    .await;
+    assert_eq!(
+        to_a,
+        Err((
+            "23503".to_owned(),
+            Some("connect_codes_tenant_id_key_id_fkey".to_owned())
+        )),
+        "B's code naming A's key is refused by the tenant-scoped key, not by A's live code"
+    );
+    assert_eq!(to_a, to_none, "as one naming no key is");
+    drop_dbs(&created).await;
+}
+
+/// Another tenant's open connection naming a key whose own tenant holds an
+/// open connection on it is refused exactly as one naming a key no row holds:
+/// `oauth_connections_open` leads with `tenant_id`, so its unique check never
+/// sees the other tenant's connection (postgres-schema.md connections, "Keys
+/// into tenant tables").
+#[tokio::test]
+async fn an_open_connection_naming_another_tenants_key_with_an_open_connection_is_refused_as_one_naming_no_key_is()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, a, key_a) = connector_rig(&created, 129).await;
+    let code_a = Uuid::from_u128(0xCA9);
+    run_under(
+        &store,
+        a,
+        &connect_code_sql(a, code_a, key_a, 0x32),
+        "A's code",
+    )
+    .await;
+    run_under(
+        &store,
+        a,
+        &connection_sql(a, Uuid::from_u128(0xEA9), key_a, code_a, "open", 0x33),
+        "A's open connection",
+    )
+    .await;
+    let mut rig_b = ChainRig::new(130);
+    rig_b.seed_chain(&store, 0).await;
+    let b = rig_b.tenant_id;
+    let key_b = Uuid::from_u128(0xC0DE_0B30);
+    run_under(&store, b, &connector_key_sql(b, key_b), "B's connector key").await;
+    let code_b = Uuid::from_u128(0xCB9);
+    run_under(
+        &store,
+        b,
+        &connect_code_sql(b, code_b, key_b, 0x34),
+        "B's code",
+    )
+    .await;
+
+    let to_a = attempt_under(
+        &store,
+        b,
+        &connection_sql(b, Uuid::from_u128(0xEB9), key_a, code_b, "open", 0x35),
+    )
+    .await;
+    let to_none = attempt_under(
+        &store,
+        b,
+        &connection_sql(
+            b,
+            Uuid::from_u128(0xEB9),
+            Uuid::from_u128(0x0BAD_0129),
+            code_b,
+            "open",
+            0x35,
+        ),
+    )
+    .await;
+    assert_eq!(
+        to_a,
+        Err((
+            "23503".to_owned(),
+            Some("oauth_connections_tenant_id_key_id_fkey".to_owned())
+        )),
+        "B's open connection naming A's key is refused by the tenant-scoped key, not by A's open connection"
+    );
+    assert_eq!(to_a, to_none, "as one naming no key is");
+    drop_dbs(&created).await;
+}
+
 /// Before the tenant is known, a session that sets `oml.api_key_hash` to a
 /// code's, an authorization code's or a token's digest sees exactly the row
 /// that digest names, through the key_resolution form 0001 gave
