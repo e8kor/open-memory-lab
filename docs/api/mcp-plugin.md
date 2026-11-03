@@ -749,8 +749,8 @@ session counts against the key's upload quota, with `oauth.attach_refused`
 ([errors](errors.md#oauth-connections),
 [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11);
 `status` answers as it would to the key, which has no session to show. No
-file's bytes travel through an upload session under a connection; the proposed
-ADR-0035, on another branch, gives a connection small text files inline on
+file's bytes travel through an upload session under a connection; ADR-0035
+(proposed, in pull request #17) gives a connection small text files inline on
 `oml_remember` instead.
 
 **Who may call:** keys with writer effective access (the session binds to a

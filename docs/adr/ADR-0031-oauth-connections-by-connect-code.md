@@ -380,8 +380,8 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     agent identity already asks for. A code that lapses before use needs a new one (d8). And no
     file's bytes travel through an upload session under a connection: `oml_attach` `open` is
     refused there (d11), because an upload's parts travel on `/v1` under a key value, which a
-    connector key does not have. The proposed ADR-0035, on another branch, gives a connection
-    small text files inline on `oml_remember` instead.
+    connector key does not have. ADR-0035 (proposed, in pull request #17) gives a connection small
+    text files inline on `oml_remember` instead.
 
 - **d8 — The connect code is twelve Crockford base32 symbols, shown once, stored only as a
   digest, journalled by id, spent by its first correct entry, and alive ten minutes by
