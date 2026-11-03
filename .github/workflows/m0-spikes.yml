@@ -2,8 +2,10 @@ name: M0 spikes
 
 # The critical path's M0 experiments that a GitHub runner can host
 # (docs/engineering/spikes/index.md): the chain-format test vectors cross-checked outside
-# Rust, and spike 3 (RLS hardening) against the deployment's Postgres pin. Each script pins
-# its Python dependencies inline and in a committed lock file, and runs with --locked.
+# Rust, and spike 3 (RLS hardening) against the deployment's Postgres pin; beside them, the
+# vocabulary release vectors (docs/engineering/release-vectors.md), cross-checked outside
+# Rust the same way. Each script pins its Python dependencies inline and in a committed lock
+# file, and runs with --locked.
 # Spikes 1, 2 and 4 need MinIO topologies or a standby and are not run here.
 
 on:
@@ -28,6 +30,16 @@ jobs:
         with:
           version: "0.11.6"
       - run: uv run --python 3.13 --locked --script scripts/check_chain_vectors.py
+
+  release-vectors:
+    name: vocabulary release vectors reproduce outside Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"
+      - run: uv run --python 3.13 --locked --script scripts/check_release_vectors.py
 
   rls-spike:
     name: spike 3, RLS hardening (pg17)

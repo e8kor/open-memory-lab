@@ -9,6 +9,7 @@
 //! and the materialized closure"), `docs/data/postgres-schema.md`
 //! (`vocab_closure`) and, for the canonical form and the digest's spelling,
 //! `docs/data/chain-format.md`; this module mirrors them and adds nothing.
+//! Its test vectors are on `docs/engineering/release-vectors.md`.
 //!
 //! Each refusal answers exactly one code of `docs/api/errors.md`:
 //!
