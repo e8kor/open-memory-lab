@@ -99,7 +99,9 @@ through them. d1 to d3 and d8 are built; the rest is decided, not built.
     1. takes the pair as ADR-0039 d15 resolves it (flag, environment, credentials file), with
        `--key-file <path>` for a file that `oml keys issue-agent --out` wrote;
     2. calls `whoami` and refuses, as `setup.admin_key`, a key whose role is `admin` or
-       `operator`, which ADR-0040 d3 keeps out of the plugin;
+       `operator`. ADR-0040 d1's `api_key` option says "never an admin key" but nothing
+       enforces it, and ADR-0040 d3 only limits the harm (an admin key recalls no claim
+       content); this refusal is the check, added here;
     3. requires Claude Code 2.1.285 or later (ADR-0040 d5), read from `claude --version`;
     4. runs `claude plugin marketplace add e8kor/open-memory-lab#v<its own version>` and
        `claude plugin install oml@open-memory-lab`, so the plugin matches the CLI's release;

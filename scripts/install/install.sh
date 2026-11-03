@@ -56,7 +56,8 @@ need() {
 }
 
 fetch() { # url file
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 3 -o "$2" "$1" \
+    # -S keeps curl's own reason, such as "returned error: 404", under -s.
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -S --retry 3 -o "$2" "$1" \
         || die "could not download $1"
 }
 
@@ -174,11 +175,14 @@ main() {
     if command -v cosign >/dev/null 2>&1; then
         fetch "$base/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS.sigstore.json"
         tag_re="$(printf '%s' "v$version" | sed 's/\./\\./g')"
-        cosign verify-blob \
+        # cosign's last line is the reason: a bad signature, a wrong identity, or no
+        # network to the transparency log's root of trust.
+        if ! said="$(cosign verify-blob \
             --certificate-oidc-issuer "$ISSUER" \
             --certificate-identity-regexp "^https://github.com/e8kor/open-memory-lab/\\.github/workflows/release\\.yml@refs/tags/${tag_re}\$" \
-            --bundle "$tmp/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS" >/dev/null 2>&1 \
-            || die "SHA256SUMS of v$version does not verify against the release workflow's signature; nothing was installed"
+            --bundle "$tmp/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS" 2>&1)"; then
+            die "cosign did not verify SHA256SUMS of v$version under the release workflow's identity; nothing was installed. cosign: $(printf '%s\n' "$said" | tail -n 1)"
+        fi
         checked="cosign verified SHA256SUMS's signature by the release workflow at v$version, and the archive matches it"
     elif [ "$require_signature" = "1" ]; then
         die "--require-signature was given and cosign is not on PATH; nothing was installed"

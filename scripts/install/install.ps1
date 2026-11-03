@@ -42,7 +42,7 @@ function Install-Oml {
     function Fail([string]$Message) { throw "oml install: $Message" }
     function Say([string]$Message) { Write-Host "oml install: $Message" }
     # A native command's stderr becomes an error record under 'Stop' in Windows
-    # PowerShell 5.1, which cosign's "Verified OK" would trip; the exit code decides.
+    # PowerShell 5.1, which a usage message on stderr would trip; the exit code decides.
     function Invoke-Quiet([scriptblock]$Command) {
         $saved = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -58,10 +58,13 @@ function Install-Oml {
     [Net.ServicePointManager]::SecurityProtocol =
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    switch ($env:PROCESSOR_ARCHITECTURE) {
+    # A 32-bit PowerShell on 64-bit Windows reports x86 and names the machine in
+    # PROCESSOR_ARCHITEW6432.
+    $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    switch ($arch) {
         'AMD64' { }
         'ARM64' { Say 'no ARM64 build; installing the x86_64 build, which Windows 11 runs under emulation' }
-        default { Fail "no oml release for Windows on $($env:PROCESSOR_ARCHITECTURE)" }
+        default { Fail "no oml release for Windows on $arch" }
     }
     if (-not $Version) { $Version = $DefaultVersion }
     if (-not $Dir) {
@@ -91,12 +94,18 @@ function Install-Oml {
             Fetch "$base/SHA256SUMS.sigstore.json" (Join-Path $tmp 'SHA256SUMS.sigstore.json')
             $tagRe = ('v' + $Version) -replace '\.', '\.'
             $identity = '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/' + $tagRe + '$'
-            $verified = Invoke-Quiet {
-                & cosign verify-blob --certificate-oidc-issuer $Issuer --certificate-identity-regexp $identity `
-                    --bundle (Join-Path $tmp 'SHA256SUMS.sigstore.json') (Join-Path $tmp 'SHA256SUMS')
-            }
+            # cosign's last line is the reason: a bad signature, a wrong identity, or no
+            # network to the transparency log's root of trust.
+            $saved = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $said = & cosign verify-blob --certificate-oidc-issuer $Issuer --certificate-identity-regexp $identity `
+                    --bundle (Join-Path $tmp 'SHA256SUMS.sigstore.json') (Join-Path $tmp 'SHA256SUMS') 2>&1 |
+                    ForEach-Object { "$_" }
+                $verified = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $saved }
             if ($verified -ne 0) {
-                Fail "SHA256SUMS of v$Version does not verify against the release workflow's signature; nothing was installed"
+                Fail "cosign did not verify SHA256SUMS of v$Version under the release workflow's identity; nothing was installed. cosign: $(@($said)[-1])"
             }
             $checked = "cosign verified SHA256SUMS's signature by the release workflow at v$Version, and the archive matches it"
         } elseif ($RequireSignature) {

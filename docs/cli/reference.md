@@ -51,7 +51,9 @@ the archive against the release's `SHA256SUMS`. When `cosign` is on `PATH` it al
 checksum only, which catches a damaged download but not a tampered release, and it says so
 (FR-69). `--require-signature` refuses to install without cosign. It edits no shell profile and no
 `PATH`; it prints the line that would. To read the script before running it, download it, read
-it, then run `sh install.sh`.
+it, then run `sh install.sh`. A piped install takes its flags after `sh -s --`, as in
+`… | sh -s -- --version latest`; `irm … | iex` takes none, so set `$env:OML_VERSION`,
+`$env:OML_INSTALL_DIR` or `$env:OML_REQUIRE_SIGNATURE = '1'` first.
 
 The manual steps:
 

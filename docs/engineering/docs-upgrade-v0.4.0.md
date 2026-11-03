@@ -59,7 +59,7 @@ client tier, so it uses plain words: "save", "find", "approve".
 | **Check before acting** | `oml_read` with a query, and what to do with "nothing found" | R |
 | **Correct or retire a memory** | `oml_write` with `replaces`, held like any write | R |
 | **Learn whether a note was approved** | `oml_read` over the agent's own work, by state | R |
-| **Two agents in one crew: one writes, one reviews** | an agent key and a reviewer key; `oml review next` and `verdict` | R |
+| **Two agents in one crew: one writes, one reviews** | an agent key and a reviewer key; `oml review next`, then `oml review approve` or `reject` (ADR-0039 d10) | R |
 | **Give a teammate's agent its key** | `oml keys issue-agent --out`, then `oml setup claude-code --key-file` | Q |
 | **Try OML on a laptop** | `oml quickstart`, then the first scenario | Q |
 | **Use OML from claude.ai or a phone** | add the server as a custom connector and sign in once | O, and the open check below |
