@@ -937,6 +937,7 @@ where
             "default_workarea_id": record.default_workarea.map(|w| w.to_string()),
             "name": record.name.as_ref().map(Name::as_str),
             "crew_id": record.crew_id.map(|c| c.to_string()),
+            "credential": record.credential.as_str(),
         })
     }
 

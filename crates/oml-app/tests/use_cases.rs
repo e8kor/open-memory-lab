@@ -2049,6 +2049,37 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
     assert_eq!(app.verify_chain(admin).await.expect("verify").seq, head);
 }
 
+/// `key.issued` journals the key's credential, so a re-fold or a follower
+/// rebuilds `api_keys.credential` from the journal alone (event-catalog.md
+/// `key.issued`; ADR-0031 d7, d12).
+#[tokio::test]
+async fn key_issued_journals_the_keys_credential() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let issued = issue_with(
+        &app,
+        &boot.admin_key.value,
+        Role::Writer,
+        "crew/agent-credential",
+        vec![grant(crew, Role::Reader)],
+    )
+    .await;
+    let tail = journal(&store, boot.tenant_id).await;
+    let key_issued = &tail[usize::try_from(issued.access.issued_seq - 1).expect("seq")].envelope;
+    assert_eq!(key_issued.event_type, event_types::KEY_ISSUED);
+    assert_eq!(key_issued.payload["credential"], "bearer");
+    let admin_issued = tail
+        .iter()
+        .map(|e| &e.envelope)
+        .find(|e| {
+            e.event_type == event_types::KEY_ISSUED
+                && e.payload["key_id"] == boot.admin_key.key_id.to_string()
+        })
+        .expect("the admin key's key.issued");
+    assert_eq!(admin_issued.payload["credential"], "bearer");
+}
+
 #[tokio::test]
 async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch() {
     let store = MemStore::new();
@@ -2106,6 +2137,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
             // (event-catalog.md `key.issued`; ADR-0026 d8, d9).
             "name": issued.name.as_str(),
             "crew_id": null,
+            "credential": "bearer",
         })
     );
     for record in &issued.access.grants {
