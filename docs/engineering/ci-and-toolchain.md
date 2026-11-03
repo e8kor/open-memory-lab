@@ -53,6 +53,7 @@ ratchet that only ever loosens, so it starts tight:
 | Docs | `cargo doc` with `RUSTDOCFLAGS="-D warnings"` | every public item documented; broken intra-doc links fail |
 | Site | `mkdocs build --strict` | this documentation set keeps building; a broken link is a failure, not a warning |
 | Chart | `scripts/check_chart.py`, then job `chart`: a kind cluster, `pgvector/pgvector:pg17` in it, the image built from the checkout, `helm install`, the claim through `kubectl port-forward`, `scripts/quickstart.sh`, a restart, and an uninstall and reinstall | the Helm chart renders the one lead [ADR-0033](../adr/ADR-0033-interim-helm-chart.md) decides, at the workspace version and as the image's own user, and that lead serves the quickstart after a real install and keeps its signing key across a restart and a reinstall |
+| CLI platforms | job `cli-matrix`: `cargo build --bin oml`, `oml --version` and `cargo test -p oml-cli --lib --bins`, each on the native runner of one CLI release target | every platform the CLI ships for still builds and passes its unit tests, before a tag ([release artifacts](#release-artifacts-sbom-signing-provenance)) |
 | Schema sync | sqlx offline check: compile-time-checked queries against committed query metadata, regenerated whenever `migrations/` changes | queries and migrations cannot drift apart silently; the companion shape-vs-bytes rule is declared in the [schema page](../data/postgres-schema.md#migrations) |
 | M0 spikes | `uv run --locked --script scripts/check_chain_vectors.py`; `uv run --locked --script testing/spikes/rls/spike_rls.py --require-all` against `pgvector/pgvector:pg17` | the chain-format vectors keep reproducing outside Rust and the Rust tests' copies of them keep equalling the page, and spike 3's findings keep standing, recorded failures included ([M0 spikes](spikes/index.md)) |
 
@@ -109,8 +110,7 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   not native to its platform, emulates `linux/arm64`. A merge job (`merge`) assembles the index
   with `docker buildx imagetools create`, asserts that both platforms are in it, and only then
   signs the **index digest** with `cosign sign --recursive`, which also signs each platform
-  image in it, so the verification command above covers both architectures. The binary
-  tarballs stay `x86_64-linux` only, and the release notes say so. In CI, the `image` job of
+  image in it, so the verification command above covers both architectures. In CI, the `image` job of
   `.github/workflows/ci.yml` builds both platforms on every pull request and runs the image's
   `oml --version` on each, and `scripts/check_release.py` fails the pull request if
   `release.yml` stops building both platforms, assembling the index or signing its digest. No
@@ -119,6 +119,31 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   `docker buildx imagetools inspect` lists both platforms and `cosign verify` passes on its
   index digest. A tag's release notes name both platforms because that run's merge job asserted
   them before signing.
+- **The CLI and server archives (built, not yet released).** The CLI ships apart from the server,
+  a decision the maintainer made on 2026-10-31. A tag ships `oml-cli-X.Y.Z-<target>.tar.gz`, the
+  `oml` binary with the README and licence, for `x86_64-unknown-linux-musl` and
+  `aarch64-unknown-linux-musl` (static, so they run on any distribution), `aarch64-apple-darwin`
+  and `x86_64-apple-darwin`, and `oml-cli-X.Y.Z-x86_64-pc-windows-msvc.zip`; and
+  `oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
+  `aarch64-unknown-linux-gnu`. `release.yml` job `cli` builds each CLI target on a runner of its
+  own OS and architecture — `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `macos-15-intel` and
+  `windows-2025`, labels GitHub lists for public repositories
+  ([GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
+  fetched 2026-11-03) — and packages it only after the binary prints the tag's version; a musl
+  binary must also carry no program interpreter. The musl legs compile ring's C with Ubuntu's
+  `musl-tools` and link Rust's self-contained musl, on the native arm64 runner for
+  `aarch64`, so no cross toolchain is pinned. Job `server` builds the server on `ubuntu-22.04` and
+  `ubuntu-22.04-arm`, whose glibc is the oldest the listed Linux runners carry. Job `binaries`, once
+  every archive exists, writes one SBOM per archive with `cargo cyclonedx --target <target>`
+  (`<archive stem>.cdx.json`), one `SHA256SUMS` over every archive and SBOM, and then signs every
+  archive, every SBOM and `SHA256SUMS` with `cosign sign-blob`, under the identity above. In CI,
+  job `cli-matrix` of `.github/workflows/ci.yml` builds `oml` on the same target and runner pairs
+  on every pull request, runs its `--version` and runs the CLI's unit tests, the Windows
+  owner-only file tests among them ([CLI reference](../cli/reference.md#installing-oml-and-what-differs-on-windows));
+  the end-to-end suite stays on Linux, where Postgres runs. `scripts/check_release.py` fails the
+  pull request if `release.yml` stops building, packaging, summing or signing any target, or if
+  `cli-matrix` stops covering one. No tag has run these jobs yet, and until a pull request runs
+  `cli-matrix`, no macOS or Windows build of `oml` has run anywhere.
 - **The Helm chart (built, not yet released).** A tag also ships `oml-X.Y.Z.tgz`, the chart at
   `deploy/helm/oml` ([ADR-0033](../adr/ADR-0033-interim-helm-chart.md) d10), and its
   `.sigstore.json` bundle. `release.yml` job `chart` checks that the chart's `version` and
