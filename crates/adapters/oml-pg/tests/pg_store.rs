@@ -37,7 +37,7 @@ use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, JournalStore, MetadataFold, OutboxRow, StoreError,
 };
-use oml_app::types::{AppError, BootstrapRequest, KeyRecord};
+use oml_app::types::{AppError, BootstrapRequest, KeyRecord, PROVIDER_TENANT};
 use oml_pg::{
     ForkCheckError, MIGRATOR, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
@@ -4682,5 +4682,290 @@ async fn a_migrated_v0_3_database_keeps_every_key_as_a_bearer_key() {
     );
     drop(conn);
     let _ = db;
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// The provider tenant's OAuth state (ADR-0031 d5, d9): migration 0013's
+// client cache and authorization-request rows
+// ---------------------------------------------------------------------------
+
+/// An `oauth_clients` row of `kind` for `client_id`, written with `tenant_id`
+/// `tenant` (ADR-0031 d5).
+fn oauth_client_sql(tenant: Uuid, client_id: &str, kind: &str) -> String {
+    let digest = digest_hex(0x51);
+    format!(
+        "INSERT INTO oauth_clients (client_id, tenant_id, kind, client_name, redirect_uris, \
+         metadata_digest, fetched_at, created_at) \
+         VALUES ('{client_id}', '{tenant}', '{kind}', 'Claude', \
+                 ARRAY['https://claude.ai/api/mcp/auth_callback'], decode('{digest}', 'hex'), \
+                 now(), now())"
+    )
+}
+
+/// An `oauth_authorizations` row written with `tenant_id` `tenant`, its
+/// handle stored as the digest `byte` names, holding the verified code's id,
+/// tenant and key (ADR-0031 d9).
+fn authorization_sql(
+    tenant: Uuid,
+    id: Uuid,
+    byte: u8,
+    code: Uuid,
+    code_tenant: Uuid,
+    key: Uuid,
+) -> String {
+    let handle = digest_hex(byte);
+    let metadata = digest_hex(0x52);
+    let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    format!(
+        "INSERT INTO oauth_authorizations (id, tenant_id, handle_hash, client_id, client_kind, \
+         metadata_digest, redirect_uri, redirect_uri_sent, code_challenge, state, expires_at, \
+         code_id, code_tenant_id, key_id) \
+         VALUES ('{id}', '{tenant}', decode('{handle}', 'hex'), \
+                 'https://client.example/metadata.json', 'cimd', decode('{metadata}', 'hex'), \
+                 'https://client.example/callback', true, '{challenge}', 'xyz', \
+                 now() + interval '10 minutes', '{code}', '{code_tenant}', '{key}')"
+    )
+}
+
+/// An `oauth_clients` row whose `tenant_id` is not the reserved provider
+/// tenant is refused: under the provider tenant's session by its row
+/// security, and under the named tenant's own session by the column's check,
+/// so no tenant's session can place a client in its own tenant (ADR-0031 d5;
+/// postgres-schema.md connections).
+#[tokio::test]
+async fn an_oauth_clients_row_outside_the_provider_tenant_is_refused() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(130);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+
+    run_under(
+        &store,
+        PROVIDER_TENANT,
+        &oauth_client_sql(
+            PROVIDER_TENANT,
+            "https://client.example/metadata.json",
+            "cimd",
+        ),
+        "a provider tenant's client",
+    )
+    .await;
+    let outside = oauth_client_sql(tenant, "https://other.example/metadata.json", "cimd");
+    assert_eq!(
+        attempt_under(&store, PROVIDER_TENANT, &outside).await,
+        Err(("42501".to_owned(), None)),
+        "the provider tenant's session cannot write another tenant's client row"
+    );
+    assert_eq!(
+        attempt_under(&store, tenant, &outside).await,
+        Err((
+            "23514".to_owned(),
+            Some("oauth_clients_provider_tenant".to_owned())
+        )),
+        "a tenant's own session cannot write a client row into its tenant"
+    );
+    drop_dbs(&created).await;
+}
+
+/// An `oauth_authorizations` row whose `tenant_id` is not the reserved
+/// provider tenant is refused by the column's check, even under the named
+/// tenant's own session (ADR-0031 d9; postgres-schema.md connections).
+#[tokio::test]
+async fn an_oauth_authorizations_row_outside_the_provider_tenant_is_refused() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, tenant, key) = connector_rig(&created, 131).await;
+    let code = Uuid::from_u128(0xCA31);
+    let outside = authorization_sql(tenant, Uuid::from_u128(0xA031), 0x31, code, tenant, key);
+    assert_eq!(
+        attempt_under(&store, tenant, &outside).await,
+        Err((
+            "23514".to_owned(),
+            Some("oauth_authorizations_provider_tenant".to_owned())
+        )),
+        "a tenant's own session cannot write an authorization row into its tenant"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Rows of `oauth_authorizations` holding the handle digest `byte` names
+/// that the serving login sees with `oml.tenant_id` set to `tenant` and
+/// `oml.api_key_hash` to that digest, each when asked.
+async fn authorizations_found(
+    store: &PgStore,
+    tenant: Option<Uuid>,
+    byte: u8,
+    digest_set: bool,
+) -> i64 {
+    let mut tx = store.pool().begin().await.expect("begin");
+    if let Some(tenant) = tenant {
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+    }
+    if digest_set {
+        sqlx::query("SELECT set_config('oml.api_key_hash', $1, true)")
+            .bind(digest_hex(byte))
+            .execute(&mut *tx)
+            .await
+            .expect("set digest");
+    }
+    let (found,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM oauth_authorizations WHERE handle_hash = decode($1, 'hex')",
+    )
+    .bind(digest_hex(byte))
+    .fetch_one(&mut *tx)
+    .await
+    .expect("count");
+    tx.rollback().await.expect("rollback");
+    found
+}
+
+/// An authorization row is found by its handle digest under the provider
+/// tenant's session, and by no other: not the code's own tenant's, not a
+/// session with no tenant, and not the pre-tenant digest lookup, which this
+/// table does not answer (ADR-0031 d9; postgres-schema.md connections).
+#[tokio::test]
+async fn an_authorization_row_is_found_by_its_handle_digest_only_under_the_provider_tenant() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, tenant, key) = connector_rig(&created, 132).await;
+    let code = Uuid::from_u128(0xCA32);
+    run_under(
+        &store,
+        PROVIDER_TENANT,
+        &authorization_sql(
+            PROVIDER_TENANT,
+            Uuid::from_u128(0xA032),
+            0x32,
+            code,
+            tenant,
+            key,
+        ),
+        "an authorization row",
+    )
+    .await;
+
+    let flags: Vec<(String, bool, bool)> = sqlx::query(
+        "SELECT relname::text, relrowsecurity, relforcerowsecurity FROM pg_class \
+         WHERE relname IN ('oauth_authorizations', 'oauth_clients') ORDER BY relname",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("table flags")
+    .iter()
+    .map(|r| (r.get(0), r.get(1), r.get(2)))
+    .collect();
+    assert_eq!(
+        flags,
+        vec![
+            ("oauth_authorizations".to_owned(), true, true),
+            ("oauth_clients".to_owned(), true, true),
+        ],
+        "row-level security is enabled and forced on the provider tenant's two tables"
+    );
+    assert_eq!(
+        authorizations_found(&store, Some(PROVIDER_TENANT), 0x32, false).await,
+        1,
+        "the provider tenant's session finds the row by its handle digest"
+    );
+    assert_eq!(
+        authorizations_found(&store, Some(PROVIDER_TENANT), 0x33, false).await,
+        0,
+        "another handle's digest finds nothing"
+    );
+    assert_eq!(
+        authorizations_found(&store, Some(tenant), 0x32, false).await,
+        0,
+        "the code's own tenant's session does not find it"
+    );
+    assert_eq!(
+        authorizations_found(&store, None, 0x32, false).await,
+        0,
+        "a session with no tenant does not find it"
+    );
+    assert_eq!(
+        authorizations_found(&store, None, 0x32, true).await,
+        0,
+        "the pre-tenant digest lookup does not find it"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Deletes the authorization row whose handle digest `byte` names under
+/// `tenant`'s session, in a transaction that commits; the code id, code
+/// tenant and key each deleted row held.
+async fn take_authorization(store: &PgStore, tenant: Uuid, byte: u8) -> Vec<(Uuid, Uuid, Uuid)> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let taken = sqlx::query_as(
+        "DELETE FROM oauth_authorizations WHERE handle_hash = decode($1, 'hex') \
+         RETURNING code_id, code_tenant_id, key_id",
+    )
+    .bind(digest_hex(byte))
+    .fetch_all(&mut *tx)
+    .await
+    .expect("delete by handle");
+    tx.commit().await.expect("commit");
+    taken
+}
+
+/// A confirmation deletes its authorization row by handle under the provider
+/// tenant and reads back the code's id, tenant and key; the first delete
+/// returns them, a second finds no row, and a delete under the code's own
+/// tenant consumes nothing (ADR-0031 d9; postgres-schema.md connections).
+#[tokio::test]
+async fn deleting_an_authorization_row_by_handle_returns_its_code_tenant_and_key_exactly_once() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, tenant, key) = connector_rig(&created, 133).await;
+    let code = Uuid::from_u128(0xCA33);
+    run_under(
+        &store,
+        PROVIDER_TENANT,
+        &authorization_sql(
+            PROVIDER_TENANT,
+            Uuid::from_u128(0xA033),
+            0x34,
+            code,
+            tenant,
+            key,
+        ),
+        "an authorization row",
+    )
+    .await;
+
+    assert_eq!(
+        take_authorization(&store, tenant, 0x34).await,
+        Vec::new(),
+        "the code's own tenant's session deletes nothing"
+    );
+    assert_eq!(
+        take_authorization(&store, PROVIDER_TENANT, 0x34).await,
+        vec![(code, tenant, key)],
+        "the first delete returns the code, its tenant and its key"
+    );
+    assert_eq!(
+        take_authorization(&store, PROVIDER_TENANT, 0x34).await,
+        Vec::new(),
+        "a second delete with the same handle finds no row"
+    );
     drop_dbs(&created).await;
 }
