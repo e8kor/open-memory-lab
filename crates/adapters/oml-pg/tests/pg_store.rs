@@ -31,7 +31,7 @@ use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::{
     Envelope, EventDraft, EventTime, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, event_types, next_envelope, sign, verify_chain,
+    SignedEnvelope, WorkareaStatus, event_types, next_envelope, sign, verify_chain,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{
@@ -43,8 +43,8 @@ use oml_pg::{
     role_split_postflight, role_split_preflight,
 };
 use oml_port_contracts::{
-    ChainRig, held_memory, key_record, name, run_journal_store_suite, test_signing_key,
-    workarea_record,
+    ChainRig, held_memory, key_record, name, pending_transition, run_journal_store_suite,
+    test_signing_key, workarea_record,
 };
 use serde_json::{Value, json};
 use sqlx::migrate::Migrate as _;
@@ -4088,6 +4088,82 @@ async fn the_schema_holds_a_transition_to_one_rung_forward_ratified_by_another_k
             .await
             .expect("count");
         assert_eq!(n, seen, "tenant {tenant} sees {seen}");
+    }
+    drop_dbs(&created).await;
+}
+
+/// The serving role's transition reads answer under the asking tenant's
+/// row security: another tenant reads none of a tenant's proposals by id
+/// or by node, and under its own context, or none, the table shows it no
+/// row, while the owning tenant reads its own (ADR-0009 d3; ADR-0034 d3;
+/// postgres-schema.md row-level security).
+#[tokio::test]
+async fn the_serving_role_reads_no_other_tenants_transitions() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut a = ChainRig::new(103);
+    a.seed_chain(&store, 0).await;
+    let t = a.tenant_id;
+    let root = Uuid::from_u128(0xB1030);
+    a.create_workarea(&store, workarea_record(t, root, None, "universe"))
+        .await;
+    let node = Uuid::from_u128(0xB1031);
+    a.create_workarea(&store, workarea_record(t, node, Some(root), "procurement"))
+        .await;
+    let proposer = Uuid::from_u128(0xD1030);
+    a.issue_key(&store, key_record(t, proposer, Role::Admin, None))
+        .await;
+    let proposal = pending_transition(
+        t,
+        Uuid::from_u128(0xE1030),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    a.propose_transition(&store, proposal.clone())
+        .await
+        .expect("proposal");
+    let mut b = ChainRig::new(104);
+    b.seed_chain(&store, 0).await;
+
+    assert_eq!(
+        store.transition(t, proposal.transition_id).await,
+        Ok(Some(proposal.clone())),
+        "the owning tenant reads its proposal"
+    );
+    assert_eq!(
+        store.pending_transitions(t, node).await,
+        Ok(vec![proposal.clone()]),
+        "the owning tenant lists its proposal"
+    );
+    assert_eq!(
+        store.transition(b.tenant_id, proposal.transition_id).await,
+        Ok(None),
+        "another tenant reads none by id"
+    );
+    assert_eq!(
+        store.pending_transitions(b.tenant_id, node).await,
+        Ok(Vec::new()),
+        "another tenant lists none by node"
+    );
+    for (tenant, seen) in [(Some(t), 1_i64), (Some(b.tenant_id), 0), (None, 0)] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        if let Some(tenant) = tenant {
+            sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+                .bind(tenant.to_string())
+                .execute(&mut *tx)
+                .await
+                .expect("set tenant");
+        }
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM workarea_transitions")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("count");
+        tx.rollback().await.expect("rollback");
+        assert_eq!(n, seen, "under {tenant:?} the table shows {seen}");
     }
     drop_dbs(&created).await;
 }

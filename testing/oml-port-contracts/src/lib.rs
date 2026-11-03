@@ -27,8 +27,8 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     ClaimKeyState, Crew, CrewRecord, DenialRecord, GrantRecord, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, RecallCandidate, UnnamedRows,
-    WorkareaRecord,
+    ListingFilter, ListingPosition, ListingScope, MemoryRecord, RecallCandidate, TransitionRecord,
+    TransitionState, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -170,6 +170,70 @@ impl ChainRig {
             (self.head, self.n) = (head, n);
         }
         receipt
+    }
+
+    /// Commit one `workarea.status_proposed` folding `proposal`, its
+    /// payload the event catalog's.
+    pub async fn propose_transition<S: JournalStore>(
+        &mut self,
+        store: &S,
+        proposal: TransitionRecord,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.commit(
+            store,
+            event_types::WORKAREA_STATUS_PROPOSED,
+            json!({
+                "workarea_id": proposal.workarea_id.to_string(),
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "transition_id": proposal.transition_id.to_string(),
+                "proposed_by_key_id": proposal.proposer_key_id.to_string(),
+            }),
+            MetadataFold::TransitionProposed(proposal),
+            None,
+        )
+        .await
+    }
+
+    /// The `workarea.status_transition` link that ratifies `transition_id`
+    /// on `workarea_id` to `to` by `ratifier_key_id`, for [`Self::commit`]
+    /// or [`Self::commit_chain`].
+    #[must_use]
+    pub fn ratification(
+        transition_id: Uuid,
+        workarea_id: Uuid,
+        to: WorkareaStatus,
+        ratifier_key_id: Uuid,
+    ) -> (&'static str, Value, MetadataFold) {
+        (
+            event_types::WORKAREA_STATUS_TRANSITION,
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "to": to.as_str(),
+                "transition_id": transition_id.to_string(),
+                "ratified_by_key_id": ratifier_key_id.to_string(),
+            }),
+            MetadataFold::TransitionRatified {
+                transition_id,
+                workarea_id,
+                to,
+                ratifier_key_id,
+            },
+        )
+    }
+
+    /// Commit one `workarea.status_transition` ratifying `transition_id`.
+    pub async fn ratify_transition<S: JournalStore>(
+        &mut self,
+        store: &S,
+        transition_id: Uuid,
+        workarea_id: Uuid,
+        to: WorkareaStatus,
+        ratifier_key_id: Uuid,
+    ) -> Result<CommitReceipt, StoreError> {
+        let (event_type, payload, fold) =
+            Self::ratification(transition_id, workarea_id, to, ratifier_key_id);
+        self.commit(store, event_type, payload, fold, None).await
     }
 
     /// Commit one `workarea.create` folding `workarea`.
@@ -2443,6 +2507,443 @@ pub async fn a_universe_root_created_at_any_status_but_committed_is_refused<S: J
     );
 }
 
+/// A fixture pending proposal of one rung forward from `from` on
+/// `workarea_id` by `proposer_key_id`, under the principal [`key_record`]
+/// gives that key.
+#[must_use]
+pub fn pending_transition(
+    tenant_id: Uuid,
+    transition_id: Uuid,
+    workarea_id: Uuid,
+    from: WorkareaStatus,
+    proposer_key_id: Uuid,
+) -> TransitionRecord {
+    TransitionRecord {
+        transition_id,
+        tenant_id,
+        workarea_id,
+        from,
+        to: match from {
+            WorkareaStatus::Development => WorkareaStatus::Committed,
+            WorkareaStatus::Committed | WorkareaStatus::Validated => WorkareaStatus::Validated,
+        },
+        state: TransitionState::Pending,
+        proposer_key_id,
+        proposer_principal: format!("fixture/{proposer_key_id}"),
+        ratifier_key_id: None,
+    }
+}
+
+/// A rig with a universe root, `node` under it in `development`, and two
+/// admin keys, `proposer` and `ratifier`: the ground every transition law
+/// stands on.
+async fn transition_ground<S: JournalStore>(
+    store: &S,
+    seed: u64,
+    node: Uuid,
+    keys: (Uuid, Uuid),
+) -> ChainRig {
+    let mut rig = ChainRig::new(seed);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let root = Uuid::from_u128(node.as_u128() + 0x100);
+    rig.create_workarea(store, workarea_record(t, root, None, "universe"))
+        .await;
+    rig.create_workarea(
+        store,
+        workarea_record(t, node, Some(root), &format!("area-{seed}")),
+    )
+    .await;
+    for key in [keys.0, keys.1] {
+        rig.issue_key(store, key_record(t, key, Role::Admin, None))
+            .await;
+    }
+    rig
+}
+
+/// A proposal is a pending row the store serves back whole, by its id and
+/// in its node's pending list, which lists the node's proposals in the
+/// order they were proposed, not in id order, and no other node's
+/// (ADR-0009 d3; workareas.md, several proposals may wait on one node).
+pub async fn a_proposed_transition_is_pending_and_listed_by_its_workarea_in_proposal_order<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB490);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD490), Uuid::from_u128(0xD491));
+    let mut rig = transition_ground(store, 49, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let other = Uuid::from_u128(0xB491);
+    rig.create_workarea(
+        store,
+        workarea_record(t, other, Some(Uuid::from_u128(0xB590)), "area-49-other"),
+    )
+    .await;
+
+    // The later proposal on `node` carries the smaller id.
+    let first = pending_transition(
+        t,
+        Uuid::from_u128(0xE492),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    let elsewhere = pending_transition(
+        t,
+        Uuid::from_u128(0xE493),
+        other,
+        WorkareaStatus::Development,
+        ratifier,
+    );
+    let second = pending_transition(
+        t,
+        Uuid::from_u128(0xE491),
+        node,
+        WorkareaStatus::Development,
+        ratifier,
+    );
+    for proposal in [&first, &elsewhere, &second] {
+        rig.propose_transition(store, proposal.clone())
+            .await
+            .expect("a pending proposal one rung forward commits");
+    }
+
+    assert_eq!(
+        store
+            .transition(t, first.transition_id)
+            .await
+            .expect("read"),
+        Some(first.clone()),
+        "the proposal reads back whole and pending"
+    );
+    assert_eq!(
+        store.pending_transitions(t, node).await.expect("pending"),
+        vec![first.clone(), second.clone()],
+        "the node's proposals, in proposal order"
+    );
+    assert_eq!(
+        store.pending_transitions(t, other).await.expect("pending"),
+        vec![elsewhere],
+        "another node's list holds only its own"
+    );
+    assert_eq!(
+        store
+            .transition(t, Uuid::from_u128(0xE49F))
+            .await
+            .expect("read"),
+        None,
+        "an id no proposal carries reads as none"
+    );
+    assert_eq!(
+        store
+            .pending_transitions(t, Uuid::from_u128(0xB49F))
+            .await
+            .expect("pending"),
+        Vec::<TransitionRecord>::new(),
+        "a node the tenant does not hold lists none"
+    );
+    let stranger = ChainRig::new(52).tenant_id;
+    assert_eq!(
+        store
+            .transition(stranger, first.transition_id)
+            .await
+            .expect("read"),
+        None,
+        "another tenant reads none of this tenant's proposals"
+    );
+    assert_eq!(
+        store
+            .pending_transitions(stranger, node)
+            .await
+            .expect("pending"),
+        Vec::<TransitionRecord>::new(),
+        "another tenant lists none of this tenant's proposals"
+    );
+}
+
+/// A ratification is one commit: the row turns `ratified` with its
+/// ratifier and the node takes the row's `to`, both with the
+/// `workarea.status_transition` event at the head; a chain whose later link
+/// is refused leaves the row pending and the node where it was. A
+/// proposal another ratification overtook stays pending as history
+/// (ADR-0002 d1; ADR-0009 d3; workareas.md, ratification re-checks).
+pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commit_as_its_event<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB500);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD500), Uuid::from_u128(0xD501));
+    let mut rig = transition_ground(store, 50, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let proposal = pending_transition(
+        t,
+        Uuid::from_u128(0xE500),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    let overtaken = pending_transition(
+        t,
+        Uuid::from_u128(0xE501),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    for p in [&proposal, &overtaken] {
+        rig.propose_transition(store, p.clone())
+            .await
+            .expect("proposal");
+    }
+
+    // The ratification and a link the store refuses, as one chain.
+    let head = store.chain_head(t).await.expect("head");
+    let refused = rig
+        .commit_chain(
+            store,
+            vec![
+                ChainRig::ratification(
+                    proposal.transition_id,
+                    node,
+                    WorkareaStatus::Committed,
+                    ratifier,
+                ),
+                (
+                    event_types::KEY_REVOKED,
+                    json!({ "key_id": Uuid::from_u128(0xD50F).to_string() }),
+                    MetadataFold::KeyRevoked {
+                        key_id: Uuid::from_u128(0xD50F),
+                    },
+                ),
+            ],
+        )
+        .await;
+    assert!(
+        refused.is_err(),
+        "a chain with a refused link commits nothing"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Development),
+        "the refused chain moved no status"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        Some(proposal.clone()),
+        "the refused chain ratified nothing"
+    );
+
+    let receipt = rig
+        .ratify_transition(
+            store,
+            proposal.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            ratifier,
+        )
+        .await
+        .expect("a pending proposal whose from is the node's status ratifies");
+    let head = store.chain_head(t).await.expect("head").expect("a head");
+    assert_eq!(head.seq, receipt.seq, "the ratification is the head");
+    let event = store
+        .events_range(t, receipt.seq, 1)
+        .await
+        .expect("range")
+        .pop()
+        .expect("the ratification's event");
+    assert_eq!(
+        event.envelope.event_type,
+        event_types::WORKAREA_STATUS_TRANSITION
+    );
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Committed),
+        "the node stands on the row's to"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        Some(TransitionRecord {
+            state: TransitionState::Ratified,
+            ratifier_key_id: Some(ratifier),
+            ..proposal.clone()
+        }),
+        "the row is ratified by its ratifier"
+    );
+    assert_eq!(
+        store.pending_transitions(t, node).await.expect("pending"),
+        vec![overtaken],
+        "the overtaken proposal stays pending as history; the ratified one is no longer listed"
+    );
+}
+
+/// Every ratification whose guard matches no row is refused at its
+/// commit: one whose `from` is no longer the node's status, one already
+/// ratified, one naming another node, another `to` or no proposal at all,
+/// and one by the proposing key. None journals its event, moves the node,
+/// or changes the row (ADR-0009 d3; ADR-0010 R2; workareas.md,
+/// ratification re-checks).
+pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_moves_nothing<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB510);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD510), Uuid::from_u128(0xD511));
+    let mut rig = transition_ground(store, 51, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let sibling = Uuid::from_u128(0xB511);
+    rig.create_workarea(
+        store,
+        workarea_record(t, sibling, Some(Uuid::from_u128(0xB610)), "area-51-sibling"),
+    )
+    .await;
+    let ratified = pending_transition(
+        t,
+        Uuid::from_u128(0xE510),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    let stale = pending_transition(
+        t,
+        Uuid::from_u128(0xE511),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    let live = pending_transition(
+        t,
+        Uuid::from_u128(0xE512),
+        sibling,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    for p in [&ratified, &stale, &live] {
+        rig.propose_transition(store, p.clone())
+            .await
+            .expect("proposal");
+    }
+    rig.ratify_transition(
+        store,
+        ratified.transition_id,
+        node,
+        WorkareaStatus::Committed,
+        ratifier,
+    )
+    .await
+    .expect("the first ratification");
+    let head = store.chain_head(t).await.expect("head");
+
+    let cases = [
+        (
+            "a proposal whose from is no longer the node's status",
+            stale.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            ratifier,
+        ),
+        (
+            "a proposal already ratified",
+            ratified.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            ratifier,
+        ),
+        (
+            "a ratification naming another node",
+            live.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            ratifier,
+        ),
+        (
+            "a ratification naming another to",
+            live.transition_id,
+            sibling,
+            WorkareaStatus::Validated,
+            ratifier,
+        ),
+        (
+            "a ratification naming no proposal",
+            Uuid::from_u128(0xE51F),
+            sibling,
+            WorkareaStatus::Committed,
+            ratifier,
+        ),
+        (
+            "a ratification by the proposing key",
+            live.transition_id,
+            sibling,
+            WorkareaStatus::Committed,
+            proposer,
+        ),
+        (
+            "a ratification by a key the tenant does not hold",
+            live.transition_id,
+            sibling,
+            WorkareaStatus::Committed,
+            Uuid::from_u128(0xD51F),
+        ),
+    ];
+    for (case, transition_id, workarea_id, to, by) in cases {
+        let refused = rig
+            .ratify_transition(store, transition_id, workarea_id, to, by)
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "{case} is refused, got {refused:?}"
+        );
+        assert_eq!(
+            store.chain_head(t).await.expect("head"),
+            head,
+            "{case} journals nothing"
+        );
+    }
+    let statuses = [
+        (node, WorkareaStatus::Committed),
+        (sibling, WorkareaStatus::Development),
+    ];
+    for (id, status) in statuses {
+        assert_eq!(
+            store.workarea(t, id).await.expect("read").map(|w| w.status),
+            Some(status),
+            "no refused ratification moved {id}"
+        );
+    }
+    for (row, state, by) in [
+        (&ratified, TransitionState::Ratified, Some(ratifier)),
+        (&stale, TransitionState::Pending, None),
+        (&live, TransitionState::Pending, None),
+    ] {
+        assert_eq!(
+            store.transition(t, row.transition_id).await.expect("read"),
+            Some(TransitionRecord {
+                state,
+                ratifier_key_id: by,
+                ..row.clone()
+            }),
+            "no refused ratification changed row {}",
+            row.transition_id
+        );
+    }
+}
+
 /// A crew given at create is stored with the node and read back whole by
 /// every workarea read; a node created without one reads back without one
 /// (event-catalog.md `workarea.create`; postgres-schema.md `workareas.crew`).
@@ -4117,6 +4618,18 @@ where
     crew_round_trips_through_workarea_created(&new_store().await).await;
     a_workarea_read_serves_the_status_its_row_stores(&new_store().await).await;
     a_universe_root_created_at_any_status_but_committed_is_refused(&new_store().await).await;
+    a_proposed_transition_is_pending_and_listed_by_its_workarea_in_proposal_order(
+        &new_store().await,
+    )
+    .await;
+    ratifying_a_transition_moves_the_workareas_status_in_the_same_commit_as_its_event(
+        &new_store().await,
+    )
+    .await;
+    a_ratification_fold_whose_status_guard_fails_journals_nothing_and_moves_nothing(
+        &new_store().await,
+    )
+    .await;
     kind_version_and_body_bytes_round_trip_through_memory_held(&new_store().await).await;
     promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
         .await;

@@ -13,11 +13,13 @@ use uuid::Uuid;
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
-use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
+use oml_domain::{
+    ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, WorkareaStatus, key_fingerprint,
+};
 
 use crate::types::{
     ClaimKeyState, CrewRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
-    RecallCandidate, UnnamedRows, WorkareaRecord,
+    RecallCandidate, TransitionRecord, UnnamedRows, WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -173,6 +175,30 @@ pub enum MetadataFold {
     TipSuperseded {
         successor: Uuid,
         replaced: Uuid,
+    },
+    /// `workarea.status_proposed`: the proposal's row, `pending` with no
+    /// ratifier, its `proposed_seq` this commit's seq. The store refuses a
+    /// node or proposing key its tenant does not hold, a step other than
+    /// one rung forward, and a record that is not pending (postgres-schema.md
+    /// `workarea_transitions`; ADR-0009 d3). Whether the step may be
+    /// proposed is the ladder's, decided before the commit: no ladder rule
+    /// lives in the store.
+    TransitionProposed(TransitionRecord),
+    /// `workarea.status_transition`: the pending row `transition_id` on
+    /// `workarea_id` becomes `ratified` by `ratifier_key_id`, its
+    /// `ratified_seq` this commit's seq, and the node's status becomes `to`
+    /// in the same transaction. Both writes are guarded: the row must be
+    /// pending with this node and this `to`, and the node's status must
+    /// still be the row's `from`; a guard that matches no row refuses the
+    /// commit, which writes nothing, its event included, never a silent
+    /// no-op. The schema's checks refuse a ratifier that is the proposing
+    /// key, a key the tenant does not hold, and a universe root moved off
+    /// `committed` (ADR-0009 d1, d3; workareas.md, ratification re-checks).
+    TransitionRatified {
+        transition_id: Uuid,
+        workarea_id: Uuid,
+        to: WorkareaStatus,
+        ratifier_key_id: Uuid,
     },
 }
 
@@ -584,6 +610,26 @@ pub trait JournalStore: Send + Sync {
         tenant_id: Uuid,
         workarea_id: Uuid,
     ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send;
+
+    /// The status-ladder proposal `transition_id`, pending or ratified;
+    /// `None` for one this tenant does not hold (ADR-0009 d3).
+    fn transition(
+        &self,
+        tenant_id: Uuid,
+        transition_id: Uuid,
+    ) -> impl Future<Output = Result<Option<TransitionRecord>, StoreError>> + Send;
+
+    /// Every `pending` proposal on the node, in the order they were
+    /// proposed (`proposed_seq`); empty for a node this tenant does not
+    /// hold. A proposal another's ratification made stale is still listed
+    /// here, as its row is still pending: the status read drops the ones
+    /// whose `from` is no longer the node's status (workareas.md, the status
+    /// read lists only live proposals).
+    fn pending_transitions(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<TransitionRecord>, StoreError>> + Send;
 
     fn idempotency_get(
         &self,

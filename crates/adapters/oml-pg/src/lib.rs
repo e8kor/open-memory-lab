@@ -24,7 +24,7 @@ use oml_app::ports::{
 use oml_app::types::{
     ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
     ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
-    UnnamedRows, WorkareaRecord,
+    TransitionRecord, TransitionState, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -648,11 +648,61 @@ impl PgStore {
         tx.commit().await.map_err(backend)?;
         rows.iter().map(workarea_from_row).collect()
     }
+
+    /// One transition read under the tenant's RLS context: `sql` binds the
+    /// tenant as `$1` and one id as `$2` and selects [`TRANSITION_COLUMNS`].
+    async fn transition_rows(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        sql: &str,
+    ) -> Result<Vec<TransitionRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(sql)
+            .bind(tenant_id)
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(transition_from_row).collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Small conversions between the port's types and the schema's columns
 // ---------------------------------------------------------------------------
+
+/// The `workarea_transitions` columns a transition read selects.
+const TRANSITION_COLUMNS: &str = "id, tenant_id, workarea_id, from_status, to_status, state, \
+     proposer_key_id, proposer_principal, ratifier_key_id";
+
+/// A `workarea_transitions` row as the port's record; a status or state
+/// word the record does not spell fails closed.
+fn transition_from_row(row: &PgRow) -> Result<TransitionRecord, StoreError> {
+    let transition_id: Uuid = row.try_get("id").map_err(backend)?;
+    let status = |column: &str| -> Result<WorkareaStatus, StoreError> {
+        let word: String = row.try_get(column).map_err(backend)?;
+        WorkareaStatus::parse(&word).ok_or_else(|| {
+            StoreError::Backend(format!("transition {transition_id} has {column} {word:?}"))
+        })
+    };
+    let state: String = row.try_get("state").map_err(backend)?;
+    Ok(TransitionRecord {
+        transition_id,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        workarea_id: row.try_get("workarea_id").map_err(backend)?,
+        from: status("from_status")?,
+        to: status("to_status")?,
+        state: TransitionState::parse(&state).ok_or_else(|| {
+            StoreError::Backend(format!("transition {transition_id} has state {state:?}"))
+        })?,
+        proposer_key_id: row.try_get("proposer_key_id").map_err(backend)?,
+        proposer_principal: row.try_get("proposer_principal").map_err(backend)?,
+        ratifier_key_id: row.try_get("ratifier_key_id").map_err(backend)?,
+    })
+}
 
 fn backend<E: std::fmt::Display>(e: E) -> StoreError {
     StoreError::Backend(e.to_string())
@@ -1550,6 +1600,120 @@ async fn apply_fold(
         } => {
             supersede_tip(tx, tenant_id, successor, replaced, at).await?;
         }
+        MetadataFold::TransitionProposed(p) => {
+            // The schema refuses a step other than one rung forward, a
+            // ratified row with no ratifier or no seq, and a node or key of
+            // another tenant (0010_workarea_transitions.sql); the record's
+            // state is written as carried, so a record that is not pending
+            // meets those checks rather than being coerced.
+            sqlx::query(
+                "INSERT INTO workarea_transitions (id, tenant_id, workarea_id, from_status, \
+                 to_status, state, proposer_key_id, proposer_principal, ratifier_key_id, \
+                 proposed_seq) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            )
+            .bind(p.transition_id)
+            .bind(tenant_id)
+            .bind(p.workarea_id)
+            .bind(p.from.as_str())
+            .bind(p.to.as_str())
+            .bind(p.state.as_str())
+            .bind(p.proposer_key_id)
+            .bind(&p.proposer_principal)
+            .bind(p.ratifier_key_id)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::TransitionRatified {
+            transition_id,
+            workarea_id,
+            to,
+            ratifier_key_id,
+        } => {
+            ratify_transition(
+                tx,
+                tenant_id,
+                seq,
+                transition_id,
+                workarea_id,
+                to,
+                ratifier_key_id,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// `workarea.status_transition`'s fold. The node row is locked and read
+/// first, under the chain lock the commit already holds, so nothing moves
+/// it between the guard and the write (workareas.md, ratification
+/// re-checks). The row turns `ratified` only while it is pending on this
+/// node with this `to` and its `from` is the node's status, and the node
+/// then takes `to` only from that `from`; a guard that matches no row
+/// refuses the commit, which writes nothing, never a silent no-op. The
+/// schema refuses a ratifier that is the proposing key or a key the tenant
+/// does not hold, and a universe root moved off `committed` (ADR-0009 d1,
+/// d3).
+async fn ratify_transition(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    seq: i64,
+    transition_id: Uuid,
+    workarea_id: Uuid,
+    to: WorkareaStatus,
+    ratifier_key_id: Uuid,
+) -> Result<(), StoreError> {
+    let guard = || {
+        StoreError::Backend(format!(
+            "transition {transition_id} is not a pending proposal on workarea {workarea_id} \
+             to {} from the node's status",
+            to.as_str()
+        ))
+    };
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM workareas WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(workarea_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
+    let Some(from) = status else {
+        return Err(guard());
+    };
+    let ratified = sqlx::query(
+        "UPDATE workarea_transitions SET state = 'ratified', ratifier_key_id = $5, \
+         ratified_seq = $6 \
+         WHERE tenant_id = $1 AND id = $2 AND workarea_id = $3 AND to_status = $4 \
+         AND state = 'pending' AND from_status = $7",
+    )
+    .bind(tenant_id)
+    .bind(transition_id)
+    .bind(workarea_id)
+    .bind(to.as_str())
+    .bind(ratifier_key_id)
+    .bind(seq)
+    .bind(&from)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if ratified.rows_affected() != 1 {
+        return Err(guard());
+    }
+    let moved = sqlx::query(
+        "UPDATE workareas SET status = $3 WHERE tenant_id = $1 AND id = $2 AND status = $4",
+    )
+    .bind(tenant_id)
+    .bind(workarea_id)
+    .bind(to.as_str())
+    .bind(&from)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if moved.rows_affected() != 1 {
+        return Err(guard());
     }
     Ok(())
 }
@@ -2541,6 +2705,36 @@ impl JournalStore for PgStore {
              ORDER BY name COLLATE \"C\" ASC, id ASC"
         );
         self.workarea_rows(tenant_id, workarea_id, &sql).await
+    }
+
+    async fn transition(
+        &self,
+        tenant_id: Uuid,
+        transition_id: Uuid,
+    ) -> Result<Option<TransitionRecord>, StoreError> {
+        let sql = format!(
+            "SELECT {TRANSITION_COLUMNS} FROM workarea_transitions \
+             WHERE tenant_id = $1 AND id = $2"
+        );
+        Ok(self
+            .transition_rows(tenant_id, transition_id, &sql)
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    async fn pending_transitions(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<TransitionRecord>, StoreError> {
+        // The index on (tenant_id, workarea_id, state) serves the filter.
+        let sql = format!(
+            "SELECT {TRANSITION_COLUMNS} FROM workarea_transitions \
+             WHERE tenant_id = $1 AND workarea_id = $2 AND state = 'pending' \
+             ORDER BY proposed_seq"
+        );
+        self.transition_rows(tenant_id, workarea_id, &sql).await
     }
 
     async fn idempotency_get(
