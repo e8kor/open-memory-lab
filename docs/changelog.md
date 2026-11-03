@@ -29,36 +29,31 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
-### 2026-10-31 — Time lives in the journal: valid time, the as-of read, MCP resources and `oml fs` (ADR-0036, proposed)
+### 2026-11-03 — Time lives in the journal: valid time, the as-of read, MCP resources and `oml fs` (ADR-0036, proposed)
 
 [ADR-0036](adr/ADR-0036-time-lives-in-the-journal-and-every-read-of-the-past-applies-todays-access.md),
-proposed on 2026-10-31, designs how OML answers what it knew at a point in the journal and what a
-claim says was true in the world, under today's access, and how agents and terminals read both. It
-records the user's decisions of that day: no file system or storage engine of OML's own, a
-bitemporal model, today's grants and state on every read of the past, and MCP resources and a
-read-only CLI as the views. Its number follows those that records on other branches hold. It
-binds nothing before its acceptance, and no accepted record changes until then.
+proposed on 2026-10-31 and simplified on 2026-11-03 after two review rounds, designs how OML
+answers what it knew at a point in the journal and what a claim says was true in the world, under
+today's access, and how agents and terminals read both. It records the user's decisions of
+2026-10-31: a bitemporal model, today's grants and state on every read of the past, MCP resources
+and a read-only CLI as the views, and no file system or storage engine of OML's own. It binds
+nothing before its acceptance, and no accepted record changes until then.
 
-- **Proposed, not built:** transaction time and valid time as two named axes beside
-  `simulated_time` (d1); `valid_from` and `valid_to` in the signed submission, bound by the digest
-  of a form sealed under the version's DEK so the journal stays digest-only and an erase shreds
-  them, reviewed and never inherited (d2); the as-of read at one resolved seq under rule
-  `oml-asof/1`, an instant's answer echoing the instant and never its seq, the interval fold over
-  submissions and tip moves, the `at` watermark kept off the journal, one instant rule on the lead
-  and on a follower, and `request.as_of_ahead` (d3); `valid_at` and valid ranges as filters that
-  never rank (d4); a version's file set pinned by its file manifest, with one durability condition
-  on ADR-0035's store (d5); MCP resources with no subscription, resolved through the scoped listing
-  at the URI's workarea and get, each file path segment encoded on its own (d6); `oml fs` and
-  `oml fs export <workarea> <dir>`, each `claim_key` one percent-encoded segment (d7); tip intervals
-  in gold (d8); what time never permits (d9); the wire, one code and three vocabulary rows (d10);
-  the build order after iteration 3, beside ADR-0035, with files in S6 (d11).
+- **Proposed, not built:** two named axes beside `simulated_time` (d1); `valid_from` and
+  `valid_to` as clear, signed metadata outside the encrypted body, reviewed and never inherited
+  (d2); the as-of read at one resolved seq under rule `oml-asof/1`, with existence and the tip
+  taken at that seq, a fold of exactly those two facts, the `at` watermark, `request.as_of_ahead`
+  on the lead and a follower alike, and no answer carrying the seq or an instant (d3); `valid_at`
+  and valid ranges as filters that never rank (d4); MCP resources with no subscription, whose path
+  segments are refused when they hold a reserved character or a `%` (d5); `oml fs` and its export
+  (d6); the wire, one code and three vocabulary rows (d7); the build order, with the steps that
+  need ADR-0030 and ADR-0035 after them (d8). Each cut from the earlier draft is a rejected or
+  deferred alternative, and the record follows ADR-0026's names.
 - **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-47 to FR-49 on
-  the roadmap, each marked proposed; FR-46 is ADR-0035's on its branch. No contract page changes,
-  so `info.version` stays `0.2.0-design`.
-- **Amends, on acceptance:** ADR-0005 (d4), ADR-0014 (d2), ADR-0018 (d4) and ADR-0025 (d8, d9,
-  d12, d13); their Status lines gain the back-pointer then, FR-31's row names the newest `at` the
-  as-of refusal shows, and ADR-0030's `P-R3-BOUNDARY` leaves out reads at a seq and the rows an
-  instant reaches where `at` regresses.
+  the roadmap, each marked proposed. No contract page changes, so `info.version` stays
+  `0.3.0-design`.
+- **Amends, on acceptance:** ADR-0005 (d4, d5), ADR-0014 (d2), ADR-0018 (d4) and ADR-0025 (d8,
+  d9, d12, d13); their Status lines gain the back-pointer then.
 
 ### 2026-10-31 — Names as keys (implementation)
 
