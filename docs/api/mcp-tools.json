@@ -24,7 +24,7 @@
           },
           "idempotency_key": {
             "type": "string",
-            "description": "A retry with the same key and an identical request returns the stored response with idempotent_replay true; the same key with a different request is a typed error, never a second write (D13)."
+            "description": "Without replaces it is scoped to (key, resolved workarea), as a submission's; with replaces to the calling key alone, whatever the target's workarea, as a supersession's. Within one scope, a retry with the same key and an identical request returns the stored response with idempotent_replay true, and the same key with a different request is a typed error, never a second write (D13). The same key reused across the two modes, or on two submissions into different workareas, is a separate write."
           },
           "claim_key": {
             "type": "string",

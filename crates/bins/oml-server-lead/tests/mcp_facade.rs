@@ -1758,6 +1758,69 @@ async fn a_repeated_idempotency_key_replays_with_idempotent_replay_true() {
     drop_db(&db).await;
 }
 
+/// `oml_write`'s idempotency key has the scope of the endpoint its mode
+/// maps to: a submission's record is scoped to (key, resolved workarea), a
+/// supersession's to the calling key alone, so one key reused across the
+/// two modes is two writes, neither a replay nor
+/// `idempotency.digest_mismatch`, and the catalog says both scopes
+/// (ADR-0039 d3, ADR-0025 d10, D13).
+#[tokio::test]
+async fn a_reused_idempotency_key_across_modes_is_a_separate_write() {
+    let catalog: Value =
+        serde_json::from_str(include_str!("../../../../docs/api/mcp-tools.json")).expect("json");
+    let write = catalog["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "oml_write")
+        .expect("oml_write is declared");
+    let said = write["inputSchema"]["properties"]["idempotency_key"]["description"]
+        .as_str()
+        .expect("description");
+    assert!(
+        said.contains("Without replaces it is scoped to (key, resolved workarea)")
+            && said.contains("with replaces to the calling key alone")
+            && said.contains("is a separate write"),
+        "{said}"
+    );
+
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+
+    let key = "crew-procure/run-5/step-1";
+    let submitted = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_write",
+        json!({"text": ALLOY, "idempotency_key": key}),
+    )
+    .await;
+    assert_eq!(submitted["isError"], false, "{submitted}");
+    assert_eq!(submitted["structuredContent"]["idempotent_replay"], false);
+
+    let superseded = call_tool(
+        &router,
+        &writer,
+        2,
+        "oml_write",
+        json!({"replaces": v1, "text": REVISED, "idempotency_key": key}),
+    )
+    .await;
+    assert_eq!(superseded["isError"], false, "{superseded}");
+    assert_eq!(superseded["structuredContent"]["idempotent_replay"], false);
+    assert_ne!(
+        superseded["structuredContent"]["artifact_id"],
+        submitted["structuredContent"]["artifact_id"]
+    );
+    assert_eq!(own_versions(&router, &writer).await, 3);
+
+    drop_db(&db).await;
+}
+
 /// `oml_remember`'s `workarea` takes the node's name as well as its id: the
 /// facade passes it through as the body's `workarea` and the server
 /// resolves it,
