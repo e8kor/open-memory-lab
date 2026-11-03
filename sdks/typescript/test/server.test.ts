@@ -12,7 +12,11 @@ import {
   RequestError,
   SubmissionError,
 } from "../src/index.ts";
-import { marker, type OmlServer, startServer } from "./harness.ts";
+import { marker, mintsRoles, type OmlServer, startServer } from "./harness.ts";
+
+// Without a superuser to mint the role pair, every suite below skips and the
+// harness has printed its did-not-run line (ADR-0034 d8).
+const live = { skip: !mintsRoles() };
 
 let server: OmlServer;
 let agent: OmlClient;
@@ -20,6 +24,7 @@ let reviewer: OmlClient;
 const tag = () => randomBytes(4).toString("hex");
 
 before(async () => {
+  if (live.skip) return;
   server = await startServer();
   agent = new OmlClient({ baseUrl: server.url, apiKey: server.agentKey });
   reviewer = new OmlClient({ baseUrl: server.url, apiKey: server.dreamerKey });
@@ -63,7 +68,7 @@ function countSubmits() {
   return { state, fetcher };
 }
 
-describe("the agent loop", () => {
+describe("the agent loop", live, () => {
   test("a remembered memory is held, recalled by its author alone, and promoted by a reviewer", async () => {
     const word = marker();
     const workarea = server.reviewWorkarea;
@@ -98,7 +103,7 @@ describe("the agent loop", () => {
   });
 });
 
-describe("idempotency", () => {
+describe("idempotency", live, () => {
   test("a write whose response was lost is retried under the same key and replayed", async () => {
     const claimKey = `lost-${tag()}`;
     const { state, fetcher } = loseFirstSubmitResponse();
@@ -156,7 +161,7 @@ describe("idempotency", () => {
   });
 });
 
-describe("pagination", () => {
+describe("pagination", live, () => {
   test("iteration follows next_cursor across pages until it is null", async () => {
     const t = tag();
     const written: string[] = [];
@@ -194,7 +199,7 @@ describe("pagination", () => {
   });
 });
 
-describe("error mapping", () => {
+describe("error mapping", live, () => {
   test("a bad key is an AuthError with its code, rule, message and retryable", async () => {
     const client = new OmlClient({ baseUrl: server.url, apiKey: "oml_not_a_key" });
     await assert.rejects(client.recall({ query: "anything" }), (error: unknown) => {
@@ -246,7 +251,7 @@ describe("error mapping", () => {
   });
 });
 
-describe("the key", () => {
+describe("the key", live, () => {
   test("the key and server come from the environment when none is passed", async () => {
     process.env.OML_API_KEY = server.agentKey;
     process.env.OML_URL = server.url;

@@ -3,7 +3,9 @@
 The current build on Kubernetes: one `oml-server-lead` under the `Recreate` strategy, its
 keyring on a ReadWriteOnce claim that `helm uninstall` keeps, Postgres external through an
 existing Secret, and the first admin key claimed through `kubectl port-forward` before any
-Ingress exists. The followers, the lake-writer, the reconciler, the indexer and the bootstrap
+Ingress exists. The Secret holds two URLs: `OML_POSTGRES__OWNER_URL`, for the role that owns the
+database and runs the migrations, and `OML_POSTGRES__URL`, for the role the lead serves under,
+which owns nothing. The lead refuses to start when both log in as one role. The followers, the lake-writer, the reconciler, the indexer and the bootstrap
 Job of the designed chart are decided, not built.
 
 - Install, the claim ceremony and the failure modes:

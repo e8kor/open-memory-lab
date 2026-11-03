@@ -25,6 +25,9 @@ packages = ["src/oml_sdk"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Skip reasons in the summary, so a local run without a superuser shows its
+# `did not run: <role> cannot create roles` line (tests/conftest.py).
+addopts = "-rs"
 
 # The hand-written code only; the generated layer is formatted by the
 # generator's own post-hooks (openapi-python-client.yaml).

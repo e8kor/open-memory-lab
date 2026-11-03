@@ -368,6 +368,14 @@ jobs:
 
           Then follow the quickstart in the README to claim the server and issue keys.
 
+          On a new volume, compose creates two database roles: \`oml_owner\`, which owns the
+          database and runs the migrations through \`OML_POSTGRES__OWNER_URL\`, and
+          \`oml_server\`, which owns nothing and serves through \`OML_POSTGRES__URL\`. Postgres
+          runs its init scripts only on an empty volume, so a volume an earlier release
+          created holds neither role: split it once before this release starts, as decision d7 of
+          https://e8kor.github.io/open-memory-lab/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing/
+          describes. The server refuses to start while both URLs log in as one role.
+
           The agent plugin for Claude Code:
 
               claude plugin marketplace add ${{ github.repository }}
@@ -492,8 +500,15 @@ jobs:
 
           ## Kubernetes
 
-          The Helm chart runs this release's one lead, with Postgres you bring through a Secret:
+          The Helm chart runs this release's one lead, with Postgres you bring through a Secret
+          that holds two URLs: \`OML_POSTGRES__OWNER_URL\` for the role that owns the database and
+          runs the migrations, and \`OML_POSTGRES__URL\` for the role the lead serves under, which
+          owns nothing. Each role holds LOGIN alone:
 
+              kubectl create namespace oml
+              kubectl --namespace oml create secret generic oml-postgres \\
+                --from-literal=OML_POSTGRES__URL='postgres://SERVING_ROLE:PASSWORD@HOST:5432/DATABASE' \\
+                --from-literal=OML_POSTGRES__OWNER_URL='postgres://OWNER_ROLE:PASSWORD@HOST:5432/DATABASE'
               helm install oml ${url} \\
                 --namespace oml --create-namespace --set image.digest=${DIGEST}
 

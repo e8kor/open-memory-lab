@@ -25,6 +25,9 @@ Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
   (d3);
 - OML_POSTGRES__URL comes from a secretKeyRef, and no env value is a
   postgres:// URL (d6);
+- OML_POSTGRES__OWNER_URL, the owner login the lead migrates under, comes
+  from a secretKeyRef in the same Secret as OML_POSTGRES__URL (ADR-0033 d6,
+  ADR-0034 d4, d10 step 2);
 - values.yaml sets no resources and the default render requests and limits
   nothing: resource hints are comments, never claims (d5);
 - the Service is a ClusterIP that selects the lead's pods by its server
@@ -244,6 +247,18 @@ def check_lead(
     url = next((e for e in lead.get("env", []) if e.get("name") == "OML_POSTGRES__URL"), None)
     if url is None or "secretKeyRef" not in url.get("valueFrom", {}):
         errors.append(f"{label}: OML_POSTGRES__URL does not come from a secretKeyRef (ADR-0033 d6)")
+    owner = next((e for e in lead.get("env", []) if e.get("name") == "OML_POSTGRES__OWNER_URL"), None)
+    owner_ref = (owner or {}).get("valueFrom", {}).get("secretKeyRef")
+    if owner_ref is None:
+        errors.append(
+            f"{label}: OML_POSTGRES__OWNER_URL does not come from a secretKeyRef; the lead "
+            "migrates under the owner URL and refuses to boot without it (ADR-0033 d6, ADR-0034 d4, d5)"
+        )
+    elif url is not None and owner_ref.get("name") != url.get("valueFrom", {}).get("secretKeyRef", {}).get("name"):
+        errors.append(
+            f"{label}: OML_POSTGRES__OWNER_URL comes from Secret {owner_ref.get('name')!r}, "
+            "not the Secret that holds OML_POSTGRES__URL (ADR-0034 d10 step 2)"
+        )
 
     mounts = {m.get("name"): m.get("mountPath") for m in lead.get("volumeMounts", [])}
     volumes = {v.get("name"): v for v in pod.get("volumes", [])}
