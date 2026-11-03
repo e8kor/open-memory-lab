@@ -29,6 +29,40 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — The agent recalls for itself, and a failed command recalls when opted in (ADR-0038)
+
+The proposed [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) records what the maintainer decided on 2026-11-03, and this change
+builds it. It amends [ADR-0029](adr/ADR-0029-session-start-hook.md) d6 and d7; the pointer on
+ADR-0029 is added on acceptance, not before.
+
+- **Decided and built:** `initialize` answers with server instructions under 4,096 characters that
+  name `oml_recall` first (d1); the `oml_recall` description in `docs/api/mcp-tools.json` and the
+  `oml-memory` skill open with when to recall and with which words (d2); one recall line in the
+  session-start context (d3); `oml hook tool-failure`, off unless `OML_FAILURE_RECALL=1`, which on
+  a failed Bash command recalls with at most three distinctive words of the error, secrets
+  removed, skips `grep`, `test`, `[` and `diff`, an error the session already recalled and any
+  session whose earlier request failed, and sends one recall of `k` 3 under 200 budget tokens with
+  a 1-second timeout and a 2-second deadline (d4–d7); its context, the data frame and a
+  may-be-irrelevant line over at most three hit lines, at most 1,600 bytes, nothing on a miss (d8);
+  the per-session cache of ids and digests, 0600, seeded by session start and deleted by
+  `oml hook session-end`, and the two guarded hook entries (d9).
+- **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` runs both verbs against the real lead behind
+  the request recorder, and against stubs for a failing and a silent server;
+  `crates/bins/oml-server-lead/tests/mcp_facade.rs` holds the instructions;
+  `scripts/check_plugin.py` now holds all three hook entries: events, matcher, timeout, status
+  message, arguments and the guard.
+- **Not verified here:** that Claude Code runs the two new hooks and adds the failure context;
+  whether `session_id` survives `/clear`. The [roadmap](product/roadmap.md) moves FR-57 and opens
+  FR-63 and FR-64.
+- **No surface change** to the HTTP API: `info.version` stays `0.3.0-design`, and no package
+  version moves until the release.
+- **Pages touched:** [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), the [decision register](adr/index.md) (row and the D14
+  cell), `mkdocs.yml`, [llms.txt](llms.txt), [CLI reference](cli/reference.md),
+  [agent plugin](api/mcp-plugin.md), [mcp-tools.json](api/mcp-tools.json), the
+  [roadmap](product/roadmap.md) (FR-57, FR-63, FR-64) and this page; outside `docs/`,
+  `plugins/oml/README.md`, `plugins/oml/skills/oml-memory/SKILL.md`,
+  `plugins/oml/hooks/hooks.json` and `scripts/check_plugin.py`.
+
 ### 2026-10-31 — Names as keys (implementation)
 
 An implementation milestone; no decision changes. The code now serves what the proposed

@@ -142,3 +142,4 @@ nav:
       - ADR-0028: adr/ADR-0028-agent-key-issuance.md
       - ADR-0029: adr/ADR-0029-session-start-hook.md
       - ADR-0033: adr/ADR-0033-interim-helm-chart.md
+      - ADR-0038: adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md
