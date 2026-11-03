@@ -7,8 +7,9 @@
 //! The surface is declared on `docs/api/http-api.md` (the vocabulary read
 //! surface, `GET /v2/vocab/suggest`) and `docs/api/openapi.yaml`
 //! (`suggestTerms`, `VocabSuggestion`); the normalization is admission's
-//! NFC step (`docs/architecture/admission.md`). This module mirrors them
-//! and adds nothing.
+//! NFC step (`docs/architecture/admission.md`). This module mirrors them in
+//! all but one thing: its order departs from the list-endpoint convention,
+//! and that departure is not yet declared (see [`suggest`]).
 //!
 //! Suggest refuses nothing: a query that matches no label answers an empty
 //! list, which is also how a vocabulary outside the caller's read scope
@@ -75,9 +76,18 @@ pub struct Suggestion {
 // `price`.
 // reading: "prefix+label typeahead" is read as prefix matching over labels;
 // the CURIE itself is not matched.
-// reading: the docs call suggest deterministic but name no order; the order
-// here is the best match first, then the shortest label, then the CURIE,
-// which makes it total.
+// departure, undeclared: http-api.md's Pagination section orders every list
+// endpoint by `created_at` descending and names the events tail as its one
+// exception; openapi.yaml's `Limit` parameter says the same, and
+// `suggestTerms` states no other order. Suggest is cursor-paginated "per the
+// convention" (http-api.md, Vocabularies), so the declared order for it is
+// newest first. This function orders by match, then label length, then
+// CURIE instead: a typeahead ranks by fit, and `ReleaseTerm` carries no
+// `created_at` to order by. That is a new decision, not a reading of a
+// silent spec. Its declaration site is http-api.md's Pagination section (a
+// second deliberate exception) with a matching line on openapi.yaml's
+// `suggestTerms`, kept in step by scripts/check_contract_sync.py; until
+// that lands, no transport may serve this order as the contract's.
 // reading: openapi.yaml's `suggestTerms` example lists a deprecated term
 // among the suggestions with its `term_status`, and the docs rank nothing
 // by status, so a deprecated term is neither dropped nor demoted in rank.
