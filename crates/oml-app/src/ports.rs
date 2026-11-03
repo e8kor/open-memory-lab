@@ -17,9 +17,9 @@ use oml_domain::oauth::RevokedCause;
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{
-    ClaimKeyState, ConnectCode, ConnectCodeRecord, ConnectionRecord, CrewRecord, KeyAccess,
-    KeyRecord, ListingFilter, ListingPosition, MemoryRecord, RecallCandidate, UnnamedRows,
-    WorkareaRecord,
+    AuthorizationRecord, ClaimKeyState, ConnectCode, ConnectCodeRecord, ConnectGrant,
+    ConnectOutcome, ConnectionRecord, CrewRecord, KeyAccess, KeyRecord, ListingFilter,
+    ListingPosition, MemoryRecord, OAuthClientRecord, RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -662,10 +662,11 @@ pub trait JournalStore: Send + Sync {
 
 /// The connection rows of a store that serves connector keys
 /// (postgres-schema.md "connections (ADR-0031)"): the operational writes
-/// that journal nothing — code entry spending a code, Connect creating an
-/// `authorized` connection — and the reads. The journalled acts are folds
-/// of [`MetadataFold`] (ADR-0031 d8, d12; event-catalog.md, operational
-/// state).
+/// that journal nothing — code entry spending a code and writing its
+/// authorization request, Connect taking that request and creating an
+/// `authorized` connection, a client's row — and the reads. The journalled
+/// acts are folds of [`MetadataFold`] (ADR-0031 d5, d8, d9, d12;
+/// event-catalog.md, operational state).
 pub trait ConnectionStore: JournalStore {
     /// Spends the code by its first correct entry, `redeemed_at` = `at`:
     /// `true` when this call spent it, `false` for a code the tenant does
@@ -678,15 +679,51 @@ pub trait ConnectionStore: JournalStore {
         at: &EventTime,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
 
-    /// Connect's row, `authorized`. The store refuses a record in any other
-    /// state, a key or code the tenant does not hold, and a second
-    /// connection of one code (postgres-schema.md
-    /// `oauth_connections_tenant_id_code_id`; ADR-0031 d9).
-    fn connection_authorize(
+    /// Connect, in one transaction (postgres-schema.md "connections
+    /// (ADR-0031)"): it deletes the authorization request's row by
+    /// `handle_hash` under the provider tenant, stamps the row's client's
+    /// `connected_at` at `grant.at` where it is null, then, under the
+    /// row's code tenant, reads the code's voiding and creates the
+    /// `authorized` connection from the row and `grant`. A voided code
+    /// changes nothing ([`ConnectOutcome::CodeVoided`]); a refused insert, a
+    /// key or code the code tenant does not hold or a second connection of
+    /// one code (`oauth_connections_tenant_id_code_id`), rolls the whole
+    /// transaction back, so the request's row stays and the stamp commits
+    /// only with the connection row (ADR-0031 d5, d8, d9; ADR-0034 d12).
+    fn connection_connect(
         &self,
-        tenant_id: Uuid,
-        record: ConnectionRecord,
+        handle_hash: &Sha256Hash,
+        grant: ConnectGrant,
+    ) -> impl Future<Output = Result<ConnectOutcome, StoreError>> + Send;
+
+    /// The authorization request's row at a correct code, under the
+    /// provider tenant; a second row with one handle digest is refused
+    /// (postgres-schema.md `oauth_authorizations`; ADR-0031 d9).
+    fn authorization_insert(
+        &self,
+        record: AuthorizationRecord,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The authorization request's row by its handle digest; `None` once
+    /// Connect or Cancel took it.
+    fn authorization(
+        &self,
+        handle_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<AuthorizationRecord>, StoreError>> + Send;
+
+    /// A client's row, a cached document or a registration, under the
+    /// provider tenant; a second row for one `client_id` is refused
+    /// (postgres-schema.md `oauth_clients`; ADR-0031 d5).
+    fn oauth_client_insert(
+        &self,
+        record: OAuthClientRecord,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// A client's row by its `client_id`; `None` for one it does not hold.
+    fn oauth_client(
+        &self,
+        client_id: &str,
+    ) -> impl Future<Output = Result<Option<OAuthClientRecord>, StoreError>> + Send;
 
     /// The key's codes in the order they were issued, voided and spent ones
     /// included; empty for a key the tenant does not hold.

@@ -27,9 +27,10 @@ use oml_app::ports::{
     Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
-    ClaimKeyState, ClientKind, ConnectCode, ConnectionRecord, Credential, Crew, CrewRecord,
-    DenialRecord, GrantRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, RecallCandidate, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimKeyState, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, GrantRecord, KeyAccess,
+    KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord, OAuthClientRecord,
+    RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -4077,6 +4078,74 @@ pub fn authorized_connection(connection_id: Uuid, key_id: Uuid, code_id: Uuid) -
     }
 }
 
+/// The SHA-256 of a fixture confirmation handle, derived from the
+/// connection its Connect creates.
+#[must_use]
+pub fn handle_hash(connection_id: Uuid) -> Sha256Hash {
+    Sha256Hash::digest(&[b"handle:".as_slice(), connection_id.as_bytes()].concat())
+}
+
+/// A fixture authorization request of `key_id`'s code `code_id` under
+/// `code_tenant_id`, its handle the one [`handle_hash`] derives from
+/// `connection_id`, its client and redirect those of
+/// [`authorized_connection`] (postgres-schema.md `oauth_authorizations`).
+#[must_use]
+pub fn authorization_request(
+    code_tenant_id: Uuid,
+    key_id: Uuid,
+    code_id: Uuid,
+    connection_id: Uuid,
+) -> AuthorizationRecord {
+    let connection = authorized_connection(connection_id, key_id, code_id);
+    AuthorizationRecord {
+        authorization_id: Uuid::from_u128(connection_id.as_u128() ^ 0xA000_0000),
+        handle_hash: handle_hash(connection_id),
+        client_id: connection.client_id,
+        client_kind: connection.client_kind,
+        metadata_digest: connection.client_metadata_digest,
+        redirect_uri: connection.redirect_uri,
+        redirect_uri_sent: connection.redirect_uri_sent,
+        code_challenge: connection.code_challenge,
+        state: Some("af0ifjsldkj".to_owned()),
+        expires_at: fixture_time("2026-10-29T13:10:00.000000Z"),
+        code_id,
+        code_tenant_id,
+        key_id,
+    }
+}
+
+/// What a fixture Connect adds for `connection_id`, so that it creates
+/// exactly [`authorized_connection`] from [`authorization_request`].
+#[must_use]
+pub fn connect_grant(connection_id: Uuid) -> ConnectGrant {
+    let connection = authorized_connection(connection_id, Uuid::nil(), Uuid::nil());
+    ConnectGrant {
+        connection_id,
+        resource: connection.resource,
+        auth_code_hash: connection.auth_code_hash.expect("the fixture has a code"),
+        auth_code_expires_at: connection
+            .auth_code_expires_at
+            .expect("the fixture's code expires"),
+        at: connection.created_at,
+    }
+}
+
+/// A fixture client row of `kind` for `client_id`, never connected.
+#[must_use]
+pub fn oauth_client(client_id: &str, kind: ClientKind) -> OAuthClientRecord {
+    OAuthClientRecord {
+        client_id: client_id.to_owned(),
+        kind,
+        client_name: "Claude".to_owned(),
+        redirect_uris: vec!["https://claude.ai/api/mcp/auth_callback".to_owned()],
+        metadata_digest: Sha256Hash::digest(b"client metadata"),
+        fetched_at: (kind == ClientKind::Cimd).then(|| fixture_time("2026-10-29T12:59:00.000000Z")),
+        last_used_at: None,
+        connected_at: None,
+        created_at: fixture_time("2026-10-29T12:59:00.000000Z"),
+    }
+}
+
 fn fixture_time(at: &str) -> EventTime {
     EventTime::parse(at).expect("fixed-width fixture time")
 }
@@ -4207,12 +4276,25 @@ impl ChainRig {
             "a live code is spent by its first correct entry"
         );
         store
-            .connection_authorize(
+            .authorization_insert(authorization_request(
                 self.tenant_id,
-                authorized_connection(connection_id, key_id, code_id),
-            )
+                key_id,
+                code_id,
+                connection_id,
+            ))
             .await
-            .expect("authorize");
+            .expect("the request's row at a correct code");
+        assert_eq!(
+            store
+                .connection_connect(&handle_hash(connection_id), connect_grant(connection_id))
+                .await
+                .expect("connect"),
+            ConnectOutcome::Authorized {
+                tenant_id: self.tenant_id,
+                connection: Box::new(authorized_connection(connection_id, key_id, code_id)),
+            },
+            "Connect creates the authorized connection under the code's tenant"
+        );
     }
 }
 
@@ -4674,9 +4756,19 @@ pub async fn connection_opened_for_an_expired_authorization_code_is_refused_and_
         ..authorized_connection(connection, key.key_id, code)
     };
     store
-        .connection_authorize(t, expired.clone())
+        .authorization_insert(authorization_request(t, key.key_id, code, connection))
         .await
-        .expect("authorize");
+        .expect("request");
+    store
+        .connection_connect(
+            &handle_hash(connection),
+            ConnectGrant {
+                auth_code_expires_at: fixture_time("2026-10-29T13:00:00.000000Z"),
+                ..connect_grant(connection)
+            },
+        )
+        .await
+        .expect("connect");
     let head = store.chain_head(t).await.expect("head");
     assert_eq!(
         rig.open_connection(store, connection, None)
@@ -4747,10 +4839,23 @@ pub async fn a_tenants_codes_and_connections_are_invisible_and_unwritable_from_a
             .expect("redeem"),
         "another tenant's code is not spent from here"
     );
+    let foreign_request = authorization_request(tb, key.key_id, live_code, foreign);
     store
-        .connection_authorize(tb, authorized_connection(foreign, key.key_id, live_code))
+        .authorization_insert(foreign_request.clone())
+        .await
+        .expect("request");
+    store
+        .connection_connect(&handle_hash(foreign), connect_grant(foreign))
         .await
         .expect_err("Connect naming another tenant's key and code is refused");
+    assert_eq!(
+        store
+            .authorization(&handle_hash(foreign))
+            .await
+            .expect("read"),
+        Some(foreign_request),
+        "the refused Connect keeps the request's row"
+    );
     b.mint_code(store, connect_code(foreign_code, key.key_id), None)
         .await
         .expect_err("a code for another tenant's key is refused");
@@ -4774,6 +4879,195 @@ pub async fn a_tenants_codes_and_connections_are_invisible_and_unwritable_from_a
     );
     assert_eq!(store.connection(ta, open).await.expect("read"), connection);
     assert_eq!(store.connection(tb, foreign).await.expect("read"), None);
+}
+
+/// Connect deletes the authorization request's row by its handle digest,
+/// stamps its client's `connected_at` where it is null and creates the
+/// `authorized` connection under the code's tenant, in one transaction; the
+/// same handle then finds no request, and a later Connect naming the client
+/// leaves its stamp alone (postgres-schema.md "connections (ADR-0031)";
+/// roles-and-keys.md connections; ADR-0031 d5, d9).
+pub async fn connect_takes_the_request_stamps_its_client_and_creates_the_authorized_connection<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(320);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3200));
+    rig.issue_key(store, key.clone()).await;
+    let client = authorized_connection(Uuid::nil(), Uuid::nil(), Uuid::nil()).client_id;
+    store
+        .oauth_client_insert(oauth_client(&client, ClientKind::Cimd))
+        .await
+        .expect("client");
+    let (first, second) = (Uuid::from_u128(0xE3201), Uuid::from_u128(0xE3202));
+    let (c1, c2) = (Uuid::from_u128(0xC3201), Uuid::from_u128(0xC3202));
+    rig.authorized_connection(store, key.key_id, c1, first, None)
+        .await;
+    assert_eq!(
+        store
+            .authorization(&handle_hash(first))
+            .await
+            .expect("read"),
+        None,
+        "Connect deletes the request's row"
+    );
+    let stamped = store
+        .oauth_client(&client)
+        .await
+        .expect("read")
+        .expect("the client stays");
+    assert_eq!(
+        stamped,
+        OAuthClientRecord {
+            connected_at: Some(connect_grant(first).at),
+            ..oauth_client(&client, ClientKind::Cimd)
+        },
+        "the first Connect naming the client stamps connected_at"
+    );
+    assert_eq!(
+        store
+            .connection_connect(&handle_hash(first), connect_grant(first))
+            .await
+            .expect("connect"),
+        ConnectOutcome::NoRequest,
+        "a used handle finds no request"
+    );
+    assert_eq!(
+        store.connection(t, first).await.expect("read"),
+        Some(authorized_connection(first, key.key_id, c1)),
+        "the used handle creates nothing more"
+    );
+
+    // The authorized connection's code is voided by this mint; the
+    // second code's Connect, later, leaves the client's stamp alone.
+    rig.mint_code(store, connect_code(c2, key.key_id), None)
+        .await
+        .expect("mint");
+    assert!(
+        store
+            .connect_code_redeem(t, c2, &fixture_time("2026-10-29T13:00:40.000000Z"))
+            .await
+            .expect("redeem")
+    );
+    store
+        .authorization_insert(authorization_request(t, key.key_id, c2, second))
+        .await
+        .expect("request");
+    let later = fixture_time("2026-10-29T13:00:50.000000Z");
+    let outcome = store
+        .connection_connect(
+            &handle_hash(second),
+            ConnectGrant {
+                at: later.clone(),
+                ..connect_grant(second)
+            },
+        )
+        .await
+        .expect("connect");
+    assert_eq!(
+        outcome,
+        ConnectOutcome::Authorized {
+            tenant_id: t,
+            connection: Box::new(ConnectionRecord {
+                created_at: later,
+                ..authorized_connection(second, key.key_id, c2)
+            }),
+        }
+    );
+    assert_eq!(
+        store.oauth_client(&client).await.expect("read"),
+        Some(stamped),
+        "connected_at is stamped where it is null only"
+    );
+}
+
+/// A Connect whose insert is refused rolls back as a whole: the request's
+/// row stays, its client's `connected_at` stays null and no connection is
+/// created; and a Connect whose code was voided since its entry changes
+/// nothing either (postgres-schema.md "connections (ADR-0031)", the stamp
+/// commits only with the connection row; roles-and-keys.md connect codes;
+/// ADR-0031 d5, d8, d9).
+pub async fn a_refused_connect_leaves_the_authorization_row_and_connected_at_unchanged<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(321);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3210));
+    rig.issue_key(store, key.clone()).await;
+    let (first, second) = (Uuid::from_u128(0xE3211), Uuid::from_u128(0xE3212));
+    let code = Uuid::from_u128(0xC3211);
+    rig.authorized_connection(store, key.key_id, code, first, None)
+        .await;
+
+    // A second request naming the same code, by another client: its
+    // connection is a second one of one code, which the store refuses.
+    let other = "https://other.example/oauth/client-metadata";
+    store
+        .oauth_client_insert(oauth_client(other, ClientKind::Cimd))
+        .await
+        .expect("client");
+    let request = AuthorizationRecord {
+        client_id: other.to_owned(),
+        ..authorization_request(t, key.key_id, code, second)
+    };
+    store
+        .authorization_insert(request.clone())
+        .await
+        .expect("request");
+    store
+        .connection_connect(&handle_hash(second), connect_grant(second))
+        .await
+        .expect_err("a second connection of one code is refused");
+    assert_eq!(
+        store
+            .authorization(&handle_hash(second))
+            .await
+            .expect("read"),
+        Some(request.clone()),
+        "the refused Connect keeps the request's row"
+    );
+    assert_eq!(
+        store.oauth_client(other).await.expect("read"),
+        Some(oauth_client(other, ClientKind::Cimd)),
+        "the stamp commits only with the connection row"
+    );
+    assert_eq!(store.connection(t, second).await.expect("read"), None);
+
+    // A newer code voids the code from which no connection opened.
+    rig.mint_code(
+        store,
+        connect_code(Uuid::from_u128(0xC3212), key.key_id),
+        None,
+    )
+    .await
+    .expect("mint");
+    assert_eq!(
+        store
+            .connection_connect(&handle_hash(second), connect_grant(second))
+            .await
+            .expect("connect"),
+        ConnectOutcome::CodeVoided,
+        "a request whose code was voided creates no connection"
+    );
+    assert_eq!(
+        store
+            .authorization(&handle_hash(second))
+            .await
+            .expect("read"),
+        Some(request),
+        "a voided code's Connect changes nothing"
+    );
+    assert_eq!(
+        store.oauth_client(other).await.expect("read"),
+        Some(oauth_client(other, ClientKind::Cimd))
+    );
+    assert_eq!(store.connection(t, second).await.expect("read"), None);
 }
 
 /// Every connection-store law in one call, each against a fresh store.
@@ -4803,6 +5097,12 @@ where
         &new_store().await,
     )
     .await;
+    connect_takes_the_request_stamps_its_client_and_creates_the_authorized_connection(
+        &new_store().await,
+    )
+    .await;
+    a_refused_connect_leaves_the_authorization_row_and_connected_at_unchanged(&new_store().await)
+        .await;
 }
 
 // ---------------------------------------------------------------------------

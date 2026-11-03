@@ -45,8 +45,9 @@ use oml_pg::{
     role_split_postflight, role_split_preflight,
 };
 use oml_port_contracts::{
-    ChainRig, authorized_connection, connect_code, connector_key, held_memory, key_record, name,
-    run_connection_store_suite, run_journal_store_suite, test_signing_key, workarea_record,
+    ChainRig, authorization_request, connect_code, connect_grant, connector_key, handle_hash,
+    held_memory, key_record, name, run_connection_store_suite, run_journal_store_suite,
+    test_signing_key, workarea_record,
 };
 use serde_json::{Value, json};
 use sqlx::migrate::Migrate as _;
@@ -422,9 +423,13 @@ async fn two_racing_connection_opened_commits_for_one_key_leave_exactly_one_open
             .expect("redeem")
     );
     store
-        .connection_authorize(t, authorized_connection(connection, key.key_id, code))
+        .authorization_insert(authorization_request(t, key.key_id, code, connection))
         .await
-        .expect("authorize");
+        .expect("request");
+    store
+        .connection_connect(&handle_hash(connection), connect_grant(connection))
+        .await
+        .expect("connect");
 
     let start = Arc::new(tokio::sync::Barrier::new(2));
     let racers: Vec<_> = (0..2)

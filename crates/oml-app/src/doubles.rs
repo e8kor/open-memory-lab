@@ -18,7 +18,8 @@ use oml_domain::budget::{hit_order, steering_order};
 use oml_domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_domain::oauth::{ConnectionAct, ConnectionState, RevokedCause, connection_transition};
 use oml_domain::{
-    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types,
+    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
+    event_types,
 };
 
 use crate::ports::{
@@ -28,9 +29,10 @@ use crate::ports::{
     claim_subject,
 };
 use crate::types::{
-    ClaimKeyState, ConnectCodeRecord, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord,
-    GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimKeyState, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS,
+    KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord,
+    OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -117,6 +119,12 @@ struct TenantState {
     connect_codes: BTreeMap<Uuid, ConnectCodeRecord>,
     /// Connections by id (postgres-schema.md `oauth_connections`).
     connections: BTreeMap<Uuid, ConnectionRecord>,
+    /// The provider tenant's client rows by `client_id`
+    /// (postgres-schema.md `oauth_clients`).
+    oauth_clients: BTreeMap<String, OAuthClientRecord>,
+    /// The provider tenant's authorization requests by their handle digest
+    /// (postgres-schema.md `oauth_authorizations`).
+    authorizations: BTreeMap<[u8; 32], AuthorizationRecord>,
     /// Per key id, in commit order — which is epoch order.
     access: BTreeMap<Uuid, KeyAccess>,
     queue: Vec<QueueEntry>,
@@ -1790,44 +1798,133 @@ impl ConnectionStore for MemStore {
         }
     }
 
-    async fn connection_authorize(
+    async fn connection_connect(
         &self,
-        tenant_id: Uuid,
-        record: ConnectionRecord,
-    ) -> Result<(), StoreError> {
-        let tenant = self.tenant(tenant_id);
+        handle_hash: &Sha256Hash,
+        grant: ConnectGrant,
+    ) -> Result<ConnectOutcome, StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        let Some(request) = provider.authorizations.get(&handle_hash.0).cloned() else {
+            return Ok(ConnectOutcome::NoRequest);
+        };
+        // The code tenant's lock is taken after the provider tenant's, and
+        // no other path holds both; a code under the provider tenant is
+        // one the code tenant does not hold.
+        let tenant_id = request.code_tenant_id;
+        let refused = |why: &str| {
+            Err(StoreError::Backend(format!(
+                "connection {} {why}",
+                grant.connection_id
+            )))
+        };
+        if tenant_id == PROVIDER_TENANT {
+            return refused("names a code under the provider tenant");
+        }
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return refused("names a key or code its tenant does not hold");
+        };
         let mut state = tenant.lock().expect("tenant lock");
-        if record.state != ConnectionState::Authorized
-            || record.opened_seq.is_some()
-            || record.revoked_seq.is_some()
-        {
-            return Err(StoreError::Backend(format!(
-                "connection {} is created authorized, never {}",
-                record.connection_id,
-                record.state.as_str()
-            )));
+        // Every check before any write, so a refusal changes nothing, as
+        // the store's rolled-back transaction does.
+        match state.connect_codes.get(&request.code_id) {
+            None => return refused("names a key or code its tenant does not hold"),
+            Some(code) if code.voided_seq.is_some() => return Ok(ConnectOutcome::CodeVoided),
+            Some(_) => {}
         }
-        if !state.keys.contains_key(&record.key_id)
-            || !state.connect_codes.contains_key(&record.code_id)
-        {
-            return Err(StoreError::Backend(format!(
-                "connection {} names a key or code this tenant does not hold",
-                record.connection_id
-            )));
+        if !state.keys.contains_key(&request.key_id) {
+            return refused("names a key or code its tenant does not hold");
         }
-        if state.connections.contains_key(&record.connection_id)
+        if state.connections.contains_key(&grant.connection_id)
             || state
                 .connections
                 .values()
-                .any(|c| c.code_id == record.code_id)
+                .any(|c| c.code_id == request.code_id)
+        {
+            return refused("is a second connection of its code");
+        }
+        let connection = ConnectionRecord {
+            connection_id: grant.connection_id,
+            key_id: request.key_id,
+            code_id: request.code_id,
+            client_id: request.client_id.clone(),
+            client_kind: request.client_kind,
+            client_metadata_digest: request.metadata_digest,
+            redirect_uri: request.redirect_uri,
+            redirect_uri_sent: request.redirect_uri_sent,
+            resource: grant.resource,
+            code_challenge: request.code_challenge,
+            auth_code_hash: Some(grant.auth_code_hash),
+            auth_code_expires_at: Some(grant.auth_code_expires_at),
+            auth_code_redeemed_at: None,
+            state: ConnectionState::Authorized,
+            opened_seq: None,
+            revoked_seq: None,
+            created_at: grant.at.clone(),
+        };
+        provider.authorizations.remove(&handle_hash.0);
+        if let Some(client) = provider
+            .oauth_clients
+            .get_mut(&request.client_id)
+            .filter(|c| c.connected_at.is_none())
+        {
+            client.connected_at = Some(grant.at);
+        }
+        state
+            .connections
+            .insert(connection.connection_id, connection.clone());
+        Ok(ConnectOutcome::Authorized {
+            tenant_id,
+            connection: Box::new(connection),
+        })
+    }
+
+    async fn authorization_insert(&self, record: AuthorizationRecord) -> Result<(), StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        if provider.authorizations.contains_key(&record.handle_hash.0)
+            || provider
+                .authorizations
+                .values()
+                .any(|a| a.authorization_id == record.authorization_id)
         {
             return Err(StoreError::Backend(format!(
-                "code {} has its connection already",
-                record.code_id
+                "authorization request {} is held already",
+                record.authorization_id
             )));
         }
-        state.connections.insert(record.connection_id, record);
+        provider.authorizations.insert(record.handle_hash.0, record);
         Ok(())
+    }
+
+    async fn authorization(
+        &self,
+        handle_hash: &Sha256Hash,
+    ) -> Result<Option<AuthorizationRecord>, StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let provider = provider.lock().expect("tenant lock");
+        Ok(provider.authorizations.get(&handle_hash.0).cloned())
+    }
+
+    async fn oauth_client_insert(&self, record: OAuthClientRecord) -> Result<(), StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        if provider.oauth_clients.contains_key(&record.client_id) {
+            return Err(StoreError::Backend(format!(
+                "client {} is held already",
+                record.client_id
+            )));
+        }
+        provider
+            .oauth_clients
+            .insert(record.client_id.clone(), record);
+        Ok(())
+    }
+
+    async fn oauth_client(&self, client_id: &str) -> Result<Option<OAuthClientRecord>, StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let provider = provider.lock().expect("tenant lock");
+        Ok(provider.oauth_clients.get(client_id).cloned())
     }
 
     async fn connect_codes(

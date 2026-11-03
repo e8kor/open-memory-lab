@@ -176,6 +176,89 @@ pub struct ConnectionRecord {
     pub created_at: EventTime,
 }
 
+/// An OAuth client the authorization server knows, a cached client ID
+/// metadata document or a dynamic registration: a provider-tenant row that
+/// holds no tenant content (postgres-schema.md `oauth_clients`; ADR-0031
+/// d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthClientRecord {
+    /// A metadata document's https URL, or a server-minted id.
+    pub client_id: String,
+    pub kind: ClientKind,
+    pub client_name: String,
+    pub redirect_uris: Vec<String>,
+    /// SHA-256 of the document or registration as received.
+    pub metadata_digest: Sha256Hash,
+    pub fetched_at: Option<EventTime>,
+    pub last_used_at: Option<EventTime>,
+    /// Stamped by the first Connect that names the client; eviction and the
+    /// removal of an unused registration read it (ADR-0031 d5, d9).
+    pub connected_at: Option<EventTime>,
+    pub created_at: EventTime,
+}
+
+/// An authorization request whose connect code verified: a provider-tenant
+/// row found by the SHA-256 of its confirmation handle, never the handle,
+/// and naming the code's tenant, code and key as plain ids
+/// (postgres-schema.md `oauth_authorizations`; ADR-0031 d9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizationRecord {
+    pub authorization_id: Uuid,
+    /// SHA-256 of the confirmation's 256-bit handle.
+    pub handle_hash: Sha256Hash,
+    pub client_id: String,
+    pub client_kind: ClientKind,
+    pub metadata_digest: Sha256Hash,
+    pub redirect_uri: String,
+    pub redirect_uri_sent: bool,
+    /// The S256 PKCE challenge.
+    pub code_challenge: String,
+    /// Echoed verbatim.
+    pub state: Option<String>,
+    /// The sealed handle's expiry.
+    pub expires_at: EventTime,
+    pub code_id: Uuid,
+    pub code_tenant_id: Uuid,
+    pub key_id: Uuid,
+}
+
+/// What Connect adds to an authorization request's row to make its
+/// `authorized` connection: the rest of the connection is copied from the
+/// row the confirmation deletes (postgres-schema.md "connections
+/// (ADR-0031)"; ADR-0031 d9, d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectGrant {
+    pub connection_id: Uuid,
+    /// `<issuer>/mcp` at Connect.
+    pub resource: String,
+    /// SHA-256 of the authorization code Connect mints.
+    pub auth_code_hash: Sha256Hash,
+    pub auth_code_expires_at: EventTime,
+    /// Connect's time: the connection's `created_at` and the client's
+    /// `connected_at` stamp.
+    pub at: EventTime,
+}
+
+/// What Connect's one transaction did (postgres-schema.md "connections
+/// (ADR-0031)"; roles-and-keys.md connections; ADR-0031 d8, d9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectOutcome {
+    /// The request's row is deleted, its client stamped `connected_at`
+    /// where it was null, and the connection created `authorized` under
+    /// `tenant_id`, the code's tenant.
+    Authorized {
+        tenant_id: Uuid,
+        connection: Box<ConnectionRecord>,
+    },
+    /// No row holds the handle's digest: Connect or Cancel used it, or it
+    /// lapsed and was removed. Answered `oauth.authorization_expired`.
+    NoRequest,
+    /// The request's connect code was voided since its entry, by a newer
+    /// code or a connection revocation of its key. Nothing changed;
+    /// answered `oauth.authorization_expired` (`code_voided`).
+    CodeVoided,
+}
+
 /// A stored grant row: the domain grant and its epoch, the journal seq of
 /// the `grant.issued` that wrote it (postgres-schema.md `grants`;
 /// workareas.md permission epoch; ADR-0025 d14).
