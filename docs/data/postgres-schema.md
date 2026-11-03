@@ -23,6 +23,9 @@ Conventions used throughout:
 - Every table carries `tenant_id` and an RLS policy (sketched [below](#row-level-security)). The
   journal's chain head gives each tenant an independent sequence; nothing orders events across
   tenants.
+- A foreign key into a tenant table carries `tenant_id`, `(tenant_id, col)` → `(tenant_id, id)`,
+  because a foreign-key check bypasses row security ([keys into tenant
+  tables](#keys-into-tenant-tables)).
 - Digest columns are `bytea` holding SHA-256 values. Journal and outbox payloads reference content
   only as digests or ciphertext references — never body plaintext (D1, declared in
   [storage](../architecture/storage.md)).
@@ -46,10 +49,11 @@ CREATE TABLE journal (
     signed_bytes bytea       NOT NULL,   -- the envelope; covers digests, never bodies
     payload      jsonb       NOT NULL,   -- digest / ciphertext references only
     principal    text        NOT NULL,
-    api_key_id   uuid,
+    api_key_id   uuid,                   -- no foreign key: may name a provider-level key
     at           timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, seq),
-    UNIQUE (event_id)
+    UNIQUE (event_id),
+    UNIQUE (tenant_id, event_id)         -- target of the tenant-scoped event references
 );
 
 CREATE TABLE journal_chain_heads (
@@ -312,7 +316,7 @@ CREATE TABLE crews (                -- named records, recorded not operated (ADR
 CREATE TABLE workareas (
     id         uuid        PRIMARY KEY,
     tenant_id  uuid        NOT NULL,
-    parent_id  uuid        REFERENCES workareas (id),   -- NULL only for universe
+    parent_id  uuid,                   -- NULL only for universe
     name       oml_name    NOT NULL,   -- unique in the tenant; never changed
     prior_name text,                   -- the PoC's creation-time name, kept as history;
                                        -- no reference reads it; NULL on a row created with a name
@@ -323,6 +327,7 @@ CREATE TABLE workareas (
     created_at timestamptz NOT NULL,
     UNIQUE (tenant_id, name),          -- one flat namespace across the whole tree
     UNIQUE (tenant_id, id),            -- target of the tenant-scoped grant and denial references
+    FOREIGN KEY (tenant_id, parent_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
     CHECK ((parent_id IS NULL) = (name = 'universe'))   -- the root, and only the root, is universe
 );
@@ -380,8 +385,9 @@ CREATE TABLE api_keys (
     role       text        NOT NULL
         CHECK (role IN ('reader', 'writer', 'dreamer', 'admin', 'operator')),
     principal  text        NOT NULL,
-    issued_by  uuid        REFERENCES api_keys (id),  -- issuer ceiling checked at issuance
-    rotated_from uuid      REFERENCES api_keys (id),  -- successor link; predecessor revoked at grace end
+    issued_by  uuid,                    -- issuer ceiling checked at issuance; no foreign key:
+                                        -- an operator key issues a tenant's first admin key
+    rotated_from uuid,                  -- successor link; predecessor revoked at grace end
     name       oml_name    NOT NULL,      -- the key's name; never changed, never released
     crew_id    uuid,                      -- the crew record named at issuance; fixed for life
     held_by    text        NOT NULL DEFAULT 'agent'
@@ -390,7 +396,7 @@ CREATE TABLE api_keys (
                                           -- (ADR-0021): verified as an attestation, never as fact;
                                           -- human_required_classes consumes it — only 'human'
                                           -- satisfies it; 'service' never counts as review capacity
-    default_workarea_id uuid REFERENCES workareas (id),
+    default_workarea_id uuid,
                                           -- provider-ring target (ADR-0022 d4): a /v1 request
                                           -- names no workarea — this, or X-OML-Workarea, resolves it
     issued_seq bigint      NOT NULL,      -- journal seq of this key's key.issued, or of the
@@ -402,6 +408,8 @@ CREATE TABLE api_keys (
                                           -- unique per tenant; operator keys (tenant_id NULL)
                                           -- share the provider's one namespace
     UNIQUE (tenant_id, id),               -- target of the tenant-scoped grant and denial references
+    FOREIGN KEY (tenant_id, rotated_from) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, default_workarea_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id)
 );
 
@@ -465,6 +473,47 @@ references, always bypass row security"
 A provider-level key (`tenant_id` NULL) matches no such reference, and carries no grant
 ([grant admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before it is imposed.
+
+## Keys into tenant tables
+
+**Status:** built in `migrations/0008_tenant_keys.sql` · its checks run only where a superuser
+mints the suites' role pairs, CI's `cargo test (Postgres)`, and in CI's `rls-spike`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8, d9).
+
+A foreign key into a table that has a `tenant_id` column pairs the referencing row's `tenant_id`
+with the referenced row's, the form the grant, denial and crew references above take. A foreign-key
+check bypasses row security (the quotation above), so a key on `id` alone accepts another tenant's
+row while it refuses an id no row holds, and the difference tells a tenant whether an id exists
+anywhere. Under the
+pair, a reference to another tenant's row is refused as one to no row is: `23503`, from the one
+constraint (ADR-0034 d12). The keys built this way:
+
+| Reference | Key | Target |
+|---|---|---|
+| `workareas.parent_id` | `(tenant_id, parent_id)` | `workareas (tenant_id, id)` |
+| `api_keys.default_workarea_id` | `(tenant_id, default_workarea_id)` | `workareas (tenant_id, id)` |
+| `api_keys.rotated_from` | `(tenant_id, rotated_from)` | `api_keys (tenant_id, id)` |
+| `memories.created_event_id` | `(tenant_id, created_event_id)` | `journal (tenant_id, event_id)` |
+| `review_queue.memory_id` | `(tenant_id, memory_id)` | `memories (tenant_id, id)` |
+
+- **The targets.** 0008 adds `UNIQUE (tenant_id, event_id)` on `journal` and `UNIQUE (tenant_id,
+  id)` on `memories`; `workareas` and `api_keys` have theirs from 0004. Each key keeps its 0001
+  constraint name.
+- **Provider-level keys.** On an `api_keys` row whose `tenant_id` is NULL, an operator key's, "the
+  row is not required to have a match"
+  ([CREATE TABLE](https://www.postgresql.org/docs/17/sql-createtable.html), fetched 2026-10-31):
+  the keys are `MATCH SIMPLE`.
+- **No foreign key.** `journal.api_key_id` and `api_keys.issued_by` name a provider-level key by
+  design, as when an operator key issues a tenant's first admin key
+  ([HTTP API](../api/http-api.md)), so no key carrying `tenant_id` could match them. 0008 drops
+  both, as 0002 dropped `review_queue.held_by_key`'s; each holds the id of the key its request
+  authenticated with, which the use case has read and no client names.
+- **Existing rows.** Adding a key validates every row, without row security, so a database that
+  already holds a cross-tenant reference fails 0008 with `23503`, naming the constraint and the
+  key, and commits nothing.
+- **Designed references.** A sketch on this page that still shows `REFERENCES t (id)` into a
+  tenant table is a column built with no key, or not built; it takes the pair when its migration
+  lands.
 
 ## vocabularies (ADR-0021)
 
