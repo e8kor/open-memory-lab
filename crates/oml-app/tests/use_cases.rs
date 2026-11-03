@@ -10,8 +10,9 @@ use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::oauth::{
-    AuthorizationExpired, AuthorizationRequest, CLAUDE_CALLBACK, ConnectCode, ConnectRefused,
-    ConnectionState, Issuer, Refusal, RevokedCause, open_request,
+    AuthorizationCodeInvalid, AuthorizationExpired, AuthorizationRequest, CLAUDE_CALLBACK,
+    ConnectCode, ConnectRefused, ConnectionState, Issuer, RefreshInvalid, Refusal, RevokedCause,
+    Token, Validation, open_request,
 };
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
@@ -27,10 +28,11 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     AppError, AuthorizationRecord, AuthorizeOutcome, AuthorizeParams, BootstrapRequest,
-    BootstrapResult, ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationView,
-    ConnectGrant, ConnectOutcome, Credential, CrewCreateRequest, CrewUpdate, GrantRequest,
-    IssueKeyRequest, IssuedKey, KeyRecord, ListRequest, MintedToken, NamingRefusal, RecallRequest,
-    RecallResult, SubmitRequest, SupersedeRequest, TokenPair, Verdict, VersionRef,
+    BootstrapResult, ClientAuthentication, ClientKind, CodeEntryOutcome, ConfirmAction,
+    ConfirmOutcome, ConfirmationView, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential,
+    CrewCreateRequest, CrewUpdate, ExchangeForm, GrantRequest, IssueKeyRequest, IssuedKey,
+    KeyRecord, ListRequest, MintedToken, NamingRefusal, RecallRequest, RecallResult, RefreshForm,
+    SubmitRequest, SupersedeRequest, TokenPair, Verdict, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7305,4 +7307,557 @@ async fn a_code_of_one_tenant_shows_only_that_tenants_name_and_grants() {
         .expect("the request's row");
     assert_eq!(row.code_tenant_id, globex.tenant_id);
     assert_eq!(row.key_id, issued.key_id);
+}
+
+// ---------------------------------------------------------------------------
+// The token endpoint and dynamic registration (ADR-0031 d5, d10, d11, d12)
+// ---------------------------------------------------------------------------
+
+/// The fixture request's S256 verifier: `code_page`'s challenge is its
+/// digest (RFC 7636 appendix B).
+const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+
+/// A writer connector key whose code was entered and connected on the page,
+/// and the authorization code Connect answered (ADR-0031 d9 step 3).
+async fn connected(app: &TestApp, admin: &str, crew: Uuid) -> (IssuedKey, String) {
+    let (issued, code) = connector_with_code(app, admin, vec![grant(crew, Role::Writer)]).await;
+    (issued, connect_with(app, &code).await)
+}
+
+/// Enters `code` on a fresh page and confirms Connect: the authorization
+/// code.
+async fn connect_with(app: &TestApp, code: &str) -> String {
+    let view = entered(app, &code_page(app).await, code).await;
+    match app
+        .confirm(&view.handle, ConfirmAction::Connect)
+        .await
+        .expect("Connect")
+    {
+        ConfirmOutcome::Connected { code, .. } => code,
+        other => panic!("Connect answers an authorization code: {other:?}"),
+    }
+}
+
+/// The fixture client's exchange of `code` with its verifier.
+fn exchange_form(code: &str) -> ExchangeForm {
+    ExchangeForm {
+        code: code.to_owned(),
+        client_id: DOC_URL.to_owned(),
+        redirect_uri: Some(CLAUDE_CALLBACK.to_owned()),
+        code_verifier: VERIFIER.to_owned(),
+        resource: Some(format!("{ISSUER}/mcp")),
+        client_authentication: None,
+    }
+}
+
+/// The fixture client's refresh with `token`.
+fn refresh_form(token: &Token) -> RefreshForm {
+    RefreshForm {
+        refresh_token: token.as_str().to_owned(),
+        client_id: DOC_URL.to_owned(),
+        resource: None,
+        client_authentication: None,
+    }
+}
+
+fn code_invalid(err: &AppError) -> Option<AuthorizationCodeInvalid> {
+    match err {
+        AppError::OAuth(Refusal::AuthorizationCodeInvalid(reason)) => Some(*reason),
+        _ => None,
+    }
+}
+
+fn refresh_invalid(err: &AppError) -> Option<RefreshInvalid> {
+    match err {
+        AppError::OAuth(Refusal::RefreshInvalid(reason)) => Some(*reason),
+        _ => None,
+    }
+}
+
+/// The key's one connection in any state.
+async fn only_connection(store: &MemStore, tenant: Uuid, key_id: Uuid) -> ConnectionRecord {
+    let connections = store.connections(tenant, key_id).await.expect("read");
+    assert_eq!(connections.len(), 1, "{connections:?}");
+    connections.into_iter().next().expect("one connection")
+}
+
+/// The first exchange redeems the code, opens the connection and answers a
+/// Bearer pair whose access token lives an hour; `connection.opened`
+/// names the connector key on its envelope and the client, its kind and
+/// digest, the redirect URI and the resource in its payload (event-catalog.md
+/// `connection.opened`; ADR-0031 d10, d12).
+#[tokio::test]
+async fn the_first_exchange_opens_the_connection_and_journals_connection_opened_with_the_client_and_resource()
+ {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    assert!(tokens.access_token.as_str().starts_with("oml_at_"));
+    assert!(tokens.refresh_token.as_str().starts_with("oml_rt_"));
+    assert_eq!(tokens.expires_in, 3_600);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Open);
+    let events = journal(&store, boot.tenant_id).await;
+    let opened = &events.last().expect("an event").envelope;
+    assert_eq!(opened.event_type, event_types::CONNECTION_OPENED);
+    assert_eq!(opened.api_key_id, Some(issued.key_id));
+    assert_eq!(opened.principal, "crew/claude-mobile");
+    assert_eq!(connection.opened_seq, Some(opened.seq));
+    assert_eq!(
+        opened.payload,
+        json!({
+            "connection_id": connection.connection_id.to_string(),
+            "key_id": issued.key_id.to_string(),
+            "code_id": connection.code_id.to_string(),
+            "client_id": DOC_URL,
+            "client_kind": "cimd",
+            "client_metadata_digest": connection.client_metadata_digest.to_prefixed(),
+            "redirect_uri": CLAUDE_CALLBACK,
+            "resource": format!("{ISSUER}/mcp"),
+            "replaces_connection_id": Value::Null,
+        })
+    );
+}
+
+/// A key holds at most one open connection: a newer code's exchange names
+/// the open one in `replaces_connection_id`, and that one is revoked
+/// `replaced` at the newer `connection.opened`'s seq, with no event of its
+/// own (roles-and-keys.md connections; ADR-0031 d7, d12).
+#[tokio::test]
+async fn opening_a_second_connection_for_a_key_revokes_the_first_as_replaced() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connected(&app, admin, crew).await;
+    app.exchange(exchange_form(&code)).await.expect("first");
+    let first = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    let newer = app
+        .mint_connect_code(admin, Reference::Id(issued.key_id))
+        .await
+        .expect("a newer code")
+        .code
+        .expect("shown once");
+
+    let second_code = connect_with(&app, &newer).await;
+    app.exchange(exchange_form(&second_code))
+        .await
+        .expect("second");
+
+    let events = journal(&store, boot.tenant_id).await;
+    let opened = &events.last().expect("an event").envelope;
+    assert_eq!(opened.event_type, event_types::CONNECTION_OPENED);
+    assert_eq!(
+        opened.payload["replaces_connection_id"],
+        json!(first.connection_id.to_string())
+    );
+    let connections = store
+        .connections(boot.tenant_id, issued.key_id)
+        .await
+        .expect("read");
+    let states: Vec<_> = connections
+        .iter()
+        .map(|c| (c.state, c.revoked_seq))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            (
+                ConnectionState::Revoked(RevokedCause::Replaced),
+                Some(opened.seq)
+            ),
+            (ConnectionState::Open, None),
+        ]
+    );
+}
+
+/// A redeemed code presented again by the connection's client with the
+/// verifier is reuse: `invalid_grant`, and `connection.revoked` with the
+/// cause `code_reuse`, `revoked_by_key_id` null and the connector key on
+/// the envelope, after which the connection's access token resolves to
+/// nothing (roles-and-keys.md connections; event-catalog.md
+/// `connection.revoked`; ADR-0031 d10, d12).
+#[tokio::test]
+async fn a_code_redeemed_twice_by_its_verifiers_holder_revokes_the_connection() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("first");
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::Reused),
+        "{err:?}"
+    );
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(
+        connection.state,
+        ConnectionState::Revoked(RevokedCause::CodeReuse)
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    let revoked = &events.last().expect("an event").envelope;
+    assert_eq!(revoked.event_type, event_types::CONNECTION_REVOKED);
+    assert_eq!(revoked.api_key_id, Some(issued.key_id));
+    assert_eq!(
+        revoked.payload,
+        json!({
+            "connection_id": connection.connection_id.to_string(),
+            "key_id": issued.key_id.to_string(),
+            "revoked_by_key_id": Value::Null,
+            "cause": "code_reuse",
+            "reason_digest": Value::Null,
+        })
+    );
+    let resolved = app.resolve_access_token(tokens.access_token.as_str()).await;
+    assert!(
+        matches!(resolved, Err(AppError::Unauthorized)),
+        "{resolved:?}"
+    );
+}
+
+/// A redeemed code presented without the verifier, or by another client,
+/// is `invalid_grant` and revokes nothing: only the verifier's holder can
+/// have redeemed first (roles-and-keys.md connections; ADR-0031 d10).
+#[tokio::test]
+async fn a_redeemed_code_presented_without_the_verifier_revokes_nothing() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    app.exchange(exchange_form(&code)).await.expect("first");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let wrong_verifier = app
+        .exchange(ExchangeForm {
+            code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXl".to_owned(),
+            ..exchange_form(&code)
+        })
+        .await
+        .unwrap_err();
+    let other_client = app
+        .exchange(ExchangeForm {
+            client_id: "https://other.example.com/client.json".to_owned(),
+            ..exchange_form(&code)
+        })
+        .await
+        .unwrap_err();
+
+    for err in [&wrong_verifier, &other_client] {
+        assert_eq!(
+            code_invalid(err),
+            Some(AuthorizationCodeInvalid::Redeemed),
+            "{err:?}"
+        );
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Open);
+}
+
+/// A failed exchange consumes nothing: after a wrong verifier, a wrong
+/// client and a wrong `redirect_uri`, the right presentation still opens
+/// the connection (roles-and-keys.md connections; ADR-0031 d10).
+#[tokio::test]
+async fn a_wrong_verifier_does_not_consume_the_code() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let failures = [
+        (
+            ExchangeForm {
+                code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXl".to_owned(),
+                ..exchange_form(&code)
+            },
+            AuthorizationCodeInvalid::VerifierMismatch,
+        ),
+        (
+            ExchangeForm {
+                client_id: "https://other.example.com/client.json".to_owned(),
+                ..exchange_form(&code)
+            },
+            AuthorizationCodeInvalid::ClientMismatch,
+        ),
+        (
+            ExchangeForm {
+                redirect_uri: None,
+                ..exchange_form(&code)
+            },
+            AuthorizationCodeInvalid::RedirectMismatch,
+        ),
+    ];
+
+    for (form, reason) in failures {
+        let err = app.exchange(form).await.unwrap_err();
+        assert_eq!(code_invalid(&err), Some(reason), "{err:?}");
+    }
+    let before = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(before.state, ConnectionState::Authorized);
+    assert_eq!(before.auth_code_redeemed_at, None);
+    app.exchange(exchange_form(&code))
+        .await
+        .expect("the code is still redeemable");
+    let after = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(after.state, ConnectionState::Open);
+}
+
+/// A refresh answers a new pair and marks the presented token rotated; the
+/// rotated token presented again is `invalid_grant` and revokes the
+/// connection with `refresh_reuse` in a `connection.revoked` of its own,
+/// after which the newer refresh token refreshes nothing (roles-and-keys.md
+/// connections; ADR-0031 d10, d11, d12).
+#[tokio::test]
+async fn a_refresh_rotates_and_the_old_refresh_token_presented_again_revokes_the_connection() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let first = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    let second = app
+        .refresh(refresh_form(&first.refresh_token))
+        .await
+        .expect("a refresh rotates");
+    assert_ne!(second.refresh_token, first.refresh_token);
+    assert_ne!(second.access_token, first.access_token);
+    let err = app
+        .refresh(refresh_form(&first.refresh_token))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        refresh_invalid(&err),
+        Some(RefreshInvalid::Reused),
+        "{err:?}"
+    );
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(
+        connection.state,
+        ConnectionState::Revoked(RevokedCause::RefreshReuse)
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    let revoked = &events.last().expect("an event").envelope;
+    assert_eq!(revoked.event_type, event_types::CONNECTION_REVOKED);
+    assert_eq!(revoked.api_key_id, Some(issued.key_id));
+    assert_eq!(revoked.payload["cause"], json!("refresh_reuse"));
+    assert_eq!(revoked.payload["revoked_by_key_id"], Value::Null);
+    assert_eq!(connection.revoked_seq, Some(revoked.seq));
+    let after = app
+        .refresh(refresh_form(&second.refresh_token))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refresh_invalid(&after),
+        Some(RefreshInvalid::ConnectionNotOpen),
+        "{after:?}"
+    );
+}
+
+/// A refresh token presented with another `client_id` is `invalid_grant`
+/// and rotates nothing, so its own client still refreshes with it
+/// (http-api.md `POST /oauth/token`; ADR-0031 d5, d10).
+#[tokio::test]
+async fn a_refresh_token_of_another_client_is_invalid_grant() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    let err = app
+        .refresh(RefreshForm {
+            client_id: "https://other.example.com/client.json".to_owned(),
+            ..refresh_form(&tokens.refresh_token)
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        refresh_invalid(&err),
+        Some(RefreshInvalid::ClientMismatch),
+        "{err:?}"
+    );
+    app.refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .expect("its own client still refreshes");
+}
+
+/// A connection is bound to `<issuer>/mcp` at Connect: under another
+/// `oauth.issuer` its refresh is `invalid_grant` and rotates nothing, so
+/// with the origin set back the same token refreshes (roles-and-keys.md
+/// connections, live; ADR-0031 d1, d10).
+#[tokio::test]
+async fn a_refresh_after_the_issuer_changed_is_invalid_grant_and_rotates_nothing() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+    let moved = app_over(store.clone())
+        .with_oauth_issuer(Issuer::parse("https://memory.example.org").expect("an origin"));
+
+    let err = moved
+        .refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        refresh_invalid(&err),
+        Some(RefreshInvalid::ResourceNotCurrent),
+        "{err:?}"
+    );
+    app.refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .expect("nothing rotated");
+}
+
+/// A rotation journals nothing: it is no actor's act on the connection
+/// (event-catalog.md `connection.*`; ADR-0031 d12).
+#[tokio::test]
+async fn a_refresh_is_not_journalled() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+    let before = hashes(&journal(&store, boot.tenant_id).await);
+
+    app.refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .expect("refresh");
+
+    assert_eq!(hashes(&journal(&store, boot.tenant_id).await), before);
+}
+
+/// An access token of an open connection, on the current resource, of a
+/// live key resolves to the caller that key's own authentication builds:
+/// the key's row and its grants and denials, read on the request
+/// (roles-and-keys.md connections; ADR-0031 d11).
+#[tokio::test]
+async fn an_access_token_resolves_to_exactly_its_keys_caller() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    let caller = app
+        .resolve_access_token(tokens.access_token.as_str())
+        .await
+        .expect("an open connection's access token resolves");
+
+    let key = store
+        .key(boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("the connector key");
+    assert_eq!(caller.key(), &key);
+    let access = store
+        .key_access(boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("its access");
+    let grants: Vec<_> = access.grants.iter().map(|g| g.grant.clone()).collect();
+    assert_eq!(caller.grants(), grants.as_slice());
+    assert!(caller.denials().is_empty());
+    assert_eq!(caller.permission_epoch(), access.permission_epoch());
+}
+
+/// A refresh token's digest finds no access row, so it never authenticates
+/// a request, nor does a key value (roles-and-keys.md connections;
+/// ADR-0031 d11).
+#[tokio::test]
+async fn a_refresh_token_never_resolves_as_an_access_credential() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    for presented in [tokens.refresh_token.as_str(), boot.admin_key.value.as_str()] {
+        let resolved = app.resolve_access_token(presented).await;
+        assert!(
+            matches!(resolved, Err(AppError::Unauthorized)),
+            "{resolved:?}"
+        );
+    }
+}
+
+/// A token request that sends client authentication is
+/// `oauth.client_invalid`, by the scheme it used, before any lookup
+/// (http-api.md `POST /oauth/token`; ADR-0031 d5).
+#[tokio::test]
+async fn a_token_request_that_sends_client_authentication_is_client_invalid_with_its_scheme() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+
+    let err = app
+        .exchange(ExchangeForm {
+            client_authentication: Some(ClientAuthentication::Header {
+                scheme: "Basic".to_owned(),
+            }),
+            ..exchange_form(&code)
+        })
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&err, AppError::ClientAuthentication { scheme: Some(s) } if s == "Basic"),
+        "{err:?}"
+    );
+    app.exchange(exchange_form(&code))
+        .await
+        .expect("the refused request consumed nothing");
+}
+
+/// The page shows `client_name`, so a registration without it is
+/// `request.validation`, carried as `invalid_client_metadata`, and writes
+/// no client (http-api.md `POST /oauth/register`; ADR-0031 d5).
+#[tokio::test]
+async fn a_registration_without_client_name_is_invalid_client_metadata() {
+    let app = oauth_app_over(MemStore::new());
+    let body = format!(r#"{{"redirect_uris":["{CLAUDE_CALLBACK}"]}}"#);
+
+    let err = app.register(body.as_bytes()).await.unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            AppError::OAuth(Refusal::RequestValidation(Validation::ClientNameMissing))
+        ),
+        "{err:?}"
+    );
+}
+
+/// An absent `token_endpoint_auth_method` is registered and echoed as
+/// `none`, under a server-minted `client_id` and with no secret, and the
+/// registration's row is a `dcr` client (http-api.md `POST /oauth/register`;
+/// ADR-0031 d5).
+#[tokio::test]
+async fn an_absent_auth_method_registers_as_none() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let body = format!(r#"{{"client_name":"Desk","redirect_uris":["{CLAUDE_CALLBACK}"]}}"#);
+
+    let registered = app.register(body.as_bytes()).await.expect("registered");
+
+    assert_eq!(registered.token_endpoint_auth_method, "none");
+    assert_eq!(registered.client_name, "Desk");
+    assert_eq!(registered.redirect_uris, [CLAUDE_CALLBACK]);
+    let row = store
+        .oauth_client(&registered.client_id)
+        .await
+        .expect("read")
+        .expect("the registration's row");
+    assert_eq!(row.kind, ClientKind::Dcr);
+    assert_eq!(row.metadata_digest, Sha256Hash::digest(body.as_bytes()));
 }

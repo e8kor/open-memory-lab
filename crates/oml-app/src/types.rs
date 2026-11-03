@@ -4,7 +4,7 @@ use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
-    ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, TokenKind,
+    ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
@@ -552,6 +552,86 @@ pub struct SweepReport {
     pub codes_cleared: u64,
     /// Authorization requests 24 hours past their expiry.
     pub authorizations_removed: u64,
+}
+
+/// Client authentication a token request sent, which no client here may
+/// send, since every client is public (http-api.md `POST /oauth/token`;
+/// ADR-0031 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientAuthentication {
+    /// An `Authorization` header, by the scheme it used, answered `401`
+    /// with `WWW-Authenticate` naming that scheme.
+    Header { scheme: String },
+    /// A `client_secret` in the body, answered `400`.
+    BodySecret,
+}
+
+/// A `grant_type=authorization_code` form, each parameter after its one
+/// form decoding; an absent `code` or a repeated parameter is the edge's
+/// `request.validation` (http-api.md `POST /oauth/token`; ADR-0031 d10).
+/// Its `Debug` names no secret.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ExchangeForm {
+    pub code: String,
+    pub client_id: String,
+    pub redirect_uri: Option<String>,
+    pub code_verifier: String,
+    pub resource: Option<String>,
+    pub client_authentication: Option<ClientAuthentication>,
+}
+
+impl std::fmt::Debug for ExchangeForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExchangeForm")
+            .field("client_id", &self.client_id)
+            .field("redirect_uri", &self.redirect_uri)
+            .field("resource", &self.resource)
+            .field("client_authentication", &self.client_authentication)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A `grant_type=refresh_token` form (http-api.md `POST /oauth/token`;
+/// ADR-0031 d10, d11). Its `Debug` names no secret.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RefreshForm {
+    pub refresh_token: String,
+    pub client_id: String,
+    pub resource: Option<String>,
+    pub client_authentication: Option<ClientAuthentication>,
+}
+
+impl std::fmt::Debug for RefreshForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefreshForm")
+            .field("client_id", &self.client_id)
+            .field("resource", &self.resource)
+            .field("client_authentication", &self.client_authentication)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The pair one exchange or one refresh answers: `token_type` is `Bearer`
+/// and `scope` `mcp`, each fixed, and `expires_in` the access token's
+/// lifetime in seconds. A [`Token`]'s `Debug` names only its kind
+/// (http-api.md `POST /oauth/token`; ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuedTokens {
+    pub access_token: Token,
+    pub refresh_token: Token,
+    pub expires_in: u64,
+}
+
+/// A dynamic registration as `201` answers it: a server-minted
+/// `client_id`, no secret and no registration access token, its
+/// `token_endpoint_auth_method` always `none` (http-api.md
+/// `POST /oauth/register`; ADR-0031 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisteredClient {
+    pub client_id: String,
+    pub client_name: String,
+    pub redirect_uris: Vec<String>,
+    pub token_endpoint_auth_method: &'static str,
 }
 
 /// A stored grant row: the domain grant and its epoch, the journal seq of
@@ -1444,6 +1524,14 @@ pub enum AppError {
     /// (errors.md "`oauth` — connections"; ADR-0031 d13).
     #[error(transparent)]
     OAuth(#[from] Refusal),
+    /// A token request that sent client authentication, by its scheme
+    /// (`None` for a `client_secret` in the body): `oauth.client_invalid`
+    /// as `invalid_client`, which a header answers `401` naming the scheme
+    /// it used (http-api.md `POST /oauth/token`; ADR-0031 d5).
+    #[error(
+        "oauth.client_invalid: clients are public and send no client authentication (ADR-0031 d5)"
+    )]
+    ClientAuthentication { scheme: Option<String> },
     #[error(transparent)]
     Store(StoreError),
 }

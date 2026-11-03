@@ -7,7 +7,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 
 use oml_app::domain::VerdictError;
-use oml_app::domain::oauth::{AuthorizationCodeInvalid, Refusal};
+use oml_app::domain::oauth::{AuthorizationCodeInvalid, ClientInvalid, Refusal};
 use oml_app::ports::StoreError;
 use oml_app::types::AppError;
 
@@ -454,6 +454,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::ChainVerify(e) => ApiError::internal(e.to_string()),
         AppError::Jcs(e) => ApiError::internal(e.to_string()),
         AppError::OAuth(refusal) => oauth_refusal(refusal),
+        // The `/oauth/token` edge answers this in the RFC's shape with the
+        // scheme; elsewhere it is the envelope's `oauth.client_invalid`.
+        AppError::ClientAuthentication { .. } => oauth_refusal(Refusal::ClientInvalid(
+            ClientInvalid::ClientAuthentication,
+        )),
     }
 }
 

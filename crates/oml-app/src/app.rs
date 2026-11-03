@@ -24,12 +24,15 @@ use oml_domain::name::{
     assign_names, unresolved_value,
 };
 use oml_domain::oauth::{
-    ATTEMPTS_PER_PAGE, AUTHORIZATION_REQUEST_SECONDS, AuthorizationExpired, AuthorizationRequest,
-    AuthorizeBounds, ClientId, ClientInvalid, CodeRow, ConnectCode as CodeSymbols, ConnectRefused,
-    ConnectionState, DOCUMENT_KEPT_SECONDS, Issuer, KeyState, PkceRequired, Refusal,
-    RequestClientKind, RevokedCause, SCOPE, Validation, after_wrong_entry, check_authorize_bounds,
-    check_code_entry, check_confirmation, check_pkce_method, check_resource, classify_client_id,
-    open_request, select_redirect, validate_document,
+    ATTEMPTS_PER_PAGE, AUTHORIZATION_REQUEST_SECONDS, AuthorizationCodeInvalid,
+    AuthorizationExpired, AuthorizationRequest, AuthorizeBounds, ClientId, ClientInvalid, CodeRow,
+    ConnectCode as CodeSymbols, ConnectRefused, ConnectionState, DOCUMENT_KEPT_SECONDS,
+    ExchangeDecision, ExchangeRequest, ExchangeRow, Issuer, KeyState, PkceRequired,
+    RefreshDecision, RefreshInvalid, Refusal, RequestClientKind, RevokedCause, SCOPE, Token,
+    TokenKind, Validation, after_wrong_entry, check_authorize_bounds, check_code_entry,
+    check_confirmation, check_pkce_method, check_resource, classify_client_id, decide_exchange,
+    decide_refresh, open_request, refresh_token_digest, select_redirect, token_kind,
+    validate_document, validate_registration,
 };
 use oml_domain::{
     ChainHead, Envelope, EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role,
@@ -46,16 +49,17 @@ use crate::ports::{
 };
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
-    BootstrapRequest, BootstrapResult, ClientDescription, ClientKind, CodeEntryOutcome,
-    ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode,
-    ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord,
-    CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
-    GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey, KeyAccess, KeyDetail, KeyRecord,
-    ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage, MemoryRecord,
-    NamingRefusal, OAuthClientRecord, PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult,
-    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeReceipt,
-    SupersedeRequest, TailPage, TailedEvent, TreeNode, TreePage, UnnamedRows, Verdict,
-    VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    BootstrapRequest, BootstrapResult, ClientAuthentication, ClientDescription, ClientKind,
+    CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView,
+    ConnectCode, ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
+    CrewUpdate, DenialRecord, ExchangeForm, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey,
+    IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
+    ListingScope, MemoryPage, MemoryRecord, MintedToken, NamingRefusal, OAuthClientRecord,
+    PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
+    RegisteredClient, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome,
+    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair, TreeNode,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -111,8 +115,10 @@ pub struct App<J, S, C, I, Sc> {
 
 /// The authenticated key and what its effective access is computed from,
 /// read once per request and never cached (workareas.md effective access;
-/// ADR-0025 d1, d14).
-struct Caller {
+/// ADR-0025 d1, d14). A key value and an access token of a live connection
+/// each resolve to one, the same for one key (ADR-0031 d11).
+#[derive(Debug)]
+pub struct Caller {
     key: KeyRecord,
     grants: Vec<Grant>,
     denials: Vec<KeyDenial>,
@@ -121,6 +127,30 @@ struct Caller {
 }
 
 impl Caller {
+    /// The key the request acts as.
+    #[must_use]
+    pub fn key(&self) -> &KeyRecord {
+        &self.key
+    }
+
+    /// The key's grants as read on this request.
+    #[must_use]
+    pub fn grants(&self) -> &[Grant] {
+        &self.grants
+    }
+
+    /// The key's global denials as read on this request.
+    #[must_use]
+    pub fn denials(&self) -> &[KeyDenial] {
+        &self.denials
+    }
+
+    /// The epoch of the access read (workareas.md permission epoch).
+    #[must_use]
+    pub fn permission_epoch(&self) -> u64 {
+        self.permission_epoch
+    }
+
     /// `effective_roles` at the node whose ancestry, node to root, this is.
     fn effective(&self, ancestry: &[Uuid]) -> BTreeSet<Role> {
         effective_roles(&self.grants, &self.denials, ancestry)
@@ -610,6 +640,11 @@ where
             .key_by_hash(&hash)
             .await?
             .ok_or(AppError::Unauthorized)?;
+        self.caller_of(key).await
+    }
+
+    /// The caller `key` acts as: its grants and denials, read now.
+    async fn caller_of(&self, key: KeyRecord) -> Result<Caller, AppError> {
         // A provider-level key carries no grant and no denial, since no
         // tenant's row can name it (postgres-schema.md): it holds no access,
         // so every verb refuses it by its role (ADR-0025 d13).
@@ -3778,6 +3813,351 @@ where
         }
     }
 
+    /// `POST /oauth/token` with `grant_type=authorization_code` (http-api.md;
+    /// ADR-0031 d5, d10, d12). Client authentication is refused first, then
+    /// a `resource` other than `<issuer>/mcp`; then the connection the
+    /// code's digest finds, whatever its tenant, is judged by
+    /// [`decide_exchange`] with the client stored on it, never the client
+    /// tables. A pass commits `connection.opened` under the chain lock,
+    /// naming the key's open connection it replaces, and its fold redeems
+    /// the code by a conditional update and inserts the minted pair in that
+    /// transaction. A redeemed code presented by its client with the
+    /// verifier revokes the connection (`code_reuse`); every other refusal
+    /// consumes and revokes nothing. An opening the fold refuses — a race
+    /// for the code, or a mint, revocation or `key.revoked` landed since the
+    /// read — is judged once more on a fresh read. Without `oauth.issuer`
+    /// the endpoint does not exist (`access.not_found`).
+    pub async fn exchange(&self, form: ExchangeForm) -> Result<IssuedTokens, AppError> {
+        let issuer = self.oauth_issuer.as_ref().ok_or(AppError::NotFound)?;
+        refuse_client_authentication(form.client_authentication.as_ref())?;
+        check_resource(form.resource.as_deref(), issuer)?;
+        let code_hash = Sha256Hash::digest(form.code.as_bytes());
+        let request = ExchangeRequest {
+            client_id: &form.client_id,
+            code_verifier: &form.code_verifier,
+            redirect_uri: form.redirect_uri.as_deref(),
+        };
+        let mut retried = false;
+        loop {
+            let now = self.clock.now();
+            let found = self.journal.connection_by_auth_code(&code_hash).await?;
+            let judged = match &found {
+                Some(found) => Some(self.exchange_row(found, &now).await?),
+                None => None,
+            };
+            let decision = decide_exchange(
+                judged.as_ref().map(|(facts, _)| facts.row()).as_ref(),
+                &request,
+                issuer,
+            );
+            let (Some(found), Some((_, key))) = (found, judged) else {
+                return Err(exchange_refusal(decision));
+            };
+            match decision {
+                ExchangeDecision::Redeem => {}
+                ExchangeDecision::Refuse(_) => return Err(exchange_refusal(decision)),
+                ExchangeDecision::RevokeForReuse => {
+                    self.revoke_for_reuse(
+                        found.tenant_id,
+                        &found.row,
+                        key.as_ref(),
+                        RevokedCause::CodeReuse,
+                    )
+                    .await?;
+                    return Err(exchange_refusal(decision));
+                }
+            }
+            let Some(key) = key else {
+                return Err(exchange_refusal(ExchangeDecision::Refuse(
+                    AuthorizationCodeInvalid::KeyEnded,
+                )));
+            };
+            match self.open_connection(found, &key, code_hash, &now).await {
+                Err(AppError::Store(StoreError::ConnectionNotOpenable { .. })) if !retried => {
+                    retried = true;
+                }
+                Err(AppError::Store(StoreError::ConnectionNotOpenable { .. })) => {
+                    return Err(exchange_refusal(ExchangeDecision::Refuse(
+                        AuthorizationCodeInvalid::Unknown,
+                    )));
+                }
+                other => return other,
+            }
+        }
+    }
+
+    /// `POST /oauth/token` with `grant_type=refresh_token` (http-api.md;
+    /// ADR-0031 d10, d11, d12). Client authentication is refused first,
+    /// then a `resource` other than `<issuer>/mcp`, then a string not in the
+    /// refresh-token format, before any lookup. The token's digest finds
+    /// its tenant, and the store's one transaction judges it by
+    /// [`decide_refresh`] under its connection's row lock and rotates it
+    /// only on a pass, journalling nothing. A rotated token presented again
+    /// revokes the connection (`refresh_reuse`) in a `connection.revoked`
+    /// of its own under the chain lock; expiry, another client or a
+    /// resource that is not current rotates and revokes nothing. Without
+    /// `oauth.issuer` the endpoint does not exist (`access.not_found`).
+    pub async fn refresh(&self, form: RefreshForm) -> Result<IssuedTokens, AppError> {
+        let issuer = self.oauth_issuer.as_ref().ok_or(AppError::NotFound)?;
+        refuse_client_authentication(form.client_authentication.as_ref())?;
+        check_resource(form.resource.as_deref(), issuer)?;
+        let token_hash = Sha256Hash(refresh_token_digest(&form.refresh_token)?);
+        let unknown = Refusal::RefreshInvalid(RefreshInvalid::Unknown);
+        let found = self
+            .journal
+            .token_by_hash(&token_hash, TokenKind::Refresh)
+            .await?
+            .ok_or(unknown)?;
+        let now = self.clock.now();
+        let (issued, next) = self.mint_token_pair(&now);
+        let client_id = form.client_id.as_str();
+        let outcome = self
+            .journal
+            .rotate_refresh(found.tenant_id, &token_hash, next, &now, |facts| {
+                decide_refresh(facts.map(RefreshFacts::row).as_ref(), client_id, issuer)
+            })
+            .await?;
+        match (outcome.decision, outcome.facts) {
+            (RefreshDecision::Rotate, _) => Ok(issued),
+            (RefreshDecision::RevokeForReuse, Some(facts)) => {
+                let connection = self
+                    .journal
+                    .connection(found.tenant_id, facts.connection_id)
+                    .await?
+                    .ok_or(unknown)?;
+                let key = self.journal.key(found.tenant_id, connection.key_id).await?;
+                self.revoke_for_reuse(
+                    found.tenant_id,
+                    &connection,
+                    key.as_ref(),
+                    RevokedCause::RefreshReuse,
+                )
+                .await?;
+                Err(Refusal::RefreshInvalid(RefreshInvalid::Reused).into())
+            }
+            (decision, _) => Err(decision.refusal().unwrap_or(unknown).into()),
+        }
+    }
+
+    /// The caller an access token acts as at `/mcp`: the token's digest
+    /// finds an access row and never a refresh row, the token unexpired,
+    /// its connection open and bound to the current `<issuer>/mcp`, and its
+    /// key neither revoked nor expired; the caller is then exactly the one
+    /// the key's own authentication builds (roles-and-keys.md connections;
+    /// ADR-0031 d10, d11). Anything else is [`AppError::Unauthorized`].
+    /// `/mcp` accepts it once ADR-0039's surface lands.
+    pub async fn resolve_access_token(&self, token: &str) -> Result<Caller, AppError> {
+        let issuer = self.oauth_issuer.as_ref().ok_or(AppError::Unauthorized)?;
+        if token_kind(token) != Some(TokenKind::Access) {
+            return Err(AppError::Unauthorized);
+        }
+        let found = self
+            .journal
+            .token_by_hash(&Sha256Hash::digest(token.as_bytes()), TokenKind::Access)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        if self.clock.now().unix_micros() >= found.row.expires_at.unix_micros() {
+            return Err(AppError::Unauthorized);
+        }
+        let connection = self
+            .journal
+            .connection(found.tenant_id, found.row.connection_id)
+            .await?
+            .filter(|c| c.state == ConnectionState::Open && c.resource == issuer.resource())
+            .ok_or(AppError::Unauthorized)?;
+        let key = self
+            .journal
+            .key(found.tenant_id, connection.key_id)
+            .await?
+            .filter(|k| k.revoked_at.is_none())
+            .ok_or(AppError::Unauthorized)?;
+        self.caller_of(key).await
+    }
+
+    /// `POST /oauth/register` (http-api.md; RFC 7591; ADR-0031 d5): the body
+    /// is validated, a `client_id` minted and the registration stored under
+    /// the provider tenant with the digest of the body as received, and the
+    /// answer carries no secret, its `token_endpoint_auth_method` `none`
+    /// whether sent or absent. Past the unused registrations' cap the store
+    /// writes nothing and answers [`StoreError::CapReached`], `limit.rate`.
+    /// It journals nothing. Without `oauth.issuer` the endpoint does not
+    /// exist (`access.not_found`).
+    pub async fn register(&self, body: &[u8]) -> Result<RegisteredClient, AppError> {
+        if self.oauth_issuer.is_none() {
+            return Err(AppError::NotFound);
+        }
+        let metadata = validate_registration(body)?;
+        let registration = ClientDescription {
+            client_id: self.ids.new_id().to_string(),
+            client_name: metadata.client_name,
+            redirect_uris: metadata.redirect_uris,
+            metadata_digest: Sha256Hash::digest(body),
+        };
+        self.journal
+            .insert_dcr(registration.clone(), &self.clock.now())
+            .await?;
+        Ok(RegisteredClient {
+            client_id: registration.client_id,
+            client_name: registration.client_name,
+            redirect_uris: registration.redirect_uris,
+            token_endpoint_auth_method: "none",
+        })
+    }
+
+    /// The exchange's facts about the connection a code's digest found, at
+    /// `now`: the code's expiry and voiding and the key's state, beside the
+    /// key's row, `None` for a key its tenant does not hold.
+    async fn exchange_row(
+        &self,
+        found: &TenantRow<ConnectionRecord>,
+        now: &EventTime,
+    ) -> Result<(ExchangeFacts, Option<KeyRecord>), AppError> {
+        let connection = &found.row;
+        let key = self.journal.key(found.tenant_id, connection.key_id).await?;
+        let code_voided = self
+            .journal
+            .connect_codes(found.tenant_id, connection.key_id)
+            .await?
+            .iter()
+            .find(|c| c.code_id == connection.code_id)
+            .is_none_or(|c| c.voided_seq.is_some());
+        let facts = ExchangeFacts {
+            connection: connection.clone(),
+            key: match &key {
+                Some(k) if k.revoked_at.is_none() => KeyState::Active,
+                _ => KeyState::Revoked,
+            },
+            code_expired: connection
+                .auth_code_expires_at
+                .as_ref()
+                .is_none_or(|at| now.unix_micros() >= at.unix_micros()),
+            code_voided,
+        };
+        Ok((facts, key))
+    }
+
+    /// The exchange's `connection.opened`, as the connector key, replacing
+    /// the key's open connection, with the minted pair in its fold: the
+    /// pair is answered only once the commit holds.
+    async fn open_connection(
+        &self,
+        found: TenantRow<ConnectionRecord>,
+        key: &KeyRecord,
+        auth_code_hash: Sha256Hash,
+        now: &EventTime,
+    ) -> Result<IssuedTokens, AppError> {
+        let tenant_id = found.tenant_id;
+        let connection = found.row;
+        let replaces = self
+            .journal
+            .connections(tenant_id, key.key_id)
+            .await?
+            .into_iter()
+            .find(|c| c.state == ConnectionState::Open)
+            .map(|c| c.connection_id);
+        let (issued, tokens) = self.mint_token_pair(now);
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::CONNECTION_OPENED,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "connection_id": connection.connection_id.to_string(),
+                "key_id": key.key_id.to_string(),
+                "code_id": connection.code_id.to_string(),
+                "client_id": connection.client_id,
+                "client_kind": connection.client_kind.as_str(),
+                "client_metadata_digest": connection.client_metadata_digest.to_prefixed(),
+                "redirect_uri": connection.redirect_uri,
+                "resource": connection.resource,
+                "replaces_connection_id": replaces.map(|c| c.to_string()),
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::ConnectionOpened {
+                connection_id: connection.connection_id,
+                replaces,
+                auth_code_hash,
+                tokens,
+            },
+            None,
+        )
+        .await?;
+        Ok(issued)
+    }
+
+    /// A reuse's `connection.revoked`, as the connector key whose past
+    /// credential triggered it, `revoked_by_key_id` and `reason_digest`
+    /// null, under the chain lock (event-catalog.md `connection.revoked`;
+    /// ADR-0031 d10, d12). A connection another request revoked first is
+    /// revoked once: that commit's refusal is not this request's failure.
+    async fn revoke_for_reuse(
+        &self,
+        tenant_id: Uuid,
+        connection: &ConnectionRecord,
+        key: Option<&KeyRecord>,
+        cause: RevokedCause,
+    ) -> Result<(), AppError> {
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::CONNECTION_REVOKED,
+            key.map_or("", |k| k.principal.as_str()),
+            Some(connection.key_id),
+            json!({
+                "connection_id": connection.connection_id.to_string(),
+                "key_id": connection.key_id.to_string(),
+                "revoked_by_key_id": Value::Null,
+                "cause": cause.as_str(),
+                "reason_digest": Value::Null,
+            }),
+        )?;
+        let fold = MetadataFold::ConnectionRevoked {
+            connection_id: connection.connection_id,
+            cause,
+        };
+        match self.commit(event, fold, None).await {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let revoked = self
+                    .journal
+                    .connection(tenant_id, connection.connection_id)
+                    .await?
+                    .is_some_and(|c| matches!(c.state, ConnectionState::Revoked(_)));
+                if revoked { Ok(()) } else { Err(err) }
+            }
+        }
+    }
+
+    /// A fresh access and refresh token, each from the id generator's
+    /// secret, living [`ACCESS_TOKEN_TTL_SECS`] and
+    /// [`REFRESH_TOKEN_TTL_SECS`] from `now`: the answer and what the store
+    /// keeps of it, the digests (ADR-0031 d10).
+    fn mint_token_pair(&self, now: &EventTime) -> (IssuedTokens, TokenPair) {
+        let access = Token::mint(TokenKind::Access, self.ids.new_secret());
+        let refresh = Token::mint(TokenKind::Refresh, self.ids.new_secret());
+        let minted = |token: &Token, ttl: i64| MintedToken {
+            token_hash: Sha256Hash(token.digest()),
+            expires_at: EventTime::from_unix_micros(now.unix_micros() + ttl * 1_000_000).expect(
+                "a token's lifetime after a clock reading is a time the fixed-width form writes",
+            ),
+        };
+        let pair = TokenPair {
+            access: minted(&access, ACCESS_TOKEN_TTL_SECS),
+            refresh: minted(&refresh, REFRESH_TOKEN_TTL_SECS),
+        };
+        let issued = IssuedTokens {
+            access_token: access,
+            refresh_token: refresh,
+            expires_in: ACCESS_TOKEN_TTL_SECS.unsigned_abs(),
+        };
+        (issued, pair)
+    }
+
     /// The authorize request's client (ADR-0031 d5): a document client's
     /// metadata from a cached copy within its `Cache-Control` lifetime,
     /// else a fresh fetch, validated and cached, else — the fetch failed or
@@ -3855,6 +4235,59 @@ where
                     DocumentFetchFailure::Busy => ClientInvalid::FetchBusy,
                 }))),
             },
+        }
+    }
+}
+
+/// What the token exchange judges a connection by: the row the code's
+/// digest found and what was read beside it.
+struct ExchangeFacts {
+    connection: ConnectionRecord,
+    key: KeyState,
+    code_expired: bool,
+    code_voided: bool,
+}
+
+impl ExchangeFacts {
+    fn row(&self) -> ExchangeRow<'_> {
+        let c = &self.connection;
+        ExchangeRow {
+            state: c.state,
+            client_id: &c.client_id,
+            code_challenge: &c.code_challenge,
+            redirect_uri: &c.redirect_uri,
+            redirect_uri_sent: c.redirect_uri_sent,
+            resource: &c.resource,
+            key: self.key,
+            code_redeemed: c.auth_code_redeemed_at.is_some(),
+            code_expired: self.code_expired,
+            code_voided: self.code_voided,
+        }
+    }
+}
+
+/// The exchange's refusal, `oauth.authorization_code_invalid` whatever its
+/// reason (`invalid_grant`).
+fn exchange_refusal(decision: ExchangeDecision) -> AppError {
+    decision
+        .refusal()
+        .unwrap_or(Refusal::AuthorizationCodeInvalid(
+            AuthorizationCodeInvalid::Unknown,
+        ))
+        .into()
+}
+
+/// Every client is public, so client authentication on a token request is
+/// `oauth.client_invalid`, by the scheme of its header, before any lookup
+/// (http-api.md `POST /oauth/token`; ADR-0031 d5).
+fn refuse_client_authentication(sent: Option<&ClientAuthentication>) -> Result<(), AppError> {
+    match sent {
+        None => Ok(()),
+        Some(ClientAuthentication::Header { scheme }) => Err(AppError::ClientAuthentication {
+            scheme: Some(scheme.clone()),
+        }),
+        Some(ClientAuthentication::BodySecret) => {
+            Err(AppError::ClientAuthentication { scheme: None })
         }
     }
 }
