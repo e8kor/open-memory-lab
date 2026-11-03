@@ -1255,6 +1255,13 @@ async fn schema_through(created: &Mutex<Vec<String>>, version: i64) -> (String, 
     let mut conn = PgConnection::connect(&owner_url(&name))
         .await
         .expect("connect");
+    // 0007 and every later granting migration name the grantee through
+    // oml.serving_role, as PgStore::migrate sets it (ADR-0034 d2).
+    sqlx::query("SELECT set_config('oml.serving_role', $1, false)")
+        .bind(format!("{name}_serving"))
+        .execute(&mut conn)
+        .await
+        .expect("set the serving role");
     conn.ensure_migrations_table()
         .await
         .expect("migrations table");
@@ -1997,8 +2004,9 @@ async fn two_operator_keys_cannot_share_a_name_though_their_tenant_is_null() {
         .execute(&mut *tx)
         .await
         .expect("the owner lifts FORCE");
-    let insert = "INSERT INTO api_keys (id, tenant_id, hash, role, principal, issued_seq, name) \
-                  VALUES ($1, NULL, $2, 'operator', 'provider/operator', 1, $3)";
+    let insert = "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
+                  issued_seq, name) \
+                  VALUES ($1, NULL, $2, 'bearer', 'operator', 'provider/operator', 1, $3)";
     for (n, key_name) in [(1_u8, None), (2, None), (3, Some("root-operator"))] {
         sqlx::query(insert)
             .bind(Uuid::from_u128(0xD970 + u128::from(n)))
@@ -3239,8 +3247,8 @@ async fn an_operator_key_with_tenant_id_null_still_issues_a_tenants_first_admin_
         .await
         .expect("the owner lifts FORCE");
     sqlx::query(
-        "INSERT INTO api_keys (id, tenant_id, hash, role, principal, issued_seq, rotated_from) \
-         VALUES ($1, NULL, $2, 'operator', 'provider/operator', 1, $3)",
+        "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, issued_seq, \
+         rotated_from) VALUES ($1, NULL, $2, 'bearer', 'operator', 'provider/operator', 1, $3)",
     )
     .bind(operator)
     .bind(vec![0xA0_u8; 32])
@@ -3900,5 +3908,653 @@ async fn the_migrations_create_no_function_marked_leakproof() {
     .await
     .expect("the leakproof functions");
     assert_eq!(marked, Vec::<String>::new());
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Connections (ADR-0031 d7, d8, d10): migration 0012's connector-key
+// credential, connect codes, connections and their tokens
+// ---------------------------------------------------------------------------
+
+/// Runs `statement` over the serving login with `oml.tenant_id` set to
+/// `tenant`, in a transaction that commits; panics naming `what` on a
+/// refusal.
+async fn run_under(store: &PgStore, tenant: Uuid, statement: &str, what: &str) {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    sqlx::query(statement)
+        .execute(&mut *tx)
+        .await
+        .unwrap_or_else(|e| panic!("{what}: {e}"));
+    tx.commit().await.expect("commit");
+}
+
+/// Runs `statement` over the serving login under `tenant`, in a transaction
+/// that rolls back; the refusal's SQLSTATE and constraint, or the rows it
+/// changed.
+async fn attempt_under(
+    store: &PgStore,
+    tenant: Uuid,
+    statement: &str,
+) -> Result<u64, (String, Option<String>)> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let result = sqlx::query(statement).execute(&mut *tx).await;
+    tx.rollback().await.expect("rollback");
+    match result {
+        Ok(done) => Ok(done.rows_affected()),
+        Err(e) => {
+            let db = e
+                .as_database_error()
+                .unwrap_or_else(|| panic!("not a database error: {e}"));
+            Err((
+                db.code().map(|c| c.into_owned()).unwrap_or_default(),
+                db.constraint().map(str::to_owned),
+            ))
+        }
+    }
+}
+
+/// The hex of a 32-byte fixture digest, every byte `byte`.
+fn digest_hex(byte: u8) -> String {
+    hex::encode([byte; 32])
+}
+
+/// A connector key row: `credential` `connection` and no hash (ADR-0031 d7).
+fn connector_key_sql(tenant: Uuid, key: Uuid) -> String {
+    format!(
+        "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, issued_seq) \
+         VALUES ('{key}', '{tenant}', NULL, 'connection', 'writer', 'crew/claude-mobile', 1)"
+    )
+}
+
+/// A live connect code of `key`, stored as the digest `byte` names (ADR-0031 d8).
+fn connect_code_sql(tenant: Uuid, code: Uuid, key: Uuid, byte: u8) -> String {
+    let digest = digest_hex(byte);
+    format!(
+        "INSERT INTO connect_codes (id, tenant_id, key_id, hash, issued_seq, expires_at) \
+         VALUES ('{code}', '{tenant}', '{key}', decode('{digest}', 'hex'), 2, \
+                 now() + interval '10 minutes')"
+    )
+}
+
+/// A connection of `key` opened from `code` in `state`, its authorization
+/// code stored as the digest `byte` names (ADR-0031 d10).
+fn connection_sql(
+    tenant: Uuid,
+    connection: Uuid,
+    key: Uuid,
+    code: Uuid,
+    state: &str,
+    byte: u8,
+) -> String {
+    let digest = digest_hex(byte);
+    let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    format!(
+        "INSERT INTO oauth_connections (id, tenant_id, key_id, code_id, client_id, client_kind, \
+         client_metadata_digest, redirect_uri, redirect_uri_sent, resource, code_challenge, \
+         auth_code_hash, auth_code_expires_at, state, created_at) \
+         VALUES ('{connection}', '{tenant}', '{key}', '{code}', \
+                 'https://client.example/metadata.json', 'cimd', decode('{digest}', 'hex'), \
+                 'https://client.example/callback', true, 'https://oml.example/mcp', \
+                 '{challenge}', decode('{digest}', 'hex'), now() + interval '1 minute', \
+                 '{state}', now())"
+    )
+}
+
+/// A token of `connection` of `kind`, stored as the digest `byte` names.
+fn token_sql(tenant: Uuid, connection: Uuid, kind: &str, byte: u8) -> String {
+    let digest = digest_hex(byte);
+    format!(
+        "INSERT INTO oauth_tokens (hash, tenant_id, connection_id, kind, expires_at, created_at) \
+         VALUES (decode('{digest}', 'hex'), '{tenant}', '{connection}', '{kind}', \
+                 now() + interval '1 hour', now())"
+    )
+}
+
+/// A migrated store with one tenant, seeded from `seed`, holding a connector
+/// key; the store, the tenant and the key.
+async fn connector_rig(created: &Mutex<Vec<String>>, seed: u64) -> (PgStore, Uuid, Uuid) {
+    let store = fresh_store(created).await;
+    let mut rig = ChainRig::new(seed);
+    rig.seed_chain(&store, 0).await;
+    let key = Uuid::from_u128(0xC0DE_0000 + u128::from(seed));
+    run_under(
+        &store,
+        rig.tenant_id,
+        &connector_key_sql(rig.tenant_id, key),
+        "a connector key row",
+    )
+    .await;
+    (store, rig.tenant_id, key)
+}
+
+/// A connector key is stored with `credential` `connection` and no hash; a
+/// connector key row holding a hash is refused, and a bearer key, which the
+/// adapter's fold writes with its hash, cannot turn connector while it holds
+/// one (ADR-0031 d7; postgres-schema.md api_keys).
+#[tokio::test]
+async fn a_connector_key_row_has_no_hash_and_a_bearer_key_row_holding_its_hash_cannot_turn_connector()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, tenant, connector) = connector_rig(&created, 120).await;
+    let mut rig = ChainRig::new(121);
+    rig.seed_chain(&store, 0).await;
+    let bearer = key_record(rig.tenant_id, Uuid::from_u128(0xB0B1), Role::Writer, None);
+    rig.issue_key(&store, bearer.clone()).await;
+
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let (credential, hashed): (String, bool) =
+        sqlx::query_as("SELECT credential, hash IS NOT NULL FROM api_keys WHERE id = $1")
+            .bind(connector)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("the connector key row");
+    tx.rollback().await.expect("rollback");
+    assert_eq!(
+        (credential.as_str(), hashed),
+        ("connection", false),
+        "a connector key is stored with no hash"
+    );
+
+    let hashed_connector = format!(
+        "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, issued_seq) \
+         VALUES ('{}', '{tenant}', decode('{}', 'hex'), 'connection', 'writer', 'crew/x', 1)",
+        Uuid::from_u128(0xC0DE_0F00),
+        digest_hex(0x77)
+    );
+    assert_eq!(
+        attempt_under(&store, tenant, &hashed_connector).await,
+        Err((
+            "23514".to_owned(),
+            Some("api_keys_connector_has_no_hash".to_owned())
+        )),
+        "a connector key row holding a hash is refused"
+    );
+
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let (credential, hashed): (String, bool) =
+        sqlx::query_as("SELECT credential, hash IS NOT NULL FROM api_keys WHERE id = $1")
+            .bind(bearer.key_id)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("the bearer key row");
+    tx.rollback().await.expect("rollback");
+    assert_eq!(
+        (credential.as_str(), hashed),
+        ("bearer", true),
+        "the fold writes an issued key as a bearer key with its hash"
+    );
+    let turn = format!(
+        "UPDATE api_keys SET credential = 'connection' WHERE id = '{}'",
+        bearer.key_id
+    );
+    assert_eq!(
+        attempt_under(&store, rig.tenant_id, &turn).await,
+        Err((
+            "23514".to_owned(),
+            Some("api_keys_connector_has_no_hash".to_owned())
+        )),
+        "a bearer key holding its hash cannot turn connector"
+    );
+    drop_dbs(&created).await;
+}
+
+/// `connect_codes_live` holds one unredeemed, unvoided code per key: a
+/// second live code is refused, and a voided or a redeemed code no longer
+/// counts (ADR-0031 d8).
+#[tokio::test]
+async fn a_key_holds_at_most_one_live_connect_code() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, tenant, key) = connector_rig(&created, 122).await;
+    let [first, second, third] = [0xC1, 0xC2, 0xC3].map(Uuid::from_u128);
+    run_under(
+        &store,
+        tenant,
+        &connect_code_sql(tenant, first, key, 0x01),
+        "the first code",
+    )
+    .await;
+    assert_eq!(
+        attempt_under(&store, tenant, &connect_code_sql(tenant, second, key, 0x02)).await,
+        Err(("23505".to_owned(), Some("connect_codes_live".to_owned()))),
+        "a second live code of one key is refused"
+    );
+    run_under(
+        &store,
+        tenant,
+        &format!("UPDATE connect_codes SET voided_seq = 3 WHERE id = '{first}'"),
+        "void the first code",
+    )
+    .await;
+    run_under(
+        &store,
+        tenant,
+        &connect_code_sql(tenant, second, key, 0x02),
+        "a code beside a voided one",
+    )
+    .await;
+    run_under(
+        &store,
+        tenant,
+        &format!("UPDATE connect_codes SET redeemed_at = now() WHERE id = '{second}'"),
+        "redeem the second code",
+    )
+    .await;
+    run_under(
+        &store,
+        tenant,
+        &connect_code_sql(tenant, third, key, 0x03),
+        "a code beside a redeemed one",
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
+/// `oauth_connections_open` holds one open connection per key: a second
+/// open connection is refused, an authorized one beside it is not, and a
+/// revoked connection no longer counts (ADR-0031 d7).
+#[tokio::test]
+async fn a_key_holds_at_most_one_open_connection() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, tenant, key) = connector_rig(&created, 123).await;
+    let [code_a, code_b] = [0xCA, 0xCB].map(Uuid::from_u128);
+    let [conn_a, conn_b] = [0xEA, 0xEB].map(Uuid::from_u128);
+    for (code, byte) in [(code_a, 0x0A), (code_b, 0x0B)] {
+        run_under(
+            &store,
+            tenant,
+            &connect_code_sql(tenant, code, key, byte),
+            "a code",
+        )
+        .await;
+        run_under(
+            &store,
+            tenant,
+            &format!("UPDATE connect_codes SET redeemed_at = now() WHERE id = '{code}'"),
+            "redeem it",
+        )
+        .await;
+    }
+    run_under(
+        &store,
+        tenant,
+        &connection_sql(tenant, conn_a, key, code_a, "open", 0x1A),
+        "the first open connection",
+    )
+    .await;
+    assert_eq!(
+        attempt_under(
+            &store,
+            tenant,
+            &connection_sql(tenant, conn_b, key, code_b, "open", 0x1B)
+        )
+        .await,
+        Err((
+            "23505".to_owned(),
+            Some("oauth_connections_open".to_owned())
+        )),
+        "a second open connection of one key is refused"
+    );
+    run_under(
+        &store,
+        tenant,
+        &connection_sql(tenant, conn_b, key, code_b, "authorized", 0x1B),
+        "an authorized connection beside the open one",
+    )
+    .await;
+    run_under(
+        &store,
+        tenant,
+        &format!(
+            "UPDATE oauth_connections SET state = 'revoked', revoked_seq = 4, \
+             revoked_cause = 'replaced' WHERE id = '{conn_a}'"
+        ),
+        "revoke the first",
+    )
+    .await;
+    run_under(
+        &store,
+        tenant,
+        &format!("UPDATE oauth_connections SET state = 'open' WHERE id = '{conn_b}'"),
+        "open the second once the first is revoked",
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
+/// Rows of `connect_codes`, `oauth_connections` and `oauth_tokens` the
+/// serving login sees with `oml.tenant_id` set to `tenant` and
+/// `oml.api_key_hash` to `digest`, each when given.
+async fn visible_connection_rows(
+    store: &PgStore,
+    tenant: Option<Uuid>,
+    digest: Option<u8>,
+) -> (i64, i64, i64) {
+    let mut tx = store.pool().begin().await.expect("begin");
+    if let Some(tenant) = tenant {
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+    }
+    if let Some(byte) = digest {
+        sqlx::query("SELECT set_config('oml.api_key_hash', $1, true)")
+            .bind(digest_hex(byte))
+            .execute(&mut *tx)
+            .await
+            .expect("set digest");
+    }
+    let counts = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM connect_codes), (SELECT count(*) FROM oauth_connections), \
+                (SELECT count(*) FROM oauth_tokens)",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .expect("counts");
+    tx.rollback().await.expect("rollback");
+    counts
+}
+
+/// A tenant's connect code, connection and token are invisible to another
+/// tenant's session and to a session with no tenant, and another tenant's
+/// row cannot reference them: the reference is refused as one to no row is
+/// (postgres-schema.md connections, "Keys into tenant tables").
+#[tokio::test]
+async fn a_connection_row_of_one_tenant_is_invisible_to_another_tenants_session() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, a, key_a) = connector_rig(&created, 124).await;
+    let (code_a, conn_a) = (Uuid::from_u128(0xCA4), Uuid::from_u128(0xEA4));
+    run_under(
+        &store,
+        a,
+        &connect_code_sql(a, code_a, key_a, 0x24),
+        "A's code",
+    )
+    .await;
+    run_under(
+        &store,
+        a,
+        &connection_sql(a, conn_a, key_a, code_a, "open", 0x25),
+        "A's connection",
+    )
+    .await;
+    run_under(
+        &store,
+        a,
+        &token_sql(a, conn_a, "access", 0x26),
+        "A's token",
+    )
+    .await;
+    let mut rig_b = ChainRig::new(125);
+    rig_b.seed_chain(&store, 0).await;
+    let b = rig_b.tenant_id;
+    let key_b = Uuid::from_u128(0xC0DE_0B25);
+    run_under(&store, b, &connector_key_sql(b, key_b), "B's connector key").await;
+
+    let flags: Vec<(String, bool, bool)> = sqlx::query(
+        "SELECT relname::text, relrowsecurity, relforcerowsecurity FROM pg_class \
+         WHERE relname IN ('connect_codes', 'oauth_connections', 'oauth_tokens') ORDER BY relname",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("table flags")
+    .iter()
+    .map(|r| (r.get(0), r.get(1), r.get(2)))
+    .collect();
+    assert_eq!(
+        flags,
+        vec![
+            ("connect_codes".to_owned(), true, true),
+            ("oauth_connections".to_owned(), true, true),
+            ("oauth_tokens".to_owned(), true, true),
+        ],
+        "row-level security is enabled and forced on the three tables"
+    );
+    assert_eq!(
+        visible_connection_rows(&store, Some(a), None).await,
+        (1, 1, 1),
+        "the owning tenant sees its rows"
+    );
+    assert_eq!(
+        visible_connection_rows(&store, Some(b), None).await,
+        (0, 0, 0),
+        "another tenant sees none"
+    );
+    assert_eq!(
+        visible_connection_rows(&store, None, None).await,
+        (0, 0, 0),
+        "no tenant context sees none"
+    );
+
+    let to_a = attempt_under(
+        &store,
+        b,
+        &connection_sql(b, Uuid::from_u128(0xEB4), key_b, code_a, "authorized", 0x27),
+    )
+    .await;
+    let to_none = attempt_under(
+        &store,
+        b,
+        &connection_sql(
+            b,
+            Uuid::from_u128(0xEB4),
+            key_b,
+            Uuid::from_u128(0x0BAD_C0DE),
+            "authorized",
+            0x27,
+        ),
+    )
+    .await;
+    assert_eq!(
+        to_a,
+        Err((
+            "23503".to_owned(),
+            Some("oauth_connections_code_id_fkey".to_owned())
+        )),
+        "B's connection naming A's code is refused by the tenant-scoped key"
+    );
+    assert_eq!(to_a, to_none, "as one naming no code is");
+    let token_to_a = attempt_under(&store, b, &token_sql(b, conn_a, "access", 0x28)).await;
+    let token_to_none = attempt_under(
+        &store,
+        b,
+        &token_sql(b, Uuid::from_u128(0x0BAD_E000), "access", 0x28),
+    )
+    .await;
+    assert_eq!(
+        token_to_a,
+        Err((
+            "23503".to_owned(),
+            Some("oauth_tokens_connection_id_fkey".to_owned())
+        )),
+        "B's token naming A's connection is refused by the tenant-scoped key"
+    );
+    assert_eq!(token_to_a, token_to_none, "as one naming no connection is");
+    drop_dbs(&created).await;
+}
+
+/// Before the tenant is known, a session that sets `oml.api_key_hash` to a
+/// code's, an authorization code's or a token's digest sees exactly the row
+/// that digest names, through the key_resolution form 0001 gave
+/// `api_keys.hash`, and a digest no row holds shows nothing
+/// (postgres-schema.md connections).
+#[tokio::test]
+async fn a_digest_lookup_with_no_tenant_sees_exactly_the_row_its_digest_names() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (store, t, key) = connector_rig(&created, 126).await;
+    let (code, conn) = (Uuid::from_u128(0xCA6), Uuid::from_u128(0xEA6));
+    run_under(&store, t, &connect_code_sql(t, code, key, 0x61), "a code").await;
+    run_under(
+        &store,
+        t,
+        &connection_sql(t, conn, key, code, "authorized", 0x62),
+        "a connection",
+    )
+    .await;
+    run_under(&store, t, &token_sql(t, conn, "refresh", 0x63), "a token").await;
+    assert_eq!(
+        visible_connection_rows(&store, None, Some(0x61)).await,
+        (1, 0, 0),
+        "the code's digest finds the code alone"
+    );
+    assert_eq!(
+        visible_connection_rows(&store, None, Some(0x62)).await,
+        (0, 1, 0),
+        "the authorization code's digest finds the connection alone"
+    );
+    assert_eq!(
+        visible_connection_rows(&store, None, Some(0x63)).await,
+        (0, 0, 1),
+        "the token's digest finds the token alone"
+    );
+    assert_eq!(
+        visible_connection_rows(&store, None, Some(0x64)).await,
+        (0, 0, 0),
+        "a digest no row holds finds nothing"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Every `api_keys` row of a database at the v0.3 schema, 0001–0009
+/// applied, tenant keys, a revoked key and a provider-level operator key
+/// among them, reads as a bearer key with its hash after 0012, and a row
+/// written since names its credential: the column keeps no default
+/// (ADR-0031 d7; postgres-schema.md api_keys).
+#[tokio::test]
+async fn a_migrated_v0_3_database_keeps_every_key_as_a_bearer_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 9).await;
+    let tenant = Uuid::from_u128(0xA03);
+    let keys = [
+        (
+            Uuid::from_u128(0xD031),
+            Some(tenant),
+            "admin",
+            false,
+            0x31_u8,
+        ),
+        (Uuid::from_u128(0xD032), Some(tenant), "writer", false, 0x32),
+        (Uuid::from_u128(0xD033), Some(tenant), "reader", true, 0x33),
+        (Uuid::from_u128(0xD034), None, "operator", false, 0x34),
+    ];
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("ALTER TABLE api_keys NO FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .expect("the owner lifts FORCE to write the operator key");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, 'v03')")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    for (id, key_tenant, role, revoked, byte) in keys {
+        sqlx::query(
+            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, issued_seq, revoked_at) \
+             VALUES ($1, $2, $3, $4, 'v03/key', 1, CASE WHEN $5 THEN now() END)",
+        )
+        .bind(id)
+        .bind(key_tenant)
+        .bind(vec![byte; 32])
+        .bind(role)
+        .bind(revoked)
+        .execute(&mut *tx)
+        .await
+        .expect("a v0.3 key row");
+    }
+    sqlx::query("ALTER TABLE api_keys FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .expect("restore FORCE");
+    tx.commit().await.expect("commit the v0.3 rows");
+
+    for migration in MIGRATOR.iter().filter(|m| m.version > 9) {
+        conn.apply(migration)
+            .await
+            .expect("the later migrations apply");
+    }
+
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("ALTER TABLE api_keys NO FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .expect("the owner lifts FORCE to read every row");
+    let rows: Vec<(Uuid, String, Option<Vec<u8>>)> =
+        sqlx::query_as("SELECT id, credential, hash FROM api_keys ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await
+            .expect("the migrated keys");
+    tx.rollback().await.expect("rollback");
+    let expected: Vec<(Uuid, String, Option<Vec<u8>>)> = keys
+        .iter()
+        .map(|&(id, _, _, _, byte)| (id, "bearer".to_owned(), Some(vec![byte; 32])))
+        .collect();
+    assert_eq!(rows, expected, "every key is a bearer key with its hash");
+
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let unnamed = sqlx::query(
+        "INSERT INTO api_keys (id, tenant_id, hash, role, principal, issued_seq) \
+         VALUES ($1, $2, $3, 'writer', 'v03/new', 2)",
+    )
+    .bind(Uuid::from_u128(0xD035))
+    .bind(tenant)
+    .bind(vec![0x35_u8; 32])
+    .execute(&mut *tx)
+    .await;
+    tx.rollback().await.expect("rollback");
+    assert_eq!(
+        refused_code(unnamed, "a key row that names no credential"),
+        "23502",
+        "the credential column keeps no default"
+    );
+    drop(conn);
+    let _ = db;
     drop_dbs(&created).await;
 }

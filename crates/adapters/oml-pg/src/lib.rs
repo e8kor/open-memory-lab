@@ -1417,9 +1417,11 @@ async fn apply_fold(
                 ))
             })?;
             sqlx::query(
-                "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
-                 default_workarea_id, issued_by, issued_seq, name, crew_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                // Every key the fold writes is a bearer key, with its hash
+                // (0012; ADR-0031 d7).
+                "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
+                 held_by, default_workarea_id, issued_by, issued_seq, name, crew_id) \
+                 VALUES ($1, $2, $3, 'bearer', $4, $5, $6, $7, $8, $9, $10, $11)",
             )
             .bind(k.key_id)
             .bind(k.tenant_id)

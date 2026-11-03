@@ -6261,8 +6261,8 @@ async fn provider_operator_key(rig: &Rig) -> String {
         .await
         .expect("lift force");
     sqlx::query(
-        "INSERT INTO api_keys (tenant_id, hash, role, principal, held_by, issued_seq) \
-         VALUES (NULL, decode($1, 'hex'), 'operator', 'provider/operator-1', 'human', 0)",
+        "INSERT INTO api_keys (tenant_id, hash, credential, role, principal, held_by, issued_seq) \
+         VALUES (NULL, decode($1, 'hex'), 'bearer', 'operator', 'provider/operator-1', 'human', 0)",
     )
     .bind(hash.trim_start_matches("sha256:"))
     .execute(&mut conn)

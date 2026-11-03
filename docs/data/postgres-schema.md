@@ -580,6 +580,7 @@ CREATE TABLE connect_codes (
     voided_seq  bigint,                        -- seq of the connection.code_issued,
                                                -- connection.revoked or key.revoked that voided it
                                                -- (roles-and-keys Connections; ADR-0031 d8)
+    UNIQUE (tenant_id, id),                    -- target of oauth_connections' code reference
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id)
 );
 
@@ -591,7 +592,7 @@ CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'auth
     id                   uuid        PRIMARY KEY,
     tenant_id            uuid        NOT NULL,
     key_id               uuid        NOT NULL,
-    code_id              uuid        NOT NULL UNIQUE REFERENCES connect_codes (id),
+    code_id              uuid        NOT NULL UNIQUE,
                                                 -- one connect code, at most one connection
     client_id            text        NOT NULL,  -- no reference: oauth_clients is the provider tenant's;
                                                 -- the token endpoint's client (ADR-0031 d5)
@@ -618,7 +619,9 @@ CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'auth
     revoked_cause        text        CHECK (revoked_cause IN
                              ('admin', 'refresh_reuse', 'code_reuse', 'replaced')),
     created_at           timestamptz NOT NULL,
-    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id)
+    UNIQUE (tenant_id, id),                     -- target of oauth_tokens' connection reference
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, code_id) REFERENCES connect_codes (tenant_id, id)
 );
 
 -- at most one open connection per key (ADR-0031 d7).
@@ -627,11 +630,12 @@ CREATE UNIQUE INDEX oauth_connections_open ON oauth_connections (key_id) WHERE s
 CREATE TABLE oauth_tokens (
     hash          bytea       PRIMARY KEY,      -- SHA-256 of the token string
     tenant_id     uuid        NOT NULL,
-    connection_id uuid        NOT NULL REFERENCES oauth_connections (id),
+    connection_id uuid        NOT NULL,
     kind          text        NOT NULL CHECK (kind IN ('access', 'refresh')),
     expires_at    timestamptz NOT NULL,         -- set at minting; rotation never changes it
     rotated_at    timestamptz,                  -- refresh only: presenting it after this is reuse
-    created_at    timestamptz NOT NULL
+    created_at    timestamptz NOT NULL,
+    FOREIGN KEY (tenant_id, connection_id) REFERENCES oauth_connections (tenant_id, id)
 );
 ```
 
@@ -1109,11 +1113,15 @@ serving role until that migration grants its row here, under the sync rule.
 | `grants` | ✓ | ✓ | | | |
 | `key_denials` | ✓ | ✓ | ✓ | | |
 | `crews` | ✓ | ✓ | ✓ | | |
+| `connect_codes` | ✓ | ✓ | ✓ | | |
+| `oauth_connections` | ✓ | ✓ | ✓ | ✓ | |
+| `oauth_tokens` | ✓ | ✓ | ✓ | ✓ | |
 | `_sqlx_migrations` | | | | | |
 
 - **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
   privilege (`42501`) before the guard trigger runs (ADR-0002 d4).
-- **`review_queue`** is the one table a statement deletes from, at a verdict.
+- **`review_queue`** is deleted from at a verdict; **`oauth_connections`** and **`oauth_tokens`**
+  only by the operational removal that [connections](#connections-adr-0031) states (0012).
 - **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the
   `bigserial` sequence.
 - **No table** grants `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`, whole-table operations
