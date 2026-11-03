@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0015-cli-administration
 tier: engineering
-status: accepted design
+status: accepted design · amended by ADR-0028
 answers: why the CLI is the whole administration surface, why a web console is declined, and what that refusal costs
 -->
 
 # ADR-0015 — The CLI is the administration surface; a web console is declined
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0028](ADR-0028-agent-key-issuance.md)
 
 Everything this record decides is design — no code exists. The verb-by-verb contract is owned by
 [cli/reference.md](../cli/reference.md) and the ceremony transcripts by

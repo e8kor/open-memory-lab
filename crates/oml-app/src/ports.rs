@@ -12,11 +12,12 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use oml_domain::access::{Grant, KeyDenial};
+use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{
-    ClaimKeyState, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
-    WorkareaRecord,
+    ClaimKeyState, CrewRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
+    RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -37,6 +38,12 @@ pub enum StoreError {
     /// and this commit wrote nothing (http-api.md idempotency).
     #[error("an idempotency record already holds this scope")]
     IdempotencyRecorded,
+    /// A creation named a name its kind already holds in the namespace, a
+    /// revoked key's included: the unique index refused it, and the commit
+    /// wrote nothing, its event included (postgres-schema.md names and
+    /// tenants; errors.md `name.taken`; ADR-0026 d5, d10).
+    #[error("the {} name {} is already taken in its namespace", .kind.as_str(), .name.as_str())]
+    NameTaken { kind: NamedKind, name: Name },
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -49,12 +56,45 @@ pub enum StoreError {
 /// `promoted_at` are never carried here: the store writes the seq or the
 /// `at` of the event this fold commits with, so the row cannot disagree with
 /// its event (workareas.md permission epoch; ADR-0025 d10, d14).
+///
+/// Every fold that creates a named row writes its name, and refuses a name
+/// its kind already holds in the namespace with [`StoreError::NameTaken`]
+/// (ADR-0026 d1, d5); a row that names a crew names one of its own tenant's
+/// crew records, or the store refuses it (postgres-schema.md `crews`).
 #[derive(Debug, Clone)]
 pub enum MetadataFold {
-    TenantGenesis,
+    /// `tenant.genesis`: the tenant's row, named, unique in the deployment.
+    /// The PoC creates its tenant here, since the provider chain's
+    /// `tenant.created` is not built. A tenant that already has its row
+    /// keeps it, name included, so the fold changes nothing then.
+    TenantGenesis {
+        name: Name,
+    },
+    /// `workarea.create`: the node, its path derived from its parent's path
+    /// and its name (postgres-schema.md `workareas`).
     WorkareaCreated(WorkareaRecord),
     /// `key.issued`: the key row, its `issued_seq` this commit's seq.
     KeyIssued(KeyRecord),
+    /// `crew.created`: one crew record (ADR-0026 d8).
+    CrewCreated(CrewRecord),
+    /// `crew.updated`: the record's charter URI and external manager, the
+    /// full new values; the store refuses a crew the tenant does not hold,
+    /// and never changes a name (ADR-0026 d8).
+    CrewUpdated(CrewRecord),
+    /// `workarea.crew_updated`: the node now names `crew_id`, a crew record
+    /// of its own tenant, or the store refuses it (ADR-0026 d8).
+    WorkareaCrewUpdated {
+        workarea_id: Uuid,
+        crew_id: Uuid,
+    },
+    /// `system.names_assigned`: each listed row of the commit's tenant, and
+    /// the tenant itself, takes the name the event assigns, every workarea's
+    /// path derives from those names, and each crew record is created and
+    /// named by the workareas listed under it. Every listed row must hold
+    /// no name yet, or the store refuses the commit, which writes nothing; a
+    /// name its kind already holds is [`StoreError::NameTaken`]
+    /// (postgres-schema.md folds; ADR-0026 d11).
+    NamesAssigned(Naming),
     /// `grant.issued`: one grant row on `key_id`, its epoch this commit's
     /// seq. The store refuses a grant on a key or node it does not hold, and
     /// a grant role other than reader, writer or dreamer (postgres-schema.md
@@ -71,6 +111,16 @@ pub enum MetadataFold {
         key_id: Uuid,
         denial: KeyDenial,
         created_by: Uuid,
+    },
+    /// `key.denial_lifted`: the denial `denial_id` on `key_id` masks nothing
+    /// from this commit on, its row staying as history, and this commit's
+    /// seq is the lift's epoch. The store refuses a lift of a denial it does
+    /// not hold on that key, and of one already lifted (postgres-schema.md
+    /// `key_denials`; event-catalog.md `key.denial_lifted`; ADR-0026 d11,
+    /// rule 5).
+    KeyDenialLifted {
+        key_id: Uuid,
+        denial_id: Uuid,
     },
     /// `key.revoked`: the key resolves by its hash no more; its row, grants
     /// and denials stay as history. The store refuses a revocation of a key
@@ -177,6 +227,59 @@ pub struct CommitReceipt {
     pub hash: Sha256Hash,
 }
 
+/// The claim version an event names as its subject, by the subject table of
+/// the events tail (http-api.md#events-tail; ADR-0025 d15): the new version
+/// of a `lifecycle.supersede`, the version that becomes the tip of a
+/// `lifecycle.tip_override`, and the payload's `artifact_id` for every other
+/// `lifecycle.*`, `submission.*` and `simulation.write` event. `None` for
+/// every other family, and for a payload that names no version.
+#[must_use]
+pub fn claim_subject(event_type: &str, payload: &Value) -> Option<Uuid> {
+    let field = match event_type {
+        "lifecycle.supersede" => "new_artifact_id",
+        "lifecycle.tip_override" => "to_artifact_id",
+        t if t.starts_with("lifecycle.")
+            || t.starts_with("submission.")
+            || t == "simulation.write" =>
+        {
+            "artifact_id"
+        }
+        _ => return None,
+    };
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+}
+
+/// The row of a tail event's claim subject, joined as data: the filter that
+/// reads it is the use-case's (ADR-0025 d15; ADR-0019 d1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubjectRow {
+    pub artifact_id: Uuid,
+    pub workarea_id: Uuid,
+    /// `memories.author_key_id`: the envelope `api_key_id` of the version's
+    /// submission event.
+    pub author_key_id: Uuid,
+}
+
+/// One raw event of a tail scan, with the row its [`claim_subject`] names
+/// when the store holds one.
+#[derive(Debug, Clone)]
+pub struct TailEvent {
+    pub event: SignedEnvelope,
+    pub subject: Option<SubjectRow>,
+}
+
+/// One bounded tail scan and the head read in the snapshot it reads (0 for
+/// a tenant with no chain), so `next_after_seq` and `head_seq` label one
+/// journalled state (http-api.md#events-tail).
+#[derive(Debug, Clone, Default)]
+pub struct TailScan {
+    pub head_seq: u64,
+    pub events: Vec<TailEvent>,
+}
+
 /// The journal-and-metadata store port (workspace-plan.md row 1).
 pub trait JournalStore: Send + Sync {
     /// The one-transaction commit point. The store refuses a commit whose
@@ -215,22 +318,44 @@ pub trait JournalStore: Send + Sync {
         limit: usize,
     ) -> impl Future<Output = Result<Vec<SignedEnvelope>, StoreError>> + Send;
 
+    /// The events tail's bounded scan: events with `seq >= from_seq`,
+    /// ascending, at most `limit`, each joined to the row its
+    /// [`claim_subject`] names, with the chain head read in the same
+    /// snapshot (http-api.md#events-tail; ADR-0025 d15).
+    fn events_with_subjects(
+        &self,
+        tenant_id: Uuid,
+        from_seq: u64,
+        limit: usize,
+    ) -> impl Future<Output = Result<TailScan, StoreError>> + Send;
+
     fn memory(
         &self,
         tenant_id: Uuid,
         memory_id: Uuid,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
-    /// Full-text recall: each matched hit with its score, at most `k`, in
-    /// the total order of hits — score descending, then `artifact_id`
-    /// ascending (retrieval.md, the recall-ordering contract; ADR-0025 d8).
-    /// Hits are served tips (tip and state promoted) of kind `memory` or
-    /// `derived_fact` that `kinds` names, never retirement versions, so
-    /// neither a replaced version nor any version of a retired claim is a
-    /// hit; steering never is, whatever `kinds` names. The search covers
-    /// exactly the `readable` workarea nodes — subtree(scope) ∩ the nodes
-    /// where reader is effective, computed by the use-case. An empty set
-    /// searches nothing: there is no tenant-wide fallback (ADR-0025 d1).
+    /// The rows of `memory_ids` this tenant holds, read set-wise in one
+    /// statement, in the order named; an id no row has is absent. Recall
+    /// hydrates exactly the rows it serves this way, after the `k` and
+    /// budget cuts, never one read per hit (retrieval.md token budgets;
+    /// ADR-0024 d4, ADR-0025 d7).
+    fn memories(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
+    /// Full-text recall: each matched hit as a candidate with its score, at
+    /// most `k`, in the total order of hits — score descending, then
+    /// `artifact_id` ascending (retrieval.md, the recall-ordering contract;
+    /// ADR-0025 d8). Hits are served tips (tip and state promoted) of kind
+    /// `memory` or `derived_fact` that `kinds` names, never retirement
+    /// versions, so neither a replaced version nor any version of a retired
+    /// claim is a hit; steering never is, whatever `kinds` names. The search
+    /// covers exactly the `readable` workarea nodes — subtree(scope) ∩ the
+    /// nodes where reader is effective, computed by the use-case. An empty
+    /// set searches nothing: there is no tenant-wide fallback (ADR-0025 d1).
     fn recall_fts(
         &self,
         tenant_id: Uuid,
@@ -238,7 +363,28 @@ pub trait JournalStore: Send + Sync {
         query: &str,
         kinds: &[MemoryKind],
         k: usize,
-    ) -> impl Future<Output = Result<Vec<(MemoryRecord, f32)>, StoreError>> + Send;
+    ) -> impl Future<Output = Result<Vec<RecallCandidate>, StoreError>> + Send;
+
+    /// Own held recall: the held rows whose author is one of
+    /// `author_key_ids`, of kind `memory` or `derived_fact` that `kinds`
+    /// names, never retirement versions and never steering, on exactly the
+    /// `readable` nodes, matched by the query and scored as
+    /// [`recall_fts`](Self::recall_fts) scores, at most `k` in the same
+    /// total order (retrieval.md, own held rows in recall; ADR-0025 d4). The
+    /// state and the author predicate are the store's own, never a filter
+    /// the caller may forget, so no other key's held text is ever matched.
+    /// The designed form reads a `held_fts` table fenced by an author policy
+    /// instead; the PoC stores bodies inline and reads them here (retrieval.md,
+    /// held text containment; ADR-0025 d5).
+    fn recall_own_held(
+        &self,
+        tenant_id: Uuid,
+        author_key_ids: &[Uuid],
+        readable: &[Uuid],
+        query: &str,
+        kinds: &[MemoryKind],
+        k: usize,
+    ) -> impl Future<Output = Result<Vec<RecallCandidate>, StoreError>> + Send;
 
     /// Applicable steering over `nodes`, the scope's ancestors the key reads,
     /// listed from the `universe` root down: every promoted served tip of
@@ -331,6 +477,54 @@ pub trait JournalStore: Send + Sync {
         key_id: Uuid,
     ) -> impl Future<Output = Result<Option<KeyAccess>, StoreError>> + Send;
 
+    /// The id of the row of `kind` that holds `name` in the tenant's
+    /// namespace, a revoked or expired key's included, since a name is never
+    /// released; `None` when no row of the tenant holds it. One lookup on
+    /// the unique index that also refuses a taken name (http-api.md names
+    /// and ids; ADR-0026 d1, d4, d10). Tenant names live
+    /// in the deployment's namespace and operator-key names in the
+    /// provider's, which the operator tier reads and which this read never
+    /// consults: a [`NamedKind::Tenant`] resolves nothing here, and no tenant
+    /// holds the provider tenant's nil id, so nothing resolves under it.
+    fn resolve_name(
+        &self,
+        tenant_id: Uuid,
+        kind: NamedKind,
+        name: &Name,
+    ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send;
+
+    /// One crew record of the tenant; `None` for a crew it does not hold
+    /// (postgres-schema.md `crews`; ADR-0026 d8).
+    fn crew(
+        &self,
+        tenant_id: Uuid,
+        crew_id: Uuid,
+    ) -> impl Future<Output = Result<Option<CrewRecord>, StoreError>> + Send;
+
+    /// Every crew record of the tenant, ordered by name in byte order
+    /// (http-api.md crews; ADR-0026 d8).
+    fn crews(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<CrewRecord>, StoreError>> + Send;
+
+    /// One key row of the tenant by its id, a revoked key's included, since
+    /// its name and role stay history; `None` for a key the tenant does not
+    /// hold (roles-and-keys.md key lifecycle; ADR-0026 d10).
+    fn key(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's rows that have no name yet: its own row, its workareas
+    /// and its keys, which the lead names before it serves (http-api.md
+    /// rows created before names; ADR-0026 d11).
+    fn unnamed_rows(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<UnnamedRows, StoreError>> + Send;
+
     fn workarea(
         &self,
         tenant_id: Uuid,
@@ -356,8 +550,9 @@ pub trait JournalStore: Send + Sync {
         workarea_id: Uuid,
     ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send;
 
-    /// The node's immediate children, ordered by name in byte order, then
-    /// id: the order the workarea read serves them in (ADR-0025 d14).
+    /// The node's immediate children, ordered by name in byte order: the
+    /// order the workarea read serves them in (ADR-0025 d14). Names are
+    /// unique in the tenant, so no two children tie (ADR-0026 d1).
     fn workarea_children(
         &self,
         tenant_id: Uuid,

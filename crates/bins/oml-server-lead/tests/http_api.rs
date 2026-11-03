@@ -17,12 +17,20 @@ use sqlx::{Connection, Executor};
 use tower::ServiceExt as _;
 use uuid::Uuid;
 
-use oml_app::domain::sha256_digest_string;
+use oml_app::domain::name::Name;
+use oml_app::domain::{
+    EventDraft, EventTime, Sha256Hash, SignedEnvelope, event_types, next_envelope,
+    sha256_digest_string, sign,
+};
 use oml_app::ed25519_dalek::SigningKey;
-use oml_app::ports::{IdGen as _, JournalStore};
-use oml_pg::PgStore;
-use oml_server_lead::{OsIds, enumerate_tenants, lead_state, pg_ping, startup_fork_check};
+use oml_app::ports::{CommitRequest, IdGen as _, JournalStore, MetadataFold, OutboxRow};
+use oml_pg::{MIGRATOR, PgStore};
+use oml_server_lead::{
+    OsIds, enumerate_tenants, lead_state, pg_ping, start_lead, startup_fork_check,
+    startup_names_check,
+};
 use oml_transport_http::DbPing;
+use sqlx::migrate::Migrate as _;
 
 const ENROLLMENT: &str = "enr_test_fixture_token";
 
@@ -52,7 +60,8 @@ struct Rig {
     db_name: String,
 }
 
-async fn fresh_rig() -> Rig {
+/// A throwaway database with no migration applied; its name.
+async fn fresh_database() -> String {
     let db_name = format!(
         "oml_test_http_{}_{}",
         std::process::id(),
@@ -65,6 +74,11 @@ async fn fresh_rig() -> Rig {
         .execute(format!("CREATE DATABASE {db_name}").as_str())
         .await
         .expect("create throwaway database");
+    db_name
+}
+
+async fn fresh_rig() -> Rig {
+    let db_name = fresh_database().await;
     let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
     store.migrate().await.expect("embedded migrations apply");
     let signing = SigningKey::from_bytes(&OsIds.new_secret());
@@ -197,6 +211,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
         "/v2/bootstrap/claim",
         Call::default().body(json!({
             "enrollment_token": ENROLLMENT,
+            "name": "root-admin",
             "tenant_name": "test-tenant",
             "admin_principal": "platform/admin",
         })),
@@ -206,6 +221,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
     let token = body["value"].as_str().expect("show-once value").to_owned();
     assert!(token.starts_with("oml_"), "key wire format: {token}");
     assert_eq!(body["role"], "admin");
+    assert_eq!(body["name"], "root-admin", "the key's name as journalled");
     let tenant = Uuid::parse_str(body["tenant_id"].as_str().expect("tenant id")).expect("uuid");
     let root = Uuid::parse_str(body["root_workarea_id"].as_str().expect("root id")).expect("uuid");
     (token, tenant, root)
@@ -227,6 +243,17 @@ async fn issue_key(router: &Router, admin: &str, role: &str, principal: &str, wa
         .to_owned()
 }
 
+/// The fixture key name for a role and principal, unique wherever the pair
+/// is, as the idempotency key a fixture issuance sends is: every issuance
+/// names its key (ADR-0026 d9).
+fn key_name(role: &str, principal: &str) -> String {
+    format!("{role}-{principal}")
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
 /// Issues a key over HTTP carrying exactly `grants`; returns the 201 body.
 async fn issue_key_with(
     router: &Router,
@@ -235,17 +262,19 @@ async fn issue_key_with(
     principal: &str,
     grants: Value,
 ) -> Value {
+    let name = key_name(role, principal);
     let (status, _, body) = send(
         router,
         "POST",
         "/v2/keys",
         Call::auth(admin)
             .idem(&format!("issue-{role}-{principal}"))
-            .body(json!({ "role": role, "principal": principal, "grants": grants })),
+            .body(json!({ "role": role, "name": name, "principal": principal, "grants": grants })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "issue {role}: {body}");
     assert_eq!(body["role"], role);
+    assert_eq!(body["name"], name.as_str());
     body
 }
 
@@ -325,6 +354,401 @@ async fn health_readyz_and_fork_refusal() {
     );
 
     drop_db(&rig.db_name).await;
+}
+
+/// A database at the PoC schema (0001–0005) holding one PoC tenant and its
+/// `root` workarea, then migrated by this build, so that both rows predate
+/// names (ADR-0026 d11): (database name, store, the root's id).
+async fn poc_store() -> (String, PgStore, Uuid) {
+    let db_name = fresh_database().await;
+    let mut conn = PgConnection::connect(&db_url(&db_name))
+        .await
+        .expect("connect");
+    conn.ensure_migrations_table()
+        .await
+        .expect("migrations table");
+    for migration in MIGRATOR.iter().filter(|m| m.version <= 5) {
+        conn.apply(migration)
+            .await
+            .expect("the PoC migrations apply");
+    }
+    let (tenant, root) = (Uuid::from_u128(0xA800), Uuid::from_u128(0xB800));
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, 'oml')")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("PoC tenant");
+    sqlx::query(
+        "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+         VALUES ($1, $2, NULL, 'root', 'committed')",
+    )
+    .bind(root)
+    .bind(tenant)
+    .execute(&mut *tx)
+    .await
+    .expect("PoC root");
+    tx.commit().await.expect("commit the PoC rows");
+    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
+    store
+        .migrate()
+        .await
+        .expect("0006 applies over the PoC's rows");
+    (db_name, store, root)
+}
+
+/// A lead whose store holds rows that predate names, left unnamed by its
+/// start (ADR-0026 d11), fails its startup names check by name and, built
+/// so, reports `names_assigned` not ready on `/readyz` and answers every
+/// request on either ring — a read, a write, the bootstrap claim, `/mcp` —
+/// with `system.unavailable` naming `names_assigned`, before any credential
+/// is read; `/healthz` still answers (http-api.md "Health", "Rows created
+/// before names").
+#[tokio::test]
+async fn a_lead_over_rows_that_predate_names_is_not_ready_and_serves_no_request() {
+    let (db_name, store, root) = poc_store().await;
+    let tenants = enumerate_tenants(store.pool()).await.expect("tenants");
+    let failure = startup_names_check(&store, &tenants)
+        .await
+        .expect_err("the PoC rows predate names");
+    for named in ["names_assigned", "tenants 1", "workareas 1"] {
+        assert!(failure.contains(named), "{named}: {failure}");
+    }
+
+    let router = lead_state(
+        &store,
+        SigningKey::from_bytes(&OsIds.new_secret()),
+        pg_ping(store.pool().clone()),
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .with_names_assigned(false)
+    .into_router();
+    let (status, _, body) = send(&router, "GET", "/healthz", Call::default()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, body) = send(&router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["status"], "unavailable", "{body}");
+    assert_eq!(body["checks"]["names_assigned"], "unassigned", "{body}");
+    assert_eq!(body["checks"]["fork_check"], "ok", "{body}");
+
+    let submit = json!({ "verb": "remember", "claim_key": "x", "kind": "memory", "body": "x" });
+    let tools = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    for (method, path, call) in [
+        (
+            "GET",
+            format!("/v2/workareas/{root}"),
+            Call::auth("oml_whatever"),
+        ),
+        (
+            "POST",
+            "/v1/memories".to_owned(),
+            Call::auth("oml_whatever").idem("k").body(submit),
+        ),
+        (
+            "POST",
+            "/v2/bootstrap/claim".to_owned(),
+            Call::default().body(json!({ "enrollment_token": ENROLLMENT })),
+        ),
+        (
+            "POST",
+            "/mcp".to_owned(),
+            Call::auth("oml_whatever").body(tools),
+        ),
+    ] {
+        let (status, headers, body) = send(&router, method, &path, call).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{method} {path}: {body}"
+        );
+        assert_envelope(&body, "system.unavailable");
+        assert_eq!(
+            body["error"]["details"]["reason"], "names_assigned",
+            "{method} {path}: {body}"
+        );
+        assert!(
+            headers.contains_key("retry-after"),
+            "retryable refusals carry Retry-After"
+        );
+    }
+    drop(store);
+    drop_db(&db_name).await;
+}
+
+/// A deployment this build bootstrapped holds no row that predates names:
+/// its tenant, workareas and keys are named at creation, the claim's key and
+/// every issued key included (ADR-0026 d9). Its startup names check passes
+/// and `/readyz` reports `names_assigned` ok.
+#[tokio::test]
+async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "metals-crew").await;
+    issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+
+    let tenants = enumerate_tenants(rig.store.pool()).await.expect("tenants");
+    assert_eq!(startup_names_check(&rig.store, &tenants).await, Ok(()));
+    let (status, _, body) = send(router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["checks"]["names_assigned"], "ok", "{body}");
+    drop_db(&rig.db_name).await;
+}
+
+/// A database at the PoC schema (0001–0005) holding, for each of `tenants`,
+/// the chain the PoC journalled, signed by `signing` — `tenant.genesis`
+/// with its `tenant_name`, a `root` workarea and an admin key with no name,
+/// whose value is `oml_poc_admin_<n>` — and the rows the PoC folded from it,
+/// then migrated by this build, so that every row predates names (ADR-0026
+/// d11): the database's name and the store.
+async fn poc_chains_store(
+    signing: &SigningKey,
+    tenants: &[(Uuid, Uuid, &str)],
+) -> (String, PgStore) {
+    let db_name = fresh_database().await;
+    let mut conn = PgConnection::connect(&db_url(&db_name))
+        .await
+        .expect("connect");
+    conn.ensure_migrations_table()
+        .await
+        .expect("migrations table");
+    for migration in MIGRATOR.iter().filter(|m| m.version <= 5) {
+        conn.apply(migration)
+            .await
+            .expect("the PoC migrations apply");
+    }
+    for (n, &(tenant, root, tenant_name)) in tenants.iter().enumerate() {
+        let admin = Uuid::from_u128(0xD810 + u128::try_from(n).expect("n"));
+        let drafts = [
+            (
+                event_types::TENANT_GENESIS,
+                json!({ "tenant_name": tenant_name }),
+            ),
+            (
+                event_types::WORKAREA_CREATE,
+                json!({
+                    "workarea_id": root, "parent_id": null, "name": "root",
+                    "status": "committed", "crew": null, "prefix": null,
+                }),
+            ),
+            (
+                event_types::KEY_ISSUED,
+                json!({
+                    "key_id": admin, "role": "admin", "principal": "oml/admin",
+                    "issued_by_key_id": null, "expiry": null, "value_disclosed": false,
+                    "held_by": "human", "default_workarea_id": root,
+                }),
+            ),
+        ];
+        let mut head: Option<SignedEnvelope> = None;
+        let mut events = Vec::new();
+        for (seq, (event_type, payload)) in drafts.into_iter().enumerate() {
+            let draft = EventDraft {
+                tenant_id: tenant,
+                event_id: Uuid::from_u128(
+                    0xE810_0000 + (admin.as_u128() << 8) + u128::try_from(seq).expect("seq"),
+                ),
+                event_type: event_type.to_owned(),
+                principal: "oml/admin".to_owned(),
+                api_key_id: None,
+                at: EventTime::parse(&format!("2026-10-01T09:00:{seq:02}.000000Z")).expect("time"),
+                payload,
+            };
+            let event = sign(
+                next_envelope(head.as_ref(), draft).expect("lawful"),
+                signing,
+            )
+            .expect("signs");
+            head = Some(event.clone());
+            events.push(event);
+        }
+        let mut tx = conn.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(tenant)
+            .bind(tenant_name)
+            .execute(&mut *tx)
+            .await
+            .expect("PoC tenant");
+        for event in &events {
+            let env = &event.envelope;
+            sqlx::query(
+                "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+                 api_key_id, at, payload, signed_bytes, signed_bytes_hash, sig) \
+                 VALUES ($1, $2, $3, $4, $5, $6, NULL, ($7)::timestamptz, $8, $9, $10, $11)",
+            )
+            .bind(tenant)
+            .bind(i64::try_from(env.seq).expect("seq"))
+            .bind(env.event_id)
+            .bind(&env.event_type)
+            .bind(env.prev_hash.0.to_vec())
+            .bind(&env.principal)
+            .bind(env.at.as_str())
+            .bind(&env.payload)
+            .bind(&event.signed_bytes)
+            .bind(event.hash.0.to_vec())
+            .bind(event.sig.to_bytes().to_vec())
+            .execute(&mut *tx)
+            .await
+            .expect("journal row");
+        }
+        let last = head.expect("the chain has a head");
+        sqlx::query(
+            "INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES ($1, $2, $3)",
+        )
+        .bind(tenant)
+        .bind(i64::try_from(last.envelope.seq).expect("seq"))
+        .bind(last.hash.0.to_vec())
+        .execute(&mut *tx)
+        .await
+        .expect("chain head");
+        sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+             VALUES ($1, $2, NULL, 'root', 'committed')",
+        )
+        .bind(root)
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("PoC root");
+        sqlx::query(
+            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
+             default_workarea_id, issued_seq) VALUES ($1, $2, $3, 'admin', 'oml/admin', 'human', $4, 3)",
+        )
+        .bind(admin)
+        .bind(tenant)
+        .bind(Sha256Hash::digest(format!("oml_poc_admin_{n}").as_bytes()).0.to_vec())
+        .bind(root)
+        .execute(&mut *tx)
+        .await
+        .expect("PoC admin key");
+        tx.commit().await.expect("commit the PoC rows");
+    }
+    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
+    store
+        .migrate()
+        .await
+        .expect("0006 applies over the PoC's rows");
+    (db_name, store)
+}
+
+/// How many `system.names_assigned` the tenant's chain journals, and its
+/// head seq.
+async fn names_assigned_on(store: &PgStore, tenant: Uuid) -> (usize, u64) {
+    let events = store
+        .events_range(tenant, 1, 1000)
+        .await
+        .expect("the chain");
+    let assigned = events
+        .iter()
+        .filter(|e| e.envelope.event_type == event_types::SYSTEM_NAMES_ASSIGNED)
+        .count();
+    (assigned, events.last().expect("a chain").envelope.seq)
+}
+
+/// The lead's start over a store whose rows all predate names names them
+/// before it serves: one `system.names_assigned` on each chain, signed so
+/// the chain still verifies, after which `/readyz` reports `names_assigned`
+/// ok and the rows are served by their names; a second start finds nothing
+/// to name, journals nothing and serves as the first (http-api.md "Rows
+/// created before names"; ADR-0026 d11).
+#[tokio::test]
+async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_second_start_journals_nothing()
+ {
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let tenants = [
+        (Uuid::from_u128(0xA810), Uuid::from_u128(0xB810), "oml"),
+        (Uuid::from_u128(0xA811), Uuid::from_u128(0xB811), "acme"),
+    ];
+    let (db_name, store) = poc_chains_store(&signing, &tenants).await;
+    for &(tenant, _, _) in &tenants {
+        assert_eq!(
+            names_assigned_on(&store, tenant).await,
+            (0, 3),
+            "the PoC chain"
+        );
+    }
+
+    for start in 1..=2 {
+        let started = start_lead(&store, signing.clone())
+            .await
+            .expect("the start reads the store");
+        assert_eq!(started.fork_check, Ok(()), "start {start}");
+        let named = started
+            .names
+            .as_ref()
+            .unwrap_or_else(|failure| panic!("start {start}: {failure}"));
+        assert_eq!(
+            named.len(),
+            if start == 1 { tenants.len() } else { 0 },
+            "start {start}: the chains it named"
+        );
+        assert_eq!(started.enrollment_token, None, "start {start}");
+        for &(tenant, _, _) in &tenants {
+            assert_eq!(
+                names_assigned_on(&store, tenant).await,
+                (1, 4),
+                "start {start}: one system.names_assigned on the chain, journalled once"
+            );
+        }
+        let (status, _, body) = send(&started.router, "GET", "/readyz", Call::default()).await;
+        assert_eq!(status, StatusCode::OK, "start {start}: {body}");
+        assert_eq!(
+            body["checks"]["names_assigned"], "ok",
+            "start {start}: {body}"
+        );
+        for (n, &(_, root, _)) in tenants.iter().enumerate() {
+            let (status, _, body) = send(
+                &started.router,
+                "GET",
+                &format!("/v2/workareas/{root}"),
+                Call::auth(&format!("oml_poc_admin_{n}")),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "start {start}: {body}");
+            assert_eq!(
+                body["path"], "universe",
+                "start {start}: rule 1 named the root"
+            );
+        }
+    }
+    drop(store);
+    drop_db(&db_name).await;
+}
+
+/// The naming signs, and the lead never signs on top of a fork: a start
+/// whose fork check fails, here under a key that did not sign the chains,
+/// names nothing and journals nothing, and its router serves no request,
+/// `/readyz` reporting both checks (ADR-0002 d7, ADR-0026 d11).
+#[tokio::test]
+async fn a_start_whose_fork_check_fails_names_nothing_and_serves_no_request() {
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let tenants = [(Uuid::from_u128(0xA820), Uuid::from_u128(0xB820), "oml")];
+    let (db_name, store) = poc_chains_store(&signing, &tenants).await;
+    let foreign = SigningKey::from_bytes(&OsIds.new_secret());
+    let started = start_lead(&store, foreign)
+        .await
+        .expect("the start reads the store");
+    assert!(started.fork_check.is_err(), "a chain the key did not sign");
+    let failure = started.names.as_ref().expect_err("nothing is named");
+    assert!(failure.contains("names_assigned"), "{failure}");
+    assert_eq!(names_assigned_on(&store, tenants[0].0).await, (0, 3));
+    let (status, _, body) = send(&started.router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["checks"]["fork_check"], "failed", "{body}");
+    assert_eq!(body["checks"]["names_assigned"], "unassigned", "{body}");
+    drop(store);
+    drop_db(&db_name).await;
 }
 
 #[tokio::test]
@@ -436,6 +860,7 @@ async fn full_happy_path_over_http() {
         "/v2/keys",
         Call::auth(&admin).idem("bad-key").body(json!({
             "role": "admin",
+            "name": "bad-admin",
             "grants": [{"workarea_node_id": crew, "role": "dreamer"}],
         })),
     )
@@ -786,7 +1211,9 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
 
-    // Events tail: seq ascending from after_seq, head_seq for lag.
+    // Events tail: seq ascending from after_seq, filtered to what the
+    // reader may see, so gaps are normal; head_seq for lag and
+    // next_after_seq to resume from (ADR-0025 d15).
     let (status, _, events) = send(
         router,
         "GET",
@@ -802,11 +1229,14 @@ async fn full_happy_path_over_http() {
         .map(|e| e["seq"].as_u64().expect("seq"))
         .collect();
     assert!(
-        seqs.windows(2).all(|w| w[1] == w[0] + 1),
-        "seq ascending, gapless: {seqs:?}"
+        seqs.windows(2).all(|w| w[1] > w[0]),
+        "seq ascending: {seqs:?}"
     );
-    assert_eq!(seqs[0], 1);
-    assert_eq!(events["head_seq"].as_u64(), seqs.last().copied());
+    assert!(
+        seqs[0] > 1,
+        "the genesis is not on the content tail: {seqs:?}"
+    );
+    assert_eq!(events["next_after_seq"], events["head_seq"], "{events}");
     assert!(
         items.iter().any(|e| e["event_type"] == "lifecycle.promote"),
         "the ratification is journalled"
@@ -1026,7 +1456,7 @@ async fn full_happy_path_over_http() {
         "/v1/memories",
         Call::auth(&writer)
             .idem("s-bad-wa")
-            .workarea("not-a-node-id")
+            .workarea("not_a_node_id")
             .body(json!({
                 "verb": "remember", "claim_key": "x", "kind": "memory", "body": "x",
             })),
@@ -1101,6 +1531,1089 @@ async fn workarea_unresolved_is_422() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
+
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// Names at creation (ADR-0026 d2, d5, d6)
+// ---------------------------------------------------------------------------
+
+/// A workarea name the creation grammar refuses — an uppercase letter, an
+/// underscore, the derived form — is `request.validation` naming the field,
+/// and a name the tenant already holds, the root's `universe` included, is
+/// `409 name.taken` with its kind and name; neither journals anything
+/// (errors.md; http-api.md names and ids; ADR-0026 d2, d5, d6).
+#[tokio::test]
+async fn a_workarea_name_the_creation_grammar_refuses_is_request_validation_and_a_taken_one_is_name_taken()
+ {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let head = head_seq(&rig, tenant).await;
+    let create = |n: usize, name: &str| {
+        Call::auth(&admin)
+            .idem(&format!("names-{n}"))
+            .body(json!({ "parent_id": crew, "name": name }))
+    };
+
+    for (n, value) in [
+        "Metals-Crew",
+        "metals_crew",
+        "wa-0190f2a47c3e4b1d9a6fe2d8c51b3a07",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (status, _, body) = send(router, "POST", "/v2/workareas", create(n, value)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{value}: {body}");
+        assert_envelope(&body, "request.validation");
+        assert_eq!(body["error"]["details"]["field"], "/name", "{body}");
+    }
+    for (n, value) in ["universe", "metals-crew"].into_iter().enumerate() {
+        let (status, _, body) = send(router, "POST", "/v2/workareas", create(10 + n, value)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{value}: {body}");
+        assert_envelope(&body, "name.taken");
+        assert_eq!(
+            body["error"]["details"],
+            json!({ "kind": "workarea", "name": value }),
+            "{body}"
+        );
+    }
+    assert_eq!(
+        head_seq(&rig, tenant).await,
+        head,
+        "no refused creation journals anything"
+    );
+    drop_db(&rig.db_name).await;
+}
+
+/// The bootstrap claim checks the enrollment token before the name: a name
+/// the creation grammar refuses is `auth.invalid` under an unknown or a
+/// consumed token, and `request.validation` naming the field only under the
+/// valid one, whose refusal consumes no token and journals nothing, so the
+/// holder claims again with a valid name (http-api.md bootstrap; errors.md
+/// `name.taken`; ADR-0026 d5).
+#[tokio::test]
+async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_consumes_no_token() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let claim = |token: &str| {
+        Call::default().body(json!({
+            "enrollment_token": token,
+            "name": "root-admin",
+            "tenant_name": "Test_Tenant",
+        }))
+    };
+
+    let (status, _, body) = send(router, "POST", "/v2/bootstrap/claim", claim("enr_wrong")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.invalid");
+    assert_eq!(body["error"]["details"]["reason"], "unknown", "{body}");
+
+    let (status, _, body) = send(router, "POST", "/v2/bootstrap/claim", claim(ENROLLMENT)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+    assert_eq!(body["error"]["details"]["field"], "/tenant_name", "{body}");
+    // The key's name is required, and checked after the token too: a
+    // claim with none, or with one the creation grammar refuses, is
+    // `request.validation` naming `name` (ADR-0026 d9).
+    for name in [Value::Null, json!("Root Admin")] {
+        let mut unnamed = json!({ "enrollment_token": ENROLLMENT, "tenant_name": "test-tenant" });
+        if !name.is_null() {
+            unnamed["name"] = name;
+        }
+        let (status, _, body) = send(
+            router,
+            "POST",
+            "/v2/bootstrap/claim",
+            Call::default().body(unnamed),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_envelope(&body, "request.validation");
+        assert_eq!(body["error"]["details"]["field"], "/name", "{body}");
+    }
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/bootstrap/claim",
+        Call::default().body(json!({ "enrollment_token": "enr_wrong" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.invalid");
+    assert!(
+        enumerate_tenants(rig.store.pool())
+            .await
+            .expect("tenants")
+            .is_empty(),
+        "the refused claims journal nothing"
+    );
+
+    bootstrap(router).await;
+    let (status, _, body) = send(router, "POST", "/v2/bootstrap/claim", claim(ENROLLMENT)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.invalid");
+    assert_eq!(body["error"]["details"]["reason"], "consumed", "{body}");
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// References by id or name on the transport (ADR-0026 d3, d4, d5, d8, d15)
+// ---------------------------------------------------------------------------
+
+/// A writer key with a writer and a reader grant on `node`, its default;
+/// returns the show-once value.
+async fn agent_on(router: &Router, admin: &str, principal: &str, node: Uuid) -> String {
+    issue_key_with(
+        router,
+        admin,
+        "writer",
+        principal,
+        json!([
+            { "workarea_node_id": node, "role": "writer" },
+            { "workarea_node_id": node, "role": "reader" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned()
+}
+
+/// A submit of the claim `claim_key` under `token`, its `X-OML-Workarea`
+/// header `workarea`.
+fn submit_into(token: &str, idem: &str, workarea: &str, claim_key: &str) -> Call {
+    Call::auth(token).idem(idem).workarea(workarea).body(json!({
+        "verb": "remember",
+        "claim_key": claim_key,
+        "kind": "memory",
+        "body": format!("Supplier quote {claim_key}."),
+    }))
+}
+
+/// Creates a crew record named `name` over HTTP; returns the `201` body.
+async fn create_crew(router: &Router, admin: &str, name: &str) -> Value {
+    let (status, _, crew) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(admin).idem(&format!("crew-{name}")).body(json!({
+            "name": name,
+            "charter_uri": format!("https://crews.example.com/{name}/charter.md"),
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{crew}");
+    crew
+}
+
+/// `X-OML-Workarea` takes the node's id or its name, and a name is replaced
+/// by the id before the idempotency record is looked up: a submit whose
+/// header names the node lands where the same submit by id lands, a retry
+/// that switches the header's spelling replays, and the listing's and the
+/// events tail's `workarea_id` answer one page by name and by id
+/// (http-api.md names and ids, idempotency; ADR-0026 d4).
+#[tokio::test]
+async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    let by_id = quarter.to_string();
+
+    let (status, _, named) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&agent, "quote-1", "q1-2027", "quote-1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{named}");
+    assert_eq!(named["workarea_id"], by_id.as_str(), "served by id");
+    let (status, _, sent_by_id) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&agent, "quote-2", &by_id, "quote-2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{sent_by_id}");
+    assert_eq!(sent_by_id["workarea_id"], by_id.as_str());
+
+    // The record's workarea component is the resolved node, so one
+    // Idempotency-Key under either spelling of the header is one request.
+    let (status, headers, replay) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&agent, "quote-1", &by_id, "quote-1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{replay}");
+    assert_eq!(
+        headers
+            .get("idempotency-replay")
+            .and_then(|v| v.to_str().ok()),
+        Some("true"),
+        "{replay}"
+    );
+    assert_eq!(replay, named);
+
+    // The filters answer one page by name and by id.
+    let (status, page_by_name) =
+        list(router, Call::auth(&agent), "own=true&workarea_id=q1-2027").await;
+    assert_eq!(status, StatusCode::OK, "{page_by_name}");
+    assert_eq!(listed(&page_by_name).len(), 2, "{page_by_name}");
+    let (_, page_by_id) = list(
+        router,
+        Call::auth(&agent),
+        &format!("own=true&workarea_id={by_id}"),
+    )
+    .await;
+    assert_eq!(listed(&page_by_name), listed(&page_by_id));
+    let tail = |workarea: String| {
+        let call = Call::auth(&agent);
+        async move {
+            send(
+                router,
+                "GET",
+                &format!("/v2/events?workarea_id={workarea}"),
+                call,
+            )
+            .await
+        }
+    };
+    let (status, _, tail_by_name) = tail("q1-2027".to_owned()).await;
+    assert_eq!(status, StatusCode::OK, "{tail_by_name}");
+    assert!(
+        !tail_by_name["items"].as_array().expect("items").is_empty(),
+        "{tail_by_name}"
+    );
+    let (_, _, tail_by_id) = tail(by_id.clone()).await;
+    assert_eq!(tail_by_name["items"], tail_by_id["items"]);
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A derived path is never a reference: it holds `.`, so `X-OML-Workarea:
+/// universe.metals-crew` is neither an id nor a name, and the submit, the
+/// recall and the listing that carry it are refused at parse,
+/// `request.validation` with `details.field` the header's name, before any
+/// check that consults state, so nothing is journalled (errors.md
+/// `details.field`; ADR-0026 d3, d7).
+#[tokio::test]
+async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    let head = head_seq(&rig, tenant).await;
+    let path = "universe.metals-crew";
+
+    for (method, uri, call) in [
+        (
+            "POST",
+            "/v1/memories",
+            submit_into(&agent, "path-1", path, "quote-1"),
+        ),
+        (
+            "POST",
+            "/v1/memories/recall",
+            Call::auth(&agent)
+                .workarea(path)
+                .body(json!({ "query": "quote" })),
+        ),
+        ("GET", "/v1/memories", Call::auth(&agent).workarea(path)),
+    ] {
+        let (status, _, refused) = send(router, method, uri, call).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(
+            refused["error"]["details"]["field"], "X-OML-Workarea",
+            "{method} {uri}: {refused}"
+        );
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Every place that names a workarea, crew or key classifies its value at
+/// parse: a derived path, or hex-and-dash text of version 8, which no id
+/// carries, is `request.validation` with `details.field` naming its place as
+/// errors.md spells it — the parameter for a path or query parameter, the
+/// header for a header, a JSON Pointer for a body member — and nothing is
+/// journalled (errors.md `details.field`; ADR-0026 d3).
+#[tokio::test]
+async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_its_place() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    let head = head_seq(&rig, tenant).await;
+    let path = "universe.metals-crew";
+    let version_8 = "0190f2a4-7c3e-8b1d-9a6f-e2d8c51b3a07";
+    let issue = |idem: &str, body: Value| Call::auth(&admin).idem(idem).body(body);
+
+    for (method, uri, call, field) in [
+        (
+            "GET",
+            format!("/v2/workareas/{path}"),
+            Call::auth(&admin),
+            "workarea_id",
+        ),
+        (
+            "GET",
+            format!("/v2/workareas/{version_8}"),
+            Call::auth(&admin),
+            "workarea_id",
+        ),
+        (
+            "GET",
+            format!("/v1/memories?workarea_id={path}"),
+            Call::auth(&agent),
+            "workarea_id",
+        ),
+        (
+            "GET",
+            format!("/v2/events?workarea_id={path}"),
+            Call::auth(&agent),
+            "workarea_id",
+        ),
+        (
+            "POST",
+            "/v1/memories".to_owned(),
+            submit_into(&agent, "v8", version_8, "quote-8"),
+            "X-OML-Workarea",
+        ),
+        (
+            "POST",
+            "/v2/workareas".to_owned(),
+            issue("wa-path", json!({ "parent_id": path, "name": "q1-2027" })),
+            "/parent_id",
+        ),
+        (
+            "POST",
+            "/v2/workareas".to_owned(),
+            issue(
+                "wa-crew",
+                json!({ "parent_id": crew, "name": "q1-2027", "crew": path }),
+            ),
+            "/crew",
+        ),
+        (
+            "POST",
+            "/v2/keys".to_owned(),
+            issue(
+                "key-grant",
+                json!({ "role": "writer", "name": "agent-1", "grants": [
+                    { "workarea_node_id": crew, "role": "writer" },
+                    { "workarea_node_id": path, "role": "reader" },
+                ] }),
+            ),
+            "/grants/1/workarea_node_id",
+        ),
+        (
+            "POST",
+            "/v2/keys".to_owned(),
+            issue(
+                "key-deny",
+                json!({ "role": "writer", "name": "agent-2", "grants": [
+                    { "workarea_node_id": crew, "role": "writer", "deny": [{ "subtree_node_id": version_8 }] },
+                ] }),
+            ),
+            "/grants/0/deny/0/subtree_node_id",
+        ),
+        (
+            "POST",
+            "/v2/keys".to_owned(),
+            issue(
+                "key-default",
+                json!({ "role": "writer", "name": "agent-3", "default_workarea_id": path, "grants": [
+                    { "workarea_node_id": crew, "role": "writer" },
+                ] }),
+            ),
+            "/default_workarea_id",
+        ),
+        (
+            "POST",
+            "/v2/keys".to_owned(),
+            issue(
+                "key-crew",
+                json!({ "role": "writer", "name": "agent-4", "crew": path, "grants": [] }),
+            ),
+            "/crew",
+        ),
+        (
+            "POST",
+            format!("/v2/keys/{path}/denials"),
+            issue("deny-key", json!({ "workarea_node_id": crew })),
+            "key_id",
+        ),
+        (
+            "POST",
+            "/v2/keys/writer-crew-agent-7/denials".to_owned(),
+            issue("deny-node", json!({ "workarea_node_id": path })),
+            "/workarea_node_id",
+        ),
+        (
+            "GET",
+            format!("/v2/keys/{path}"),
+            Call::auth(&admin),
+            "key_id",
+        ),
+        (
+            "GET",
+            format!("/v2/crews/{path}"),
+            Call::auth(&admin),
+            "crew_id",
+        ),
+        (
+            "POST",
+            format!("/v2/crews/{version_8}/update"),
+            issue(
+                "crew-update",
+                json!({ "external_manager": "crewd.example.com" }),
+            ),
+            "crew_id",
+        ),
+        (
+            "POST",
+            format!("/v2/workareas/{path}/crew"),
+            issue("wa-crew-path", json!({ "crew": "metals-crew" })),
+            "workarea_id",
+        ),
+        (
+            "POST",
+            format!("/v2/workareas/{crew}/crew"),
+            issue("wa-crew-ref", json!({ "crew": path })),
+            "/crew",
+        ),
+    ] {
+        let (status, _, refused) = send(router, method, &uri, call).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(
+            refused["error"]["details"]["field"], field,
+            "{method} {uri}: {refused}"
+        );
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Names compare byte for byte and are never case-mapped: with
+/// `metals-crew` a workarea and a crew of the tenant and `root-admin` its
+/// key, `Metals-Crew` and `Root-Admin` are `request.validation` naming their
+/// place wherever they are sent — a header, a path parameter, a reference
+/// body field, a creation's name — and never read as the lowercase name they
+/// resemble (http-api.md names and ids; errors.md; ADR-0026 d2).
+#[tokio::test]
+async fn an_uppercase_name_is_refused_never_lowercased() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    create_crew(router, &admin, "metals-crew").await;
+    let head = head_seq(&rig, tenant).await;
+
+    // Spelled as created, each resolves.
+    for uri in [
+        "/v2/workareas/metals-crew",
+        "/v2/crews/metals-crew",
+        "/v2/keys/root-admin",
+    ] {
+        let (status, _, body) = send(router, "GET", uri, Call::auth(&admin)).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    for (method, uri, call, field) in [
+        (
+            "POST",
+            "/v1/memories",
+            submit_into(&agent, "upper-1", "Metals-Crew", "quote-1"),
+            "X-OML-Workarea",
+        ),
+        (
+            "GET",
+            "/v2/workareas/Metals-Crew",
+            Call::auth(&admin),
+            "workarea_id",
+        ),
+        (
+            "GET",
+            "/v2/crews/Metals-Crew",
+            Call::auth(&admin),
+            "crew_id",
+        ),
+        ("GET", "/v2/keys/Root-Admin", Call::auth(&admin), "key_id"),
+        (
+            "POST",
+            "/v2/workareas",
+            Call::auth(&admin)
+                .idem("upper-wa")
+                .body(json!({ "parent_id": "Universe", "name": "q1-2027" })),
+            "/parent_id",
+        ),
+        (
+            "POST",
+            "/v2/crews",
+            Call::auth(&admin)
+                .idem("upper-crew")
+                .body(json!({ "name": "Redline-Crew" })),
+            "/name",
+        ),
+    ] {
+        let (status, _, refused) = send(router, method, uri, call).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(
+            refused["error"]["details"]["field"], field,
+            "{method} {uri}: {refused}"
+        );
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// `GET /v2/keys/{key_id}` takes the key's id or its name, and answers the
+/// same by both: the key's name, role, principal, crew, default workarea,
+/// attestation as `key.issued` journalled it, stored grants, denials in
+/// force and permission epoch, never its value. A name that names no key
+/// answers exactly what an unknown id answers, `access.not_found`, and only
+/// the admin key role reads a key (http-api.md keys, grants, denials;
+/// ADR-0026 d4, d8, d9).
+#[tokio::test]
+async fn get_v2_keys_by_name_answers_the_key() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let crew_record = create_crew(router, &admin, "metals-crew").await;
+    let (status, _, issued) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("issue-laptop").body(json!({
+            "role": "writer",
+            "name": "claude-laptop",
+            "principal": "claude/laptop",
+            "held_by": "agent",
+            "crew": "metals-crew",
+            "grants": [
+                { "workarea_node_id": "metals-crew", "role": "writer" },
+                { "workarea_node_id": "metals-crew", "role": "reader" },
+            ],
+            "default_workarea_id": "q1-2027",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    // Every reference was sent by name; the response carries ids.
+    assert_eq!(issued["crew_id"], crew_record["crew_id"], "{issued}");
+    assert_eq!(issued["default_workarea_id"], quarter.to_string());
+    assert_eq!(issued["grants"][0]["workarea_node_id"], crew.to_string());
+    let agent = issued["value"].as_str().expect("value").to_owned();
+    let key_id = issued["key_id"].as_str().expect("key id").to_owned();
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        "/v2/keys/claude-laptop/denials",
+        Call::auth(&admin)
+            .idem("deny-laptop")
+            .body(json!({ "workarea_node_id": "q1-2027" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    let read = |key: String, token: String| async move {
+        send(
+            router,
+            "GET",
+            &format!("/v2/keys/{key}"),
+            Call::auth(&token),
+        )
+        .await
+    };
+    let (status, _, by_name) = read("claude-laptop".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{by_name}");
+    assert_eq!(
+        by_name,
+        json!({
+            "key_id": key_id,
+            "name": "claude-laptop",
+            "role": "writer",
+            "principal": "claude/laptop",
+            "crew_id": crew_record["crew_id"],
+            "default_workarea_id": quarter,
+            "held_by": "agent",
+            "expiry": null,
+            "revoked_at": null,
+            "rotated_from": null,
+            "grants": issued["grants"],
+            "denials": [{
+                "denial_id": denial["denial_id"],
+                "workarea_node_id": quarter,
+                "epoch": denial["epoch"],
+                "lifted": false,
+            }],
+            "epoch": denial["epoch"],
+        })
+    );
+    let (status, _, by_id) = read(key_id.clone(), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_id, by_name, "one key by either spelling");
+
+    // The attestation reads back as key.issued journalled it: the ceremony's
+    // `human`, and null for a key issued without one.
+    let (_, _, root_admin) = read("root-admin".to_owned(), admin.clone()).await;
+    assert_eq!(root_admin["role"], "admin", "{root_admin}");
+    assert_eq!(root_admin["held_by"], "human", "{root_admin}");
+    issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let (_, _, unattested) = read("reader-crew-agent-recall".to_owned(), admin.clone()).await;
+    assert_eq!(unattested["held_by"], Value::Null, "{unattested}");
+    assert_eq!(unattested["crew_id"], Value::Null, "{unattested}");
+
+    // An unknown name answers what an unknown id answers; an agent key
+    // reaches no key read.
+    let (status, _, unknown_name) = read("nobody-key".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{unknown_name}");
+    let (status, _, unknown_id) = read(OsIds.new_id().to_string(), admin.clone()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{unknown_id}");
+    assert_eq!(unknown_name["error"], unknown_id["error"]);
+    let (status, _, refused) = read("claude-laptop".to_owned(), agent).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.verb_ceiling");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Commits the `key.revoked` an issuance that fails after its `key.issued`
+/// journals (roles-and-keys.md issuance order), signed by the lead's key and
+/// folded by the store, since no route revokes a key in this build; answers
+/// the event's `at`.
+async fn revoke_in_the_store(rig: &Rig, tenant: Uuid, revoker: &Value, key_id: Uuid) -> EventTime {
+    let head = rig
+        .store
+        .chain_head(tenant)
+        .await
+        .expect("head")
+        .expect("chain");
+    let prev = rig
+        .store
+        .events_range(tenant, head.seq, 1)
+        .await
+        .expect("the head event")
+        .remove(0);
+    let at = EventTime::parse("2026-11-02T10:30:00.123456Z").expect("time");
+    let draft = EventDraft {
+        tenant_id: tenant,
+        event_id: OsIds.new_id(),
+        event_type: event_types::KEY_REVOKED.to_owned(),
+        principal: revoker["principal"].as_str().expect("principal").to_owned(),
+        api_key_id: Some(
+            Uuid::parse_str(revoker["key_id"].as_str().expect("key id")).expect("uuid"),
+        ),
+        at: at.clone(),
+        payload: json!({
+            "key_id": key_id.to_string(),
+            "revoked_by_key_id": revoker["key_id"],
+            "reason_digest": sha256_digest_string(b"issuance_incomplete"),
+        }),
+    };
+    let event = sign(
+        next_envelope(Some(&prev), draft).expect("lawful"),
+        &rig.signing,
+    )
+    .expect("signs");
+    rig.store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({
+                    "tenant_id": tenant.to_string(),
+                    "seq": event.envelope.seq,
+                    "event_type": event.envelope.event_type,
+                }),
+            },
+            event,
+            fold: MetadataFold::KeyRevoked { key_id },
+            idempotency: None,
+        })
+        .await
+        .expect("the revocation commits");
+    at
+}
+
+/// A revoked key's name still resolves, so `GET /v2/keys/{key_id}` answers
+/// it by name as history, with `revoked_at` the `at` of its `key.revoked`,
+/// where a live key's is null (http-api.md keys, grants, denials; ADR-0026
+/// d4, d10).
+#[tokio::test]
+async fn get_v2_keys_by_name_answers_a_revoked_key_with_its_revoked_at() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "claude/laptop",
+        json!([{ "workarea_node_id": crew, "role": "writer" }]),
+    )
+    .await;
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
+    let laptop = issued["name"].as_str().expect("name").to_owned();
+    let read = |key: String| {
+        let admin = admin.clone();
+        async move {
+            send(
+                router,
+                "GET",
+                &format!("/v2/keys/{key}"),
+                Call::auth(&admin),
+            )
+            .await
+        }
+    };
+    let (status, _, live) = read(laptop.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{live}");
+    assert_eq!(live.get("revoked_at"), Some(&Value::Null), "{live}");
+    let (_, _, root_admin) = read("root-admin".to_owned()).await;
+
+    let at = revoke_in_the_store(&rig, tenant, &root_admin, key_id).await;
+    let (status, _, revoked) = read(laptop.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{revoked}");
+    let mut expected = live.clone();
+    expected["revoked_at"] = json!(at.as_str());
+    assert_eq!(
+        revoked, expected,
+        "the revocation time and nothing else moves"
+    );
+    let (status, _, by_id) = read(key_id.to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_id, revoked, "one revoked key by either spelling");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A crew's name is unique in its tenant and in its kind: `POST /v2/crews`
+/// creates the record beside a workarea of the same name and answers it, and
+/// a second create under that name, under another Idempotency-Key, is `409
+/// name.taken` with `details` `{kind, name}` and journals nothing
+/// (http-api.md crews; errors.md `name.taken`; ADR-0026 d1, d5, d8).
+#[tokio::test]
+async fn post_v2_crews_twice_with_one_name_answers_409_name_taken() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, _crew_workarea) = crew_tenant(router).await;
+    let (status, _, created) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(&admin).idem("crew-1").body(json!({
+            "name": "metals-crew",
+            "charter_uri": "https://crews.example.com/metals/charter.md",
+            "external_manager": "crewd.example.com",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let crew_id = created["crew_id"].as_str().expect("crew id");
+    assert!(Uuid::parse_str(crew_id).is_ok(), "{created}");
+    assert_eq!(
+        created,
+        json!({
+            "crew_id": crew_id,
+            "name": "metals-crew",
+            "charter_uri": "https://crews.example.com/metals/charter.md",
+            "external_manager": "crewd.example.com",
+        })
+    );
+    let head = head_seq(&rig, tenant).await;
+
+    let (status, _, taken) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(&admin)
+            .idem("crew-2")
+            .body(json!({ "name": "metals-crew" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{taken}");
+    assert_envelope(&taken, "name.taken");
+    assert_eq!(
+        taken["error"]["details"],
+        json!({ "kind": "crew", "name": "metals-crew" }),
+        "{taken}"
+    );
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The crew routes are the admin key role's: `GET /v2/crews/{crew_id}`
+/// reads one record by id or name, `POST /v2/crews/{crew_id}/update`
+/// changes its charter or manager and never its name, `GET /v2/crews` pages
+/// the tenant's records in name order under a cursor bound to the key that
+/// obtained it, an unknown crew is `access.not_found`, and no agent key
+/// reaches any of them (http-api.md crews; ADR-0026 d8).
+#[tokio::test]
+async fn the_crew_routes_read_update_and_list_crew_records_by_id_or_name_for_admin_keys_only() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
+    let redline = create_crew(router, &admin, "redline").await;
+    let metals = create_crew(router, &admin, "metals-crew").await;
+    let metals_id = metals["crew_id"].as_str().expect("crew id").to_owned();
+
+    for crew_ref in ["metals-crew", metals_id.as_str()] {
+        let (status, _, read) = send(
+            router,
+            "GET",
+            &format!("/v2/crews/{crew_ref}"),
+            Call::auth(&admin),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{read}");
+        assert_eq!(read, metals);
+    }
+
+    let (status, _, updated) = send(
+        router,
+        "POST",
+        "/v2/crews/metals-crew/update",
+        Call::auth(&admin)
+            .idem("update-1")
+            .body(json!({ "external_manager": "crewd.example.com" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(
+        updated,
+        json!({
+            "crew_id": metals_id,
+            "name": "metals-crew",
+            "charter_uri": metals["charter_uri"],
+            "external_manager": "crewd.example.com",
+        }),
+        "the charter kept, the name never changed"
+    );
+    let head = head_seq(&rig, tenant).await;
+    // An update with neither field, and one naming the record anew, are
+    // refused; the body is closed.
+    for (n, body) in [json!({}), json!({ "name": "renamed-crew" })]
+        .into_iter()
+        .enumerate()
+    {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            &format!("/v2/crews/{metals_id}/update"),
+            Call::auth(&admin)
+                .idem(&format!("update-bad-{n}"))
+                .body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    // Two pages of one, in name order; the cursor answers only its key.
+    let (status, _, first) = send(router, "GET", "/v2/crews?limit=1", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["items"], json!([updated]));
+    let cursor = first["next_cursor"]
+        .as_str()
+        .expect("a next page")
+        .to_owned();
+    let (status, _, second) = send(
+        router,
+        "GET",
+        &format!("/v2/crews?limit=1&cursor={cursor}"),
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second, json!({ "items": [redline], "next_cursor": null }));
+    let other_admin = issue_key_with(router, &admin, "admin", "platform/second", json!([])).await;
+    let other_admin = other_admin["value"].as_str().expect("value");
+    let (status, _, foreign) = send(
+        router,
+        "GET",
+        &format!("/v2/crews?cursor={cursor}"),
+        Call::auth(other_admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{foreign}");
+    assert_envelope(&foreign, "request.validation");
+
+    let (status, _, unknown) =
+        send(router, "GET", "/v2/crews/nowhere-crew", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{unknown}");
+    assert_envelope(&unknown, "access.not_found");
+
+    for (method, uri, call) in [
+        ("GET", "/v2/crews", Call::auth(&agent)),
+        ("GET", "/v2/crews/metals-crew", Call::auth(&agent)),
+        (
+            "POST",
+            "/v2/crews",
+            Call::auth(&agent)
+                .idem("agent-crew")
+                .body(json!({ "name": "agent-crew" })),
+        ),
+        (
+            "POST",
+            "/v2/crews/metals-crew/update",
+            Call::auth(&agent)
+                .idem("agent-update")
+                .body(json!({ "charter_uri": "https://crews.example.com/x.md" })),
+        ),
+    ] {
+        let (status, _, refused) = send(router, method, uri, call).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}: {refused}");
+        assert_envelope(&refused, "access.verb_ceiling");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+/// `POST /v2/workareas/{workarea_id}/crew` points a workarea at a crew
+/// record, each by id or name, and answers the node with its name, its
+/// path and the record, which the workarea read then serves; a crew that
+/// names no record of the tenant is `access.not_found`, as is a workarea,
+/// and nothing is journalled for either (http-api.md workareas; ADR-0026
+/// d8).
+#[tokio::test]
+async fn post_v2_workareas_crew_points_a_workarea_at_a_crew_record_by_name() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let record = create_crew(router, &admin, "metals-crew").await;
+    let head = head_seq(&rig, tenant).await;
+
+    for (n, uri, crew_ref) in [
+        (1, "/v2/workareas/q1-2027/crew", "nowhere-crew"),
+        (2, "/v2/workareas/no-such-node/crew", "metals-crew"),
+    ] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            uri,
+            Call::auth(&admin)
+                .idem(&format!("point-{n}"))
+                .body(json!({ "crew": crew_ref })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {refused}");
+        assert_envelope(&refused, "access.not_found");
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    let (status, _, pointed) = send(
+        router,
+        "POST",
+        "/v2/workareas/q1-2027/crew",
+        Call::auth(&admin)
+            .idem("point")
+            .body(json!({ "crew": "metals-crew" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pointed}");
+    assert_eq!(
+        pointed,
+        json!({
+            "id": quarter,
+            "name": "q1-2027",
+            "parent_id": crew,
+            "path": "universe.metals-crew.q1-2027",
+            "status": "development",
+            "crew": record,
+        })
+    );
+    let (status, _, view) = send(
+        router,
+        "GET",
+        &format!("/v2/workareas/{quarter}"),
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["crew"], record, "the read serves the record");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// An admin key reads workarea structure by its key role, no grant
+/// entering: the workarea read, here by name, answers the node's name and
+/// every child, children no grant reaches included, with
+/// `my_effective_verbs` empty, and an admin key with no grant reads it the
+/// same; a reader key sees only what its grants reach (roles-and-keys.md
+/// permission matrix, footnote 6; http-api.md workareas; ADR-0026 d15).
+#[tokio::test]
+async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_empty() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let metals = create_workarea(router, &admin, root, "metals-crew").await;
+    let redline = create_workarea(router, &admin, root, "redline").await;
+    let quarter = create_workarea(router, &admin, metals, "q1-2027").await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", quarter).await;
+    let second_admin = issue_key_with(router, &admin, "admin", "platform/second", json!([])).await;
+    let second_admin = second_admin["value"].as_str().expect("value").to_owned();
+
+    for token in [&admin, &second_admin] {
+        let (status, _, view) =
+            send(router, "GET", "/v2/workareas/universe", Call::auth(token)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(
+            view,
+            json!({
+                "id": root,
+                "name": "universe",
+                "parent_id": null,
+                "path": "universe",
+                "status": "committed",
+                "crew": null,
+                "children": [
+                    { "id": metals, "path_leaf": "metals-crew", "status": "development" },
+                    { "id": redline, "path_leaf": "redline", "status": "development" },
+                ],
+                "edges": [],
+                "my_effective_verbs": [],
+                "permission_epoch": view["permission_epoch"],
+            })
+        );
+    }
+
+    // A reader key reads by its grants alone: not the node above its grant,
+    // and its own node with the verbs its grant confers.
+    let (status, _, refused) = send(
+        router,
+        "GET",
+        "/v2/workareas/metals-crew",
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_envelope(&refused, "access.not_found");
+    let (status, _, leaf) = send(router, "GET", "/v2/workareas/q1-2027", Call::auth(&reader)).await;
+    assert_eq!(status, StatusCode::OK, "{leaf}");
+    assert_eq!(leaf["name"], "q1-2027");
+    assert_eq!(
+        leaf["my_effective_verbs"],
+        json!(["recall", "read", "graph_read", "events_tail"])
+    );
 
     drop_db(&rig.db_name).await;
 }
@@ -1254,9 +2767,9 @@ async fn an_unknown_issuance_field_is_request_validation() {
     // ignored, so no field the issuer meant is silently dropped (ADR-0025
     // d16).
     for (n, body) in [
-        json!({ "role": "writer", "scopes": ["all"] }),
-        json!({ "role": "writer", "grants": [{ "workarea_node_id": crew, "role": "writer", "expires": "never" }] }),
-        json!({ "role": "writer", "grants": [{ "workarea_node_id": crew, "role": "writer", "deny": [{ "node": crew }] }] }),
+        json!({ "role": "writer", "name": "agent-1", "scopes": ["all"] }),
+        json!({ "role": "writer", "name": "agent-2", "grants": [{ "workarea_node_id": crew, "role": "writer", "expires": "never" }] }),
+        json!({ "role": "writer", "name": "agent-3", "grants": [{ "workarea_node_id": crew, "role": "writer", "deny": [{ "node": crew }] }] }),
     ]
     .into_iter()
     .enumerate()
@@ -1276,6 +2789,86 @@ async fn an_unknown_issuance_field_is_request_validation() {
     drop_db(&rig.db_name).await;
 }
 
+/// Every issuance names its key: a body with no `name`, or with one the
+/// creation grammar refuses, is `request.validation` naming `name` before
+/// any check of the refusal order, and journals nothing; the `201` answers
+/// the name `key.issued` journalled, and a second key under it is
+/// `name.taken` (roles-and-keys.md issuance order; ADR-0026 d5, d9).
+#[tokio::test]
+async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_journals_nothing() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let head = head_seq(&rig, tenant).await;
+    let grants = json!([{ "workarea_node_id": crew, "role": "writer" }]);
+    for (n, name) in [
+        Value::Null,
+        json!("Claude Laptop"),
+        json!("key-0123456789abcdef0123456789abcdef"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut body = json!({ "role": "writer", "principal": "claude/laptop", "grants": grants });
+        if !name.is_null() {
+            body["name"] = name;
+        }
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&admin).idem(&format!("unnamed-{n}")).body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "/name", "{refused}");
+    }
+    // Before step 1: a body that would also fail the two-key rule answers
+    // the missing name.
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("unnamed-admin").body(json!({
+            "role": "admin",
+            "grants": [{ "workarea_node_id": crew, "role": "dreamer" }],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["details"]["field"], "/name", "{refused}");
+    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+
+    let issued = issue_key_with(router, &admin, "writer", "claude/laptop", grants.clone()).await;
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
+    let stored = rig
+        .store
+        .key(tenant, key_id)
+        .await
+        .expect("read")
+        .expect("the key row");
+    assert_eq!(
+        stored.name.as_ref().map(Name::as_str),
+        Some("writer-claude-laptop")
+    );
+    let (status, _, taken) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("taken").body(json!({
+            "role": "writer",
+            "name": "writer-claude-laptop",
+            "principal": "claude/other",
+            "grants": grants,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{taken}");
+    assert_envelope(&taken, "name.taken");
+    drop_db(&rig.db_name).await;
+}
+
 #[tokio::test]
 async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
     let rig = fresh_rig().await;
@@ -1292,6 +2885,7 @@ async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
         "/v2/keys",
         Call::auth(&admin).idem("expiring").body(json!({
             "role": "writer",
+            "name": "expiring",
             "grants": [{ "workarea_node_id": crew, "role": "writer" }],
             "expiry": "2027-01-01T00:00:00Z",
         })),
@@ -1321,6 +2915,7 @@ async fn access_refusals_carry_their_recovery_details() {
         "/v2/keys",
         Call::auth(&admin).idem("k-1").body(json!({
             "role": "writer",
+            "name": "k-1",
             "grants": [
                 { "workarea_node_id": crew, "role": "reader" },
                 { "workarea_node_id": crew, "role": "dreamer" },
@@ -1341,7 +2936,7 @@ async fn access_refusals_carry_their_recovery_details() {
         "/v2/keys",
         Call::auth(&admin)
             .idem("k-2")
-            .body(json!({ "role": "operator" })),
+            .body(json!({ "role": "operator", "name": "k-2" })),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
@@ -1354,11 +2949,11 @@ async fn access_refusals_carry_their_recovery_details() {
     for (idem, body) in [
         (
             "k-3",
-            json!({ "role": "writer", "grants": [{ "workarea_node_id": quotes, "role": "writer", "deny": [{ "subtree_node_id": crew }] }] }),
+            json!({ "role": "writer", "name": "k-3", "grants": [{ "workarea_node_id": quotes, "role": "writer", "deny": [{ "subtree_node_id": crew }] }] }),
         ),
         (
             "k-4",
-            json!({ "role": "writer", "grants": [{ "workarea_node_id": quotes, "role": "writer" }], "default_workarea_id": crew }),
+            json!({ "role": "writer", "name": "k-4", "grants": [{ "workarea_node_id": quotes, "role": "writer" }], "default_workarea_id": crew }),
         ),
     ] {
         let (status, _, refused) = send(
@@ -1485,6 +3080,574 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
     assert_envelope(&body, "access.not_found");
 
     drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// The events tail: per-family visibility, the subtree filter and the bounded
+// scan (http-api.md events tail; ADR-0025 d15)
+// ---------------------------------------------------------------------------
+
+/// A key the tail tests read with: its show-once value and its key id.
+struct TailKey {
+    value: String,
+    key_id: String,
+}
+
+/// A crew and the keys that tail it: two writer keys holding writer and
+/// reader there under one principal, so own is the authoring key and never
+/// the principal (roles-and-keys.md#own), a dreamer holding dreamer and
+/// reader, and a reader.
+struct TailRig {
+    rig: Rig,
+    admin: String,
+    tenant: Uuid,
+    root: Uuid,
+    crew: Uuid,
+    agent: TailKey,
+    twin: TailKey,
+    dreamer: TailKey,
+    reader: TailKey,
+}
+
+async fn tail_key(
+    router: &Router,
+    admin: &str,
+    role: &str,
+    principal: &str,
+    idem: &str,
+    grants: Value,
+) -> TailKey {
+    let (value, key_id) = key_with(router, admin, role, principal, idem, grants).await;
+    TailKey { value, key_id }
+}
+
+async fn tail_rig() -> TailRig {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "metals-crew").await;
+    let on_crew = |roles: &[&str]| {
+        Value::Array(
+            roles
+                .iter()
+                .map(|role| json!({ "workarea_node_id": crew, "role": role }))
+                .collect(),
+        )
+    };
+    let agent = tail_key(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "issue-agent",
+        on_crew(&["writer", "reader"]),
+    )
+    .await;
+    let twin = tail_key(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "issue-twin",
+        on_crew(&["writer", "reader"]),
+    )
+    .await;
+    let dreamer = tail_key(
+        router,
+        &admin,
+        "dreamer",
+        "crew/reviewer-3",
+        "issue-dreamer",
+        on_crew(&["dreamer", "reader"]),
+    )
+    .await;
+    let reader = tail_key(
+        router,
+        &admin,
+        "reader",
+        "crew/agent-recall",
+        "issue-reader",
+        on_crew(&["reader"]),
+    )
+    .await;
+    TailRig {
+        rig,
+        admin,
+        tenant,
+        root,
+        crew,
+        agent,
+        twin,
+        dreamer,
+        reader,
+    }
+}
+
+/// Every item of `key`'s events tail from the beginning, at `scope` when one
+/// is named, following `next_after_seq` until it reaches `head_seq`.
+async fn tailed(router: &Router, key: &str, scope: Option<Uuid>) -> Vec<Value> {
+    let mut events = Vec::new();
+    let mut after_seq = 0;
+    for _ in 0..100 {
+        let mut path = format!("/v2/events?after_seq={after_seq}&limit=5");
+        if let Some(scope) = scope {
+            path.push_str(&format!("&workarea_id={scope}"));
+        }
+        let (status, _, page) = send(router, "GET", &path, Call::auth(key)).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        events.extend(page["items"].as_array().expect("items").iter().cloned());
+        let next = page["next_after_seq"].as_u64().expect("next_after_seq");
+        if Some(next) == page["head_seq"].as_u64() {
+            return events;
+        }
+        assert!(
+            next > after_seq,
+            "a page short of head_seq advances: {page}"
+        );
+        after_seq = next;
+    }
+    panic!("the tail never reached head_seq");
+}
+
+/// The claim versions the `event_type` items of a tail name, in order: the
+/// new version of a `lifecycle.supersede`, the payload's `artifact_id`
+/// otherwise.
+fn tail_subjects(events: &[Value], event_type: &str) -> Vec<String> {
+    events
+        .iter()
+        .filter(|e| e["event_type"] == event_type)
+        .map(|e| {
+            let payload = &e["payload"];
+            payload
+                .get("new_artifact_id")
+                .or_else(|| payload.get("artifact_id"))
+                .and_then(Value::as_str)
+                .expect("a claim subject")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// The events of a tail outside the submission family: what two keys with
+/// equal access see alike.
+fn shared_events(events: &[Value]) -> Vec<Value> {
+    events
+        .iter()
+        .filter(|e| {
+            !e["event_type"]
+                .as_str()
+                .expect("event_type")
+                .starts_with("submission.")
+        })
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn the_tail_never_shows_another_keys_submission() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let mine = remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let theirs = remember(
+        router,
+        &t.twin.value,
+        "km-2210",
+        "Kumasi Metals quoted 405 USD/t.",
+        None,
+    )
+    .await;
+
+    // The two writer keys share a principal: only the authoring key makes a
+    // submission its own (roles-and-keys.md#own; ADR-0025 d3, d15).
+    let agent = tailed(router, &t.agent.value, None).await;
+    assert_eq!(tail_subjects(&agent, "submission.remember"), [mine]);
+    let twin = tailed(router, &t.twin.value, None).await;
+    assert_eq!(tail_subjects(&twin, "submission.remember"), [theirs]);
+    for key in [&t.dreamer.value, &t.reader.value] {
+        let events = tailed(router, key, None).await;
+        assert!(
+            events.iter().all(|e| !e["event_type"]
+                .as_str()
+                .expect("event_type")
+                .starts_with("submission.")),
+            "a held submission reaches no other key: {events:?}"
+        );
+    }
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_author_sees_its_own_submission_in_the_tail() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let text = "Accra Metals quoted 412 USD/t for Q1-2027 delivery.";
+    let mine = remember(router, &t.agent.value, "am-7741", text, None).await;
+
+    let events = tailed(router, &t.agent.value, None).await;
+    let own: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["event_type"] == "submission.remember")
+        .collect();
+    assert_eq!(own.len(), 1, "{events:?}");
+    let event = own[0];
+    assert_eq!(event["payload"]["artifact_id"], mine);
+    assert_eq!(event["payload"]["workarea_id"], t.crew.to_string());
+    // The key is the actor, so the tail names it (http-api.md events tail).
+    assert_eq!(event["api_key_id"], t.agent.key_id, "{event}");
+    assert_eq!(event["principal"], "crew/agent-7", "{event}");
+    assert!(
+        !event["payload"].to_string().contains("Accra Metals quoted"),
+        "no body plaintext rides the tail (D1): {event}"
+    );
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn lifecycle_promote_is_visible_to_readers_of_the_workarea() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let ledger = create_workarea(router, &t.admin, t.root, "ledger").await;
+    let outsider = tail_key(
+        router,
+        &t.admin,
+        "reader",
+        "ledger/agent-recall",
+        "issue-outsider",
+        json!([{ "workarea_node_id": ledger, "role": "reader" }]),
+    )
+    .await;
+    let mine = remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    assert_eq!(review(router, &t.dreamer.value, "approve").await, mine);
+
+    let events = tailed(router, &t.reader.value, None).await;
+    assert_eq!(tail_subjects(&events, "lifecycle.promote"), [mine]);
+    assert!(
+        tail_subjects(&events, "submission.remember").is_empty(),
+        "{events:?}"
+    );
+    let promote = events
+        .iter()
+        .find(|e| e["event_type"] == "lifecycle.promote")
+        .expect("the promote");
+    assert_eq!(promote["payload"]["workarea_id"], t.crew.to_string());
+    assert_eq!(promote["payload"]["version"], 1);
+    // The reader is outside the actor's own key set: the tail names no
+    // identity (ADR-0025 d15).
+    assert!(promote["principal"].is_null(), "{promote}");
+    assert!(promote["api_key_id"].is_null(), "{promote}");
+
+    // A reader of another workarea sees nothing of it.
+    let elsewhere = tailed(router, &outsider.value, None).await;
+    assert!(
+        tail_subjects(&elsewhere, "lifecycle.promote").is_empty(),
+        "{elsewhere:?}"
+    );
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn the_tail_never_shows_review_or_key_administration_events() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    remember(
+        router,
+        &t.agent.value,
+        "am-7742",
+        "Accra Metals quoted 415 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "reject").await;
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        &format!("/v2/keys/{}/denials", t.twin.key_id),
+        Call::auth(&t.admin)
+            .idem("deny-twin")
+            .body(json!({ "workarea_node_id": t.crew })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    // The journal holds them; the content tail omits them for every key.
+    let journalled: Vec<String> = t
+        .rig
+        .store
+        .events_range(t.tenant, 1, 1000)
+        .await
+        .expect("journal")
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    for event_type in [
+        "tenant.genesis",
+        "key.issued",
+        "grant.issued",
+        "key.denied",
+        "review.approve",
+        "review.reject",
+    ] {
+        assert!(
+            journalled.iter().any(|j| j == event_type),
+            "{event_type}: {journalled:?}"
+        );
+    }
+    // The dreamer recorded both verdicts and sees neither (ADR-0025 d15).
+    for key in [&t.agent.value, &t.dreamer.value, &t.reader.value] {
+        for event in tailed(router, key, None).await {
+            let event_type = event["event_type"].as_str().expect("event_type");
+            assert!(
+                ["submission.", "lifecycle.", "workarea."]
+                    .iter()
+                    .any(|family| event_type.starts_with(family)),
+                "{event_type} is not on the content tail: {event}"
+            );
+        }
+    }
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn two_keys_with_equal_access_tail_the_same_events_in_the_same_order() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let first = remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    let theirs = remember(
+        router,
+        &t.twin.value,
+        "km-2210",
+        "Kumasi Metals quoted 405 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    let rejected = remember(
+        router,
+        &t.agent.value,
+        "am-7742",
+        "Accra Metals quoted 415 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "reject").await;
+
+    let agent = tailed(router, &t.agent.value, None).await;
+    let twin = tailed(router, &t.twin.value, None).await;
+    let reader = tailed(router, &t.reader.value, None).await;
+    assert_eq!(shared_events(&agent), shared_events(&twin));
+    assert_eq!(
+        shared_events(&reader),
+        shared_events(&agent),
+        "reader access on the crew is the access that matters"
+    );
+    assert_eq!(
+        tail_subjects(&agent, "lifecycle.promote"),
+        [first.clone(), theirs.clone()]
+    );
+    // Each additionally sees its own submissions, and only those.
+    assert_eq!(
+        tail_subjects(&agent, "submission.remember"),
+        [first, rejected]
+    );
+    assert_eq!(tail_subjects(&twin, "submission.remember"), [theirs]);
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_filtered_page_advances_next_after_seq() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let start = head_seq(&t.rig, t.tenant).await;
+    // Six events no tail shows: three keys, a key.issued and a
+    // grant.issued apiece.
+    for n in 0..3 {
+        tail_key(
+            router,
+            &t.admin,
+            "reader",
+            &format!("crew/extra-{n}"),
+            &format!("issue-extra-{n}"),
+            json!([{ "workarea_node_id": t.crew, "role": "reader" }]),
+        )
+        .await;
+    }
+    let head = head_seq(&t.rig, t.tenant).await;
+    assert_eq!(head, start + 6);
+    let page = async |after_seq: u64| {
+        send(
+            router,
+            "GET",
+            &format!("/v2/events?after_seq={after_seq}&limit=4"),
+            Call::auth(&t.reader.value),
+        )
+        .await
+    };
+
+    // One call scans at most limit raw events and resumes after the last.
+    let (status, _, first) = page(start).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["items"], json!([]), "{first}");
+    assert_eq!(first["next_after_seq"].as_u64(), Some(start + 4), "{first}");
+    assert_eq!(first["head_seq"].as_u64(), Some(head), "{first}");
+    let (status, _, second) = page(start + 4).await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second["items"], json!([]), "{second}");
+    assert_eq!(second["next_after_seq"].as_u64(), Some(head), "{second}");
+    // No raw event follows the head: the resume point stays where it is.
+    let (status, _, idle) = page(head).await;
+    assert_eq!(status, StatusCode::OK, "{idle}");
+    assert_eq!(idle["items"], json!([]), "{idle}");
+    assert_eq!(idle["next_after_seq"].as_u64(), Some(head), "{idle}");
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_after_seq_beyond_head_is_request_validation() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let head = head_seq(&t.rig, t.tenant).await;
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v2/events?after_seq={}", head + 1),
+        Call::auth(&t.reader.value),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v2/events?after_seq={head}"),
+        Call::auth(&t.reader.value),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["next_after_seq"].as_u64(), Some(head), "{body}");
+
+    drop_db(&t.rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_tail_scope_outside_read_access_is_not_found() {
+    let t = tail_rig().await;
+    let router = &t.rig.router;
+    let quotes = create_workarea(router, &t.admin, t.crew, "quotes").await;
+    let ledger = create_workarea(router, &t.admin, t.root, "ledger").await;
+    for scope in [
+        ledger.to_string(),
+        t.root.to_string(),
+        Uuid::from_u128(0xBEEF).to_string(),
+        "not-a-node".to_owned(),
+    ] {
+        let (status, _, body) = send(
+            router,
+            "GET",
+            &format!("/v2/events?workarea_id={scope}"),
+            Call::auth(&t.reader.value),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{scope}: {body}");
+        assert_envelope(&body, "access.not_found");
+    }
+    // An omitted scope is the key's default, and a key with none is
+    // refused, never guessed for.
+    let unscoped = tail_key(
+        router,
+        &t.admin,
+        "reader",
+        "crew/unscoped",
+        "issue-unscoped",
+        json!([]),
+    )
+    .await;
+    let (status, _, body) = send(router, "GET", "/v2/events", Call::auth(&unscoped.value)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_envelope(&body, "request.workarea_unresolved");
+
+    // Within read access the scope is a subtree filter.
+    let in_crew = remember(
+        router,
+        &t.agent.value,
+        "am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    let in_quotes = remember(
+        router,
+        &t.agent.value,
+        "am-7742",
+        "Accra Metals quoted 415 USD/t.",
+        Some(quotes),
+    )
+    .await;
+    review(router, &t.dreamer.value, "approve").await;
+    let scoped = tailed(router, &t.reader.value, Some(quotes)).await;
+    assert_eq!(
+        tail_subjects(&scoped, "lifecycle.promote"),
+        std::slice::from_ref(&in_quotes)
+    );
+    let created: Vec<&Value> = scoped
+        .iter()
+        .filter(|e| e["event_type"] == "workarea.create")
+        .map(|e| &e["payload"]["workarea_id"])
+        .collect();
+    assert_eq!(created, [&json!(quotes.to_string())]);
+    let whole = tailed(router, &t.reader.value, None).await;
+    assert_eq!(
+        tail_subjects(&whole, "lifecycle.promote"),
+        [in_crew, in_quotes]
+    );
+    let created: Vec<&Value> = whole
+        .iter()
+        .filter(|e| e["event_type"] == "workarea.create")
+        .map(|e| &e["payload"]["workarea_id"])
+        .collect();
+    assert_eq!(
+        created,
+        [&json!(t.crew.to_string()), &json!(quotes.to_string())]
+    );
+
+    drop_db(&t.rig.db_name).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -1882,6 +4045,637 @@ async fn terms_on_recall_is_refused_by_name_until_built() {
 }
 
 // ---------------------------------------------------------------------------
+// Own held rows in recall and the max_tokens budget (ADR-0025 d4, d5, d6,
+// d7, d9)
+// ---------------------------------------------------------------------------
+
+/// Budget tokens of `text`, an NFC literal: ⌈UTF-8 bytes ÷ 4⌉ under counter
+/// `oml-tc/1` (retrieval.md token budgets).
+fn tokens(text: &str) -> u64 {
+    (text.len() as u64).div_ceil(4)
+}
+
+/// A crew and its supersession keys: (rig, admin, crew, agent, dreamer,
+/// reader), the agent a writer key holding writer and reader.
+async fn own_held_rig() -> (Rig, String, Uuid, String, String, String) {
+    let rig = fresh_rig().await;
+    let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
+    let (agent, dreamer, reader) = supersession_keys(&rig.router, &admin, crew).await;
+    (rig, admin, crew, agent, dreamer, reader)
+}
+
+/// One recall over HTTP at the key's default scope, answered 200.
+async fn recall_ok(router: &Router, token: &str, body: Value) -> Value {
+    let (status, recall) = recall_over_http(router, token, None, body).await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    recall
+}
+
+/// The `(state, tip)` of each hit, in order.
+fn hit_states(recall: &Value) -> Vec<(Value, Value)> {
+    recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| (h["memory"]["state"].clone(), h["memory"]["tip"].clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
+    let (rig, admin, crew, agent, _dreamer, reader) = own_held_rig().await;
+    let router = &rig.router;
+    let row = remember(
+        router,
+        &agent,
+        "accra",
+        "Accra Metals aluminium price is 412 USD/t.",
+        None,
+    )
+    .await;
+
+    let query = json!({"query": "aluminium price", "include_own_held": true});
+    let recall = recall_ok(router, &agent, query.clone()).await;
+    assert_eq!(hit_ids(&recall), vec![json!(row)], "{recall}");
+    assert_eq!(hit_states(&recall), vec![(json!("held"), json!(false))]);
+    let off = recall_ok(router, &agent, json!({"query": "aluminium price"})).await;
+    assert_eq!(off["hits"], json!([]), "the flag defaults off: {off}");
+
+    // Own is the authoring key, never the principal (roles-and-keys.md#own).
+    let value = |body: Value| body["value"].as_str().expect("value").to_owned();
+    let same_reader = issue_key(router, &admin, "reader", "crew/agent-7", crew).await;
+    let same_dreamer = value(
+        issue_key_with(
+            router,
+            &admin,
+            "dreamer",
+            "crew/agent-7",
+            json!([
+                { "workarea_node_id": crew, "role": "dreamer" },
+                { "workarea_node_id": crew, "role": "reader" },
+            ]),
+        )
+        .await,
+    );
+    for key in [&same_reader, &same_dreamer, &reader] {
+        let recall = recall_ok(router, key, query.clone()).await;
+        assert_eq!(recall["hits"], json!([]), "{recall}");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
+    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let router = &rig.router;
+    // ts_rank grows with the occurrences of the one query term.
+    let best = promoted_over_http(router, &agent, &dreamer, "p1", "canary canary canary").await;
+    let worst = promoted_over_http(router, &agent, &dreamer, "p2", "canary").await;
+    let row = remember(router, &agent, "h1", "canary canary", None).await;
+
+    let recall = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "include_own_held": true}),
+    )
+    .await;
+    assert_eq!(
+        hit_ids(&recall),
+        vec![json!(best), json!(row), json!(worst)],
+        "one total order across states: {recall}"
+    );
+    assert_eq!(
+        hit_states(&recall),
+        vec![
+            (json!("promoted"), json!(true)),
+            (json!("held"), json!(false)),
+            (json!("promoted"), json!(true)),
+        ]
+    );
+    let scores: Vec<f64> = recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| h["score"].as_f64().expect("score"))
+        .collect();
+    assert!(scores.windows(2).all(|w| w[0] > w[1]), "{scores:?}");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn own_held_rows_count_against_k_and_the_budget() {
+    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let router = &rig.router;
+    let (two_text, held_text) = ("canary canary", "canary canary canary");
+    let two = promoted_over_http(router, &agent, &dreamer, "p1", two_text).await;
+    let one = promoted_over_http(router, &agent, &dreamer, "p2", "canary").await;
+    let row = remember(router, &agent, "h1", held_text, None).await;
+
+    let with = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "k": 2, "include_own_held": true}),
+    )
+    .await;
+    assert_eq!(hit_ids(&with), vec![json!(row), json!(two)], "{with}");
+    let without = recall_ok(router, &agent, json!({"query": "canary", "k": 2})).await;
+    assert_eq!(hit_ids(&without), vec![json!(two), json!(one)], "{without}");
+
+    let filled = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "include_own_held": true, "max_tokens": tokens(held_text)}),
+    )
+    .await;
+    assert_eq!(hit_ids(&filled), vec![json!(row)], "{filled}");
+    assert_eq!(
+        filled["budget"],
+        json!({
+            "max_tokens": tokens(held_text),
+            "counter": "oml-tc/1",
+            "steering_tokens": 0,
+            "used_tokens": tokens(held_text),
+            "truncated": true,
+            "hits_omitted": 2,
+            "next_hit_tokens": tokens(two_text),
+        })
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn own_held_steering_and_retirement_rows_never_enter_recall() {
+    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let router = &rig.router;
+    let target = promoted_over_http(router, &agent, &dreamer, "claim", "the canary claim").await;
+    let (status, _, steering) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&agent).idem("s-held").body(json!({
+            "verb": "remember", "claim_key": "steer", "kind": "steering",
+            "body": "canary steering, held",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{steering}");
+    let (status, _, retirement) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{target}/supersede"),
+        Call::auth(&agent).idem("ret-1").body(json!({
+            "body": "retired: the canary lapsed",
+            "retirement": true,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{retirement}");
+
+    // Neither is in force, so neither is recalled; the promoted tip stays.
+    let recall = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "include_own_held": true}),
+    )
+    .await;
+    assert_eq!(hit_ids(&recall), vec![json!(target)], "{recall}");
+    assert_eq!(recall["steering"], json!([]), "{recall}");
+    // Get reaches both: they are the key's own (ADR-0025 d3).
+    for row in [&steering, &retirement] {
+        let id = row["artifact_id"].as_str().expect("id");
+        let (status, _, got) = send(
+            router,
+            "GET",
+            &format!("/v1/memories/{id}"),
+            Call::auth(&agent),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{got}");
+        assert_eq!(got["state"], "held", "{got}");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn include_own_held_never_widens_the_workareas_served() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let quotes = create_workarea(router, &admin, crew, "quotes").await;
+    let freight = create_workarea(router, &admin, crew, "freight").await;
+    let quarantine = create_workarea(router, &admin, quotes, "quarantine").await;
+    // The key writes the whole crew but reads only quotes, and a global
+    // denial masks quarantine beneath it.
+    let (agent, key_id) = key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        "issue-agent",
+        json!([
+            { "workarea_node_id": crew, "role": "writer" },
+            { "workarea_node_id": quotes, "role": "reader" },
+        ]),
+    )
+    .await;
+    let mut rows = Vec::new();
+    for (claim_key, wa) in [
+        ("q", quotes),
+        ("f", freight),
+        ("c", crew),
+        ("x", quarantine),
+    ] {
+        rows.push(remember(router, &agent, claim_key, "the canary held", Some(wa)).await);
+    }
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        &format!("/v2/keys/{key_id}/denials"),
+        Call::auth(&admin)
+            .idem("d-1")
+            .body(json!({ "workarea_node_id": quarantine })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    let query = json!({"query": "canary", "include_own_held": true});
+    let (status, recall) = recall_over_http(router, &agent, Some(quotes), query.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(
+        hit_ids(&recall),
+        vec![json!(rows[0])],
+        "subtree(scope) within reader access, minus global denials: {recall}"
+    );
+    // The recall ceiling is unchanged: reader on the scope, own rows or not.
+    for scope in [crew, freight] {
+        let (status, refused) = recall_over_http(router, &agent, Some(scope), query.clone()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+        assert_envelope(&refused, "access.not_found");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
+    let (rig, _admin, _crew, agent, dreamer, reader) = own_held_rig().await;
+    let router = &rig.router;
+    let target = promoted_over_http(
+        router,
+        &agent,
+        &dreamer,
+        "quote",
+        "the canary quote is 412 USD/t",
+    )
+    .await;
+    let (status, _, proposal) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{target}/supersede"),
+        Call::auth(&agent)
+            .idem("sup-1")
+            .body(json!({ "body": "the canary quote is 409 USD/t" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+    let successor = proposal["artifact_id"].clone();
+
+    let query = json!({"query": "canary quote", "include_own_held": true});
+    let recall = recall_ok(router, &agent, query.clone()).await;
+    let hits = recall["hits"].as_array().expect("hits");
+    assert_eq!(hits.len(), 2, "never deduplicated: {recall}");
+    let hit = |id: &Value| {
+        &hits
+            .iter()
+            .find(|h| &h["memory"]["artifact_id"] == id)
+            .expect("served")["memory"]
+    };
+    let held = hit(&successor);
+    assert_eq!(
+        (&held["state"], &held["tip"]),
+        (&json!("held"), &json!(false))
+    );
+    assert_eq!(
+        held["replaces"],
+        json!({"artifact_id": target, "version": 1}),
+        "{held}"
+    );
+    let tip = hit(&json!(target));
+    assert_eq!(
+        (&tip["state"], &tip["tip"]),
+        (&json!("promoted"), &json!(true))
+    );
+
+    // Every other key recalls the target alone until ratification.
+    let other = recall_ok(router, &reader, query).await;
+    assert_eq!(hit_ids(&other), vec![json!(target)], "{other}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A crew with one promoted steering row and three promoted memories that
+/// rank by their `canary` count, 3, 2 and 1, the second the largest body:
+/// (rig, reader, steering id, hit ids in rank order, steering tokens, hit
+/// tokens in rank order).
+async fn budget_rig() -> (Rig, String, Value, Vec<Value>, u64, Vec<u64>) {
+    let (rig, _admin, crew, agent, dreamer, reader) = own_held_rig().await;
+    let steering_text = "Quote every price in USD/t.";
+    let texts = [
+        "canary canary canary",
+        "canary canary, then wait out the whole quarter before anyone settles it",
+        "canary",
+    ];
+    let steering = promote_over_http(
+        &rig.router,
+        &agent,
+        &dreamer,
+        crew,
+        ("units", "steering", steering_text),
+    )
+    .await;
+    let mut hits = Vec::new();
+    for (n, text) in texts.iter().enumerate() {
+        let claim_key = format!("m{n}");
+        hits.push(
+            promote_over_http(
+                &rig.router,
+                &agent,
+                &dreamer,
+                crew,
+                (&claim_key, "memory", text),
+            )
+            .await,
+        );
+    }
+    let counts = texts.iter().map(|t| tokens(t)).collect();
+    (rig, reader, steering, hits, tokens(steering_text), counts)
+}
+
+#[tokio::test]
+async fn max_tokens_keeps_the_longest_rank_prefix_and_reports_the_budget() {
+    let (rig, reader, steering, hits, s, t) = budget_rig().await;
+    let router = &rig.router;
+    assert!(t[1] > t[2], "the third hit fits where the second does not");
+
+    // After steering and the first hit, what remains fits the third hit but
+    // not the second: the first that does not fit ends the list.
+    let max = s + t[0] + t[2];
+    let recall = recall_ok(
+        router,
+        &reader,
+        json!({"query": "canary", "max_tokens": max}),
+    )
+    .await;
+    assert_eq!(steering_ids(&recall), vec![steering], "{recall}");
+    assert_eq!(
+        hit_ids(&recall),
+        vec![hits[0].clone()],
+        "no skip-ahead: {recall}"
+    );
+    assert_eq!(
+        recall["budget"],
+        json!({
+            "max_tokens": max,
+            "counter": "oml-tc/1",
+            "steering_tokens": s,
+            "used_tokens": s + t[0],
+            "truncated": true,
+            "hits_omitted": 2,
+            "next_hit_tokens": t[1],
+        })
+    );
+
+    // A budget every candidate fits cuts nothing.
+    let all = s + t.iter().sum::<u64>();
+    let recall = recall_ok(
+        router,
+        &reader,
+        json!({"query": "canary", "max_tokens": all}),
+    )
+    .await;
+    assert_eq!(hit_ids(&recall), hits, "{recall}");
+    assert_eq!(recall["budget"]["truncated"], false);
+    assert_eq!(recall["budget"]["hits_omitted"], 0);
+    assert_eq!(recall["budget"]["next_hit_tokens"], Value::Null);
+    assert_eq!(recall["budget"]["used_tokens"], all);
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn steering_past_the_budget_is_served_whole_with_no_hits_and_truncated() {
+    let (rig, reader, steering, _hits, s, t) = budget_rig().await;
+    let recall = recall_ok(
+        &rig.router,
+        &reader,
+        json!({"query": "canary", "max_tokens": s - 1}),
+    )
+    .await;
+    assert_eq!(steering_ids(&recall), vec![steering], "{recall}");
+    assert_eq!(
+        recall["steering"][0]["body"], "Quote every price in USD/t.",
+        "served whole"
+    );
+    assert_eq!(recall["hits"], json!([]), "{recall}");
+    assert_eq!(
+        recall["budget"],
+        json!({
+            "max_tokens": s - 1,
+            "counter": "oml-tc/1",
+            "steering_tokens": s,
+            "used_tokens": s,
+            "truncated": true,
+            "hits_omitted": 3,
+            "next_hit_tokens": t[0],
+        })
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn every_steering_item_and_hit_carries_its_tokens() {
+    let (rig, _admin, crew, agent, dreamer, _reader) = own_held_rig().await;
+    let router = &rig.router;
+    // Each text is sent decomposed; its count is its NFC text's, which here
+    // is one budget token fewer (retrieval.md token budgets; ADR-0025 d6).
+    let [steering_text, hit_text, held_text] =
+        ["café canary", "the café canary", "own café canary"];
+    let decomposed = |text: &str| text.replace('é', "e\u{301}");
+    for text in [steering_text, hit_text, held_text] {
+        assert_ne!(tokens(text), tokens(&decomposed(text)), "{text}");
+    }
+    let steering = promote_over_http(
+        router,
+        &agent,
+        &dreamer,
+        crew,
+        ("units", "steering", &decomposed(steering_text)),
+    )
+    .await;
+    let hit = promote_over_http(
+        router,
+        &agent,
+        &dreamer,
+        crew,
+        ("cafe", "memory", &decomposed(hit_text)),
+    )
+    .await;
+    let row = remember(router, &agent, "own", &decomposed(held_text), None).await;
+    let expected = [
+        (steering, tokens(steering_text)),
+        (hit, tokens(hit_text)),
+        (json!(row), tokens(held_text)),
+    ];
+
+    // With and without a budget, with and without bodies.
+    for body in [
+        json!({"query": "canary", "include_own_held": true}),
+        json!({"query": "canary", "include_own_held": true, "include_bodies": false}),
+        json!({"query": "canary", "include_own_held": true, "max_tokens": 100}),
+    ] {
+        let recall = recall_ok(router, &agent, body).await;
+        let served: Vec<(Value, Value)> = recall["steering"]
+            .as_array()
+            .expect("steering")
+            .iter()
+            .chain(
+                recall["hits"]
+                    .as_array()
+                    .expect("hits")
+                    .iter()
+                    .map(|h| &h["memory"]),
+            )
+            .map(|m| (m["artifact_id"].clone(), m["tokens"].clone()))
+            .collect();
+        assert_eq!(served.len(), 3, "{recall}");
+        for (id, count) in &expected {
+            assert!(
+                served.contains(&(id.clone(), json!(count))),
+                "{id}: {recall}"
+            );
+        }
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn the_same_budgeted_recall_answers_identically_twice() {
+    let (rig, reader, _steering, hits, s, t) = budget_rig().await;
+    let body = json!({"query": "canary", "max_tokens": s + t[0] + t[2]});
+    let first = recall_ok(&rig.router, &reader, body.clone()).await;
+    let second = recall_ok(&rig.router, &reader, body).await;
+    assert_eq!(hit_ids(&first), vec![hits[0].clone()], "{first}");
+    assert_eq!(first["budget"]["truncated"], true);
+    assert_eq!(first, second, "the cut is deterministic");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_recall_without_max_tokens_carries_no_budget_object() {
+    let (rig, reader, _steering, hits, _s, _t) = budget_rig().await;
+    let recall = recall_ok(&rig.router, &reader, json!({"query": "canary"})).await;
+    assert!(recall.get("budget").is_none(), "{recall}");
+    assert_eq!(hit_ids(&recall), hits, "nothing is cut: {recall}");
+    let budgeted = recall_ok(
+        &rig.router,
+        &reader,
+        json!({"query": "canary", "max_tokens": 10_000}),
+    )
+    .await;
+    assert!(budgeted["budget"].is_object(), "{budgeted}");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn max_tokens_with_include_bodies_false_is_request_validation() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+
+    for body in [
+        json!({"query": "canary", "max_tokens": 500, "include_bodies": false}),
+        // max_tokens is an integer ≥ 1 that RFC 8785 digests exactly.
+        json!({"query": "canary", "max_tokens": 0}),
+        json!({"query": "canary", "max_tokens": 9_007_199_254_740_992_u64}),
+        json!({"query": "canary", "max_tokens": -1}),
+        json!({"query": "canary", "max_tokens": "500"}),
+        json!({"query": "canary", "include_own_held": "yes"}),
+    ] {
+        let (status, refused) = recall_over_http(router, &reader, None, body.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+    // Either alone is a recall.
+    for body in [
+        json!({"query": "canary", "include_bodies": false}),
+        json!({"query": "canary", "max_tokens": 500}),
+        json!({"query": "canary", "max_tokens": 9_007_199_254_740_991_u64}),
+    ] {
+        recall_ok(router, &reader, body).await;
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let digest = |body: Value| {
+        let reader = reader.clone();
+        async move { recall_ok(router, &reader, body).await["query_digest"].clone() }
+    };
+
+    // Every member is present with its default applied, the scope the
+    // resolved node (retrieval.md, the read log; ADR-0025 d9).
+    let base = digest(json!({"query": "canary"})).await;
+    let canonical = format!(
+        "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
+         \"k\":8,\"kinds\":[],\"max_tokens\":null,\"query\":\"canary\",\
+         \"scope\":\"{crew}\",\"terms\":[]}}"
+    );
+    assert_eq!(base, json!(sha256_digest_string(canonical.as_bytes())));
+    assert_eq!(
+        digest(
+            json!({"query": "canary", "k": 8, "include_bodies": true, "include_own_held": false})
+        )
+        .await,
+        base,
+        "a default sent is the default applied"
+    );
+
+    let budget = digest(json!({"query": "canary", "max_tokens": 500})).await;
+    assert_ne!(budget, base, "max_tokens is digested");
+    assert_ne!(
+        digest(json!({"query": "canary", "max_tokens": 501})).await,
+        budget
+    );
+    assert_ne!(
+        digest(json!({"query": "canary", "include_own_held": true})).await,
+        base,
+        "include_own_held is digested"
+    );
+    assert_eq!(
+        digest(json!({"query": "canary", "kinds": ["memory", "derived_fact"]})).await,
+        digest(json!({"query": "canary", "kinds": ["derived_fact", "memory", "memory"]})).await,
+        "only the order and repetition of kinds never matter"
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
 // The claim item's real fields (ADR-0025 d6, d10, d12)
 // ---------------------------------------------------------------------------
 
@@ -2078,16 +4872,48 @@ async fn the_body_limit_counts_the_nfc_text() {
 // The workarea read (ADR-0025 d14)
 // ---------------------------------------------------------------------------
 
+/// `crew` on workarea create names a crew record by id or name, and the
+/// create and the read serve the record as stored (ADR-0026 d8). The crew
+/// routes are not served yet, so the record is created through the app the
+/// router composes.
 #[tokio::test]
 async fn crew_given_at_create_is_persisted_and_returned() {
     let rig = fresh_rig().await;
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
-    let crew_record = json!({
-        "name": "metals-crew",
-        "charter_uri": "https://crews.example.com/metals/charter.md",
-        "external_manager": "crewd.example.com",
-    });
+    let (status, _, crew_record) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(&admin).idem("crew-metals").body(json!({
+            "name": "metals-crew",
+            "charter_uri": "https://crews.example.com/metals/charter.md",
+            "external_manager": "crewd.example.com",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{crew_record}");
+
+    // A crew that names no crew record of the tenant is absent, and a value
+    // that is neither an id nor a name is refused at parse.
+    for (idem, value, code) in [
+        ("wa-no-crew", "nowhere-crew", "access.not_found"),
+        ("wa-bad-crew", "Metals Crew", "request.validation"),
+    ] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/workareas",
+            Call::auth(&admin).idem(idem).body(json!({
+                "parent_id": root,
+                "name": "orphan",
+                "crew": value,
+            })),
+        )
+        .await;
+        assert_eq!(refused["error"]["code"], code, "{status} {refused}");
+    }
+
     let (status, _, created) = send(
         router,
         "POST",
@@ -2095,13 +4921,15 @@ async fn crew_given_at_create_is_persisted_and_returned() {
         Call::auth(&admin).idem("wa-crew").body(json!({
             "parent_id": root,
             "name": "metals-crew",
-            "crew": crew_record,
+            "crew": "metals-crew",
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     assert_eq!(created["crew"], crew_record);
-    // The create serves the same derived path the read serves.
+    // The create serves the node's name and the same derived path the read
+    // serves.
+    assert_eq!(created["name"], "metals-crew");
     assert_eq!(created["path"], "universe.metals-crew");
     let crew = Uuid::parse_str(created["id"].as_str().expect("id")).expect("uuid");
     let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
@@ -2132,6 +4960,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
         view,
         json!({
             "id": crew,
+            "name": "metals-crew",
             "parent_id": root,
             "path": "universe.metals-crew",
             "status": "development",
@@ -2147,7 +4976,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     );
     assert!(view["permission_epoch"].is_u64(), "{view}");
 
-    // A node created without a crew has none, stored and served absent.
+    // A node created without a crew names none, and the read serves null.
     let (status, _, leaf) = send(
         router,
         "GET",
@@ -2157,8 +4986,344 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     .await;
     assert_eq!(status, StatusCode::OK, "{leaf}");
     assert_eq!(leaf["path"], "universe.metals-crew.q1-2027");
-    assert!(leaf.get("crew").is_none(), "{leaf}");
+    assert_eq!(leaf.get("crew"), Some(&Value::Null), "{leaf}");
     assert_eq!(leaf["children"], json!([]));
+
+    drop_db(&rig.db_name).await;
+}
+
+/// `Workarea.crew` is the crew record the workarea names, or null: a
+/// workarea created without a crew answers `"crew": null` on its create and
+/// on its read, never an absent member (openapi.yaml `Workarea`; http-api.md
+/// workareas; ADR-0026 d8).
+#[tokio::test]
+async fn a_workarea_created_without_crew_answers_crew_null() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+
+    let (status, _, created) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(&admin)
+            .idem("wa-no-crew")
+            .body(json!({ "parent_id": root, "name": "metals-crew" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created.get("crew"), Some(&Value::Null), "{created}");
+    assert_eq!(created["path"], "universe.metals-crew");
+
+    let (status, _, read) = send(
+        router,
+        "GET",
+        "/v2/workareas/metals-crew",
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read.get("crew"), Some(&Value::Null), "{read}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Creates a workarea named `name` under `parent`, each by id or name, with
+/// the crew `crew` names when one is given, over HTTP; answers the `201`.
+async fn create_named_workarea(
+    router: &Router,
+    admin: &str,
+    parent: &str,
+    name: &str,
+    crew: Option<&str>,
+) -> Value {
+    let mut body = json!({ "parent_id": parent, "name": name });
+    if let Some(crew) = crew {
+        body["crew"] = json!(crew);
+    }
+    let (status, _, created) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(admin).idem(&format!("wa-{name}")).body(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    created
+}
+
+/// The paths of a tree page's items, in its order.
+fn tree_paths(page: &Value) -> Vec<&str> {
+    page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|node| node["path"].as_str().expect("path"))
+        .collect()
+}
+
+/// `GET /v2/workareas/{workarea_id}/tree` answers an admin key, by its key
+/// role and with no grant, the whole subtree at a workarea it names by name:
+/// a node before its children and siblings by name, each node with its id,
+/// name, parent, derived path, status and crew record or null, one page at a
+/// time under a cursor bound to the key; the same subtree by id; and an
+/// unknown name what an unknown id answers (http-api.md workareas and
+/// pagination; ADR-0026 d4, d8, d15).
+#[tokio::test]
+async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_page_by_page() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let (status, _, crew) = send(
+        router,
+        "POST",
+        "/v2/crews",
+        Call::auth(&admin)
+            .idem("crew-metals")
+            .body(json!({ "name": "metals-crew" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{crew}");
+    let procurement = create_named_workarea(router, &admin, "universe", "procurement", None).await;
+    let metals =
+        create_named_workarea(router, &admin, "procurement", "metals", Some("metals-crew")).await;
+    // Created out of name order, served in it.
+    let q2 = create_named_workarea(router, &admin, "metals", "q2-2027", None).await;
+    let q1 = create_named_workarea(router, &admin, "metals", "q1-2027", None).await;
+    let review = create_named_workarea(router, &admin, "q2-2027", "lit-review", None).await;
+    create_named_workarea(router, &admin, "universe", "research", None).await;
+
+    let tree = |query: String, token: String| async move {
+        send(
+            router,
+            "GET",
+            &format!("/v2/workareas/{query}"),
+            Call::auth(&token),
+        )
+        .await
+    };
+    let (status, _, page) = tree("procurement/tree".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        page,
+        json!({
+            "items": [
+                {
+                    "id": procurement["id"],
+                    "name": "procurement",
+                    "parent_id": root,
+                    "path": "universe.procurement",
+                    "status": "development",
+                    "crew": null,
+                },
+                {
+                    "id": metals["id"],
+                    "name": "metals",
+                    "parent_id": procurement["id"],
+                    "path": "universe.procurement.metals",
+                    "status": "development",
+                    "crew": crew,
+                },
+                {
+                    "id": q1["id"],
+                    "name": "q1-2027",
+                    "parent_id": metals["id"],
+                    "path": "universe.procurement.metals.q1-2027",
+                    "status": "development",
+                    "crew": null,
+                },
+                {
+                    "id": q2["id"],
+                    "name": "q2-2027",
+                    "parent_id": metals["id"],
+                    "path": "universe.procurement.metals.q2-2027",
+                    "status": "development",
+                    "crew": null,
+                },
+                {
+                    "id": review["id"],
+                    "name": "lit-review",
+                    "parent_id": q2["id"],
+                    "path": "universe.procurement.metals.q2-2027.lit-review",
+                    "status": "development",
+                    "crew": null,
+                },
+            ],
+            "next_cursor": null,
+        })
+    );
+    let procurement_id = procurement["id"].as_str().expect("id");
+    let (status, _, by_id) = tree(format!("{procurement_id}/tree"), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_id, page, "one subtree by either spelling");
+
+    // Two at a time: the cursor resumes after the last node served.
+    let (status, _, first) = tree("universe/tree?limit=2".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(tree_paths(&first), ["universe", "universe.procurement"]);
+    let mut paths: Vec<String> = tree_paths(&first).into_iter().map(str::to_owned).collect();
+    let mut cursor = first["next_cursor"]
+        .as_str()
+        .expect("a next page")
+        .to_owned();
+    loop {
+        let (status, _, next) = tree(
+            format!("universe/tree?limit=2&cursor={cursor}"),
+            admin.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{next}");
+        paths.extend(tree_paths(&next).into_iter().map(str::to_owned));
+        match next["next_cursor"].as_str() {
+            Some(more) => cursor = more.to_owned(),
+            None => break,
+        }
+    }
+    assert_eq!(
+        paths,
+        [
+            "universe",
+            "universe.procurement",
+            "universe.procurement.metals",
+            "universe.procurement.metals.q1-2027",
+            "universe.procurement.metals.q2-2027",
+            "universe.procurement.metals.q2-2027.lit-review",
+            "universe.research",
+        ]
+    );
+
+    // An unknown name answers what an unknown id answers; a cursor answers
+    // only the key it was issued to, and an unknown parameter is refused,
+    // never ignored.
+    let (status, _, unknown_name) = tree("nowhere/tree".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{unknown_name}");
+    let (_, _, unknown_id) = tree(format!("{}/tree", OsIds.new_id()), admin.clone()).await;
+    assert_eq!(unknown_name["error"], unknown_id["error"]);
+    let reader = issue_key(router, &admin, "reader", "crew/recall-1", root).await;
+    let first_cursor = first["next_cursor"].as_str().expect("cursor");
+    let (status, _, foreign) = tree(
+        format!("universe/tree?cursor={first_cursor}"),
+        reader.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{foreign}");
+    assert_envelope(&foreign, "request.validation");
+    let (status, _, unknown) = tree("universe/tree?depth=2".to_owned(), admin.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{unknown}");
+    assert_envelope(&unknown, "request.validation");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Under a reader key the tree omits every node outside its read access,
+/// a node below one it cannot read included when a grant reaches it, and a
+/// workarea it cannot read answers what an unknown one does (http-api.md
+/// workareas; roles-and-keys.md refusal order; ADR-0026 d15).
+#[tokio::test]
+async fn get_v2_workareas_tree_under_a_reader_key_omits_the_nodes_outside_its_read_access() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, _root) = bootstrap(router).await;
+    let metals = create_named_workarea(router, &admin, "universe", "metals", None).await;
+    let q1 = create_named_workarea(router, &admin, "metals", "q1-2027", None).await;
+    create_named_workarea(router, &admin, "metals", "q2-2027", None).await;
+    let review = create_named_workarea(router, &admin, "q1-2027", "lit-review", None).await;
+    let reader = issue_key_with(
+        router,
+        &admin,
+        "reader",
+        "crew/recall-1",
+        json!([
+            {
+                "workarea_node_id": metals["id"],
+                "role": "reader",
+                "deny": [{ "subtree_node_id": q1["id"] }],
+            },
+            { "workarea_node_id": review["id"], "role": "reader" },
+        ]),
+    )
+    .await;
+    let reader = reader["value"].as_str().expect("value");
+
+    let (status, _, page) = send(
+        router,
+        "GET",
+        "/v2/workareas/metals/tree",
+        Call::auth(reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        tree_paths(&page),
+        [
+            "universe.metals",
+            "universe.metals.q1-2027.lit-review",
+            "universe.metals.q2-2027",
+        ],
+        "q1-2027 is denied, and lit-review below it is granted"
+    );
+    assert_eq!(page["next_cursor"], Value::Null);
+
+    for unreadable in ["q1-2027", "universe"] {
+        let (status, _, refused) = send(
+            router,
+            "GET",
+            &format!("/v2/workareas/{unreadable}/tree"),
+            Call::auth(reader),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{unreadable}: {refused}");
+        assert_envelope(&refused, "access.not_found");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The queue filter on `POST /v2/review/next` is not built, so a `workarea`
+/// in its body, by id, by name or neither, is refused as
+/// `request.validation` with `details.field` `/workarea`, never ignored, and
+/// claims nothing: the next unfiltered call serves the held item
+/// (http-api.md names and ids; errors.md `request.validation`; ADR-0026
+/// d4).
+#[tokio::test]
+async fn a_workarea_on_review_next_is_refused_by_name_until_the_filter_is_built() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let dreamer = issue_key(router, &admin, "dreamer", "crew/reviewer-1", crew).await;
+    let artifact = remember(router, &writer, "filter-1", "copper closes at 4182", None).await;
+
+    for (n, workarea) in [json!("metals-crew"), json!(crew), json!("Metals Crew")]
+        .into_iter()
+        .enumerate()
+    {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/review/next",
+            Call::auth(&dreamer)
+                .idem(&format!("r-filter-{n}"))
+                .body(json!({ "workarea": workarea })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{workarea}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(
+            refused["error"]["details"],
+            json!({ "field": "/workarea" }),
+            "{workarea}: {refused}"
+        );
+    }
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer).idem("r-unfiltered").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    assert_eq!(serve["item"]["artifact_id"], artifact.as_str());
 
     drop_db(&rig.db_name).await;
 }
@@ -2177,12 +5342,12 @@ async fn an_unreadable_workarea_is_not_found() {
     };
     let (status, _, body) = get(&reader, crew.to_string()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    // A writer-only key, an unknown node and an id that names no node all
-    // answer as absence.
+    // A writer-only key, an id that names no node and a name that names no
+    // node all answer as absence (ADR-0026 d4).
     for (token, id) in [
         (&writer, crew.to_string()),
         (&reader, Uuid::from_u128(0xDEAD).to_string()),
-        (&reader, "wa_not_a_node".to_owned()),
+        (&reader, "no-such-node".to_owned()),
     ] {
         let (status, _, body) = get(token, id).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -2297,9 +5462,12 @@ async fn key_with(
         router,
         "POST",
         "/v2/keys",
-        Call::auth(admin)
-            .idem(idem)
-            .body(json!({ "role": role, "principal": principal, "grants": grants })),
+        Call::auth(admin).idem(idem).body(json!({
+            "role": role,
+            "name": key_name(role, idem),
+            "principal": principal,
+            "grants": grants,
+        })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -2807,14 +5975,10 @@ async fn a_cursor_from_another_key_or_expired_is_request_validation() {
     drop_db(&rig.db_name).await;
 }
 
-#[tokio::test]
-async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
-    let rig = fresh_rig().await;
-    let router = &rig.router;
-    bootstrap(router).await;
-    // An operator key is a provider-level row (tenant_id NULL): no admin
-    // issues one, so the fixture writes the row as the table's owner would,
-    // with row-level security off for that one insert.
+/// A provider-level operator key (tenant_id NULL), returned by value. No
+/// admin issues one, so the fixture writes the row as the table's owner
+/// would, with row-level security off for that one insert.
+async fn provider_operator_key(rig: &Rig) -> String {
     let operator = format!("oml_{}", "0".repeat(42) + "1");
     let hash = sha256_digest_string(operator.as_bytes());
     let mut conn = rig.store.pool().acquire().await.expect("connection");
@@ -2835,6 +5999,15 @@ async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
         .await
         .expect("restore force");
     drop(conn);
+    operator
+}
+
+#[tokio::test]
+async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    bootstrap(router).await;
+    let operator = provider_operator_key(&rig).await;
 
     // The operator never reads content: refused by its role, before any
     // tenant is consulted, with or without own.
@@ -2843,6 +6016,78 @@ async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{query}: {body}");
         assert_envelope(&body, "access.verb_ceiling");
     }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_operator_key_is_refused_get_with_verb_ceiling() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let written = remember(
+        router,
+        &writer,
+        "supplier-quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let operator = provider_operator_key(&rig).await;
+
+    // Operator keys never read content (http-api.md, admin verbs): get
+    // refuses the role at step 1 of the refusal order, before any lookup,
+    // so a row that exists and an id that names none answer alike
+    // (roles-and-keys.md refusal order; ADR-0025 d1).
+    for id in [written, Uuid::from_u128(0xDEAD).to_string()] {
+        let (status, _, body) = send(
+            router,
+            "GET",
+            &format!("/v1/memories/{id}"),
+            Call::auth(&operator),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{id}: {body}");
+        assert_envelope(&body, "access.verb_ceiling");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_get_with_x_oml_workarea_is_request_validation() {
+    let rig = fresh_rig().await;
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let written = remember(
+        router,
+        &writer,
+        "supplier-quote-am-7741",
+        "Accra Metals quoted 412 USD/t.",
+        None,
+    )
+    .await;
+    let path = format!("/v1/memories/{written}");
+
+    // The author reads its own held row back without the header.
+    let (status, _, body) = send(router, "GET", &path, Call::auth(&writer)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["artifact_id"], written.as_str());
+
+    // Get resolves no workarea, so the override is refused, not ignored,
+    // even when it names the row's own workarea (http-api.md get;
+    // ADR-0025 d13).
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &path,
+        Call::auth(&writer).workarea(&crew.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
 
     drop_db(&rig.db_name).await;
 }

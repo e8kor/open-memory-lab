@@ -118,6 +118,30 @@ than self-confirmed, and committed as the fixtures every later tier verifies
 ([test strategy](../engineering/test-strategy.md)). **Everything depends on M0's findings
 standing.**
 
+**Progress.** The recorded findings, and the experiments that have not run, are listed on the
+[M0 spikes](../engineering/spikes/index.md) page. Two experiments ran on 2026-10-31:
+
+- The chain-format test vectors were reproduced byte for byte by independent implementations
+  outside Rust: two of the canonical form and two of the signature. The cross-check also
+  corrected one sentence on the chain format page, and it now checks that the copies of the
+  vectors kept in the Rust tests agree with that page
+  ([finding](../engineering/spikes/chain-vectors.md)).
+- Spike 3 ran on the host's PostgreSQL 18, not yet on the pinned version. The part of the
+  scenario that needs a separate application account did not run. The part that asks whether
+  OML's own accounts are kept apart cannot be tested yet, because no deployment's accounts are
+  specified. In that run, every kind of read the server makes stayed inside its tenant. The
+  database's statistics about indexed text did not. The account that owns the tables can read
+  other tenants' words in them. The database's own estimates also tell a session whether another
+  tenant's text holds a given word. That was measured for the owning account. By the database's
+  documentation and source it holds for any account, and keeping the owning account away from
+  requests does not close it. Both come from one search index shared by every tenant, where the
+  design says no index is shared. Whether that changes a recorded decision, or the index is
+  split per tenant, is for the maintainer to decide, and that decision is still open. The same
+  run found that, with tenant isolation on, the full-text index is never used
+  ([findings](../engineering/spikes/spike-3-rls.md)).
+
+Spikes 1, 2 and 4 have not run. M0's exit stays open.
+
 ## M1 — System of record
 
 **Goal.** The one commit point exists and the constitution is code.
@@ -165,6 +189,12 @@ agent-only-memory scenario passing: an agent that stores to OML and nothing else
 what it wrote, search it under a token budget, update it, and propose retiring it. Depends on
 M1.
 
+**Progress.** What FR-10 and FR-11 ask for is built, and the agent-only-memory scenario is a
+test in the repository's suite. Neither row has closed: both close when that scenario passes in
+continuous integration, and the [roadmap](roadmap.md) cites that run when they do. FR-12's
+Python and TypeScript clients are built; its batch write path and upload wrapper are not, and it
+still gates M2.
+
 ## M3 — Derived lakehouse
 
 **Goal.** The derived side exists and its exactly-once claim is verified, not assumed.
@@ -201,6 +231,12 @@ erasure-SLO bounds measured; [FR-19](roadmap.md)'s vocabulary slice demonstrated
 Depends on M1–M3 — the evidence export reads the journal, and the
 inventory is only checkable once the reconciler runs. [FR-20](roadmap.md)'s vocabulary
 measurements join M6's campaigns.
+
+**Progress.** Not started. One check that M1 demonstrated now waits on this milestone: since
+each key's event feed shows only the events that key may see (M2), the feed no longer carries
+the whole signed history, so the command-line check of that history against a running server
+stops with an error that says so. It returns when the server serves the export of the whole
+history that this milestone's evidence export includes.
 
 ## M5 — Dataset onboarding (post-v1)
 

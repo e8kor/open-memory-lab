@@ -9,7 +9,9 @@
 //! refusal order, effective verbs and content-tail visibility (ADR-0025 d1,
 //! d2, d14, d15), with dreamer grants narrowed by `edge_labels` and the
 //! member-profile check (ADR-0027 d3, d4, d5); `budget` holds the budget token, the budget cut and the
-//! recall order (ADR-0025 d6, d7, d8). `vocab` holds the CURIE grammar, the
+//! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
+//! classification of a reference as an id or a name, and the naming of rows
+//! that predate names (ADR-0026 d2, d3, d11). `vocab` holds the CURIE grammar, the
 //! prefix registry, `term_status` and the `oml:` register (ADR-0021 d1, d2;
 //! ADR-0027 d7); `vocab_edges` holds claim-edge states, classification
 //! validation, cycle refusal, the lineage closure without `oml:about`,
@@ -24,6 +26,7 @@ pub mod envelope;
 pub mod jcs;
 pub mod keys;
 pub mod model;
+pub mod name;
 pub mod vocab;
 pub mod vocab_edges;
 
@@ -41,6 +44,6 @@ pub use keys::{
     verify_rotation_cross_sig,
 };
 pub use model::{
-    HeldBy, LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError,
-    check_reviewer, nfc, transition,
+    HeldBy, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError,
+    check_reviewer, nfc, satisfies_crew_inequality, satisfies_manager_inequality, transition,
 };

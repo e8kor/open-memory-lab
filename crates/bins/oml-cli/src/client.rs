@@ -7,8 +7,10 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-/// Why a verb did not succeed, split exactly along the CLI reference's exit
-/// codes: a typed server refusal (exit 1) versus a local failure (exit 2).
+/// Why a verb did not succeed, split along the CLI reference's exit codes: a
+/// typed server refusal (exit 1) versus a local failure (exit 2), and among
+/// the local failures, one where the server may have acted from one where
+/// nothing was sent.
 #[derive(Debug)]
 pub enum CliError {
     /// The server refused with the typed envelope; `envelope` is the whole
@@ -20,8 +22,16 @@ pub enum CliError {
         rule: String,
         envelope: Value,
     },
-    /// No context, unreachable server, bad arguments.
+    /// No context, unreachable server, bad arguments, or a 4xx without the
+    /// typed envelope: the server did not act on the request.
     Local(String),
+    /// The request may have reached the server, but no answer the CLI can
+    /// use came back: the exchange failed after connecting, a success body
+    /// could not be read or parsed, or a 5xx came without the typed
+    /// envelope, as from a gateway. The server may have acted on it. The
+    /// message never carries a success body, which can hold a key value
+    /// (cli/reference.md `oml keys issue-agent`, ADR-0028 d1).
+    Unanswered(String),
 }
 
 impl CliError {
@@ -51,8 +61,19 @@ pub struct Client {
 impl Client {
     #[must_use]
     pub fn new(server: String, key: Option<String>) -> Self {
+        Self::with_timeout(server, key, Duration::from_secs(30))
+    }
+
+    /// A client whose every request ends after `timeout`, its TCP connect
+    /// included. The DNS lookup has no deadline here: ureq gives it none, so
+    /// a caller that must end in time bounds the whole call itself, as `oml
+    /// hook session-start` does (ADR-0029 d5).
+    #[must_use]
+    pub fn with_timeout(server: String, key: Option<String>, timeout: Duration) -> Self {
+        // `timeout` alone leaves ureq's own 30-second connect timeout in force.
         let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
+            .timeout_connect(timeout)
+            .timeout(timeout)
             .build();
         Self {
             agent,
@@ -123,6 +144,48 @@ impl Client {
     }
 }
 
+/// One path segment carrying a reference exactly as the operator typed it,
+/// [`encode`]d, so a `/`, a `?` or a `%` stays inside the segment and
+/// reaches the server, which alone classifies the value as an id, a name or
+/// neither (`request.validation`). Three spellings no URL path carries as
+/// one segment are refused here instead, before anything is sent: the empty
+/// value, which leaves no segment, and `.` and `..`, which the URL parser
+/// ureq sends through removes as dot segments (url 2.5.8 `src/parser.rs`,
+/// after the URL Standard's single-dot and double-dot path segments, which
+/// count an escaped `%2e` as a dot too, so no escape carries them). No id
+/// or name is spelled that way (ADR-0026 d2, d3), and the refusal turns away
+/// no value the server would resolve; beyond it the CLI classifies and
+/// resolves nothing (cli/reference.md conventions; ADR-0026 d4).
+///
+/// # Errors
+///
+/// A local failure (exit 2) naming the value, when it is ``, `.` or `..`.
+pub fn segment(text: &str) -> Result<String, CliError> {
+    if matches!(text, "" | "." | "..") {
+        return Err(CliError::local(format!(
+            "{text:?} is neither an id nor a name and cannot travel as one URL path segment (an \
+             empty value leaves none, and a URL parser removes `.` and `..` as dot segments); \
+             nothing was sent (cli/reference.md conventions)"
+        )));
+    }
+    Ok(encode(text))
+}
+
+/// `text` with every byte outside RFC 3986's unreserved set percent-encoded,
+/// for a path segment ([`segment`]) or a query value.
+#[must_use]
+pub fn encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
 /// One idempotency key per invocation: a re-run is a new act, a transport
 /// retry inside the call is not (ureq does not retry POSTs).
 fn new_idempotency_key() -> String {
@@ -139,15 +202,25 @@ fn finish(result: Result<ureq::Response, ureq::Error>) -> Result<(u16, Value), C
     match result {
         Ok(response) => {
             let status = response.status();
-            let text = response
-                .into_string()
-                .map_err(|e| CliError::local(format!("reading the response body: {e}")))?;
+            // A success body is never echoed: an issuance's carries the key
+            // value, which reaches no stream but the one the verb prints it
+            // to (ADR-0028 d1).
+            let text = response.into_string().map_err(|e| {
+                CliError::Unanswered(format!(
+                    "the server answered {status}, but its body could not be read ({e}); the \
+                     server may have acted on the request"
+                ))
+            })?;
             if text.is_empty() {
                 // 204: nothing in scope waits.
                 return Ok((status, Value::Null));
             }
-            let value: Value = serde_json::from_str(&text)
-                .map_err(|e| CliError::local(format!("the response is not JSON ({e}): {text}")))?;
+            let value: Value = serde_json::from_str(&text).map_err(|e| {
+                CliError::Unanswered(format!(
+                    "the server answered {status}, but its body is not JSON ({e}) and is not \
+                     shown; the server may have acted on the request"
+                ))
+            })?;
             Ok((status, value))
         }
         Err(ureq::Error::Status(status, response)) => {
@@ -163,11 +236,40 @@ fn finish(result: Result<ureq::Response, ureq::Error>) -> Result<(u16, Value), C
                     rule: envelope["error"]["rule"].as_str().unwrap_or("").to_owned(),
                     envelope,
                 }),
+                // A gateway's 5xx can follow a request the server committed.
+                _ if status >= 500 => Err(CliError::Unanswered(format!(
+                    "the server answered {status} without the typed error envelope, so the \
+                     server behind it may have acted on the request: {text}"
+                ))),
                 _ => Err(CliError::local(format!(
                     "the server answered {status} without the typed error envelope: {text}"
                 ))),
             }
         }
-        Err(e) => Err(CliError::local(format!("cannot reach the server: {e}"))),
+        Err(e) if nothing_was_sent(e.kind()) => {
+            Err(CliError::local(format!("cannot reach the server: {e}")))
+        }
+        Err(e) => Err(CliError::Unanswered(format!(
+            "the exchange with the server failed after connecting ({e}); the server may have \
+             acted on the request"
+        ))),
     }
+}
+
+/// The transport failures that end a call before any request byte leaves:
+/// a bad URL, DNS, the connection or the proxy. Every other failure may
+/// follow a request the server received, so it is not one of these.
+fn nothing_was_sent(kind: ureq::ErrorKind) -> bool {
+    use ureq::ErrorKind as K;
+    matches!(
+        kind,
+        K::InvalidUrl
+            | K::UnknownScheme
+            | K::Dns
+            | K::InsecureRequestHttpsOnly
+            | K::ConnectionFailed
+            | K::InvalidProxyUrl
+            | K::ProxyConnect
+            | K::ProxyUnauthorized
+    )
 }

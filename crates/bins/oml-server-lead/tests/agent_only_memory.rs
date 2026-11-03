@@ -209,7 +209,7 @@ async fn crew(router: &Router) -> Crew {
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "tenant_name": "aom-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "aom-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -258,7 +258,7 @@ async fn crew(router: &Router) -> Crew {
             "/v2/keys",
             Some(&admin),
             Some(idem),
-            Some(&json!({"role": role, "principal": principal, "grants": grants})),
+            Some(&json!({"role": role, "name": idem, "principal": principal, "grants": grants})),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{key}");
@@ -355,7 +355,6 @@ fn set<I: IntoIterator<Item = S>, S: Into<String>>(ids: I) -> BTreeSet<String> {
 }
 
 #[tokio::test]
-#[ignore = "the agent-only-memory scenario turns green at plan step S14 (ADR-0025)"]
 async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and_proposes_retiring_its_memory()
  {
     let (router, db) = fresh_router().await;

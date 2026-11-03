@@ -89,6 +89,79 @@ CREATE TRIGGER journal_no_truncate
 A superuser can still bypass both; the design treats superuser access as deployment-key-equivalent
 compromise, stated in [security](../architecture/security.md).
 
+## names and tenants
+
+Workareas, crews, keys and tenants each carry a name: unique in its namespace, never changed,
+never released ([names](../api/http-api.md#names-and-ids),
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)). The grammar is one domain, so every named table
+checks the same rule; the unique indexes on each table are the authority `name.taken` reports,
+and an insert that loses a race to one answers it with nothing journalled.
+
+```sql
+-- a lowercase RFC 1035 label, 1-63 characters, that never reads as an id:
+-- not the RFC 9562 hex-and-dash form, and not 32 hex digits.
+CREATE DOMAIN oml_name AS text CHECK (
+    VALUE ~ '^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$'
+    AND VALUE !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    AND VALUE !~ '^[0-9a-f]{32}$'
+);
+
+-- the tenant registry: provider-level, folded from the provider chain's tenant.created
+-- events; read by the operator path's own policy, never by a tenant session. The reserved
+-- provider tenant has no tenant.created and is not a row: it carries no name.
+CREATE TABLE tenants (
+    id         uuid        PRIMARY KEY,
+    name       oml_name    NOT NULL UNIQUE,   -- unique per deployment
+    prior_name text,                          -- the PoC's creation-time name, kept as history;
+                                              -- no reference reads it; NULL on a row created
+                                              -- with a name
+    created_at timestamptz NOT NULL
+);
+```
+
+The domain admits the derived form `<prefix>-<32 hex digits>`, because the fold of
+`system.names_assigned` writes it; every creation refuses that form in the name check the server
+runs before it journals anything ([names](../api/http-api.md#names-and-ids)).
+
+**The migration that adds names.** A migration cannot sign a journal event, and rows that predate
+names have no name until the lead journals `system.names_assigned`
+([rows created before names](../api/http-api.md#rows-created-before-names)). The PoC's
+`tenants.name` and `workareas.name` are already `text NOT NULL` columns holding creation-time
+names, duplicates and ungrammatical values among them, the root's `root` included
+(migrations/0001_init.sql:22-44), so neither the domain nor a unique constraint can be laid on
+them. The migration that adds names therefore:
+
+1. renames `tenants.name` and `workareas.name` to `prior_name`, kept as unconstrained `text`
+   history that no reference reads;
+2. creates `crews`, and adds a new `name oml_name NULL` to `tenants`, `workareas`, `crews` and
+   `api_keys`, `crew_id uuid NULL` to `workareas` and `api_keys`, `path ltree NULL` to
+   `workareas`, which the PoC schema does not have, and `lifted_epoch bigint NULL` to
+   `key_denials`, which the lift of every denial on an admin key
+   ([rule 5](../api/http-api.md#rows-created-before-names)) sets in the commit that names the
+   chain;
+3. creates the unique constraints shown here on the new `name` columns only. Each admits any
+   number of NULLs, `api_keys`' included: its `NULLS NOT DISTINCT` constraint, which makes the
+   operator keys one namespace, would make two unnamed keys of a tenant collide, so it is created
+   as a unique index on `(tenant_id, name) NULLS NOT DISTINCT WHERE name IS NOT NULL`, the same
+   rule once every name is set. `name.taken` has its authority from the first request served.
+4. adds the `universe` `CHECK` shown on `workareas`, which ties the name to the root. A check
+   constraint "is satisfied if the check expression evaluates to true or the null value"
+   ([Check Constraints](https://www.postgresql.org/docs/17/ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS),
+   fetched 2026-10-31), and the comparison is NULL on a row whose `name` is NULL, so the `CHECK`
+   passes every row the migration finds and refuses a non-root `universe` under a root that has
+   no name yet, as under one that holds `universe`.
+
+The migration carries no creation-time name into `name`: `system.names_assigned` fills every `name`,
+and its `prior_name` entries are read from the journal, never from the renamed columns. The lead,
+before it serves, journals that event and folds it into the new columns, deriving each `path`. A
+migration of a later schema version, which cannot run before that first start, then sets `name` and
+`path` `NOT NULL`, the shape this page shows, and fails, holding that upgrade, if any NULL
+remains. A lead that finds a NULL `name` in a chain whose
+`system.names_assigned` is already journalled refuses to start, with the `names_assigned`
+[doctor](../operations/observability.md#the-doctor-contract) line naming the table. Renaming columns
+the earlier binaries read is outside the expand-contract rule, which is why this upgrade stops every
+earlier binary before it migrates ([upgrades](../operations/upgrades.md#the-upgrade-order)).
+
 ## memories
 
 The fold of submission, review and lifecycle events into the current state of every claim version.
@@ -225,16 +298,33 @@ node-id grants, deny semantics, status ladder — is declared in
 ```sql
 CREATE EXTENSION IF NOT EXISTS ltree;
 
+CREATE TABLE crews (                -- named records, recorded not operated (ADR-0026 d8)
+    id               uuid        PRIMARY KEY,
+    tenant_id        uuid        NOT NULL,
+    name             oml_name    NOT NULL,   -- immutable; OML's key for the crew
+    charter_uri      text,
+    external_manager text,
+    created_at       timestamptz NOT NULL,
+    UNIQUE (tenant_id, name),
+    UNIQUE (tenant_id, id)                   -- target of tenant-scoped crew references
+);
+
 CREATE TABLE workareas (
     id         uuid        PRIMARY KEY,
     tenant_id  uuid        NOT NULL,
     parent_id  uuid        REFERENCES workareas (id),   -- NULL only for universe
-    path       ltree       NOT NULL,   -- DERIVED; rewritten in one transaction on re-parent
+    name       oml_name    NOT NULL,   -- unique in the tenant; never changed
+    prior_name text,                   -- the PoC's creation-time name, kept as history;
+                                       -- no reference reads it; NULL on a row created with a name
+    path       ltree       NOT NULL,   -- DERIVED from names; rewritten in one transaction on re-parent
     status     text        NOT NULL
         CHECK (status IN ('development', 'committed', 'validated')),
-    crew       jsonb,                  -- {name, charter_uri, external_manager}
+    crew_id    uuid,                   -- the crew record this workarea names, or NULL
     created_at timestamptz NOT NULL,
-    UNIQUE (tenant_id, id)             -- target of the tenant-scoped grant and denial references
+    UNIQUE (tenant_id, name),          -- one flat namespace across the whole tree
+    UNIQUE (tenant_id, id),            -- target of the tenant-scoped grant and denial references
+    FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
+    CHECK ((parent_id IS NULL) = (name = 'universe'))   -- the root, and only the root, is universe
 );
 
 -- exactly one universe root per tenant; it is permanently 'committed'.
@@ -271,8 +361,11 @@ CREATE TABLE claim_edges (
 The key-inequality `CHECK` is the cheap spelling of R2 on edges; the full rule — ratifier principal
 distinct from proposer principal, resolved at ratification time — is enforced in the ratification
 transaction, because a principal can hold several keys and a column constraint cannot see that.
-`path` is derived: grants bind to node ids, and every path is recomputable from `parent_id`, so a
-re-parent is a single-transaction descendant rewrite rather than a grant migration.
+`path` is derived: grants bind to node ids, and every path is recomputable from `parent_id` and
+the names, so a re-parent is a single-transaction descendant rewrite rather than a grant migration.
+Every name is a valid `ltree` label — PostgreSQL 17 admits "alphanumeric characters, underscores,
+and hyphens" up to 1000 characters per label
+([ltree](https://www.postgresql.org/docs/17/ltree.html), fetched 2026-10-30) — so every path is.
 
 ## api_keys, grants, key_denials, bans
 
@@ -289,6 +382,8 @@ CREATE TABLE api_keys (
     principal  text        NOT NULL,
     issued_by  uuid        REFERENCES api_keys (id),  -- issuer ceiling checked at issuance
     rotated_from uuid      REFERENCES api_keys (id),  -- successor link; predecessor revoked at grace end
+    name       oml_name    NOT NULL,      -- the key's name; never changed, never released
+    crew_id    uuid,                      -- the crew record named at issuance; fixed for life
     held_by    text        NOT NULL DEFAULT 'agent'
         CHECK (held_by IN ('agent', 'human', 'service')),
                                           -- issuance-time attestation by the issuing admin
@@ -303,7 +398,11 @@ CREATE TABLE api_keys (
                                           -- permission epoch (ADR-0025 d14)
     expiry     timestamptz,
     revoked_at timestamptz,
-    UNIQUE (tenant_id, id)                -- target of the tenant-scoped grant and denial references
+    UNIQUE NULLS NOT DISTINCT (tenant_id, name),
+                                          -- unique per tenant; operator keys (tenant_id NULL)
+                                          -- share the provider's one namespace
+    UNIQUE (tenant_id, id),               -- target of the tenant-scoped grant and denial references
+    FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id)
 );
 
 CREATE TABLE grants (
@@ -327,6 +426,8 @@ CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all
     key_id           uuid        NOT NULL,
     workarea_node_id uuid        NOT NULL,
     epoch            bigint      NOT NULL,   -- journal seq of this denial's key.denied
+    lifted_epoch     bigint,                 -- journal seq of the key.denial_lifted that
+                                             -- lifted it; NULL while the denial is in force
     created_by       uuid        NOT NULL,
     created_at       timestamptz NOT NULL,
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
@@ -350,9 +451,11 @@ CREATE UNIQUE INDEX bans_active ON bans (tenant_id, subject_kind, subject)
 ```
 
 Effective access is computed, never stored, on every request: union of a key's grants, each
-attenuated by its own `deny` entries, then masked by any `key_denials` row. The `epoch` column is
-the journal seq of the event that wrote the row, which makes every historical computation
-reproducible from journalled grants ([workareas](../architecture/workareas.md) owns the
+attenuated by its own `deny` entries, then masked by any `key_denials` row whose `lifted_epoch` is
+NULL. A lifted denial masks nothing and its row stays as history
+([event catalog](event-catalog.md#keydenial_lifted)). The `epoch` column is
+the journal seq of the event that wrote the row, and `lifted_epoch` the seq of the lift, which
+makes every historical computation reproducible from journalled grants ([workareas](../architecture/workareas.md) owns the
 permission-epoch semantics).
 A grant's and a denial's key and node references carry the row's `tenant_id`. In PostgreSQL,
 "referential integrity checks, such as unique or primary key constraints and foreign key
@@ -461,8 +564,11 @@ CREATE TABLE dead_letter (
 
 CREATE TABLE idempotency (
     key_id         uuid        NOT NULL,
-    workarea_id    uuid        NOT NULL,  -- the nil UUID (00000000-0000-0000-0000-000000000000)
-                                          -- for endpoints that name no workarea
+    workarea_id    uuid        NOT NULL,  -- the resolved node id; the nil UUID
+                                          -- (00000000-0000-0000-0000-000000000000) for endpoints
+                                          -- that name no workarea; for a /v1 X-OML-Workarea name
+                                          -- that names no row, its version-8 unresolved value
+                                          -- (http-api.md, the unresolved value), never an id
     idem_key       text        NOT NULL,
     request_digest bytea       NOT NULL,
     state          text        NOT NULL CHECK (state IN ('in_progress', 'committed')),
@@ -687,13 +793,25 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | Table | Folded from |
 |---|---|
 | `memories` | submission, review, lifecycle, simulation events |
-| `workareas` | workarea create / re-parent / status / crew events |
+| `workareas` | workarea create / re-parent / status / crew events, `system.names_assigned` |
+| `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
+| `tenants` | the provider chain's `tenant.created`, `system.names_assigned` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |
 | `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |
 | `simulations` | simulation open / end events |
-| `api_keys` (state columns) | key issue / revoke events |
+| `api_keys` (state columns) | key issue / rotate / revoke events, `system.names_assigned` |
+
+A chain's `system.names_assigned` sits later in the chain than the creation events of the rows it
+names, and those rows' `name` and `path` are `NOT NULL`. So a fold of a chain from genesis is two
+passes: it reads the chain's `system.names_assigned` first, when the chain holds one, and then
+replays the chain in order, folding each creation event that predates names with the name that
+event assigns, the path derived from those names and, for a workarea, the `crew_id` of the crew
+record the event lists the workarea under, which the fold inserts before the first workarea that
+names it. A row is never folded with a NULL name, so the final shape keeps `name` and `path`
+`NOT NULL`. The incremental fold at the lead's first start on the names schema is the one that
+fills NULL columns, on rows the PoC wrote before the migration.
 
 One honest exception inside that last row: `api_keys.hash` is operational secret material. The
 journal records issuance **without the key value** (show-once ceremony), so a re-fold reconstructs

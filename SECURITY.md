@@ -1,18 +1,15 @@
 # Security policy
 
-**Status:** design draft for review · decided, not built
+## Supported versions
 
-## Scope, honestly stated
+Security fixes land on the latest release. Please upgrade to the newest version on the
+[releases page](https://github.com/e8kor/open-memory-lab/releases) before reporting.
 
-This repository is a design specification. **No code exists**, so there is no running software
-to exploit and no binary to patch. What can be wrong today is the design itself: a flaw in the
-threat model, a hole in the erasure boundary, a chain-format weakness, a tenancy bypass that the
-spec fails to close. Those are welcome as **public issues** — a design flaw found now is the
-cheapest kind, and hiding it would only delay the fix. Use the design-review-finding issue
-template and name the decision handle the flaw sits under.
+## Please don't report in public
 
-Private reporting applies once code lands: from the first tagged implementation release onward,
-a vulnerability in released code goes through the private channel below, not a public issue.
+Report a vulnerability privately, never in a public issue, pull request or Discussion. That
+includes flaws in tenant isolation, key handling, the tamper-evident history, erasure, and the
+review rules.
 
 ## Reporting channel
 
@@ -27,23 +24,18 @@ project's private contact for conduct matters (see
 - **Acknowledgement within 7 days** of a private report.
 - Triage against the threat model in
   [docs/architecture/security.md](docs/architecture/security.md) — the attacker that page is
-  written against is a hostile co-tenant, so a finding that breaks tenant isolation, the signed
-  journal chain, or the erasure boundary is treated as the most severe class.
-- A fix timeline agreed with the reporter before any public disclosure. During the design phase
-  the "fix" is an amended ADR and corrected pages; the reporter is credited in the change unless
-  they ask otherwise.
+  written against is a hostile co-tenant, so a finding that breaks tenant isolation, the
+  tamper-evident history, or the erasure boundary is treated as the most severe class.
+- A fix timeline agreed with the reporter before any public disclosure. The reporter is credited
+  in the advisory unless they ask otherwise.
 
 ## Advisories and CVEs
 
-Once binaries ship, the project will publish **GitHub Security Advisories** for vulnerabilities
-in released code and request CVE identifiers through GitHub's CVE Numbering Authority for any
-vulnerability that affects a tagged release. Design-phase findings do not receive CVEs — there is
-no affected software version to name.
+The project publishes **GitHub Security Advisories** for vulnerabilities in released code and
+requests CVE identifiers through GitHub's CVE Numbering Authority for any vulnerability that
+affects a tagged release.
 
-## Where the security design lives
+## Security model
 
-The security posture this policy defends is specified in
-[docs/architecture/security.md](docs/architecture/security.md): the tenancy model, the key
-custody map, the controls on privileged services, and the threat model. A report that argues
-against one of those decisions should name its decision handle, so the discussion lands on the
-page that owns it.
+The security model is documented in [docs/architecture/security.md](docs/architecture/security.md):
+the tenancy model, key custody, the controls on privileged services, and the threat model.

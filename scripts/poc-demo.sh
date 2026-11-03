@@ -3,7 +3,8 @@
 #
 # Boots ./target/release/oml-server-lead on a fresh `oml_poc` database and
 # drives every ceremony through ./target/release/oml (the lab client speaks
-# only the public HTTP API, ADR-0015): bootstrap claim → workarea → keys →
+# only the public HTTP API, ADR-0015), naming the workarea by its name
+# wherever an id would go (ADR-0026 d4): bootstrap claim → workarea → keys →
 # submit → (recall withholds the held row) → review + approve → recall hit →
 # the R2 reviewer-is-author refusal → supersede → verify-chain → doctor →
 # graceful shutdown.
@@ -108,32 +109,40 @@ echo "deployment signing public key (from the boot log, handed out of band): $PU
 
 # --- bootstrap: the one-time claim ------------------------------------------
 step "bootstrap claim (single-use token -> first admin key, credentials stored 0600)" 0 \
-    "$OML" --server "$SERVER_URL" --json bootstrap claim \
+    "$OML" --server "$SERVER_URL" --json bootstrap claim alice-admin \
     --token "$TOKEN" --tenant-name poc-demo --principal platform/alice
 TENANT="$(jqf .tenant_id)"
-ROOT_WA="$(jqf .root_workarea_id)"
 
 step "a second claim is refused — the token is consumed (typed refusal, exit 1)" 1 \
-    "$OML" --server "$SERVER_URL" --json bootstrap claim --token "$TOKEN"
+    "$OML" --server "$SERVER_URL" --json bootstrap claim second-admin --token "$TOKEN"
 
 # --- workarea and the crew's keys (admin credentials from the stored file) ---
-step "create a child workarea under the root ($ROOT_WA)" 0 \
-    "$OML" --json workareas create "$ROOT_WA" poc-metals
+# Every workarea below goes by its name, the root as `universe` (ADR-0026 d6),
+# and the server resolves each one to the id the grants bind to.
+step "create a child workarea under the root, both by name" 0 \
+    "$OML" --json workareas create universe poc-metals
 WA="$(jqf .id)"
+[ "$(jqf .path)" = "universe.poc-metals" ] || fail "the workarea's derived path is not universe.poc-metals"
 
-step "issue a writer key (held by an agent)" 0 \
-    "$OML" --json keys issue --role writer --held-by agent \
-    --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:writer"
+# Each key carries only grant roles its key role admits (the admissibility
+# table, ADR-0025 d1): writer admits reader and writer, dreamer admits reader
+# and dreamer, reader admits reader.
+step "issue the agent's writer key with a writer and a reader grant (one key writes and recalls)" 0 \
+    "$OML" --json keys issue agent-blue --role writer --held-by agent --principal crew/agent-blue \
+    --default-workarea poc-metals --grant poc-metals:writer --grant poc-metals:reader
 WRITER="$(jqf .value)"
+[ "$(jqf .default_workarea_id)" = "$WA" ] || fail "the name poc-metals did not resolve to the workarea's id"
+[ "$(jqf '[.grants[].workarea_node_id] | unique | join(",")')" = "$WA" ] \
+    || fail "the grants named poc-metals do not bind to the workarea's id"
 
 step "issue a dreamer key (held by a human reviewer)" 0 \
-    "$OML" --json keys issue --role dreamer --held-by human \
-    --principal crew/maya --default-workarea "$WA" --grant "$WA:dreamer"
+    "$OML" --json keys issue maya --role dreamer --held-by human \
+    --principal crew/maya --default-workarea poc-metals --grant poc-metals:dreamer
 DREAMER="$(jqf .value)"
 
-step "issue a reader key (recall and the audit tail are reader-scope; roles never nest)" 0 \
-    "$OML" --json keys issue --role reader --held-by service \
-    --principal crew/recall-bot --default-workarea "$WA" --grant "$WA:reader"
+step "issue a reader key for a second identity that only reads (a reader key admits reader grants only)" 0 \
+    "$OML" --json keys issue recall-bot --role reader --held-by service \
+    --principal crew/recall-bot --default-workarea poc-metals --grant poc-metals:reader
 READER="$(jqf .value)"
 
 # --- submit: held on arrival, invisible to recall ----------------------------
@@ -162,10 +171,14 @@ step "recall after promotion: the claim is served" 0 \
 [ "$(jqf '.hits | length')" -ge 1 ] || fail "promoted row missing from recall"
 jqf '.hits[0].memory.artifact_id' | grep -q "$ARTIFACT" || fail "recall hit is not the promoted artifact"
 
+step "recall after promotion with the agent's own writer key (its reader grant serves recall)" 0 \
+    "$OML" --key "$WRITER" --json recall --query "Accra Metals"
+jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the writer key's reader grant did not serve recall"
+
 # --- R2: the reviewer is never the author ------------------------------------
 step "issue a dreamer key to the AUTHOR's principal (crew/agent-blue also reviews?)" 0 \
-    "$OML" --json keys issue --role dreamer --held-by agent \
-    --principal crew/agent-blue --default-workarea "$WA" --grant "$WA:dreamer"
+    "$OML" --json keys issue agent-blue-reviewer --role dreamer --held-by agent \
+    --principal crew/agent-blue --default-workarea poc-metals --grant poc-metals:dreamer
 AUTHOR_DREAMER="$(jqf .value)"
 
 step "verdict with the author's key is refused — R2 against the lineage closure (exit 1)" 1 \
@@ -194,9 +207,17 @@ step "recall now serves the ratified successor (the replaced version is history)
 jq -r '.hits[].memory.body' "$OUT" | grep -q "399 USD/t" || fail "successor body missing from recall"
 jq -r '.hits[].memory.body' "$OUT" | grep -q "412 USD/t" && fail "the replaced version is still a recall hit"
 
-# --- evidence: verify the signed hash chain from genesis ---------------------
-step "audit verify-chain --genesis (reader key; the signing key set is operator input)" 0 \
-    "$OML" --key "$READER" audit verify-chain --genesis --signing-key "$PUBKEY"
+# --- evidence: the chain export is the one verification surface -------------
+# The events tail is a filtered feed (ADR-0025 d15), so live verification
+# reads the chain export, which this build does not serve: the verb refuses
+# by name (exit 2) rather than report breaks it did not find.
+echo
+echo "=== audit verify-chain --genesis: refused by name while no chain export is served"
+"$OML" --key "$READER" audit verify-chain --genesis --signing-key "$PUBKEY" 2>"$DEMO_DIR/verify.stderr"
+code=$?
+cat "$DEMO_DIR/verify.stderr"
+[ "$code" -eq 2 ] || fail "verify-chain exited $code, expected the local refusal 2"
+grep -q "chain export" "$DEMO_DIR/verify.stderr" || fail "verify-chain did not name the chain export"
 
 step "oml doctor" 0 \
     "$OML" --key "$READER" doctor

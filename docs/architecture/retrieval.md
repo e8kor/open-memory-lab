@@ -356,10 +356,15 @@ changes meaning.
 **Per-row counts.** Every served row carries `tokens`, whether or not a budget
 was sent: steering items, hits, get results and own-work listing items.
 
-**The parameter.** `max_tokens` is an integer ≥ 1. Absent, there is no budget
-and the response carries no `budget` object. `max_tokens` together with
-`include_bodies: false` is refused with `request.validation`: counting bodies
-that are not sent gives the caller a meaningless budget.
+**The parameter.** `max_tokens` is an integer from 1 to 2⁵³ − 1. The upper
+bound is the [read log](#the-read-log)'s: the request digest canonicalizes
+`max_tokens` under [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785), which
+serializes an integer exactly only below 2⁵³
+([chain format](../data/chain-format.md#the-signed-fields)), so a larger value
+is refused with `request.validation` rather than digested lossily. Absent,
+there is no budget and the response carries no `budget` object. `max_tokens`
+together with `include_bodies: false` is refused with `request.validation`:
+counting bodies that are not sent gives the caller a meaningless budget.
 
 **The cut.** Over the steering counts S, the `k`-capped ranked hit counts H
 (own held rows included when asked) and the budget M:

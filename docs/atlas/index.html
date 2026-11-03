@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>OML Live Atlas</title>
 <meta name="description" content="Interactive 3D visualization of Open Memory Lab in a trading domain: crews recalling market data along grants, remembering signals, non-author review, supersession, a backtest simulation fenced off, and the signed journal chain. Every memory is clickable. Mocked data.">
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%2304060d"/><rect x="20" y="20" width="24" height="24" transform="rotate(45 32 32)" fill="%23b48af2"/><circle cx="32" cy="32" r="5" fill="%234fd8c0"/></svg>'>
+<meta name="theme-color" content="#0a0f1d">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -12,11 +14,11 @@
     --bg:#04060d; --bg-raise:#0a0f1d; --bg-panel:#0e1526;
     --fg:#e9edf8; --fg-dim:#94a0c0; --fg-faint:#5c6584;
     --line:#1e2745; --line-soft:#161e38;
-    --accent:#7aa2ff; --accent-2:#4fd8c0; --gold:#e8b45a;
+    --accent:#7aa2ff; --accent-2:#4fd8c0; --gold:#e8b45a; --grant:#ffdf9e; --edge:#5a74b8;
     --held:#e8b45a; --promoted:#46d684; --rejected:#f0716e;
-    --superseded:#64748b; --demoted:#49917a; --sim:#b48af2;
-    --recall:#4fd8c0; --remember:#e8b45a;
-    --lad-dev:#9fb0d8; --lad-com:#7aa2ff; --lad-val:#dbe9ff;
+    --superseded:#64748b; --demoted:#b08968; --sim:#b48af2;
+    --recall:#4fd8c0; --remember:#e8b45a; --review:#8bd5ff;
+    --lad-dev:#9fb0d8; --lad-com:#7aa2ff; --lad-val:#b6c5de;
     --sans:"Inter",system-ui,-apple-system,sans-serif;
     --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
     color-scheme:dark;
@@ -31,18 +33,23 @@
   header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
     padding:11px max(16px,env(safe-area-inset-right,0px)) 11px max(16px,env(safe-area-inset-left,0px));
     border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--bg-raise),color-mix(in srgb,var(--bg-raise) 60%,var(--bg)))}
-  header .brand{font:700 15px/1 var(--sans);letter-spacing:.01em;color:var(--fg);text-decoration:none}
-  header .brand span{color:var(--accent-2)}
+  .brand{display:inline-flex;align-items:center;gap:8px;font:700 15px/1 var(--sans);color:var(--fg)}
+  .brand span{color:var(--fg-dim);font-weight:500}
+  .back{font:500 12.5px/1 var(--sans);color:var(--fg-dim)}
+  .back:hover{color:var(--fg);text-decoration:none}
   .crumb{display:flex;align-items:center;gap:8px;font:500 12.5px/1 var(--sans);color:var(--fg-dim)}
   .crumb b{color:var(--fg);font-weight:600}
   .badge{font:600 10px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;
     color:var(--held);border:1px solid color-mix(in srgb,var(--held) 40%,transparent);border-radius:999px;padding:5px 10px}
   header .spacer{flex:1}
   button{font:600 12px/1 var(--sans);color:var(--fg);background:var(--bg-panel);
-    border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;transition:border-color .15s,color .15s}
+    border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
   button:hover{border-color:var(--accent)}
   button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
   button[hidden]{display:none!important}
+  button.cta{border-color:color-mix(in srgb,var(--accent) 55%,transparent);
+    background:color-mix(in srgb,var(--accent) 10%,var(--bg-panel));color:var(--fg)}
+  button.cta:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--bg-panel))}
   main{position:relative;flex:1;min-height:0}
   main::after{content:"";position:absolute;inset:0;pointer-events:none;
     background:radial-gradient(130% 90% at 50% 40%, transparent 55%, rgba(2,4,10,.55) 100%)}
@@ -50,11 +57,14 @@
   canvas#gl:active{cursor:grabbing}
   canvas#gl.hover{cursor:pointer}
   #labels{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:1}
-  .lbl{position:absolute;transform:translate(-50%,-134%);white-space:nowrap;
-    font:600 11px/1.35 var(--sans);color:var(--fg);text-shadow:0 1px 8px #000d;opacity:.94}
-  .lbl small{display:block;font:500 9.5px/1.35 var(--sans);color:var(--fg-dim);letter-spacing:.03em}
+  .lbl{position:absolute;left:0;top:0;transform:translate(-50%,-134%);will-change:transform;white-space:nowrap;
+    font:600 12px/1.3 var(--sans);color:var(--fg);text-shadow:0 1px 8px #000d;opacity:.94}
+  .lbl small{display:block;font:500 9.5px/1.5 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-faint)}
   .lbl .st{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:1px}
-  .lbl.minor{font-size:9.5px;opacity:.8}
+  .lbl.minor{font-size:10.5px;opacity:.8}
+  #tip{font:500 11px/1.4 var(--sans);color:var(--fg);background:color-mix(in srgb,var(--bg) 82%,transparent);
+    border:1px solid var(--line);border-radius:7px;padding:5px 9px;transform:none}
+  #tip small{display:block;font:500 9.5px/1.4 var(--mono);color:var(--fg-dim);text-transform:none;letter-spacing:0}
   .hud{position:absolute;z-index:2;top:12px;left:max(14px,env(safe-area-inset-left,0px));right:max(14px,env(safe-area-inset-right,0px));
     display:flex;gap:8px;flex-wrap:wrap;align-items:center;pointer-events:none}
   .hud>*{pointer-events:auto}
@@ -63,10 +73,13 @@
     border:1px solid var(--line);border-radius:8px;padding:6px 11px}
   .tag b{color:var(--fg);font-weight:600}
   .tag .num{font-family:var(--mono);font-size:11px;color:var(--accent-2)}
-  .hint{position:absolute;z-index:2;left:50%;transform:translateX(-50%);bottom:14px;
+  .hint,.tourcap{position:absolute;z-index:2;left:50%;transform:translateX(-50%);bottom:14px;
     font:500 12px/1 var(--sans);color:var(--fg-dim);background:color-mix(in srgb,var(--bg) 72%,transparent);
     backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:999px;padding:7px 15px;
     pointer-events:none;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
+  .tourcap{bottom:48px;color:var(--fg);font-weight:600;border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+  .skip{position:absolute;z-index:3;right:max(14px,env(safe-area-inset-right,0px));bottom:14px;
+    font:600 11px/1 var(--sans)}
   .panel{position:absolute;z-index:3;right:max(14px,env(safe-area-inset-right,0px));top:56px;width:min(300px,84%);
     background:color-mix(in srgb,var(--bg-panel) 92%,transparent);backdrop-filter:blur(10px);
     border:1px solid var(--line);border-radius:12px;padding:0;font-size:12.5px;color:var(--fg-dim);
@@ -74,7 +87,7 @@
   .panel .head{padding:11px 14px 9px;border-bottom:1px solid var(--line-soft);
     background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 7%,transparent),transparent)}
   .panel .head h4{margin:0;font:700 13.5px/1.3 var(--sans);color:var(--fg);display:flex;align-items:center;gap:8px}
-  .panel .head .chip{font:600 9.5px/1 var(--sans);letter-spacing:.1em;text-transform:uppercase;border-radius:999px;padding:4px 8px}
+  .panel .head .chip{font:600 10px/1 var(--sans);letter-spacing:.1em;text-transform:uppercase;border-radius:999px;padding:4px 9px}
   .panel .head .crew{font:500 11px/1.4 var(--sans);color:var(--accent-2);margin-top:3px}
   .panel .body{padding:10px 14px 12px;overflow:auto}
   .panel .x{position:absolute;top:8px;right:8px;border:none;background:transparent;color:var(--fg-faint);font:600 14px/1 var(--sans);padding:4px 7px}
@@ -113,11 +126,14 @@
     border-top:1px solid var(--line);background:var(--bg-raise)}
   .legend .one{color:var(--fg);font-weight:600;margin-right:2px}
   .legend .one i{color:var(--accent-2);font-style:normal;font-weight:500}
+  .legend .grp{font:600 9.5px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--fg-faint)}
   .legend i.sw{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
-  .ticker{height:60px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;
+  .ticker{height:62px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;cursor:pointer;
     padding:4px max(16px,env(safe-area-inset-right,0px)) 7px max(16px,env(safe-area-inset-left,0px));
     border-top:1px solid var(--line);background:var(--bg);
-    font:500 11px/1.6 var(--mono);color:var(--fg-dim)}
+    font:500 11px/1.6 var(--mono);color:var(--fg-dim);transition:height .2s}
+  .ticker.open{height:190px;overflow-y:auto;justify-content:flex-start}
+  .ticker.paused{border-top-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
   .ticker div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ticker .k{color:var(--accent-2)}
   .ticker .s{color:var(--fg-faint)}
@@ -126,7 +142,7 @@
   .fade{position:absolute;z-index:4;inset:0;background:var(--bg);opacity:0;pointer-events:none;transition:opacity .22s}
   .fade.on{opacity:1}
   @media (max-width:640px){
-    .ticker{height:48px}
+    .ticker{height:50px}
     header{gap:8px}
     .steps{width:min(234px,70%)}
     .legend{max-height:34px;overflow:hidden;cursor:pointer}
@@ -137,14 +153,15 @@
 </head>
 <body>
 <header>
-  <a class="brand" href="../">⟵ OML<span> docs</span></a>
+  <span class="brand"><svg width="11" height="11" viewBox="0 0 10 10" aria-hidden="true"><rect x="2" y="2" width="6" height="6" transform="rotate(45 5 5)" fill="#4fd8c0"/></svg>Open Memory Lab<span> · Live Atlas</span></span>
+  <a class="back" href="../">← docs</a>
   <nav class="crumb" aria-label="mode">
-    <b>Live Atlas</b><span>·</span><span id="crumbMode">universe</span>
+    <span id="crumbMode">universe</span>
   </nav>
-  <span class="badge" title="Every journal line is generated client-side using the exact event types of data/event-catalog.md. The tenant, desks, instruments and prices are fictional; nothing calls a server. OML itself is a design with an M1 proof-of-concept.">mocked data</span>
+  <span class="badge" title="Every journal line is generated client-side using the exact event types of data/event-catalog.md. The tenant, desks, instruments and prices are fictional; nothing calls a server. OML itself is a design with an M1 proof-of-concept.">mocked data · client-side</span>
   <span class="spacer"></span>
   <button id="btnBack" hidden>← universe</button>
-  <button id="btnLive" aria-pressed="true">live traffic</button>
+  <button id="btnLive" aria-pressed="true">pause traffic</button>
 </header>
 
 <main id="main">
@@ -154,13 +171,15 @@
   <div class="panel" id="panel" hidden></div>
   <div class="steps" id="steps" hidden></div>
   <div class="hint" id="hint">drag to orbit · scroll to zoom · click a memory, a workarea, or the core</div>
+  <div class="tourcap" id="tourCap" hidden></div>
+  <button class="skip" id="tourSkip" hidden>skip intro ✕</button>
   <div class="fade" id="fade"></div>
   <noscript>The Live Atlas needs JavaScript (and WebGL). The static story it tells lives in the
   <a href="../concepts/">concepts</a> and <a href="../architecture/overview/">architecture</a> pages.</noscript>
 </main>
 
 <div class="legend" id="legend"></div>
-<div class="ticker" id="ticker" aria-live="off"></div>
+<div class="ticker" id="ticker" aria-live="off" title="hover to pause · click to expand"></div>
 
 <script src="./three.min.js"></script>
 <script>
@@ -168,17 +187,21 @@
 'use strict';
 if (!window.THREE) { document.getElementById('hint').textContent = '3D library failed to load — three.min.js missing.'; return; }
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const MOT = REDUCED?0:1;   /* decorative-motion gate: meaning still moves, decoration stops */
 
-/* ═══ THEME — the one shared setting every scene draws from ═══════════════ */
+/* ═══ THEME — the one shared setting every scene draws from ═══════════════
+   One law for color: warmth belongs to memory (amber held/remember, pale
+   gold ceremony/permission, bronze kept-but-lowered); cool belongs to
+   structure and verdicts; brightness tracks ACTIVITY, never age.          */
 const THEME = {
-  c: {held:0xe8b45a, prom:0x46d684, rej:0xf0716e, sup:0x64748b, dem:0x49917a, ers:0x232c48,
-      sim:0xb48af2, agent:0x7aa2ff, human:0xffffff, gold:0xe8b45a, review:0x8bd5ff,
-      recall:0x4fd8c0, remember:0xe8b45a, grant:0xe8b45a, link:0x46d684},
-  ladder: {development:0x9fb0d8, committed:0x7aa2ff, 'validated/frozen':0xdbe9ff},
-  fog:.0082, dprMax:2,
-  pt:{size:.72, hubGlow:1.9, hubHalo:4.8, agent:.8, pulse:1.9},
-  dur:{flow:1.5, remember:1.0, ceremony:1.15, fly:.55},
-  op:{ring:.3, halo:.28, edge:.15, fence:.11},
+  c: {held:0xe8b45a, prom:0x46d684, rej:0xf0716e, sup:0x64748b, dem:0xb08968, ers:0x232c48,
+      sim:0xb48af2, agent:0x7aa2ff, human:0xffffff, gold:0xe8b45a, grant:0xffdf9e,
+      edge:0x5a74b8, review:0x8bd5ff, recall:0x4fd8c0, remember:0xe8b45a, link:0x46d684},
+  ladder: {development:0x9fb0d8, committed:0x7aa2ff, 'validated/frozen':0xb6c5de},
+  fog:.005, dprMax:2,
+  pt:{size:.62, glowSize:1.15, hubGlow:1.9, hubHalo:4.8, agent:.8, pulse:1.9},
+  dur:{flow:1.5, remember:1.0, ceremony:1.15, fly:.9},
+  op:{ring:.18, halo:.26, edge:.15, lane:.22, fence:.18},
 };
 const CLR=THEME.c, LADDER=THEME.ladder;
 
@@ -195,37 +218,37 @@ const TERMS={
   'compliance-vault':['fin:best-execution','fin:kyc','fin:audit-trail'],
 };
 const MAKERS={
-  'market-data':()=>{const t=pick([
+  'market-data':()=>pick([
     ()=>[`eurusd-spot-${(900+Math.random()*300|0)}z`,`EURUSD spot ${px(1.07,1.10)} — venue mid, tick-filtered`],
     ()=>[`ust10y-close`,`UST 10Y yield ${px(3.9,4.4,2)}% at close — curve node refreshed`],
     ()=>[`xauusd-fix`,`XAU/USD ${(2300+Math.random()*160|0)} London fix — spread ${px(.2,.6,2)} bp`],
     ()=>[`sofr-3m`,`SOFR 3M ${px(5.1,5.4,2)}% — term structure anchor`],
     ()=>[`eurusd-vol-1w`,`EURUSD 1W implied vol ${px(6.8,8.4,1)}% — desk quote`],
-  ])();return t;},
-  'trading-signals':()=>{const t=pick([
+  ])(),
+  'trading-signals':()=>pick([
     ()=>[`sig-momo-eurusd`,`Momentum long EURUSD — conviction ${px(.4,.8,2)}, horizon 3d, entry ${px(1.07,1.09)}`],
     ()=>[`sig-mr-xau`,`Mean-reversion flat XAU after fix drift — z-score ${px(1.6,2.4,1)}`],
     ()=>[`sig-carry-basket`,`Carry basket: funding skew favors G10 longs — expected ${px(8,22,0)} bp/m`],
     ()=>[`sig-curve-steepener`,`2s10s steepener — regime filter on, sizing ${px(.2,.6,1)}x`],
-  ])();return t;},
-  'risk-limits':()=>{const t=pick([
+  ])(),
+  'risk-limits':()=>pick([
     ()=>[`var95-desk-cap`,`Desk VaR95 cap ${px(1.8,3.2,1)}m USD — breach escalates to held state`],
     ()=>[`gross-fx-overnight`,`FX overnight gross cap ${(30+Math.random()*30|0)}m — netting per counterparty`],
     ()=>[`single-name-cap`,`Single-name concentration limit ${px(3,6,1)}% of book`],
     ()=>[`stop-policy-momo`,`Momentum sleeve stop at ${px(.8,1.6,1)}x daily vol — hard, not advisory`],
-  ])();return t;},
-  'ref-taxonomy':()=>{const t=pick([
+  ])(),
+  'ref-taxonomy':()=>pick([
     ()=>[`term-var95`,`fin:var-95 — one-day 95% value-at-risk, parametric unless stated`],
     ()=>[`term-eurusd`,`mkt:eurusd — EURUSD spot pair, venue-mid convention`],
     ()=>[`term-best-ex`,`fin:best-execution — the policy term audits cite; supersedes desk slang`],
     ()=>[`term-t2`,`fin:settlement-t2 — T+2 settlement window definition`],
-  ])();return t;},
-  'compliance-vault':()=>{const t=pick([
+  ])(),
+  'compliance-vault':()=>pick([
     ()=>[`bestex-q2`,`Q2 best-execution attestation — sampled fills within tolerance`],
     ()=>[`kyc-acme-broker`,`Counterparty KYC refresh: acme-broker — approved, expiry 2027-04`],
     ()=>[`audit-pack-0729`,`Audit evidence pack 07-29 — journal export digest pinned`],
     ()=>[`steering-sim-prices`,`Steering: never act on sim-derived prices in live books`],
-  ])();return t;},
+  ])(),
 };
 function mkClaim(w,status){
   const [key,text]=MAKERS[w.name]();
@@ -236,23 +259,49 @@ function mkClaim(w,status){
     history:[]};
 }
 
-/* ═══ mock journal — exact event types of data/event-catalog.md ═══════════ */
+/* ═══ mock journal: exact event types; a paced, pausable desk ticker ══════ */
+const tickerEl=document.getElementById('ticker');
+let tickerPaused=false, tickerQueue=[], drainAcc=0;
+tickerEl.addEventListener('pointerenter',()=>{tickerPaused=true;tickerEl.classList.add('paused');});
+tickerEl.addEventListener('pointerleave',()=>{tickerPaused=false;tickerEl.classList.remove('paused');});
+tickerEl.addEventListener('click',()=>tickerEl.classList.toggle('open'));
 const journal = {
-  seq: 14, tenant: 'meridian-cap',
+  seq: 1472, tenant: 'meridian-cap',  /* an old desk, not a toy: history exists */
   emit(event_type, detail, kind=false){
     if(!kind) this.seq++;
-    const el=document.getElementById('ticker');
-    const d=document.createElement('div');
-    if(kind){ const pre={read:'read log',refuse:'refused — not an event',note:'no new event'}[kind];
-      d.className='r'; d.innerHTML=`${pre} · <span class="k">${event_type}</span> · ${detail}`; }
-    else d.innerHTML=`<span class="s">seq ${this.seq}</span> · <span class="k">${event_type}</span> · ${detail}`;
-    el.appendChild(d); while(el.children.length>3) el.removeChild(el.firstChild);
+    const pre=kind?{read:'read log',refuse:'refused — not an event',note:'no new event'}[kind]:null;
+    const html=kind?`${pre} · <span class="k">${event_type}</span> · ${detail}`
+      :`<span class="s">seq ${this.seq}</span> · <span class="k">${event_type}</span> · ${detail}`;
+    tickerQueue.push({html,kind});
     if(!kind){const h=document.getElementById('hudSeq');if(h)h.textContent=this.seq;}
     return this.seq;
+  },
+  drain(dt){
+    if(tickerPaused||!tickerQueue.length)return;
+    if((drainAcc+=dt)<(REDUCED?1.6:.9))return;
+    drainAcc=0;
+    const {html,kind}=tickerQueue.shift();
+    const d=document.createElement('div');
+    if(kind)d.className='r';
+    d.innerHTML=html;
+    tickerEl.appendChild(d);
+    while(tickerEl.children.length>40)tickerEl.removeChild(tickerEl.firstChild);
+    if(tickerEl.classList.contains('open'))tickerEl.scrollTop=tickerEl.scrollHeight;
   }
 };
+/* the desk was alive before you arrived */
+[['workarea.create','wa:ref-taxonomy under the universe root',1468],
+ ['grant.issued','reader on wa:market-data → key_a41f09 (crew:signal-desk)',1469],
+ ['lifecycle.promote','eurusd-vol-1w-8c21 · wa:market-data · k=1',1470]].forEach(([k,d,s])=>{
+  const el=document.createElement('div');
+  el.innerHTML=`<span class="s">seq ${s}</span> · <span class="k">${k}</span> · ${d}`;
+  tickerEl.appendChild(el);
+});
 let LIVE=true;
-document.getElementById('btnLive').onclick=e=>{LIVE=!LIVE;e.currentTarget.setAttribute('aria-pressed',LIVE);};
+document.getElementById('btnLive').onclick=e=>{LIVE=!LIVE;
+  e.currentTarget.setAttribute('aria-pressed',String(!LIVE));
+  e.currentTarget.textContent=LIVE?'pause traffic':'resume traffic';
+  journal.emit('recall',LIVE?'traffic resumed — the desk keeps working':'traffic paused — the scene holds, the journal holds with it','note');};
 
 /* ═══ workareas: one desk crew per area; reads follow grants, never status ═ */
 const WAS = [
@@ -290,16 +339,16 @@ function applyCam(){
     st.target.z+st.radius*Math.sin(st.phi)*Math.cos(st.theta));
   camera.lookAt(st.target);
 }
-function flyTo(targetPos,radius,cb){
+function flyTo(targetPos,radius,cb,dur){
   if(REDUCED){ if(cb)cb(); return; }
-  tween.on=true;tween.t=0;tween.cb=cb;
+  tween.on=true;tween.t=0;tween.cb=cb;tween.dur=dur||THEME.dur.fly;
   tween.from={target:st.target.clone(),radius:st.radius};
   tween.to={target:targetPos.clone(),radius};
 }
 function tweenFrame(dt){
   if(!tween.on)return;
   tween.t+=dt/tween.dur;
-  const k=Math.min(1,tween.t), e=1-Math.pow(1-k,3);
+  const k=Math.min(1,tween.t), e=k<.5?4*k*k*k:1-Math.pow(-2*k+2,3)/2; /* easeInOutCubic */
   st.target.lerpVectors(tween.from.target,tween.to.target,e);
   st.radius=tween.from.radius+(tween.to.radius-tween.from.radius)*e;
   applyCam();
@@ -334,7 +383,6 @@ function discTexture(stops){
   g.fillStyle=grad;g.fillRect(0,0,256,256);
   return new THREE.CanvasTexture(c);
 }
-/* shape textures: category is carried by FORM, not only color */
 function shapeTexture(kind){
   const c=document.createElement('canvas');c.width=c.height=256;
   const g=c.getContext('2d');g.translate(128,128);g.fillStyle='#fff';g.strokeStyle='#fff';
@@ -349,6 +397,24 @@ function shapeTexture(kind){
   if(kind==='sq'){g.fillRect(-58,-58,116,116);g.globalAlpha=.22;g.fillRect(-80,-80,160,160);}
   return new THREE.CanvasTexture(c);
 }
+function nebulaTexture(){
+  const c=document.createElement('canvas');c.width=c.height=512;
+  const g=c.getContext('2d');
+  const blobs=[['#101b40',.7],['#1b1440',.6],['#0b2438',.65],['#140f2e',.55],['#101b40',.5],['#0b2438',.45]];
+  blobs.forEach(([col,a],i)=>{
+    const x=rnd(100,412),y=rnd(100,412),r=rnd(90,220);
+    const gr=g.createRadialGradient(x,y,0,x,y,r);
+    gr.addColorStop(0,col+Math.round(a*255).toString(16).padStart(2,'0'));
+    gr.addColorStop(1,col+'00');
+    g.fillStyle=gr;g.fillRect(0,0,512,512);
+  });
+  g.globalCompositeOperation='destination-out';
+  for(let i=0;i<2;i++){const x=rnd(140,372),y=rnd(140,372),r=rnd(40,80);
+    const gr=g.createRadialGradient(x,y,0,x,y,r);
+    gr.addColorStop(0,'rgba(0,0,0,.55)');gr.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,Math.PI*2);g.fill();}
+  return new THREE.CanvasTexture(c);
+}
 const SOFT=discTexture([[0,'rgba(255,255,255,1)'],[0.35,'rgba(255,255,255,.45)'],[1,'rgba(255,255,255,0)']]);
 const HALO=discTexture([[0,'rgba(255,255,255,.9)'],[0.2,'rgba(255,255,255,.22)'],[1,'rgba(255,255,255,0)']]);
 const CORE=shapeTexture('core'),RING=shapeTexture('ring'),DIA=shapeTexture('dia'),SQ=shapeTexture('sq');
@@ -360,28 +426,36 @@ function ringLine(r,color,opacity=THEME.op.ring,y=0,seg=128){
   const pts=[];for(let i=0;i<=seg;i++){const a=i/seg*Math.PI*2;pts.push(new THREE.Vector3(Math.cos(a)*r,y,Math.sin(a)*r));}
   return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color,transparent:true,opacity}));
 }
+/* dual-layer memory points: crisp alpha-tested data discs + a soft bloom
+   child sharing the SAME geometry — status color stays legible under overlap */
 function softPoints(n,fill){
   const pos=new Float32Array(n*3),col=new Float32Array(n*3);
   for(let i=0;i<n;i++){const {p,c}=fill(i);pos.set(p,i*3);col.set([c.r,c.g,c.b],i*3);}
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.BufferAttribute(pos,3));
   g.setAttribute('color',new THREE.BufferAttribute(col,3));
-  return new THREE.Points(g,new THREE.PointsMaterial({size:THEME.pt.size,map:CORE,vertexColors:true,transparent:true,
-    opacity:.98,alphaTest:.05,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true}));
+  const data=new THREE.Points(g,new THREE.PointsMaterial({size:THEME.pt.size,map:CORE,vertexColors:true,
+    alphaTest:.5,transparent:false,depthWrite:true,sizeAttenuation:true}));
+  const bloom=new THREE.Points(g,new THREE.PointsMaterial({size:THEME.pt.glowSize,map:SOFT,vertexColors:true,
+    transparent:true,opacity:.3,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true}));
+  data.add(bloom);  /* child: rotation/color updates ride along; raycast hits the parent only */
+  return data;
 }
+const colFor=s=>{const c=new THREE.Color(CLR[s]);if(s==='held')c.multiplyScalar(.62);return c;};
 function disposeGroup(g){g.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});}
 
 function FlowField(group){
   const flows=[],bursts=[];
   return {
-    send(from,toGetter,color,{arc=5,dur=THEME.dur.flow,onArrive,shape=CORE}={}){
+    count(){return flows.length;},
+    send(from,toGetter,color,{arc=5,dur=THEME.dur.flow,onArrive,shape=CORE,burstScale=1}={}){
       const src=from.clone();
       const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
         new Array(25).fill(0).map(()=>src.clone())),
         new THREE.LineBasicMaterial({color,transparent:true,opacity:0}));
       const head=glow(color,THEME.pt.pulse,1,shape);const tail=glow(color,1,.55);
       group.add(line,head,tail);
-      flows.push({src,toGetter,t:0,dur,head,tail,line,onArrive,color,arc});
+      flows.push({src,toGetter,t:0,dur,head,tail,line,onArrive,color,arc,burstScale});
     },
     burst(pos,color,s=3){const g=glow(color,s,1,HALO);g.position.copy(pos);group.add(g);bursts.push({g,t:0});},
     frame(dt){
@@ -390,19 +464,23 @@ function FlowField(group){
         const dst=f.toGetter();
         const mid=f.src.clone().add(dst).multiplyScalar(.5);mid.y+=f.arc;
         const curve=new THREE.QuadraticBezierCurve3(f.src,mid,dst);
-        const k=Math.min(f.t,1);
+        const kr=Math.min(f.t,1);
+        const k=kr<.5?2*kr*kr:1-Math.pow(-2*kr+2,2)/2;  /* easeInOutQuad */
         f.head.position.copy(curve.getPoint(k));
         f.tail.position.copy(curve.getPoint(Math.max(0,k-.07)));
+        if(k>.85){const sw=1+((k-.85)/.15)*.5;f.head.scale.setScalar(THEME.pt.pulse*sw);
+          f.tail.material.opacity=.55*(1-(k-.85)/.15);}
         const attr=f.line.geometry.attributes.position;
         for(let j=0;j<25;j++){curve.getPoint(j/24,tmp);attr.setXYZ(j,tmp.x,tmp.y,tmp.z);}
         attr.needsUpdate=true;
         f.line.material.opacity=.3*Math.sin(Math.PI*k);
         if(f.t>=1){group.remove(f.head,f.tail,f.line);f.line.geometry.dispose();f.line.material.dispose();
           f.head.material.dispose();f.tail.material.dispose();
-          this.burst(dst,f.color,2.4);
+          if(f.burstScale>0)this.burst(dst,f.color,2.4*f.burstScale);
           if(f.onArrive)f.onArrive();flows.splice(i,1);}}
       for(let i=bursts.length-1;i>=0;i--){const b=bursts[i];b.t+=dt*2.2;
-        b.g.scale.setScalar(b.g.scale.x*(1+dt*3));b.g.material.opacity=Math.max(0,1-b.t);
+        const e=1-Math.pow(1-Math.min(b.t,1),3);  /* easeOutCubic bloom */
+        b.g.scale.setScalar(b.g.scale.x*(1+dt*(1.6+e)));b.g.material.opacity=Math.max(0,1-e);
         if(b.t>=1){group.remove(b.g);b.g.material.dispose();bursts.splice(i,1);}}
     }
   };
@@ -413,21 +491,30 @@ const hud=document.getElementById('hud'),legend=document.getElementById('legend'
       panel=document.getElementById('panel'),stepsEl=document.getElementById('steps'),
       hint=document.getElementById('hint'),fade=document.getElementById('fade'),
       crumb=document.getElementById('crumbMode'),btnBack=document.getElementById('btnBack'),
-      labelsEl=document.getElementById('labels');
+      labelsEl=document.getElementById('labels'),tourCap=document.getElementById('tourCap'),
+      tourSkip=document.getElementById('tourSkip');
+const tip=document.createElement('div');tip.id='tip';tip.className='lbl';tip.style.display='none';labelsEl.appendChild(tip);
 const ONE_LINER='<span class="one">OML<i> — every desk memory is a claim: held → reviewed by a non-author → visible.</i></span>';
 const TICKER_KEY='<span style="color:var(--fg-faint)">dim ticker lines = read log / refusals — not journal events</span>';
-function setLegend(items){legend.innerHTML=ONE_LINER+items.map(([c,t])=>`<span><i class="sw" style="background:${c}"></i>${t}</span>`).join('')+TICKER_KEY;
+function setLegend(items){legend.innerHTML=ONE_LINER+items.map(it=>
+  it.grp?`<span class="grp">${it.grp}</span>`:`<span><i class="sw" style="background:${it[0]}"></i>${it[1]}</span>`).join('')+TICKER_KEY;
   legend.onclick=()=>legend.classList.toggle('open');}
 function setHud(html){hud.innerHTML=html;}
-function clearLabels(){labelsEl.innerHTML='';}
+function clearLabels(){labelsEl.innerHTML='';labelsEl.appendChild(tip);}
 function statusChip(s){
   const map={held:['held','--held'],prom:['promoted','--promoted'],sup:['superseded','--superseded'],
              dem:['demoted','--demoted'],ers:['erased','--superseded'],rej:['rejected','--rejected'],sim:['simulation','--sim']};
   const [t,v]=map[s]||[s,'--fg-dim'];
   return `<span class="chip" style="color:var(${v});border:1px solid color-mix(in srgb,var(${v}) 45%,transparent)">${t}</span>`;
 }
-/* the claim inspector — any mode hands it a claim record */
-function showClaim(cl){
+
+/* ═══ selection that holds: one marker, a live inspector ═════════════════ */
+let sel=null;
+const selMarker=glow(0xffffff,1.3,.9,RING);selMarker.visible=false;
+function clearSelection(){sel=null;selMarker.visible=false;panel.hidden=true;}
+function showClaim(cl,getWorldPos){
+  sel=getWorldPos?{cl,getWorldPos}:null;
+  selMarker.visible=!!sel;
   panel.innerHTML=`<button class="x" id="px">✕</button>
     <div class="head"><h4>${cl.key} ${statusChip(cl.status)}</h4>
     <div class="crew">wa:${cl.wa} · by ${cl.author}</div></div>
@@ -439,23 +526,28 @@ function showClaim(cl){
         ${cl.seq?`<tr><td>journalled</td><td class="mono">seq ${cl.seq}</td></tr>`:''}
         ${cl.supersedes?`<tr><td>supersedes</td><td class="mono">${cl.supersedes}</td></tr>`:''}
       </table>
-      ${cl.history.length?`<div class="hist">${cl.history.slice(-4).map(h=>`<div>seq ${h.seq} · <span class="k">${h.ev}</span></div>`).join('')}</div>`:''}
+      <div class="hist" id="selHist">${cl.history.slice(-4).map(h=>`<div>seq ${h.seq} · <span class="k">${h.ev}</span></div>`).join('')}</div>
       <div class="docsrow">a claim under test — <a href="../concepts/">concepts</a> · <a href="../architecture/admission/">admission</a></div>
     </div>`;
   panel.hidden=false;
-  document.getElementById('px').onclick=()=>panel.hidden=true;
+  document.getElementById('px').onclick=clearSelection;
 }
-function note(cl,ev){cl.history.push({seq:journal.seq,ev});}
+function note(cl,ev){cl.history.push({seq:journal.seq,ev});
+  if(sel&&sel.cl===cl){const h=document.getElementById('selHist');
+    if(h)h.innerHTML=cl.history.slice(-4).map(x=>`<div>seq ${x.seq} · <span class="k">${x.ev}</span></div>`).join('');}}
 
 /* ═══ scene + mode manager ════════════════════════════════════════════════ */
 const scene=new THREE.Scene();
 scene.fog=new THREE.FogExp2(0x04060d,THEME.fog);
+scene.add(selMarker);
 { const n=460,p=new Float32Array(n*3);for(let i=0;i<n;i++)p.set([rnd(-115,115),rnd(-62,62),rnd(-115,115)],i*3);
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));
-  scene.add(new THREE.Points(g,new THREE.PointsMaterial({size:.3,map:SOFT,color:0x55639a,transparent:true,opacity:.65,depthWrite:false})));
-  [[0x101b40,-60,10,-70,95],[0x1b1440,70,-15,-50,115],[0x0b2438,20,25,80,105],[0x140f2e,-75,-20,60,90]]
-    .forEach(([c,x,y,z,s])=>{const nb=new THREE.Sprite(new THREE.SpriteMaterial({map:SOFT,color:c,transparent:true,opacity:.34,depthWrite:false}));
-      nb.position.set(x,y,z);nb.scale.setScalar(s);scene.add(nb);}); }
+  const sm=new THREE.PointsMaterial({size:.3,map:SOFT,color:0x55639a,transparent:true,opacity:.6,depthWrite:false});
+  sm.fog=false;   /* the backdrop IS the depth cue — exempt it from fog */
+  scene.add(new THREE.Points(g,sm));
+  const nm=new THREE.SpriteMaterial({map:nebulaTexture(),transparent:true,opacity:.55,depthWrite:false});
+  nm.fog=false;
+  const nb=new THREE.Sprite(nm);nb.position.set(8,-6,-80);nb.scale.set(190,190,1);scene.add(nb); }
 
 let mode=null,modeName='';
 function switchMode(name,arg,flyFrom){
@@ -463,7 +555,7 @@ function switchMode(name,arg,flyFrom){
     fade.classList.add('on');
     setTimeout(()=>{
       if(mode){mode.exit();disposeGroup(mode.group);scene.remove(mode.group);}
-      panel.hidden=true;stepsEl.hidden=true;clearLabels();
+      clearSelection();stepsEl.hidden=true;clearLabels();
       mode=MODES[name](arg);modeName=name;
       crumb.textContent=name==='universe'?'universe'
         :name==='reactor'?`universe ▸ ${arg.name} · admission pipeline`
@@ -474,14 +566,20 @@ function switchMode(name,arg,flyFrom){
       setTimeout(()=>fade.classList.remove('on'),60);
     },220);
   };
-  if(flyFrom){ flyTo(flyFrom, Math.max(st.min,10), doSwap); } else doSwap();
+  if(flyFrom&&!REDUCED){ flyTo(flyFrom, Math.max(st.min,10)); setTimeout(doSwap,580); }
+  else doSwap();
 }
 btnBack.onclick=()=>switchMode('universe');
-addEventListener('keydown',e=>{if(e.key==='Escape'&&modeName!=='universe')switchMode('universe');});
+addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  if(!panel.hidden){clearSelection();return;}       /* Esc layers: panel → mode */
+  if(modeName!=='universe')switchMode('universe');
+});
 
 const ray=new THREE.Raycaster(),mvec=new THREE.Vector2();
 ray.params.Points={threshold:.6};
 function castAt(x,y){
+  ray.params.Points.threshold=Math.min(1.4,Math.max(.5,.6*(st.radius/35)));  /* aim assist scales with zoom */
   const b=canvas.getBoundingClientRect();
   mvec.set(((x-b.left)/b.width)*2-1,-((y-b.top)/b.height)*2+1);
   ray.setFromCamera(mvec,camera);
@@ -496,41 +594,59 @@ function hoverCheck(){
   castAt(hoverXY[0],hoverXY[1]);
   const hit=ray.intersectObjects(mode.hoverables());
   canvas.classList.toggle('hover',hit.length>0);
-  if(mode.onHover)mode.onHover(hit.length?hit[0].object:null);
+  if(mode.onHover)mode.onHover(hit.length?hit[0]:null);
+}
+function showTip(html){
+  if(!html||!hoverXY){tip.style.display='none';return;}
+  tip.innerHTML=html;tip.style.display='';
+  tip.style.transform=`translate3d(${hoverXY[0]+12}px,${hoverXY[1]-14}px,0)`;
 }
 
 /* ════════════════════════ MODE: universe ════════════════════════════════ */
 function Universe(){
   const group=new THREE.Group();
+  const system=new THREE.Group();system.rotation.x=.14;group.add(system); /* the tilt that makes it a place */
   const flow=FlowField(group);
   const timers=[];
+  const fading=[]; /* ttl lines (supersession threads) */
+
+  /* floor: a quiet instrument surface under the orbits */
+  { const grid=new THREE.PolarGridHelper(40,8,4,48,0x1e2745,0x11182e);
+    grid.position.y=-7;grid.material.transparent=true;grid.material.opacity=.35;system.add(grid);
+    const disc=new THREE.Mesh(new THREE.CircleGeometry(40,48),
+      new THREE.MeshBasicMaterial({color:0x070b16,transparent:true,opacity:.5}));
+    disc.rotation.x=-Math.PI/2;disc.position.y=-7.05;system.add(disc); }
 
   const core=new THREE.Group();
   const coreHit=new THREE.Mesh(new THREE.SphereGeometry(2.2,12,10),new THREE.MeshBasicMaterial({visible:false}));
   core.add(coreHit, glow(0xffffff,3.2,.95), glow(0x7aa2ff,7,.4,HALO), glow(0x4fd8c0,11,.13,HALO));
   group.add(core);
 
-  WAS.forEach(w=>{
-    w.ring=ringLine(w.r,LADDER[w.ladder],THEME.op.ring,w.y);
-    group.add(w.ring);
+  const reveal={t:REDUCED?99:0, done:REDUCED};   /* staged reveal clock */
+
+  /* pooled held/erased markers: shared materials, category by FORM */
+  const MARK_HELD=new THREE.SpriteMaterial({map:RING,color:0xffffff,transparent:true,opacity:.9,blending:THREE.AdditiveBlending,depthWrite:false});
+  const MARK_ERS=new THREE.SpriteMaterial({map:RING,color:0x64748b,transparent:true,opacity:.5,blending:THREE.AdditiveBlending,depthWrite:false});
+
+  WAS.forEach((w,wi)=>{
+    const frozen=w.ladder==='validated/frozen';
+    w.ring=ringLine(w.r,LADDER[w.ladder],frozen?.14:THEME.op.ring,w.y);
+    system.add(w.ring);
     w.group=new THREE.Group();w.angle=w.angle??rnd(0,Math.PI*2);
     w.hub=new THREE.Mesh(new THREE.SphereGeometry(1.6,12,10),new THREE.MeshBasicMaterial({visible:false}));
-    w.glowMain=glow(LADDER[w.ladder],THEME.pt.hubGlow,.95);
-    w.glowHalo=glow(LADDER[w.ladder],THEME.pt.hubHalo,THEME.op.halo,HALO);
+    w.glowMain=glow(LADDER[w.ladder],THEME.pt.hubGlow,frozen?.6:.95);
+    w.glowHalo=glow(LADDER[w.ladder],THEME.pt.hubHalo,frozen?.1:THEME.op.halo,HALO);
     w.group.add(w.hub,w.glowMain,w.glowHalo);
-    if(w.ladder==='validated/frozen') w.cage=makeCage(w);
-    /* memories: a REAL claim record behind every particle */
+    if(frozen) w.cage=makeCage(w);
     w.statuses=[];w.claims=[];
     w.pts=softPoints(w.n,()=> {
-      const a=rnd(0,Math.PI*2),rr=rnd(1.4,3.0),yy=rnd(-.9,.9);
+      const a=rnd(0,Math.PI*2),rr=rnd(1.9,3.2),yy=rnd(-.9,.9);
       const s=Math.random()<.6?'prom':Math.random()<.55?'held':'sup';
       w.statuses.push(s);
       const cl=mkClaim(w,s);cl.seq=1+(Math.random()*journal.seq|0);
-      if(s==='prom')cl.history.push({seq:cl.seq,ev:'lifecycle.promote'});
-      else if(s==='sup')cl.history.push({seq:cl.seq,ev:'lifecycle.supersede'});
-      else cl.history.push({seq:cl.seq,ev:'submission.remember'});
+      cl.history.push({seq:cl.seq,ev:s==='prom'?'lifecycle.promote':s==='sup'?'lifecycle.supersede':'submission.remember'});
       w.claims.push(cl);
-      return {p:[Math.cos(a)*rr,yy,Math.sin(a)*rr],c:new THREE.Color(CLR[s])};
+      return {p:[Math.cos(a)*rr,yy,Math.sin(a)*rr],c:colFor(s)};
     });
     w.group.add(w.pts);
     w.agents=[];
@@ -545,7 +661,7 @@ function Universe(){
         const cl=mkClaim(w,s);cl.wa=w.child;cl.seq=1+(Math.random()*journal.seq|0);
         cl.history.push({seq:cl.seq,ev:s==='prom'?'lifecycle.promote':'submission.remember'});
         w.childClaims.push(cl);
-        return {p:[Math.cos(a)*rr,rnd(-.3,.3),Math.sin(a)*rr],c:new THREE.Color(CLR[s])};
+        return {p:[Math.cos(a)*rr,rnd(-.3,.3),Math.sin(a)*rr],c:colFor(s)};
       });
       w.childGroup.add(w.childPts);
       w.group.add(w.childGroup);
@@ -557,7 +673,9 @@ function Universe(){
       w.simGroup=new THREE.Group();
       const fence=new THREE.Mesh(new THREE.SphereGeometry(1.7,18,14),
         new THREE.MeshBasicMaterial({color:CLR.sim,transparent:true,opacity:THEME.op.fence,side:THREE.DoubleSide}));
-      w.simGroup.add(fence, glow(CLR.sim,2.2,.5,HALO));
+      const shell=new THREE.Mesh(new THREE.IcosahedronGeometry(1.78,1),
+        new THREE.MeshBasicMaterial({color:CLR.sim,wireframe:true,transparent:true,opacity:.22}));
+      w.simGroup.add(fence, shell, glow(CLR.sim,2.2,.5,HALO));
       w.simClaims=[];
       w.simPts=softPoints(9,()=> {
         const a=rnd(0,Math.PI*2),rr=rnd(.3,1.1);
@@ -576,14 +694,18 @@ function Universe(){
       labelsEl.appendChild(w.simLbl);
     }
     w.promotions=0; w.pendingSupersede=null; w.ceremony=null;
-    group.add(w.group);
+    w.spin=w.r; /* fixed, varied phase when motion is reduced */
+    w.revealAt=.35+wi*.22; w.revealK=REDUCED?1:0;
+    if(!REDUCED)w.group.scale.setScalar(.001);
+    system.add(w.group);
     w.lbl=document.createElement('div');w.lbl.className='lbl';
+    if(!REDUCED)w.lbl.style.opacity='0';
     labelsEl.appendChild(w.lbl);updateLbl(w);
     refreshMarks(w);
   });
   function makeCage(w){
     const cage=new THREE.Mesh(new THREE.SphereGeometry(1.5,10,8),
-      new THREE.MeshBasicMaterial({color:0xdbe9ff,wireframe:true,transparent:true,opacity:.45}));
+      new THREE.MeshBasicMaterial({color:0xb6c5de,wireframe:true,transparent:true,opacity:.4}));
     w.group.add(cage);return cage;
   }
   function updateLbl(w){
@@ -594,58 +716,69 @@ function Universe(){
   coreLbl.innerHTML=`universe root<small>permanently committed · no claims live here<br>journal: per-tenant signed chain — click to verify</small>`;
   labelsEl.appendChild(coreLbl);
 
+  /* standing structure: solid cool = relationships, dashed pale gold = permission */
   const edgeLines=RELATED.map(e=>{
     const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
       new Array(13).fill(0).map(()=>new THREE.Vector3())),
-      new THREE.LineBasicMaterial({color:CLR.gold,transparent:true,opacity:THEME.op.edge}));
-    group.add(l);return {e,l};
+      new THREE.LineBasicMaterial({color:CLR.edge,transparent:true,opacity:THEME.op.edge}));
+    system.add(l);return {a:e.src,b:e.dst,l,dashed:false};
   });
+  const laneLines=[];
+  function addLane(reader,source){
+    const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+      new Array(13).fill(0).map(()=>new THREE.Vector3())),
+      new THREE.LineDashedMaterial({color:CLR.grant,dashSize:.7,gapSize:1.1,transparent:true,opacity:THEME.op.lane}));
+    system.add(l);laneLines.push({a:source,b:reader,l,dashed:true});
+  }
+  WAS.forEach(w=>w.grants.forEach(g=>addLane(w.name,g)));
   const tmpV=new THREE.Vector3();
-  function updateEdges(){
-    edgeLines.forEach(({e,l})=>{
-      const a=byName(e.src).group.position,b=byName(e.dst).group.position;
-      const mid=a.clone().add(b).multiplyScalar(.5);mid.y+=2.5;
-      const curve=new THREE.QuadraticBezierCurve3(a,mid,b);
+  function updateCurves(){
+    edgeLines.concat(laneLines).forEach(({a,b,l,dashed})=>{
+      const pa=byName(a).group.position,pb=byName(b).group.position;
+      const mid=pa.clone().add(pb).multiplyScalar(.5);mid.y+=2.5;
+      const curve=new THREE.QuadraticBezierCurve3(pa,mid,pb);
       const attr=l.geometry.attributes.position;
       for(let j=0;j<13;j++){curve.getPoint(j/12,tmpV);attr.setXYZ(j,tmpV.x,tmpV.y,tmpV.z);}
       attr.needsUpdate=true;
+      if(dashed)l.computeLineDistances();
     });
   }
 
-  setHud(`<span class="tag">tenant <b>${journal.tenant}</b> · writes ride <b>/v1</b>, ceremonies ride <b>/v2</b> · chain head <b class="num" id="hudSeq">${journal.seq}</b></span>
-          <span class="tag" id="hudStory">desk crews recall where their grants reach; remember into their own area</span>
-          <button id="goPipe">admission pipeline ▸</button>
-          <button id="goChain">journal chain ▸</button>`);
+  setHud(`<span class="tag">tenant <b>${journal.tenant}</b> · writes on <b>/v1</b>, ceremonies on <b>/v2</b> · chain head <b class="num" id="hudSeq">${journal.seq}</b></span>
+          <span class="tag" id="hudStory">desk crews recall where their grants reach · remember into their own area</span>
+          <button id="goPipe" class="cta">admission pipeline ▸</button>
+          <button id="goChain" class="cta">journal chain ▸</button>`);
   document.getElementById('goPipe').onclick=()=>{
     const w=byName('ref-taxonomy').ladder!=='validated/frozen'?byName('ref-taxonomy')
           :WAS.find(x=>x.ladder!=='validated/frozen')||WAS[0];
     switchMode('reactor',w,w.group.position.clone());};
   document.getElementById('goChain').onclick=()=>switchMode('ledger',null,core.position.clone());
-  setLegend([['var(--recall)','◌ recall (read, along grants)'],['var(--remember)','● remember → held'],
-             ['#fff','◌ white ring = held, under review'],['var(--promoted)','● promoted'],
-             ['var(--superseded)','superseded'],['var(--demoted)','demoted'],
-             ['var(--sim)','backtest rows (fenced)'],['var(--gold)','◆ grant / ratify · related edge'],
-             ['var(--lad-dev)','ladder: development'],['var(--lad-com)','committed'],['var(--lad-val)','validated/frozen']]);
+  setLegend([
+    {grp:'traffic'},['var(--recall)','◌ recall'],['var(--remember)','● remember → held'],['var(--review)','● review verdict'],
+    {grp:'state'},['#fff','◌ ring = held'],['var(--promoted)','● promoted'],['var(--demoted)','demoted'],['var(--sim)','backtest (fenced)'],
+    {grp:'structure'},['var(--grant)','◆ grant lane'],['var(--edge)','related edge'],['var(--lad-val)','frozen archive']]);
   hint.textContent=matchMedia('(pointer:coarse)').matches
     ?'drag to orbit · pinch to zoom · tap a memory, a workarea, or the core'
     :'drag to orbit · scroll to zoom · click a memory, a workarea, or the core';
 
-  /* held memories carry a white RING marker — the category reads by form,
-     not only by color */
   function refreshMarks(w){
-    /* w.group is rebuilt on every Universe entry — a stale marks group would
-       render into an orphan and the held rings would silently vanish */
-    if(!w.marks||w.marks.parent!==w.group){w.marks=new THREE.Group();w.group.add(w.marks);}
-    w.marks.children.forEach(m=>m.material.dispose());w.marks.clear();
+    if(!w.marks||w.marks.parent!==w.pts){w.marks=new THREE.Group();w.pts.add(w.marks);} /* child of pts: spins for free */
+    w.marks.clear();  /* shared materials — nothing to dispose */
     const attr=w.pts.geometry.attributes.position;
-    w.statuses.forEach((s,i)=>{if(s!=='held')return;
-      const m=glow(0xffffff,.66,.9,RING);
+    w.statuses.forEach((s,i)=>{
+      if(s!=='held'&&s!=='ers')return;
+      const m=new THREE.Sprite(s==='held'?MARK_HELD:MARK_ERS);
+      m.scale.setScalar(.66);
       m.position.set(attr.getX(i),attr.getY(i),attr.getZ(i));
       w.marks.add(m);});
   }
+  function particleWorldPos(w,i){
+    const v=new THREE.Vector3();
+    return ()=>{v.fromBufferAttribute(w.pts.geometry.attributes.position,i);return w.pts.localToWorld(v.clone());};
+  }
   function setParticle(w,i,status){
     w.statuses[i]=status;w.claims[i].status=status;
-    const c=new THREE.Color(CLR[status]);
+    const c=colFor(status);
     w.pts.geometry.attributes.color.set([c.r,c.g,c.b],i*3);
     w.pts.geometry.attributes.color.needsUpdate=true;
     refreshMarks(w);
@@ -660,37 +793,48 @@ function Universe(){
   const activeAreas=()=>WAS.filter(x=>x.ladder!=='validated/frozen');
   const grantedSources=w=>w.grants.map(byName).filter(Boolean);
 
-  /* choreography — unchanged mechanics, now acting on real claim records */
+  /* choreography: at most two flights speak at once; every flight is a
+     sentence — ask → serve, remember → held, verdict → flip             */
   function act(){
+    if(flow.count()>=2)return;
     const w=pick(activeAreas());
     const src=grantedSources(w).length?pick(grantedSources(w)):null;
     const roll=Math.random();
     if(roll<.34 && src){
+      /* recall = ask (crew → source) then serve (source → crew) */
+      const a=pick(w.agents);
       const target=pick(src.claims.filter(c=>c.status==='prom'))||pick(src.claims);
-      flow.send(src.group.position,()=>w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:THEME.dur.flow,shape:RING});
-      journal.emit('recall',`${w.crew} ← wa:${src.name} · steering 1 → hits ${2+(Math.random()*6|0)} · top: ${target.key}`,'read');
+      flow.send(w.group.position.clone().add(a.position),()=>src.group.position.clone(),CLR.recall,
+        {arc:3,dur:.7,shape:CORE,burstScale:0,onArrive:()=>{
+          journal.emit('recall',`${w.crew} ← wa:${src.name} · steering 1 → hits ${2+(Math.random()*6|0)} · top: ${target.key}`,'read');
+          flow.send(src.group.position,()=>w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:THEME.dur.flow,shape:RING,burstScale:0});
+        }});
     } else if(roll<.40 && src){
       journal.emit('submission.remember',`idempotent replay — stored receipt returned`,'note');
     } else if(roll<.62){
       const a=pick(w.agents);
-      flow.send(w.group.position.clone().add(a.position),()=>w.group.position.clone(),CLR.remember,{arc:1.6,dur:THEME.dur.remember,
+      flow.send(w.group.position.clone().add(a.position),()=>w.group.position.clone(),CLR.remember,{arc:1.6,dur:THEME.dur.remember,burstScale:.7,
         onArrive:()=>{const i=addParticle(w,'held');
           const cl=w.claims[i];
           cl.seq=journal.emit('submission.remember',`${cl.key} · wa:${w.name} · by ${w.crew}`);
           note(cl,'submission.remember');}});
     } else if(roll<.74 && src && !w.pendingSupersede){
-      flow.send(src.group.position,()=>w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:1.4,shape:RING,
-        onArrive:()=>{
-          const pred=w.statuses.indexOf('prom');
-          if(pred>=0){const succ=addParticle(w,'held',pred);
-            const sc=w.claims[succ], pc=w.claims[pred];
-            sc.supersedes=pc.key;
-            let t2=pc.text.replace(/\d+\.\d+/, m=>px(+m*.97,+m*1.03, (m.split('.')[1]||'').length||2));
-            if(t2===pc.text)t2=pc.text+' — revised';
-            sc.text=t2;
-            w.pendingSupersede={pred,succ,predCl:pc,succCl:sc};
-            sc.seq=journal.emit('submission.remember',`supersede proposal · ${sc.key} derives_from ${pc.key} · evidence ← wa:${src.name} · successor held`);
-            note(sc,'submission.remember (supersede proposal)');}
+      const a=pick(w.agents);
+      flow.send(w.group.position.clone().add(a.position),()=>src.group.position.clone(),CLR.recall,
+        {arc:3,dur:.7,shape:CORE,burstScale:0,onArrive:()=>{
+          flow.send(src.group.position,()=>w.group.position.clone(),CLR.recall,{arc:6,dur:REDUCED?2.6:1.4,shape:RING,burstScale:0,
+            onArrive:()=>{
+              const pred=w.statuses.indexOf('prom');
+              if(pred>=0){const succ=addParticle(w,'held',pred);
+                const sc=w.claims[succ], pc=w.claims[pred];
+                sc.supersedes=pc.key;
+                let t2=pc.text.replace(/\d+\.\d+/, m=>px(+m*.97,+m*1.03, (m.split('.')[1]||'').length||2));
+                if(t2===pc.text)t2=pc.text+' — revised';
+                sc.text=t2;
+                w.pendingSupersede={pred,succ,predCl:pc,succCl:sc};
+                sc.seq=journal.emit('submission.remember',`supersede proposal · ${sc.key} derives_from ${pc.key} · evidence ← wa:${src.name} · successor held`);
+                note(sc,'submission.remember (supersede proposal)');}
+            }});
         }});
     } else if(roll<.92){
       promoteBeat(w);
@@ -699,43 +843,63 @@ function Universe(){
       if(i>=0 && Math.random()<.7){setParticle(w,i,'dem');
         journal.emit('lifecycle.demote',`${w.claims[i].key} · wa:${w.name} · bytes kept`);note(w.claims[i],'lifecycle.demote');}
       else { const f=byName('compliance-vault'); const j=f.statuses.indexOf('dem')>=0?f.statuses.indexOf('dem'):f.statuses.indexOf('prom');
-        if(j>=0){f.statuses[j]='ers';f.claims[j].status='ers';
-          const c=new THREE.Color(CLR.ers);
-          f.pts.geometry.attributes.color.set([c.r,c.g,c.b],j*3);f.pts.geometry.attributes.color.needsUpdate=true;
+        if(j>=0){setParticle(f,j,'ers'); /* tombstone ring appears: record provable, body gone */
           journal.emit('lifecycle.erase',`${f.claims[j].key} · wa:compliance-vault · DEK destroyed · digests + signature intact`);
           note(f.claims[j],'lifecycle.erase');} }
     }
   }
+  /* the verdict is visible: a review pulse touches the claim, THEN it flips */
+  function reviewThen(w,getPos,flip){
+    const a=pick(w.agents);
+    flow.send(w.group.position.clone().add(a.position),getPos,CLR.review,
+      {arc:.9,dur:.7,shape:CORE,burstScale:.6,onArrive:flip});
+  }
   function promoteBeat(w){
     if(w.pendingSupersede){
       const {pred,succ,predCl,succCl}=w.pendingSupersede;w.pendingSupersede=null;
-      /* the mock may have reused these slots meanwhile — verify the records
-         still stand before flipping any tip or naming any claim */
       if(w.claims[succ]===succCl&&w.statuses[succ]==='held'){
-        setParticle(w,succ,'prom');
-        flow.burst(w.group.position.clone(),CLR.prom,3);
-        journal.emit('lifecycle.promote',`${succCl.key} ratified · wa:${w.name} · k=${w.k}`);note(succCl,'lifecycle.promote');
-        if(w.claims[pred]===predCl&&w.statuses[pred]==='prom'){
-          setParticle(w,pred,'sup');
-          journal.emit('lifecycle.supersede',`tip: ${predCl.key} → ${succCl.key} · ratification_event_id ev_${hex(8)}`);
-          note(predCl,'lifecycle.supersede (tip moved)');
-        }
+        reviewThen(w,particleWorldPos(w,succ),()=>{
+          setParticle(w,succ,'prom');
+          flow.burst(w.group.position.clone(),CLR.prom,3);
+          journal.emit('lifecycle.promote',`${succCl.key} ratified · wa:${w.name} · k=${w.k}`);note(succCl,'lifecycle.promote');
+          if(w.claims[pred]===predCl&&w.statuses[pred]==='prom'){
+            setParticle(w,pred,'sup');
+            journal.emit('lifecycle.supersede',`tip: ${predCl.key} → ${succCl.key} · ratification_event_id ev_${hex(8)}`);
+            note(predCl,'lifecycle.supersede (tip moved)');
+            lineageThread(w,pred,succ);
+          }
+          w.promotions++;maybeCeremony(w);
+        });
       }
     } else {
       const i=w.statuses.indexOf('held');
       if(i<0)return;
-      setParticle(w,i,'prom');flow.burst(w.group.position.clone(),CLR.prom,3);
-      const cl=w.claims[i];
-      journal.emit('lifecycle.promote',`${w.vocab?`term ${pick(TERMS[w.name])} · `:''}${cl.key} · wa:${w.name} · k=${w.k} · ratification ev_${hex(8)}`);
-      note(cl,'lifecycle.promote');
-      if(w.vocab&&Math.random()<.25){
-        const d=w.statuses.findIndex((s,idx)=>s==='prom'&&idx!==i);
-        if(d>=0){setParticle(w,d,'sup');
-          journal.emit('lifecycle.supersede',`term deprecated · oml:replaced_by → ${pick(TERMS[w.name])}-v2`);
-          note(w.claims[d],'lifecycle.supersede (deprecated)');}
-      }
+      reviewThen(w,particleWorldPos(w,i),()=>{
+        if(w.statuses[i]!=='held')return;
+        setParticle(w,i,'prom');flow.burst(w.group.position.clone(),CLR.prom,3);
+        const cl=w.claims[i];
+        journal.emit('lifecycle.promote',`${w.vocab?`term ${pick(TERMS[w.name])} · `:''}${cl.key} · wa:${w.name} · k=${w.k} · ratification ev_${hex(8)}`);
+        note(cl,'lifecycle.promote');
+        if(w.vocab&&Math.random()<.25){
+          const d=w.statuses.findIndex((s,idx)=>s==='prom'&&idx!==i);
+          if(d>=0){setParticle(w,d,'sup');
+            journal.emit('lifecycle.supersede',`term deprecated · oml:replaced_by → ${pick(TERMS[w.name])}-v2`);
+            note(w.claims[d],'lifecycle.supersede (deprecated)');}
+        }
+        w.promotions++;maybeCeremony(w);
+      });
     }
-    w.promotions++;maybeCeremony(w);
+  }
+  /* a visible thread from predecessor to successor, fading over 6s */
+  function lineageThread(w,pred,succ){
+    const attr=w.pts.geometry.attributes.position;
+    const a=new THREE.Vector3().fromBufferAttribute(attr,pred);
+    const b=new THREE.Vector3().fromBufferAttribute(attr,succ);
+    const mid=a.clone().add(b).multiplyScalar(.5);mid.y+=1.2;
+    const curve=new THREE.CatmullRomCurve3([a,mid,b]);
+    const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(16)),
+      new THREE.LineBasicMaterial({color:CLR.gold,transparent:true,opacity:.5}));
+    w.pts.add(l);fading.push({l,t:0,parent:w.pts});
   }
   function maybeCeremony(w){
     if(w.ceremony)return;
@@ -757,10 +921,10 @@ function Universe(){
     }
     w.ceremony=next;
     const [a,b2]=[w.agents[0],w.agents[1]];
-    flow.send(w.group.position.clone().add(a.position),()=>w.group.position.clone(),CLR.human,{arc:2.2,dur:1.1,
+    flow.send(w.group.position.clone().add(a.position),()=>w.group.position.clone(),CLR.human,{arc:2.2,dur:1.1,burstScale:.5,
       onArrive:()=>{
         journal.emit('workarea.status_proposed',`wa:${w.name} · ${w.ladder} → ${next} · proposer key_${hex(6)}`);
-        flow.send(w.group.position.clone().add(b2.position),()=>w.group.position.clone(),CLR.gold,{arc:2.6,dur:THEME.dur.ceremony,shape:DIA,
+        flow.send(w.group.position.clone().add(b2.position),()=>w.group.position.clone(),CLR.grant,{arc:2.6,dur:THEME.dur.ceremony,shape:DIA,burstScale:1.2,
           onArrive:()=>{
             journal.emit('workarea.status_transition',`wa:${w.name} · ${w.ladder} → ${next} · ratifier ≠ proposer (R2) · policy snapshot pinned`);
             transitionArea(w,next);
@@ -771,83 +935,172 @@ function Universe(){
   function transitionArea(w,next){
     w.ladder=next;w.promotions=0;
     const c=LADDER[next];
+    const frozen=next==='validated/frozen';
     w.glowMain.material.color.set(c);w.glowHalo.material.color.set(c);
-    group.remove(w.ring);w.ring.geometry.dispose();w.ring.material.dispose();
-    w.ring=ringLine(w.r,c,THEME.op.ring,w.y);group.add(w.ring);
+    if(frozen){w.glowMain.material.opacity=.6;w.glowHalo.material.opacity=.1;}
+    system.remove(w.ring);w.ring.geometry.dispose();w.ring.material.dispose();
+    w.ring=ringLine(w.r,c,frozen?.14:THEME.op.ring,w.y);system.add(w.ring);
     flow.burst(w.group.position.clone(),c,6);
     updateLbl(w);
-    if(next==='validated/frozen'){
+    if(frozen){
       w.cage=makeCage(w);
       WAS.filter(p=>p!==w&&p.ladder!=='validated/frozen').forEach((p,i)=>{
         timers.push(setTimeout(()=>{
           if(p.grants.includes(w.name))return;
           p.grants.push(w.name);
+          addLane(p.name,w.name);
           journal.emit('grant.issued',`reader on wa:${w.name} → key_${hex(6)} (${p.crew})`);
-          flow.send(w.group.position,()=>p.group.position.clone(),CLR.gold,{arc:7,dur:1.8,shape:DIA});
+          flow.send(w.group.position,()=>p.group.position.clone(),CLR.grant,{arc:7,dur:1.8,shape:DIA,burstScale:.8});
         },i*450));
       });
       const story=document.getElementById('hudStory');
-      if(story)story.innerHTML=`<b>${w.name}</b> froze: new writes refuse, reads serve; crews gained reader grants on it`;
+      if(story)story.innerHTML=`<b>${w.name}</b> froze: new writes refuse, reads serve · crews gained reader grants on it`;
       timers.push(setTimeout(()=>journal.emit('submission.remember',`wa:${w.name} · workarea.frozen — frozen areas serve reads, never writes`,'refuse'),2600));
     }
   }
-
-  const v=new THREE.Vector3();
-  function placeLabel(el,pos){
-    v.copy(pos).project(camera);
-    if(v.z>1){el.style.display='none';return;}
-    el.style.display='';
-    el.style.left=((v.x*.5+.5)*lastW)+'px';
-    el.style.top=((-v.y*.5+.5)*lastH)+'px';
+  /* the fence fences: periodically a non-audience read is refused at the shell */
+  let fenceAcc=0;
+  function fenceDemo(){
+    const ts=byName('trading-signals');
+    if(!ts||!ts.simGroup)return;
+    const rl=byName('risk-limits');
+    const simPos=()=>ts.group.position.clone().add(ts.simGroup.position);
+    flow.send(rl.group.position.clone(),simPos,CLR.recall,{arc:4,dur:1.1,shape:CORE,burstScale:0,
+      onArrive:()=>{
+        flow.burst(simPos(),CLR.rej,1.6);
+        journal.emit('recall',`crew:risk-officers → ${ts.sim.id} · provenance fence: key not in audience — zero rows`,'refuse');
+      }});
   }
 
-  let acc=0;
+  const v=new THREE.Vector3();
+  function placeLabel(el,pos,worldDist){
+    v.copy(pos).project(camera);
+    if(v.z>1){el.style.visibility='hidden';return;}
+    el.style.visibility='';
+    el.style.transform=`translate3d(${(v.x*.5+.5)*lastW}px,${(-v.y*.5+.5)*lastH}px,0) translate(-50%,-134%)`;
+    if(worldDist!==undefined)el.style.opacity=worldDist>55?String(Math.max(.25,1-(worldDist-55)/45)):'';
+  }
+
+  /* intro tour (first visit only, fully skippable) */
+  let tour=null;
+  function startTour(){
+    let seen=false;try{seen=sessionStorage.getItem('atlasIntro')==='1';}catch(_){}
+    if(seen||REDUCED)return;
+    try{sessionStorage.setItem('atlasIntro','1');}catch(_){}
+    const beats=[
+      [byName('market-data'),13,'Every dot is a memory — a claim a crew remembered. Click any of them.'],
+      [byName('trading-signals'),13,'The signal desk recalls market data along its grants; its backtest lives behind the purple fence.'],
+      [byName('ref-taxonomy'),13,'Nothing goes visible until a non-author reviews it — terms here also pass a human gate.'],
+      [null,30,'The core is the signed journal. Click it to verify the chain — or click anything to explore.'],
+    ];
+    let bi=0,alive=true;
+    const stop=()=>{if(!alive)return;alive=false;tour=null;
+      tourCap.hidden=true;tourSkip.hidden=true;hint.style.display='';};
+    tourSkip.hidden=false;hint.style.display='none';
+    tourSkip.onclick=stop;
+    const onDown=()=>stop();
+    canvas.addEventListener('pointerdown',onDown,{once:true});
+    const step=()=>{
+      if(!alive)return;
+      if(bi>=beats.length){stop();return;}
+      const [w,r,cap]=beats[bi++];
+      tourCap.textContent=cap;tourCap.hidden=false;
+      flyTo(w?w.group.position.clone():new THREE.Vector3(),r,null,1.1);
+      timers.push(setTimeout(step,3200));
+    };
+    tour={stop};
+    timers.push(setTimeout(step,2300)); /* after the reveal settles */
+  }
+  startTour();
+
+  let acc=0,next=1.9;
   return {
     group,cam:{theta:.6,phi:1.02,radius:35,min:10,max:92,target:new THREE.Vector3()},
     hoverables(){const hs=[coreHit,...WAS.map(w=>w.hub)];
       WAS.forEach(w=>{hs.push(w.pts);if(w.childPts)hs.push(w.childPts);if(w.simPts)hs.push(w.simPts);});
       return hs;},
-    onHover(obj){
-      WAS.forEach(w=>{w.hovered=(obj===w.hub);});
+    onHover(hit){
+      const obj=hit&&hit.object;
+      WAS.forEach(w=>{w.hovered=obj===w.hub||obj===w.pts||obj===w.childPts||obj===w.simPts;});
+      if(!hit){showTip(null);return;}
+      if(obj.geometry&&obj.geometry.type==='SphereGeometry'&&obj!==coreHit){
+        const w=WAS.find(x=>x.hub===obj);
+        showTip(w?`${w.name}<small>click for the desk card</small>`:null);
+      } else if(obj===coreHit){ showTip(`journal<small>click to verify the chain</small>`); }
+      else {
+        const w=WAS.find(x=>x.pts===obj||x.childPts===obj||x.simPts===obj);
+        const cls=w&&(obj===w.pts?w.claims:obj===w.childPts?w.childClaims:w.simClaims);
+        const cl=cls&&cls[hit.index];
+        showTip(cl?`${cl.key}<small>${cl.status==='sim'?'simulation row':cl.status} · click to read</small>`:null);
+      }
     },
-    exit(){timers.forEach(clearTimeout);clearLabels();},
+    exit(){timers.forEach(clearTimeout);if(tour)tour.stop();clearLabels();showTip(null);},
     frame(t,dt){
+      /* staged reveal: core first, then each desk blooms outward */
+      if(!reveal.done){
+        reveal.t+=dt;let all=true;
+        WAS.forEach(w=>{
+          if(reveal.t>w.revealAt&&w.revealK<1){
+            w.revealK=Math.min(1,w.revealK+dt*2);
+            const e=1-Math.pow(1-w.revealK,3);
+            w.group.scale.setScalar(Math.max(.001,e));
+            w.lbl.style.opacity=String(e*.94);
+          }
+          if(w.revealK<1)all=false;
+        });
+        if(all&&reveal.t>2){reveal.done=true;WAS.forEach(w=>{w.group.scale.setScalar(1);w.lbl.style.opacity='';});}
+      }
       WAS.forEach(w=>{
-        w.angle+=w.speed*(REDUCED?.25:1)*dt;
-        w.group.position.set(Math.cos(w.angle)*w.r,w.y,Math.sin(w.angle)*w.r);
-        w.pts.rotation.y=t*.14;
-        if(w.marks)w.marks.rotation.y=w.pts.rotation.y;
-        w.agents.forEach((a,i)=>{a._a+=dt*(.7+i*.13);
+        const damp=w.hovered?.12:1;
+        w.angle+=w.speed*(REDUCED?.25:1)*damp*dt;
+        w.group.position.set(Math.cos(w.angle)*w.r,w.y+Math.sin(t*.5+w.r)*.35*MOT,Math.sin(w.angle)*w.r);
+        const rate=.1+((w.r*7)%10)/80;               /* desynced idle spin */
+        w.spin+=dt*rate*MOT*(w.hovered?0:1);          /* hovered clouds hold still */
+        w.pts.rotation.y=w.spin;
+        w.agents.forEach((a,i)=>{a._a+=dt*(.7+i*.13)*(REDUCED?.15:1);
           a.position.set(Math.cos(a._a)*a._r,Math.sin(a._a*1.7)*.5,Math.sin(a._a)*a._r);});
-        if(w.childGroup){const ca=t*.35;w.childGroup.position.set(Math.cos(ca)*4.6,.9,Math.sin(ca)*4.6);
-          placeLabel(w.childLbl,w.group.position.clone().add(w.childGroup.position));}
-        if(w.simGroup){const sa=t*.28+2;w.simGroup.position.set(Math.cos(sa)*4.9,-1.1,Math.sin(sa)*4.9);
-          w.simKeys.forEach(kg=>{kg.position.set(Math.cos(t*.8+kg._a)*2.1,0,Math.sin(t*.8+kg._a)*2.1);});
-          placeLabel(w.simLbl,w.group.position.clone().add(w.simGroup.position));}
-        w.glowHalo.material.opacity=w.hovered?.6:THEME.op.halo+Math.sin(t*1.3+w.r)*.06;
-        placeLabel(w.lbl,w.group.position);
+        if(w.childGroup){const ca=REDUCED?2.1:t*.35;w.childGroup.position.set(Math.cos(ca)*4.6,.9,Math.sin(ca)*4.6);}
+        if(w.simGroup){const sa=REDUCED?4.2:t*.28+2;w.simGroup.position.set(Math.cos(sa)*4.9,-1.1,Math.sin(sa)*4.9);
+          w.simKeys.forEach(kg=>{kg.position.set(Math.cos(t*.8*MOT+kg._a)*2.1,0,Math.sin(t*.8*MOT+kg._a)*2.1);});}
+        const frozen=w.ladder==='validated/frozen';
+        w.glowHalo.material.opacity=w.hovered?.55:(frozen?.1:THEME.op.halo+Math.sin(t*1.3+w.r)*.06*MOT);
+      });
+      /* labels: project through the tilted system */
+      WAS.forEach(w=>{
+        const wp=new THREE.Vector3();w.group.getWorldPosition(wp);
+        placeLabel(w.lbl,wp,reveal.done?camera.position.distanceTo(wp):undefined);
+        if(w.childGroup){const cp=new THREE.Vector3();w.childGroup.getWorldPosition(cp);placeLabel(w.childLbl,cp,reveal.done?camera.position.distanceTo(cp):undefined);}
+        if(w.simGroup&&w.simLbl){const sp=new THREE.Vector3();w.simGroup.getWorldPosition(sp);placeLabel(w.simLbl,sp,reveal.done?camera.position.distanceTo(sp):undefined);}
       });
       placeLabel(coreLbl,core.position);
-      updateEdges();
+      updateCurves();
       flow.frame(dt);
-      core.rotation.y=t*.15;
-      if(LIVE&&(acc+=dt)>(REDUCED?3.4:1.9)){acc=0;act();
+      for(let i=fading.length-1;i>=0;i--){const f=fading[i];f.t+=dt/6;
+        f.l.material.opacity=.5*(1-f.t);
+        if(f.t>=1){f.parent.remove(f.l);f.l.geometry.dispose();f.l.material.dispose();fading.splice(i,1);}}
+      core.rotation.y=t*.15*MOT;
+      if(LIVE&&reveal.done&&!tour&&(acc+=dt)>next){acc=0;next=rnd(1.3,2.6)*(REDUCED?1.8:1);act();
         const ts=byName('trading-signals');
         if(ts&&ts.simGroup&&Math.random()<.3)
           journal.emit('simulation.write',`${ts.sim.id} · provenance: simulation · served only to the audience`);
+        if((fenceAcc+=1)>=12){fenceAcc=0;fenceDemo();}
       }
     },
     onClick(ray){
-      /* memories first: every particle — desk, child area, backtest row — is a readable record */
       const sets=[];
-      WAS.forEach(w=>{sets.push({pts:w.pts,claims:w.claims});
-        if(w.childPts)sets.push({pts:w.childPts,claims:w.childClaims});
-        if(w.simPts)sets.push({pts:w.simPts,claims:w.simClaims});});
+      WAS.forEach(w=>{sets.push({pts:w.pts,claims:w.claims,w});
+        if(w.childPts)sets.push({pts:w.childPts,claims:w.childClaims,w});
+        if(w.simPts)sets.push({pts:w.simPts,claims:w.simClaims,w});});
       const ptHit=ray.intersectObjects(sets.map(s=>s.pts));
       if(ptHit.length){
         const set=sets.find(s=>s.pts===ptHit[0].object);
         const cl=set&&set.claims[ptHit[0].index];
-        if(cl){showClaim(cl);return;}
+        if(cl){
+          const idx=ptHit[0].index,pts=set.pts;
+          const vv=new THREE.Vector3();
+          showClaim(cl,()=>{vv.fromBufferAttribute(pts.geometry.attributes.position,idx);return pts.localToWorld(vv.clone());});
+          return;
+        }
       }
       const hitCore=ray.intersectObject(coreHit,true);
       const hit=ray.intersectObjects(WAS.map(w=>w.hub));
@@ -856,6 +1109,7 @@ function Universe(){
         const c={held:0,prom:0,sup:0,dem:0,ers:0};w.statuses.forEach(s=>c[s]=(c[s]||0)+1);
         const prog=w.ladder==='development'?Math.min(100,w.promotions/6*100)
                   :w.ladder==='committed'?Math.min(100,Math.max(0,w.promotions)/12*100):100;
+        sel=null;selMarker.visible=false;
         panel.innerHTML=`<button class="x" id="pxw">✕</button>
           <div class="head"><h4>${w.name}</h4>
           <div class="crew">${w.crew} — writer keys with reader grants, plus dreamer keys</div></div>
@@ -870,17 +1124,17 @@ function Universe(){
           <tr><td>reads</td><td>own subtree + grants:<br>${w.grants.join(', ')||'—'}</td></tr>
           <tr><td>writes</td><td>own subtree (writer grant)</td></tr></table>
           <div class="bar"><i style="width:${prog}%"></i></div>
-          ${w.ladder==='validated/frozen'?'<div class="docsrow">frozen: serves reads; refuses new writes; demote/erase stay journalled</div>'
+          ${w.ladder==='validated/frozen'?'<div class="docsrow">frozen: serves reads · refuses new writes · demote and erase stay journalled</div>'
             :w.child&&w.ladder==='committed'?`<div class="docsrow">validate blocked while child ${w.child} is development (child-status rule)</div>`
             :'<div class="docsrow">bar = promotions since last transition (mock pacing — transitions are propose + ratify acts)</div>'}
           <div class="docsrow">docs: <a href="../architecture/workareas/">workareas</a> · <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></div>
-          ${w.ladder!=='validated/frozen'?'<button class="go" id="goReactor">enter the admission pipeline →</button>':''}</div>`;
+          ${w.ladder!=='validated/frozen'?'<button class="go cta" id="goReactor">enter the admission pipeline →</button>':''}</div>`;
         panel.hidden=false;
-        document.getElementById('pxw').onclick=()=>panel.hidden=true;
+        document.getElementById('pxw').onclick=clearSelection;
         const go=document.getElementById('goReactor');
-        if(go)go.onclick=()=>switchMode('reactor',w,w.group.position.clone());
+        if(go)go.onclick=()=>{const wp=new THREE.Vector3();w.group.getWorldPosition(wp);switchMode('reactor',w,wp);};
       } else if(hitCore.length){ switchMode('ledger',null,core.position.clone()); }
-      else panel.hidden=true;
+      else clearSelection();
     }
   };
 }
@@ -900,7 +1154,11 @@ function Reactor(w){
   const humanGate=glow(CLR.human,1.8,.95);humanGate.position.set(10,6,0);group.add(humanGate);
   group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(10,.4,0),new THREE.Vector3(10,5.4,0)]),
     new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:.22})));
-  const dreamers=[];for(let i=0;i<3;i++){const d=glow(CLR.agent,1.2,.95);d._a=i/3*Math.PI*2;group.add(d);dreamers.push(d);}
+  const dreamers=[];
+  for(let i=0;i<3;i++){const d=glow(CLR.agent,1.2,.95);d._a=i/3*Math.PI*2;
+    d.material.color.offsetHSL(i*.06,0,i*.04);  /* dreamers are individuals */
+    const dot=glow(0xffffff,.28,.9);dot.position.set(0,.8,0);d.add(dot);
+    group.add(d);dreamers.push(d);}
   const shelf=new THREE.Group();shelf.position.set(20,-1.9,0);group.add(shelf);let shelfN=0;
   const rejShelf=new THREE.Group();rejShelf.position.set(10,-1.9,-5);group.add(rejShelf);let rejN=0;
   const claims=new Set();
@@ -914,44 +1172,51 @@ function Reactor(w){
     <span class="tag">docs: <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></span>`);
   document.getElementById('rHuman').onclick=e=>{humanOn=!humanOn;e.currentTarget.setAttribute('aria-pressed',humanOn);};
   document.getElementById('rK').onclick=e=>{kNeed=kNeed===2?1:2;e.currentTarget.setAttribute('aria-pressed',kNeed===2);};
-  setLegend([['var(--held)','◌ claim (held)'],['var(--promoted)','● promoted'],
-             ['var(--rejected)','◌ rejected (journalled, kept) / scan veto (refused — not an event)'],
-             ['var(--accent)','dreamer'],['#fff','human reviewer'],
-             ['var(--lad-dev)','■ attachment'],['var(--gold)','◆ vocab finding']]);
-  hint.textContent=`write path of ${w.name} · click a claim to read it · a reject is journalled, never vanished (R4); a scan veto refuses before capture · Esc to go back`;
+  setLegend([
+    {grp:'claims'},['var(--held)','◌ held'],['var(--promoted)','● promoted'],['var(--rejected)','◌ rejected / vetoed (kept in view)'],
+    {grp:'actors'},['var(--accent)','dreamer'],['#fff','human'],
+    {grp:'marks'},['var(--lad-dev)','■ attachment'],['var(--gold)','◆ vocab finding']]);
+  hint.textContent=`write path of ${w.name} · click a claim to read it · a reject is journalled — a scan veto refuses before capture · Esc to go back`;
 
   const els={held:document.getElementById('rHeld'),prom:document.getElementById('rProm'),rej:document.getElementById('rRej')};
   function spawn(){
-    const c=glow(CLR.held,1.05,.98,RING);c._phase='intake';c._t=0;  /* ring = held */
+    const c=glow(CLR.held,1.05,.98,RING);c._phase='intake';c._t=0;
     c._cl=mkClaim(w,'held');c._name=c._cl.key;
     c._author=(Math.random()*3)|0;
     c._secret=Math.random()<.12;
     c._veto=!c._secret&&Math.random()<.06;
     c._vocab=!c._secret&&!c._veto&&w.vocab&&Math.random()<.15;
-    c._reviews=0;c._served=false;
-    if(c._vocab){const vd=glow(CLR.gold,.42,.95,DIA);vd.position.set(-.5,.5,0);c.add(vd);}  /* ◆ = vocab finding */
-    if(Math.random()<.2){const att=glow(LADDER.development,.45,.95,SQ);att.position.set(.5,.5,0);c.add(att);c._att=true;}  /* ■ = attachment */
+    c._reviews=0;c._served=false;c._rad=0;
+    if(c._vocab){const vd=glow(CLR.gold,.42,.95,DIA);vd.position.set(-.5,.5,0);c.add(vd);}
+    if(Math.random()<.2){const att=glow(LADDER.development,.45,.95,SQ);att.position.set(.5,.5,0);c.add(att);c._att=true;}
     c.position.set(-22,0,rnd(-3,3));group.add(c);claims.add(c);
     if(LIVE){c._cl.seq=journal.emit('submission.remember',`${c._name} · wa:${w.name} · by ${w.crew}${c._vocab?' · finding vocab.deprecation_replaced_by':''}`);
       note(c._cl,'submission.remember');
       if(c._att){journal.emit('submission.attach',`${c._name} · fills-sample.csv sha256:${hex(12)}… · 1 of 1`);note(c._cl,'submission.attach');}}
   }
   function reject(c,why){
-    c._phase='rejected';c.material.color.set(CLR.rej);c._cl.status='rej';
+    c._phase='rejected';c._t=0;c.material.color.set(CLR.rej);c._cl.status='rej';
     counts.held--;counts.rej++;els.held.textContent=counts.held;els.rej.textContent=counts.rej;
     if(LIVE){journal.emit('review.reject',`${c._name} · ${why} · journalled, bytes kept`);note(c._cl,'review.reject');}
   }
+  function disposeClaim(c){c.material.dispose();c.children.forEach(ch=>{if(ch.material)ch.material.dispose();});}
   let spawnAcc=0;
   return {
     group,cam:{theta:0,phi:1.25,radius:30,min:12,max:60,target:new THREE.Vector3(0,0,0)},
     hoverables(){return [...claims];},
-    exit(){timers.forEach(clearTimeout);},
+    onHover(hit){
+      if(!hit){showTip(null);return;}
+      let o=hit.object;while(o&&!o._cl)o=o.parent;
+      showTip(o&&o._cl?`${o._cl.key}<small>${o._cl.status} · click to read</small>`:null);
+    },
+    exit(){timers.forEach(clearTimeout);showTip(null);},
     frame(t,dt){
-      dreamers.forEach(d=>{d._a+=1.2*dt;d.position.set(10+Math.cos(d._a)*3.2,.2,Math.sin(d._a)*3.2);});
-      humanGate.position.y=6+Math.sin(t*1.4)*.15;
+      const sm=k=>1-Math.exp(-k*dt);   /* frame-rate-independent lerps */
+      dreamers.forEach(d=>{d._a+=1.2*dt*(REDUCED?.2:1);d.position.set(10+Math.cos(d._a)*3.2,.2,Math.sin(d._a)*3.2);});
+      humanGate.position.y=6+Math.sin(t*1.4)*.15*MOT;
       if(LIVE&&(spawnAcc+=dt)>(REDUCED?4:1.6)){spawnAcc=0;if(claims.size<26)spawn();}
       claims.forEach(c=>{
-        if(!LIVE)return; /* live traffic off freezes the pipeline — state never outruns the journal */
+        if(!LIVE)return; /* paused traffic freezes the pipeline — state never outruns the journal */
         c._t+=dt;
         switch(c._phase){
           case 'intake': c.position.x+=5.6*dt;if(c.position.x>=-8){
@@ -959,17 +1224,25 @@ function Reactor(w){
                 c._sv=true;c._phase='rejected';c._t=0;c.material.color.set(CLR.rej);c._cl.status='rej';
                 counts.rej++;els.rej.textContent=counts.rej;
                 if(LIVE)journal.emit('submission.scan_veto',`${c._name} · finding ${c._secret?'secret.api_token':'format.encoding'} · deterministic, same call`,'refuse');}
-              else{c._phase='held';c._a=rnd(0,Math.PI*2);counts.held++;els.held.textContent=counts.held;}}break;
-          case 'held': c._a+=1.5*dt;c.position.set(Math.cos(c._a)*3.4,0,Math.sin(c._a)*3.4);
+              else{c._phase='held';
+                c._a=Math.atan2(c.position.z,c.position.x);           /* no teleport: */
+                c._rad=Math.hypot(c.position.x,c.position.z);          /* blend into the ring */
+                counts.held++;els.held.textContent=counts.held;}}break;
+          case 'held': c._a+=1.5*dt;
+              c._rad+= (3.4-c._rad)*sm(4);
+              c.position.set(Math.cos(c._a)*c._rad,c.position.y*(1-sm(4)),Math.sin(c._a)*c._rad);
               if(c._t>rnd(4,7)){c._phase='review';c._t=0;}break;
           case 'review':{const tx=10+Math.cos(c._a)*2.2,tz=Math.sin(c._a)*2.2;
-              c.position.x+=(tx-c.position.x)*.06;c.position.z+=(tz-c.position.z)*.06;
+              c.position.x+=(tx-c.position.x)*sm(3.6);c.position.z+=(tz-c.position.z)*sm(3.6);
               if(!c._served){c._served=true;
                 if(LIVE){journal.emit('review.serve',`${c._name} → dreamer · served_digests pinned${c._att?' · attachment served':''}`);note(c._cl,'review.serve');}}
               if(c._t>1.8){
                 let reviewer=(Math.random()*3)|0;
                 if(reviewer===c._author){
                   if(LIVE)journal.emit('review.author_in_lineage',`${c._name} · reviewer = author — verdict refused`,'refuse');
+                  const d=dreamers[reviewer];const orig=d.material.color.clone();
+                  d.material.color.set(CLR.rej);
+                  timers.push(setTimeout(()=>d.material.color.copy(orig),600));
                   c._t=.9;break;
                 }
                 if(c._reviews===1&&reviewer===c._rev1){c._t=1.2;break;}
@@ -985,7 +1258,7 @@ function Reactor(w){
                   els.held.textContent=counts.held;els.prom.textContent=counts.prom;
                   if(LIVE){journal.emit('review.ratify',`${c._name} · policy satisfied (k=${kNeed})`);note(c._cl,'review.ratify');
                     journal.emit('lifecycle.promote',`${c._name} · wa:${w.name} · ratification ev_${hex(8)}`);note(c._cl,'lifecycle.promote');}}}break;}
-          case 'human': c.position.y+=(5.6-c.position.y)*.08;
+          case 'human': c.position.y+=(5.6-c.position.y)*sm(4.8);
               if(c._t>2.2){
                 if(Math.random()<.15){c.position.y=0;reject(c,'held_by:human verdict: reject');break;}
                 c._phase='out';c.material.color.set(CLR.prom);c.material.map=CORE;c._cl.status='prom';counts.held--;counts.prom++;
@@ -994,9 +1267,8 @@ function Reactor(w){
                   journal.emit('review.ratify',`${c._name} · policy satisfied (human gate)`);note(c._cl,'review.ratify');
                   journal.emit('lifecycle.promote',`${c._name} · wa:${w.name} · ratification ev_${hex(8)}`);note(c._cl,'lifecycle.promote');}}break;
           case 'rejected':{const tx=10,tz=-5;
-              c.position.x+=(tx-c.position.x)*.08;c.position.z+=(tz-c.position.z)*.08;c.position.y*=.9;
-              if(c._t>2.5){claims.delete(c);group.remove(c);c.material.dispose();
-                c.children.forEach(ch=>{if(ch.material)ch.material.dispose();});
+              c.position.x+=(tx-c.position.x)*sm(4.8);c.position.z+=(tz-c.position.z)*sm(4.8);c.position.y*=1-sm(4.8);
+              if(c._t>2.5){claims.delete(c);group.remove(c);disposeClaim(c);
                 const s=glow(CLR.rej,.8,.75,RING);s.position.set(rnd(-1,1),.3+(rejN%4)*.7,rnd(-1,1));
                 rejShelf.add(s);if(++rejN>18){const old=rejShelf.children[0];rejShelf.remove(old);old.material.dispose();}
                 if(LIVE&&!c._sv&&Math.random()<.25)timers.push(setTimeout(()=>{if(!LIVE)return;
@@ -1006,12 +1278,11 @@ function Reactor(w){
                   n2._vocab=c._vocab;n2._att=c._att;
                   if(n2._vocab){const vd=glow(CLR.gold,.42,.95,DIA);vd.position.set(-.5,.5,0);n2.add(vd);}
                   if(n2._att){const at2=glow(LADDER.development,.45,.95,SQ);at2.position.set(.5,.5,0);n2.add(at2);}
-                  n2._author=(Math.random()*3)|0;n2._reviews=0;n2._served=false;n2._a=rnd(0,Math.PI*2);
+                  n2._author=(Math.random()*3)|0;n2._reviews=0;n2._served=false;n2._a=rnd(0,Math.PI*2);n2._rad=3.4;
                   n2.position.set(0,0,3.4);group.add(n2);claims.add(n2);
                   counts.held++;els.held.textContent=counts.held;},800));}break;}
-          case 'out': c.position.x+=7.5*dt;c.position.y*=.92;
-              if(c.position.x>=20){claims.delete(c);group.remove(c);c.material.dispose();
-                c.children.forEach(ch=>{if(ch.material)ch.material.dispose();});
+          case 'out': c.position.x+=7.5*dt;c.position.y*=1-sm(4.8);
+              if(c.position.x>=20){claims.delete(c);group.remove(c);disposeClaim(c);
                 const s=glow(CLR.prom,.9,.9);s.position.set(rnd(-1.4,1.4),.4+(shelfN%5)*.85,rnd(-2.4,2.4));
                 shelf.add(s);if(++shelfN>42){const old=shelf.children[0];shelf.remove(old);old.material.dispose();}}break;
         }
@@ -1020,12 +1291,10 @@ function Reactor(w){
     onClick(ray){
       const hit=ray.intersectObjects([...claims]);
       if(hit.length){
-        /* the raycast recurses into satellite markers (◆ vocab, ■ attachment) —
-           walk up to the claim that owns them */
         let o=hit[0].object;while(o&&!o._cl)o=o.parent;
-        if(o&&o._cl){showClaim(o._cl);return;}
+        if(o&&o._cl){const c=o;showClaim(c._cl,()=>c.position.clone());return;}
       }
-      panel.hidden=true;
+      clearSelection();
     }
   };
 }
@@ -1041,6 +1310,17 @@ const VERIFY_STEPS=[
   'parsed fields match the served envelope',
   'genesis references the provider chain (non-provider tenant)',
   'stated head matches the last event; head signature verifies'];
+/* fake shading for flat boxes: vertex colors darken down-facing geometry */
+function shadeGeo(geo){
+  const n=geo.attributes.normal,count=geo.attributes.position.count;
+  const col=new Float32Array(count*3);
+  for(let i=0;i<count;i++){
+    const f=.72+.28*Math.max(0,n.getY(i))+.1*Math.max(0,n.getX(i));
+    col.set([f,f,f],i*3);
+  }
+  geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+  return geo;
+}
 function Ledger(){
   const group=new THREE.Group();
   const HELIX_R=7,STEP=1.15,TURN=.62;
@@ -1056,18 +1336,18 @@ function Ledger(){
     'workarea.create':()=>'node under the universe root'};
   const posAt=i=>{const a=i*TURN;return new THREE.Vector3(Math.cos(a)*HELIX_R,i*STEP-8,Math.sin(a)*HELIX_R);};
   const helix=new THREE.Group();group.add(helix);
+  const verifier=glow(0xffffff,1.1,.9);group.add(verifier);
   function addBlock(kind,color,detail){
     const i=blocks.length;
-    /* event families carry distinct FORMS: ◆ genesis, ● review, ▬ supersede, ■ everything else */
     const geo=kind==='tenant.genesis'?new THREE.OctahedronGeometry(.62)
       :kind.indexOf('review.')===0?new THREE.SphereGeometry(.5,14,12)
       :kind==='lifecycle.supersede'?new THREE.BoxGeometry(.9,.45,.9)
       :new THREE.BoxGeometry(.9,.9,.9);
-    const b=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color}));
-    b.position.copy(posAt(i));b._kind=kind;
+    const b=new THREE.Mesh(shadeGeo(geo),new THREE.MeshBasicMaterial({color,vertexColors:true}));
+    b.position.copy(posAt(i));b._kind=kind;b._born=0;
     b._env={type:kind,detail:detail||'',at:new Date().toISOString().replace(/\.\d+Z/,'Z'),
       prev:`sha256:${hex(10)}…`,hash:`sha256:${hex(10)}…`,sig:'ed25519 · verifies against the deployment key'};
-    const h=glow(color,2.2,.4,HALO);h.position.copy(b.position);helix.add(h);b._halo=h;
+    const h=glow(color,1.8,.3,HALO);h.position.copy(b.position);helix.add(h);b._halo=h;
     helix.add(b);blocks.push(b);
     if(i>0){const g=new THREE.BufferGeometry().setFromPoints([posAt(i-1),posAt(i)]);
       const l=new THREE.Line(g,new THREE.LineBasicMaterial({color:CLR.link,transparent:true,opacity:.85}));
@@ -1085,7 +1365,7 @@ function Ledger(){
     helix.clear();blocks=[];links=[];broken=-1;erased=false;
     KINDS.forEach(([k,c])=>addBlock(k,c,GROW_DETAIL[k]?GROW_DETAIL[k]():''));
     const base=journal.seq-blocks.length;
-    blocks.forEach((b,i)=>{b._seq=base+i+1;b._env.seq=b._seq;});
+    blocks.forEach((b,i)=>{b._seq=base+i+1;b._env.seq=b._seq;b._born=1;});
     thread(3,6);thread(6,7);
     const bt=document.getElementById('lTamper');if(bt)bt.textContent=`tamper seq ${blocks[6]._seq}`;
     setVerdict(true);
@@ -1097,8 +1377,8 @@ function Ledger(){
     [...stepsEl.querySelectorAll('li')].forEach((li,i)=>li.classList.toggle('bad',!ok&&i>=2&&i<=4));
   }
   setHud(`<span class="tag" id="lVerdict">chain <b style="color:var(--promoted)">verified</b></span>
-    <button id="lTamper">tamper</button>
-    <button id="lErase">erase artifact</button>
+    <button id="lTamper" class="cta">tamper</button>
+    <button id="lErase" class="cta">erase artifact</button>
     <button id="lHeal">restore</button>
     <span class="tag">docs: <a href="../data/chain-format/">chain format</a></span>`);
   stepsEl.innerHTML=`<h4>verifier — the nine steps</h4><ol>${VERIFY_STEPS.map(s=>`<li>${s}</li>`).join('')}</ol>
@@ -1106,16 +1386,16 @@ function Ledger(){
   stepsEl.hidden=false;
   if(matchMedia('(max-width:640px)').matches)stepsEl.classList.add('collapsed');
   stepsEl.querySelector('h4').onclick=()=>stepsEl.classList.toggle('collapsed');
-  setLegend([['#fff','◆ genesis'],['var(--held)','■ submission'],['#8bd5ff','● review'],['var(--promoted)','■ promote / verified link'],
-             ['var(--superseded)','▬ supersede / erased body'],['var(--accent)','■ workarea &amp; key events'],
-             ['var(--rejected)','broken link'],['var(--gold)','lineage thread']]);
+  setLegend([
+    {grp:'events'},['#fff','◆ genesis'],['var(--held)','■ submission'],['var(--review)','● review'],['var(--promoted)','■ lifecycle'],['var(--superseded)','▬ supersede / erased body'],
+    {grp:'chain'},['var(--promoted)','verified link'],['var(--rejected)','broken link'],['var(--gold)','lineage thread']]);
   hint.textContent='click a block to read its envelope · gold threads = supersession lineage · verification is a read, not an event · Esc to go back';
   build();
   document.getElementById('lTamper').onclick=()=>{
     if(broken>=0)return;
     broken=6;
     links.forEach((l,i)=>l.material.color.set(i>=broken?CLR.rej:CLR.link));
-    blocks.forEach((b,i)=>{if(i>broken){b.material.color.offsetHSL(0,0,-.18);b._halo.material.opacity=.15;}});
+    blocks.forEach((b,i)=>{if(i>broken){b.material.color.offsetHSL(0,0,-.18);b._halo.material.opacity=.12;}});
     blocks[broken].material.color.set(CLR.rej);blocks[broken]._halo.material.color.set(CLR.rej);
     const atSeq=blocks[broken]._seq;
     setVerdict(false,atSeq);
@@ -1129,18 +1409,21 @@ function Ledger(){
     }
     erased=true;
     const b=blocks[3];b.material.transparent=true;b.material.opacity=.22;b.material.color.set(CLR.sup);
-    b._halo.material.opacity=.1;
+    b._halo.material.opacity=.08;
     const wire=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2),new THREE.MeshBasicMaterial({color:CLR.sup,wireframe:true}));
     wire.position.copy(b.position);helix.add(wire);
     journal.emit('lifecycle.erase',`${b._env.detail||'artifact'} · DEK destroyed · digests + signature intact`);
-    const nb=addBlock('lifecycle.erase',CLR.sup,'DEK destroyed · body unreadable, record intact');nb._seq=journal.seq;nb._env.seq=journal.seq;
+    const nb=addBlock('lifecycle.erase',CLR.sup,'DEK destroyed · body unreadable, record intact');nb._seq=journal.seq;nb._env.seq=journal.seq;nb._born=0;
     setVerdict(true);
   };
   document.getElementById('lHeal').onclick=build;
   return {
     group,cam:{theta:.9,phi:1.15,radius:26,min:10,max:55,target:new THREE.Vector3(0,0,0)},
     hoverables(){return blocks;},
-    exit(){stepsEl.hidden=true;},
+    onHover(hit){
+      showTip(hit?`seq ${hit.object._seq} · ${hit.object._kind}<small>click to read the envelope</small>`:null);
+    },
+    exit(){stepsEl.hidden=true;showTip(null);},
     frame(t,dt){
       helix.rotation.y=t*(REDUCED?.02:.07);
       if(LIVE&&broken<0&&(growAcc+=dt)>3.2&&blocks.length<26){growAcc=0;
@@ -1148,16 +1431,31 @@ function Ledger(){
         const detail=GROW_DETAIL[k]();
         journal.emit(k,`${detail} · head sha256:${hex(8)}…`);
         const nb=addBlock(k,c,detail);nb._seq=journal.seq;nb._env.seq=journal.seq;}
-      const sweep=(t*.5)%Math.max(blocks.length,1);
-      blocks.forEach((b,i)=>{const d=Math.abs(i-sweep);b.scale.setScalar(d<1?1+(1-d)*.35:1);});
+      /* one 9s clock: the sweep walks the chain exactly while the checklist ticks its nine steps */
+      const period=9, ph=(t/period)%1;
+      const sweep=ph*blocks.length;
+      blocks.forEach((b,i)=>{
+        if(b._born<1){b._born=Math.min(1,b._born+dt*2.2);
+          const e=1+.6*Math.sin(Math.min(1,b._born)*Math.PI); /* easeOutBack-ish entrance */
+          b.scale.setScalar(b._born*e);
+        } else {
+          const d=Math.abs(i-sweep);b.scale.setScalar(d<1?1+(1-d)*.3:1);
+        }});
+      const fi=Math.floor(sweep);
+      if(fi>0&&fi<=links.length&&broken<0){const l=links[fi-1];
+        l.material.opacity=Math.min(1,l.material.opacity+.4);}
+      links.forEach(l=>{l.material.opacity=Math.max(.85,l.material.opacity-dt*1.2);});
+      verifier.position.copy(posAt(Math.floor(sweep)).lerp(posAt(Math.min(blocks.length-1,Math.ceil(sweep))),sweep%1));
+      verifier.position.applyAxisAngle(new THREE.Vector3(0,1,0),helix.rotation.y);
       const li=stepsEl.querySelectorAll('li');
-      const on=Math.floor(t*.9)%VERIFY_STEPS.length;
+      const on=Math.floor(ph*9)%9;
       li.forEach((l,i)=>l.classList.toggle('on',i===on&&broken<0));
     },
     onClick(ray){
       const hit=ray.intersectObjects(blocks);
       if(hit.length){
         const b=hit[0].object,e=b._env;
+        sel=null;selMarker.visible=false;
         panel.innerHTML=`<button class="x" id="pxe">✕</button>
           <div class="head"><h4>seq ${e.seq} <span class="chip" style="color:var(--accent-2);border:1px solid color-mix(in srgb,var(--accent-2) 45%,transparent)">${e.type}</span></h4>
           <div class="crew">tenant ${journal.tenant} · signed envelope</div></div>
@@ -1172,8 +1470,8 @@ function Ledger(){
           <div class="docsrow">the byte-exact rules live in <a href="../data/chain-format/">chain-format.md</a></div>
           </div>`;
         panel.hidden=false;
-        document.getElementById('pxe').onclick=()=>panel.hidden=true;
-      } else panel.hidden=true;
+        document.getElementById('pxe').onclick=clearSelection;
+      } else clearSelection();
     }
   };
 }
@@ -1190,6 +1488,9 @@ let prev=performance.now();
   resize();
   tweenFrame(dt);
   hoverCheck();
+  journal.drain(dt);
+  if(sel){selMarker.position.copy(sel.getWorldPos());
+    selMarker.scale.setScalar(1.3+Math.sin(now/1000*3)*.12*MOT);}
   if(mode)mode.frame(now/1000,dt);
   renderer.render(scene,camera);
 })(prev);

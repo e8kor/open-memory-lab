@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0013-reads-served-from-postgres
 tier: engineering
-status: accepted design
+status: accepted design · amended by ADR-0025
 answers: why reads are served from Postgres as the one serving tier; why every read is journalled; why steering is applied ahead of hits
 -->
 
 # ADR-0013 — Reads are served from Postgres, journalled: one serving tier, a logged read path, steering ahead of hits
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
 
 Everything this record decides is design — no code exists. The mechanics of the serving tier
 (index layout, query shapes, the read-log schema) are owned by

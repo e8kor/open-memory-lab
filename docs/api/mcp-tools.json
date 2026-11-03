@@ -3,13 +3,10 @@
     "comment": "Status: design draft for review - decided, not built. This file is the normative machine shape of the MCP tool catalog declared in mcp-plugin.md: the exact tools/list result payload the plugin serves. The prose catalog and this file describe the same twelve tools (ADR-0025 d12); a divergence between them that pending_design does not list is a documentation bug. tools/list serves the subset of this file the server builds; an entry for a tool the server does not serve yet carries its designed shape, and a served tool's entry describes what the build serves and changes only in the same change as the code that serves it, so the server never advertises a field it refuses. pending_design names, per served tool, what mcp-plugin.md decides that the served entry does not carry yet, or a decided refusal its description states that the build does not raise yet. Target MCP specification revision: 2025-06-18 (streamable HTTP transport, run stateless per mcp-plugin.md); the revision the implementation finally pins, and the transport behavior verified against it, are recorded with a fetch date at implementation time.",
     "spec_revision_targeted": "2025-06-18",
     "catalog_page": "mcp-plugin.md",
-    "design_spec_version": "0.2.0-design",
+    "design_spec_version": "0.3.0-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
-      "oml_remember": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_learn": "ADR-0025 d18: the claim_key collision refusal its claim_key description states is decided, not built; the build raises no submission.claim_key_conflict yet.",
-      "oml_recall": "ADR-0025 d4, d7, d8, d12, d16: include_own_held and max_tokens inputs; the caller's own held rows among the hits; steering never among the hits; the claim-item output with tokens; the budget object; refusal of unknown and unbuilt fields by name.",
-      "oml_events_tail": "ADR-0025 d15: the scope input (the ring's workarea_id, defaulting to the key's default workarea, request.workarea_unresolved for a key with none); per-family visibility; next_after_seq; the subject and workarea output fields; idle; request.validation for an after_seq beyond head_seq."
+      "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet."
     }
   },
   "tools": [
@@ -21,7 +18,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional target workarea node id. Omitted: the key's journalled default workarea. Present: an override honored only within the key's grants. A path given here is resolved to its node first. A key with neither a default nor a value here is refused (request.workarea_unresolved)."
+            "description": "Optional target workarea, by node id or name, resolved on the server; a derived path is neither and is refused (request.validation). Omitted: the key's journalled default workarea. Present: an override honored only within the key's grants, and a name the key may not see answers access.not_found exactly as its id would. A key with neither a default nor a value here is refused (request.workarea_unresolved)."
           },
           "claim_key": {
             "type": "string",
@@ -76,23 +73,34 @@
     },
     {
       "name": "oml_recall",
-      "description": "Search promoted memories within a workarea subtree; steering rows precede hits and are never ranked. Hits are promoted rows only - the caller's own held rows do not appear (use oml_my_work). Every recall is logged to the read log. Rides POST /v1/memories/recall.",
+      "description": "Search promoted memories within a workarea subtree and, with include_own_held, the calling key's own held rows, flagged state held; steering rows precede hits, are never ranked and are never cut by a max_tokens budget. Every item carries its text and its budget tokens; budget reports the cut when max_tokens was sent. Rides POST /v1/memories/recall.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
-            "description": "The search text; hybrid FTS + vector is the only search mode."
+            "description": "The search text, matched by full-text search, the only search mode served."
           },
           "scope": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the key's default workarea's subtree. Present: one node as an override within the key's grants. Either way the search covers that node's subtree intersected with the key's effective read access."
+            "description": "Optional workarea, by node id or name. Omitted: the key's default workarea's subtree. Present: one node as an override within the key's grants. Either way the search covers that node's subtree intersected with the key's effective read access."
           },
           "k": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
             "description": "How many hits to return, at most 100 as on the ring."
+          },
+          "include_own_held": {
+            "type": "boolean",
+            "default": false,
+            "description": "Optional, default false. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held; they count against k and max_tokens."
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "Optional budget in budget tokens (counter oml-tc/1, not a model's count), at most 2^53 - 1 as on the ring. Steering is never cut; the hits served are the longest rank prefix that fits, and the cut is reported in budget."
           }
         },
         "required": ["query"],
@@ -107,7 +115,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional target workarea node id, exactly as on oml_remember: omitted, the key's default workarea is the target."
+            "description": "Optional target workarea, by node id or name, exactly as on oml_remember: omitted, the key's default workarea is the target."
           },
           "claim_key": {
             "type": "string",
@@ -248,7 +256,7 @@
           "kind": {
             "type": "string",
             "enum": ["workarea", "claim"],
-            "description": "Which graph the edge lives in; endpoints are workarea node ids or artifact ids accordingly."
+            "description": "Which graph the edge lives in; endpoints are workareas, by node id or name, or artifact ids accordingly."
           },
           "label": {
             "type": "string",
@@ -256,11 +264,11 @@
           },
           "from": {
             "type": "string",
-            "description": "The from endpoint (workarea node id or artifact id, per kind)."
+            "description": "The from endpoint (a workarea's node id or name, or an artifact id, per kind)."
           },
           "to": {
             "type": "string",
-            "description": "The to endpoint (workarea node id or artifact id, per kind)."
+            "description": "The to endpoint (a workarea's node id or name, or an artifact id, per kind)."
           },
           "note": {
             "type": "string",
@@ -279,7 +287,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea node id, a subtree filter; omitted, every workarea the key wrote to. It must name a node the key holds some role on, else access.not_found, indistinguishable from a nonexistent node."
+            "description": "Optional workarea, by node id or name, a subtree filter; omitted, every workarea the key wrote to. It must name a node the key holds some role on, else access.not_found, indistinguishable from a nonexistent node."
           },
           "claim_key": {
             "type": "string",
@@ -293,7 +301,8 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Page size."
+            "maximum": 200,
+            "description": "Page size, at most 200 as on the ring."
           },
           "cursor": {
             "type": "string",
@@ -312,7 +321,7 @@
         "properties": {
           "workarea": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the tool describes the key's default workarea; a key with none is refused (request.workarea_unresolved)."
+            "description": "Optional workarea, by node id or name. Omitted: the tool describes the key's default workarea; a key with none is refused (request.workarea_unresolved)."
           }
         },
         "required": [],
@@ -327,7 +336,7 @@
         "properties": {
           "scope": {
             "type": "string",
-            "description": "Optional workarea node id. Omitted: the key's default workarea."
+            "description": "Optional workarea, by node id or name. Omitted: the key's default workarea."
           },
           "roots": {
             "type": "array",
@@ -355,19 +364,24 @@
     },
     {
       "name": "oml_events_tail",
-      "description": "Poll the journalled event stream for the key's scope, from the last journal sequence the client processed. The stateless substitute for push: the server remembers nothing between calls. Gaps in a filtered tail are normal - they are the events this key may not see. Rides GET /v2/events.",
+      "description": "Poll the journalled event stream for the key's scope, from the resume point the client holds. The stateless substitute for push: the server remembers nothing between calls. A key sees its own submissions, the lifecycle events of claims it can read or authored, and the workarea events of nodes it reads; never another key's submission, a review event or key administration. Gaps in a filtered tail are normal - they are the events this key may not see. Each event is {seq, event_type, at, subject, workarea}; the page carries head_seq, next_after_seq and idle. Rides GET /v2/events.",
       "inputSchema": {
         "type": "object",
         "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Optional workarea, by node id or name: the tail is filtered to its subtree within the key's reader effective access, and a node outside that access is refused (access.not_found). Omitted: the key's journalled default workarea; a key with none is refused (request.workarea_unresolved)."
+          },
           "after_seq": {
             "type": "integer",
             "minimum": 0,
-            "description": "The last per-tenant journal sequence the client processed; events after it are returned, seq ascending. Omit to start from the beginning (0), as on the ring; pass the head_seq of a first call to start from now. A malformed value is a typed request.validation refusal, never a silent restart from zero."
+            "description": "The resume point: the next_after_seq of the previous call, passed back verbatim; events after it are returned, seq ascending. Omit to start from the beginning (0), as on the ring; pass the head_seq of a first call to start from now. A value beyond head_seq, or a malformed one, is a typed request.validation refusal, never a silent restart from zero."
           },
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Page size."
+            "maximum": 200,
+            "description": "How many journal events one call scans. A page may hold fewer events than this, or none, while next_after_seq still advances."
           }
         },
         "required": [],
@@ -391,7 +405,7 @@
           },
           "workarea_id": {
             "type": "string",
-            "description": "With action suggest: optionally restrict to one granted vocabulary workarea."
+            "description": "With action suggest: optionally restrict to one granted vocabulary workarea, by node id or name."
           },
           "curie": {
             "type": "string",

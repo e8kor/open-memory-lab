@@ -269,19 +269,28 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         })),
         AppError::DenyOutsideGrant {
             grant_index,
-            subtree_node_id,
+            subtree_node,
         } => ApiError::validation(format!(
-            "grant {grant_index}'s deny names {subtree_node_id}, which lies outside the grant's subtree"
+            "grant {grant_index}'s deny names {subtree_node}, which lies outside the grant's subtree"
         )),
-        AppError::DefaultUncovered { workarea_id } => ApiError::validation(format!(
-            "default_workarea_id {workarea_id} is covered by no grant of the key"
+        AppError::DefaultUncovered { workarea } => ApiError::validation(format!(
+            "default_workarea_id {workarea} is covered by no grant of the key"
         )),
+        AppError::BudgetWithoutBodies => ApiError::validation(
+            "max_tokens is refused with include_bodies false: a budget counts bodies that would not be sent",
+        ),
         AppError::WorkareaUnresolved => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "request.workarea_unresolved",
             "The target workarea comes from the token (ADR-0022 d4); a key with neither a default nor the X-OML-Workarea header is refused, never guessed for.",
             "the key has no default_workarea and the request names none",
         ),
+        AppError::AfterSeqBeyondHead {
+            after_seq,
+            head_seq,
+        } => ApiError::validation(format!(
+            "after_seq {after_seq} is beyond head_seq {head_seq}: pass back a next_after_seq this tail served"
+        )),
         AppError::NotFound => ApiError::not_found(),
         AppError::LineageUnknown(id) => ApiError::not_found().with_details(json!({
             // derives_from targets fail closed as absence, like CURIE
@@ -308,8 +317,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
                 None => error,
             }
         }
-        AppError::WorkareaNotTarget { workarea_id } => ApiError::validation(format!(
-            "X-OML-Workarea names {workarea_id}, but a supersession is captured in its target's workarea"
+        AppError::WorkareaNotTarget { workarea } => ApiError::validation(format!(
+            "X-OML-Workarea names {workarea}, but a supersession is captured in its target's workarea"
         )),
         AppError::KindChangeRefused { target, sent } => ApiError::validation(format!(
             "a {} target admits no {} successor: a kind changes only within its class, and a retirement keeps the target's",
@@ -319,6 +328,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::TermRetirement => ApiError::validation(
             "a term is never retired: terms deprecate, through a supersession with term_status deprecated",
         ),
+        AppError::VocabularyTarget(kind) => ApiError::validation(format!(
+            "a {} target is superseded on the HTTP API: oml_supersede carries no vocabulary fields",
+            kind.as_str()
+        )),
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
             "submission.claim_key_conflict",
@@ -374,6 +387,34 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::unavailable("idempotency record contention")
         }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
+        // The unique index refused a creation's name; nothing was
+        // journalled (errors.md `name.taken`; ADR-0026 d5). The application
+        // answers a store's refusal as `AppError::NameTaken`.
+        AppError::NameTaken { kind, name }
+        | AppError::Store(StoreError::NameTaken { kind, name }) => ApiError::new(
+            StatusCode::CONFLICT,
+            "name.taken",
+            "A name is a unique, immutable key in its namespace and is never released, so it \
+             means one row for as long as the deployment exists (ADR-0026 d1, d10).",
+            format!(
+                "the {} name {} is already taken in its namespace",
+                kind.as_str(),
+                name.as_str()
+            ),
+        )
+        .with_details(json!({ "kind": kind.as_str(), "name": name.as_str() })),
+        // Denials attenuate grants, and an admin key carries none
+        // (http-api.md keys, grants, denials; ADR-0026 d15).
+        AppError::DenialOnAdminKey => ApiError::validation(
+            "a global denial on an admin key is refused: an admin key carries no grant for a denial to attenuate",
+        )
+        .with_details(json!({ "field": "key_id" })),
+        AppError::EmptyCrewUpdate => ApiError::validation(
+            "a crew update sends charter_uri or external_manager, at least one",
+        ),
+        // The lead's startup naming; no request reaches it, and a lead that
+        // could not name its rows serves none (ADR-0026 d11).
+        AppError::NamingRefused { .. } => ApiError::unavailable("names_assigned"),
         // A stale or foreign pagination cursor (errors.md request.validation).
         AppError::Cursor(e) => ApiError::validation(e.to_string()),
         AppError::StoredResponse(e) => ApiError::internal(e),

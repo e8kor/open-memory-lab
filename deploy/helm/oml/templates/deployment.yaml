@@ -1,0 +1,102 @@
+{{- $fullname := include "oml.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-server-lead
+  labels:
+    {{- include "oml.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+    oml.e8kor.github.io/role: lead
+spec:
+  # One lead, one keyring writer. The build has no lead lease, so Recreate
+  # stops the old lead before the new one starts; the per-tenant chain lock
+  # in Postgres stays the fence (ADR-0033 d2). Neither is a value.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "oml.leadSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "oml.labels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+        oml.e8kor.github.io/role: lead
+    spec:
+      serviceAccountName: {{ $fullname }}-server
+      # The lead calls no Kubernetes API (ADR-0033 d5).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # The image's oml user and group, as numbers: the image names its
+        # user, and the kubelet cannot check runAsNonRoot against a name
+        # (ADR-0033 d4). CI asserts the built image's `id -u` and `id -g`.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        # Under Always the kubelet ORs 0660 into every file on each mount,
+        # the 0600 keyring among them, and the lead refuses it at its next
+        # boot (ADR-0033 d4).
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: oml-server-lead
+          image: {{ include "oml.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            # The lead writes only its keyring; migrations are compiled in.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          # The image sets OML_SERVER__LISTEN=0.0.0.0:8080 and
+          # OML_KMS__KEYRING_PATH=/var/lib/oml/keyring/signing.key; the port
+          # and the mount below follow them (scripts/check_chart.py).
+          env:
+            - name: OML_POSTGRES__URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName | quote }}
+                  key: {{ .Values.postgres.secretKey | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # Probe timings are chosen, not measured (ADR-0033 d7). Boot applies
+          # migrations before the listener binds; the startup probe holds
+          # liveness off until /healthz first answers.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          # Postgres reachable and the startup fork check passed; 503 otherwise.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: keyring
+              mountPath: /var/lib/oml/keyring
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: keyring
+          persistentVolumeClaim:
+            claimName: {{ include "oml.keyringClaim" . }}

@@ -5,11 +5,16 @@
 //! (errors.md "Implementation mapping").
 //!
 //! The PoC slice: submit / list / get / recall / supersede on `/v1`; review next,
-//! verdicts, key issuance, global per-key denials, workarea creation, the
-//! workarea read, the events tail and the bootstrap claim on `/v2`;
-//! `/healthz` and `/readyz` unversioned and unauthenticated (http-api.md
-//! "Health"); `/mcp`, the agent plugin's stateless facade over those rings
-//! ([`mcp`]).
+//! verdicts, key issuance, the key read, global per-key denials, workarea
+//! creation, the workarea read, a workarea's crew, the crew records, the
+//! events tail and the bootstrap claim on `/v2`; `/healthz` and `/readyz`
+//! unversioned and unauthenticated (http-api.md "Health"); `/mcp`, the agent
+//! plugin's stateless facade over those rings ([`mcp`]).
+//!
+//! Every value that names a workarea, crew or key — a header, a path or
+//! query parameter, a body field — is classified here, at parse, as an id or
+//! a name, and refused when it is neither; the app resolves a name after the
+//! verb ceiling (http-api.md "Names and ids"; ADR-0026 d3, d4).
 
 #![forbid(unsafe_code)]
 
@@ -35,14 +40,15 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::App;
-use oml_app::domain::budget::budget_tokens;
-use oml_app::domain::{
-    HeldBy, MemoryKind, MemoryStatus, Role, SignedEnvelope, nfc, sha256_digest_string,
-};
+use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
+use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
+use oml_app::domain::name::{Name, Reference};
+use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
-    AppError, BootstrapRequest, Crew, GrantRequest, IssueKeyRequest, IssuedKey, ListRequest,
-    RecallRequest, ServedMemory, SubmitRequest, SupersedeRequest, Verdict, WorkareaInfo,
+    AppError, BootstrapRequest, CrewCreateRequest, CrewRecord, CrewUpdate, GrantRecord,
+    GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, RecallRequest, ServedMemory,
+    SubmitRequest, SupersedeRequest, TailedEvent, Verdict, WorkareaInfo, WorkareaRecord,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -63,6 +69,49 @@ const SERVE_TTL_SECS: u64 = 900;
 pub type PingFuture = Pin<Box<dyn Future<Output = bool> + Send>>;
 pub type DbPing = Arc<dyn Fn() -> PingFuture + Send + Sync>;
 
+/// The build `/readyz` names (http-api.md "Health"). The composition supplies
+/// it; the transport knows no build system. A field nothing supplied is
+/// `unknown`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildInfo {
+    pub version: String,
+    pub commit: String,
+    pub commit_time: String,
+    pub build_time: String,
+    pub rustc: String,
+    pub target: String,
+    pub profile: String,
+}
+
+impl BuildInfo {
+    /// What a composition that supplies no build reports.
+    #[must_use]
+    pub fn unknown() -> Self {
+        let unknown = || "unknown".to_owned();
+        Self {
+            version: unknown(),
+            commit: unknown(),
+            commit_time: unknown(),
+            build_time: unknown(),
+            rustc: unknown(),
+            target: unknown(),
+            profile: unknown(),
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "version": self.version,
+            "commit": self.commit,
+            "commit_time": self.commit_time,
+            "build_time": self.build_time,
+            "rustc": self.rustc,
+            "target": self.target,
+            "profile": self.profile,
+        })
+    }
+}
+
 /// Everything the handlers share. `store` is a second handle on the journal
 /// port for the reads the use-case surface does not front (the events-tail
 /// `head_seq`); every invariant-bearing verb still goes through [`App`].
@@ -71,7 +120,9 @@ pub struct ApiState<J, S, C, I, Sc> {
     store: J,
     db_ping: DbPing,
     fork_check_ok: Arc<AtomicBool>,
+    names_assigned: bool,
     enrollment: Arc<Mutex<Option<String>>>,
+    build: Arc<BuildInfo>,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -81,7 +132,9 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             store: self.store.clone(),
             db_ping: Arc::clone(&self.db_ping),
             fork_check_ok: Arc::clone(&self.fork_check_ok),
+            names_assigned: self.names_assigned,
             enrollment: Arc::clone(&self.enrollment),
+            build: Arc::clone(&self.build),
         }
     }
 }
@@ -109,15 +162,42 @@ where
             store,
             db_ping,
             fork_check_ok: Arc::new(AtomicBool::new(fork_check_ok)),
+            names_assigned: true,
             enrollment: Arc::new(Mutex::new(enrollment_token)),
+            build: Arc::new(BuildInfo::unknown()),
         }
     }
 
-    /// The two rings plus the unversioned probes, as one axum router.
+    /// The build `/readyz` reports; without it every build field is `unknown`.
+    #[must_use]
+    pub fn with_build(mut self, build: BuildInfo) -> Self {
+        self.build = Arc::new(build);
+        self
+    }
+
+    /// The composition's startup names check. `false` means the lead's
+    /// start, which names every row that predates names before it serves
+    /// (ADR-0026 d11; http-api.md "Rows created before names"), left a row
+    /// with no name: `/readyz` reports `names_assigned` not ready and every
+    /// route but the two probes answers `system.unavailable` with that
+    /// reason, so no request reaches a row with no name. Without the call
+    /// every row is taken as named.
+    #[must_use]
+    pub fn with_names_assigned(mut self, names_assigned: bool) -> Self {
+        self.names_assigned = names_assigned;
+        self
+    }
+
+    /// The two rings plus the unversioned probes, as one axum router; only
+    /// the probes while names are not assigned.
     pub fn into_router(self) -> Router {
-        Router::new()
+        let probes = Router::new()
             .route("/healthz", get(healthz))
-            .route("/readyz", get(Self::readyz))
+            .route("/readyz", get(Self::readyz));
+        if !self.names_assigned {
+            return probes.fallback(names_unassigned).with_state(self);
+        }
+        probes
             .route("/v1/memories", post(Self::submit).get(Self::list_memories))
             .route("/v1/memories/recall", post(Self::recall))
             .route("/v1/memories/{artifact_id}", get(Self::get_memory))
@@ -128,9 +208,18 @@ where
             .route("/v2/review/next", post(Self::review_next))
             .route("/v2/review/verdicts", post(Self::review_verdicts))
             .route("/v2/keys", post(Self::issue_key))
+            .route("/v2/keys/{key_id}", get(Self::get_key))
             .route("/v2/keys/{key_id}/denials", post(Self::deny_key))
+            .route("/v2/crews", post(Self::create_crew).get(Self::list_crews))
+            .route("/v2/crews/{crew_id}", get(Self::get_crew))
+            .route("/v2/crews/{crew_id}/update", post(Self::update_crew))
             .route("/v2/workareas", post(Self::create_workarea))
             .route("/v2/workareas/{workarea_id}", get(Self::get_workarea))
+            .route("/v2/workareas/{workarea_id}/tree", get(Self::workarea_tree))
+            .route(
+                "/v2/workareas/{workarea_id}/crew",
+                post(Self::set_workarea_crew),
+            )
             .route("/v2/events", get(Self::events_tail))
             .route("/v2/bootstrap/claim", post(Self::bootstrap_claim))
             .route("/mcp", post(Self::mcp).get(mcp::mcp_get))
@@ -153,14 +242,18 @@ where
         let rid = new_request_id();
         let postgres_ok = (st.db_ping)().await;
         let fork_ok = st.fork_check_ok.load(Ordering::SeqCst);
+        let ready = postgres_ok && fork_ok && st.names_assigned;
         let body = json!({
-            "status": if postgres_ok && fork_ok { "ok" } else { "unavailable" },
+            "status": if ready { "ok" } else { "unavailable" },
             "checks": {
                 "postgres": if postgres_ok { "ok" } else { "unreachable" },
                 "fork_check": if fork_ok { "ok" } else { "failed" },
+                "names_assigned": if st.names_assigned { "ok" } else { "unassigned" },
             },
+            // Ready or not, the probe names the build it belongs to.
+            "build": st.build.to_json(),
         });
-        let status = if postgres_ok && fork_ok {
+        let status = if ready {
             StatusCode::OK
         } else {
             StatusCode::SERVICE_UNAVAILABLE
@@ -308,12 +401,20 @@ where
         )
     }
 
+    /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
+    /// workarea, so an `X-OML-Workarea` sent with it is refused, not
+    /// ignored, as on the own-work listing (ADR-0025 d13).
     async fn get_memory_inner(
         st: &Self,
         artifact_id: &str,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
+        if workarea_override(headers)?.is_some() {
+            return Err(ApiError::validation(
+                "X-OML-Workarea is refused on get: get resolves no workarea",
+            ));
+        }
         // Ids are opaque; one that can name no row is absent (access.not_found).
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let memory = st
@@ -356,6 +457,17 @@ where
             ));
         }
         let kinds = parse_hit_kinds(req.kinds.as_deref())?;
+        // A budget is an integer ≥ 1, and one RFC 8785 digests exactly: an
+        // integer above 2^53 − 1 has no exact I-JSON form (retrieval.md, the
+        // read log; ADR-0025 d7, d9).
+        if req
+            .max_tokens
+            .is_some_and(|m| !(1..=MAX_CHAIN_INTEGER).contains(&m))
+        {
+            return Err(ApiError::validation(
+                "max_tokens must be an integer between 1 and 2^53 - 1",
+            ));
+        }
         let include_bodies = req.include_bodies.unwrap_or(true);
         let workarea_id = workarea_override(headers)?;
         let result = st
@@ -367,6 +479,9 @@ where
                     k,
                     workarea_id,
                     kinds,
+                    include_bodies,
+                    include_own_held: req.include_own_held.unwrap_or(false),
+                    max_tokens: req.max_tokens,
                 },
             )
             .await
@@ -388,14 +503,17 @@ where
                 })
             })
             .collect();
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({
-                "steering": steering,
-                "hits": hits,
-                "query_digest": sha256_digest_string(req.query.as_bytes()),
-            }),
-        ))
+        let mut response = json!({
+            "steering": steering,
+            "hits": hits,
+            "query_digest": result.query_digest,
+        });
+        // The budget object is present if and only if max_tokens was sent
+        // (retrieval.md token budgets; ADR-0025 d7).
+        if let (Some(budget), Some(obj)) = (&result.budget, response.as_object_mut()) {
+            obj.insert("budget".to_owned(), budget_json(budget));
+        }
+        Ok(json_response(StatusCode::OK, &response))
     }
 
     async fn supersede(
@@ -407,7 +525,8 @@ where
         let rid = new_request_id();
         finish(
             &rid,
-            Self::supersede_inner(&st, &artifact_id, &headers, &body).await,
+            // The ring supersedes a target of any kind (ADR-0025 d12).
+            Self::supersede_inner(&st, &artifact_id, &headers, &body, false).await,
         )
     }
 
@@ -415,11 +534,14 @@ where
     /// names what it replaces; the target stays the tip until ratification
     /// (http-api.md supersede; ADR-0025 d10, d11). The body is closed: a
     /// field the server does not serve is refused, never dropped (d16).
+    /// `refuse_vocabulary_target` is set by `oml_supersede`, whose input
+    /// carries no vocabulary fields (d12).
     async fn supersede_inner(
         st: &Self,
         artifact_id: &str,
         headers: &HeaderMap,
         body: &Bytes,
+        refuse_vocabulary_target: bool,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
@@ -456,6 +578,7 @@ where
             derives_from: req.derives_from,
             reason: req.reason,
             workarea_id: workarea_override(headers)?,
+            refuse_vocabulary_target,
         };
         let outcome = retry_chain(|| st.app.supersede(&token, &app_req))
             .await
@@ -502,9 +625,18 @@ where
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
         if !body.is_empty() {
-            // The optional subtree filter is accepted but the PoC serves the
-            // whole tenant queue.
-            let _filter: ReviewNextBody = parse_json(headers, body)?;
+            // The subtree filter is not built: the PoC serves the whole
+            // tenant queue, so a `workarea` is refused by name, never
+            // ignored, however it is spelled (errors.md `request.validation`;
+            // ADR-0026 d4).
+            let filter: ReviewNextBody = parse_json(headers, body)?;
+            if filter.workarea.is_some() {
+                return Err(ApiError::validation(
+                    "workarea on POST /v2/review/next is not built: the queue is served whole, \
+                     so the filter is refused, never ignored",
+                )
+                .with_details(json!({ "field": "/workarea" })));
+            }
         }
         let served = st
             .app
@@ -624,6 +756,10 @@ where
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
         let req: KeyIssueBody = parse_json(headers, body)?;
+        // Every issuance names its key, under the creation grammar, checked
+        // with the rest of the body before step 0 of the issuance order
+        // (roles-and-keys.md issuance order; ADR-0026 d5, d9).
+        let name = required_creation_name("/name", req.name.as_deref())?;
         // Issued keys do not expire yet: a requested expiry is refused by
         // name, since minting the key without it would leave the key its
         // access past the issuer's date (ADR-0025 d2, d16).
@@ -649,17 +785,36 @@ where
                 )));
             }
         };
+        // Every workarea and crew reference is an id or a name, each
+        // refusal naming its JSON Pointer (errors.md; ADR-0026 d3).
         let grants = req
             .grants
             .iter()
-            .map(|g| {
+            .enumerate()
+            .map(|(i, g)| {
                 Ok(GrantRequest {
-                    node: g.workarea_node_id,
+                    node: reference(
+                        &format!("/grants/{i}/workarea_node_id"),
+                        &g.workarea_node_id,
+                    )?,
                     role: parse_grant_role(&g.role)?,
-                    deny: g.deny.iter().map(|d| d.subtree_node_id).collect(),
+                    deny: g
+                        .deny
+                        .iter()
+                        .enumerate()
+                        .map(|(j, d)| {
+                            reference(
+                                &format!("/grants/{i}/deny/{j}/subtree_node_id"),
+                                &d.subtree_node_id,
+                            )
+                        })
+                        .collect::<Result<_, _>>()?,
                 })
             })
             .collect::<Result<Vec<_>, ApiError>>()?;
+        let default_workarea =
+            optional_reference("/default_workarea_id", req.default_workarea_id.as_deref())?;
+        let crew = optional_reference("/crew", req.crew.as_deref())?;
         let principal = req
             .principal
             .clone()
@@ -667,9 +822,11 @@ where
             .unwrap_or_else(|| "unnamed".to_owned());
         let issue = IssueKeyRequest {
             role,
+            name,
             principal,
             held_by,
-            default_workarea: req.default_workarea_id,
+            default_workarea,
+            crew,
             grants,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
@@ -695,7 +852,8 @@ where
     }
 
     /// `POST /v2/keys/{key_id}/denials`: one journalled `key.denied`, its
-    /// epoch its own seq (http-api.md keys, grants, denials; ADR-0025 d2).
+    /// epoch its own seq, the key and the node each by id or name
+    /// (http-api.md keys, grants, denials; ADR-0025 d2; ADR-0026 d4).
     async fn deny_key_inner(
         st: &Self,
         key_id: &str,
@@ -705,10 +863,10 @@ where
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
-        // Ids are opaque; one that can name no key is absent.
-        let key_id = Uuid::parse_str(key_id).map_err(|_| ApiError::not_found())?;
+        let key = reference("key_id", key_id)?;
         let req: DenialBody = parse_json(headers, body)?;
-        let denial = retry_chain(|| st.app.deny_key(&token, key_id, req.workarea_node_id))
+        let node = reference("/workarea_node_id", &req.workarea_node_id)?;
+        let denial = retry_chain(|| st.app.deny_key(&token, key.clone(), node.clone()))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -745,27 +903,24 @@ where
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
             ));
         }
+        let parent = reference("/parent_id", &req.parent_id)?;
+        let name = creation_name("/name", &req.name)?;
+        // A crew record's id or name (ADR-0026 d8).
+        let crew = optional_reference("/crew", req.crew.as_deref())?;
         let created = retry_chain(|| {
             st.app
-                .create_workarea(&token, &req.name, Some(req.parent_id), req.crew.clone())
+                .create_workarea(&token, &name, Some(parent.clone()), crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let workarea = &created.workarea;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &json!({
-                "id": workarea.workarea_id,
-                "parent_id": workarea.parent_id,
-                // Derived from the parent names, as the workarea read serves
-                // it (ADR-0025 d14).
-                "path": created.path,
-                "status": workarea.status(),
-                // The crew as stored, which the workarea read serves.
-                "crew": workarea.crew,
-                "created_at": system_event_time().as_str(),
-            }),
-        ))
+        // The path derived from the parent names and the crew record as
+        // stored, as the workarea read serves them (ADR-0025 d14; ADR-0026
+        // d8).
+        let mut response = workarea_json(&created.workarea, &created.path, created.crew.as_ref());
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
+        }
+        Ok(json_response(StatusCode::CREATED, &response))
     }
 
     async fn get_workarea(
@@ -781,8 +936,9 @@ where
     }
 
     /// `GET /v2/workareas/{workarea_id}`: the node and the calling key's
-    /// view of it in one call, at reader effective access and otherwise
-    /// `access.not_found` (http-api.md workareas; ADR-0025 d14). `None` is
+    /// view of it in one call, at reader effective access, or for an admin
+    /// key its structure by its key role, and otherwise `access.not_found`
+    /// (http-api.md workareas; ADR-0025 d14; ADR-0026 d15). `None` is
     /// the MCP facade's omitted workarea: the key's default, which the app
     /// resolves after step 1 of the refusal order (mcp-plugin.md
     /// `oml_workarea_info`).
@@ -792,16 +948,64 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
-        // Ids are opaque; one that can name no node is absent.
-        let id = workarea_id
-            .map(|id| Uuid::parse_str(id).map_err(|_| ApiError::not_found()))
-            .transpose()?;
+        let node = optional_reference("workarea_id", workarea_id)?;
         let info = st
             .app
-            .workarea_info(&token, id)
+            .workarea_info(&token, node)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
+    }
+
+    async fn workarea_tree(
+        State(st): State<Self>,
+        Path(workarea_id): Path<String>,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        let result = match query {
+            Ok(Query(params)) => {
+                Self::workarea_tree_inner(&st, &workarea_id, &params, &headers).await
+            }
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/workareas/{workarea_id}/tree`: one page of the subtree at a
+    /// workarea, by id or name, in path order, each node with the `Workarea`
+    /// fields the workarea read serves, under a cursor bound to the key: at
+    /// reader effective access with every node outside it omitted, or for an
+    /// admin key by its key role, structure only, and otherwise
+    /// `access.not_found` (http-api.md workareas and pagination; ADR-0026
+    /// d4, d15). Each query parameter at most once, and an unknown one
+    /// refused rather than ignored.
+    async fn workarea_tree_inner(
+        st: &Self,
+        workarea_id: &str,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let node = reference("workarea_id", workarea_id)?;
+        let (limit, cursor) = page_params(params)?;
+        let page = st
+            .app
+            .workarea_tree(&token, node, cursor, limit)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let items: Vec<Value> = page
+            .items
+            .iter()
+            .map(|n| workarea_json(&n.workarea, &n.path, n.crew.as_ref()))
+            .collect();
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({ "items": items, "next_cursor": page.next_cursor }),
+        ))
     }
 
     async fn events_tail(
@@ -835,29 +1039,23 @@ where
                     ApiError::validation(format!("limit must be between 1 and {PAGE_LIMIT_MAX}"))
                 })?,
         };
-        let events = st
+        let workarea_id =
+            optional_reference("workarea_id", params.get("workarea_id").map(String::as_str))?;
+        let page = st
             .app
-            .tail_events(&token, after_seq, limit)
+            .tail_events(&token, workarea_id, after_seq, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        // head_seq, for measuring lag (http-api.md events tail). The key was
-        // just authenticated by the app; the port lookup names its tenant.
-        let key = st
-            .store
-            .key_by_hash(&sha256_digest_string(token.as_bytes()))
-            .await
-            .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
-            .ok_or_else(|| ApiError::auth_invalid("unknown"))?;
-        let head_seq = st
-            .store
-            .chain_head(key.tenant_id)
-            .await
-            .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
-            .map_or(0, |h| h.seq);
-        let items: Vec<Value> = events.iter().map(event_json).collect();
+        // head_seq for measuring lag, next_after_seq to resume from, both
+        // read in the scan's snapshot (http-api.md events tail; ADR-0025 d15).
+        let items: Vec<Value> = page.events.iter().map(event_json).collect();
         Ok(json_response(
             StatusCode::OK,
-            &json!({ "items": items, "head_seq": head_seq }),
+            &json!({
+                "items": items,
+                "head_seq": page.head_seq,
+                "next_after_seq": page.next_after_seq,
+            }),
         ))
     }
 
@@ -879,19 +1077,32 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let req: BootstrapClaimBody = parse_json(headers, body)?;
-        let taken = {
+        // The token first (`auth.invalid`), the names after, so only the
+        // holder of the valid token learns anything about a name (ADR-0026
+        // d5; http-api.md bootstrap). The names are checked while the lock
+        // still holds the token: a refused name consumes no token and
+        // journals nothing, and no concurrent claim sees it consumed.
+        let (taken, admin_key_name, tenant_name) = {
             let mut guard = st
                 .enrollment
                 .lock()
                 .map_err(|_| ApiError::internal("enrollment token lock poisoned"))?;
             match guard.as_deref() {
-                Some(t) if t == req.enrollment_token => guard.take(),
+                Some(t) if t == req.enrollment_token => {}
                 Some(_) => return Err(ApiError::auth_invalid("unknown")),
                 None => return Err(ApiError::auth_invalid("consumed")),
             }
+            // The claim names the key it mints (ADR-0026 d9).
+            let admin_key_name = required_creation_name("/name", req.name.as_deref())?;
+            let tenant_name = creation_name(
+                "/tenant_name",
+                req.tenant_name.as_deref().unwrap_or("default"),
+            )?;
+            (guard.take(), admin_key_name, tenant_name)
         };
         let boot = BootstrapRequest {
-            tenant_name: req.tenant_name.unwrap_or_else(|| "default".to_owned()),
+            tenant_name,
+            admin_key_name,
             admin_principal: req
                 .admin_principal
                 .unwrap_or_else(|| "bootstrap/admin".to_owned()),
@@ -918,6 +1129,215 @@ where
                 Ok(json_response(StatusCode::CREATED, &body))
             }
         }
+    }
+
+    async fn get_key(
+        State(st): State<Self>,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(&rid, Self::get_key_inner(&st, &key_id, &headers).await)
+    }
+
+    /// `GET /v2/keys/{key_id}`: one key, by id or name, admin by key role,
+    /// a revoked key's included; never its value (http-api.md keys, grants,
+    /// denials; ADR-0026 d4, d9, d10).
+    async fn get_key_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let key = reference("key_id", key_id)?;
+        let detail = st
+            .app
+            .key(&token, key)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &key_json(&detail)))
+    }
+
+    async fn create_crew(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
+        let rid = new_request_id();
+        finish(&rid, Self::create_crew_inner(&st, &headers, &body).await)
+    }
+
+    /// `POST /v2/crews`: a named crew record, admin by key role, journalled
+    /// `crew.created`; a name the tenant's crews already hold is
+    /// `name.taken`, checked last, and journals nothing (http-api.md crews;
+    /// ADR-0026 d5, d8).
+    async fn create_crew_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let req: CrewCreateBody = parse_json(headers, body)?;
+        let create = CrewCreateRequest {
+            name: required_creation_name("/name", req.name.as_deref())?,
+            charter_uri: req.charter_uri,
+            external_manager: req.external_manager,
+        };
+        let crew = retry_chain(|| st.app.create_crew(&token, &create))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::CREATED, &crew_json(&crew)))
+    }
+
+    async fn list_crews(
+        State(st): State<Self>,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        let result = match query {
+            Ok(Query(params)) => Self::list_crews_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/crews`: one page of the tenant's crew records in name
+    /// order, admin by key role, under a cursor bound to the key
+    /// (http-api.md crews and pagination; ADR-0026 d8). Each query parameter
+    /// at most once, and an unknown one refused rather than ignored.
+    async fn list_crews_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let (limit, cursor) = page_params(params)?;
+        let page = st
+            .app
+            .crews(&token, cursor, limit)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "items": page.items.iter().map(crew_json).collect::<Vec<_>>(),
+                "next_cursor": page.next_cursor,
+            }),
+        ))
+    }
+
+    async fn get_crew(
+        State(st): State<Self>,
+        Path(crew_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(&rid, Self::get_crew_inner(&st, &crew_id, &headers).await)
+    }
+
+    /// `GET /v2/crews/{crew_id}`: one crew record, by id or name, admin by
+    /// key role; one the tenant does not hold is absent (http-api.md crews;
+    /// ADR-0026 d4, d8).
+    async fn get_crew_inner(
+        st: &Self,
+        crew_id: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let crew = reference("crew_id", crew_id)?;
+        let record = st
+            .app
+            .crew(&token, crew)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &crew_json(&record)))
+    }
+
+    async fn update_crew(
+        State(st): State<Self>,
+        Path(crew_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(
+            &rid,
+            Self::update_crew_inner(&st, &crew_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/crews/{crew_id}/update`: the record's charter URI or
+    /// external manager, at least one, journalled `crew.updated`. The body
+    /// is closed, so a `name` is refused, never dropped: a crew's name
+    /// never changes (http-api.md crews; ADR-0026 d1, d8).
+    async fn update_crew_inner(
+        st: &Self,
+        crew_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let crew = reference("crew_id", crew_id)?;
+        let req: CrewUpdateBody = parse_json(headers, body)?;
+        let update = CrewUpdate {
+            charter_uri: req.charter_uri,
+            external_manager: req.external_manager,
+        };
+        let updated = retry_chain(|| st.app.update_crew(&token, crew.clone(), &update))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &crew_json(&updated)))
+    }
+
+    async fn set_workarea_crew(
+        State(st): State<Self>,
+        Path(workarea_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(
+            &rid,
+            Self::set_workarea_crew_inner(&st, &workarea_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/workareas/{workarea_id}/crew`: points the workarea at a
+    /// crew record, each by id or name, admin by key role, journalled
+    /// `workarea.crew_updated`; a workarea the tenant does not hold is
+    /// absent, and so, checked after it, is a crew (http-api.md workareas;
+    /// ADR-0026 d8). The answer is the node as the admin key's structure read
+    /// serves it once the update has committed (ADR-0026 d15).
+    async fn set_workarea_crew_inner(
+        st: &Self,
+        workarea_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let workarea = reference("workarea_id", workarea_id)?;
+        let req: WorkareaCrewBody = parse_json(headers, body)?;
+        let crew = reference("/crew", &req.crew)?;
+        let updated = retry_chain(|| {
+            st.app
+                .set_workarea_crew(&token, workarea.clone(), crew.clone())
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let info = st
+            .app
+            .workarea_info(&token, Some(Reference::Id(updated.workarea_id)))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &workarea_json(&info.workarea, &info.path, info.crew.as_ref()),
+        ))
     }
 }
 
@@ -953,6 +1373,8 @@ struct RecallBody {
     k: Option<usize>,
     kinds: Option<Vec<String>>,
     include_bodies: Option<bool>,
+    include_own_held: Option<bool>,
+    max_tokens: Option<u64>,
     /// Parsed only to be refused while the vocabulary filter is unbuilt
     /// (ADR-0025 d16).
     terms: Option<Vec<String>>,
@@ -994,9 +1416,10 @@ struct SupersedeBody {
 
 #[derive(Deserialize)]
 struct ReviewNextBody {
+    /// The subtree filter, by id or name; parsed only to be refused while
+    /// the filter is unbuilt. Any JSON value is the field's presence.
     #[serde(default)]
-    #[allow(dead_code, reason = "the PoC serves the whole tenant queue")]
-    workarea: Option<String>,
+    workarea: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -1006,16 +1429,18 @@ struct VerdictBody {
     reason: Option<String>,
 }
 
+/// A workarea or crew reference is a string, classified after the body
+/// parses so that a refusal names its JSON Pointer (errors.md; ADR-0026 d3).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DenyBody {
-    subtree_node_id: Uuid,
+    subtree_node_id: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GrantBody {
-    workarea_node_id: Uuid,
+    workarea_node_id: String,
     role: String,
     #[serde(default)]
     deny: Vec<DenyBody>,
@@ -1025,6 +1450,10 @@ struct GrantBody {
 #[serde(deny_unknown_fields)]
 struct KeyIssueBody {
     role: String,
+    /// Required, and optional here only so that an absent name is refused
+    /// with `details.field: name`, which serde's missing-field refusal does
+    /// not carry (ADR-0026 d9).
+    name: Option<String>,
     #[serde(default)]
     grants: Vec<GrantBody>,
     label: Option<String>,
@@ -1033,14 +1462,16 @@ struct KeyIssueBody {
     #[serde(default)]
     expiry: Option<String>,
     held_by: Option<String>,
-    default_workarea_id: Option<Uuid>,
+    default_workarea_id: Option<String>,
+    /// The key's crew record, by id or name (ADR-0026 d8).
+    crew: Option<String>,
     tenant_id: Option<String>,
 }
 
 /// openapi.yaml `DenialRequest`, which the contract leaves open.
 #[derive(Deserialize)]
 struct DenialBody {
-    workarea_node_id: Uuid,
+    workarea_node_id: String,
     #[serde(default)]
     #[allow(
         dead_code,
@@ -1051,17 +1482,48 @@ struct DenialBody {
 
 #[derive(Deserialize)]
 struct WorkareaCreateBody {
-    parent_id: Uuid,
+    parent_id: String,
     name: String,
+    /// A crew record's id or name (ADR-0026 d8).
     #[serde(default)]
-    crew: Option<Crew>,
+    crew: Option<String>,
     #[serde(default)]
     prefix: Option<String>,
+}
+
+/// openapi.yaml `WorkareaCrewUpdate`, closed.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkareaCrewBody {
+    crew: String,
+}
+
+/// openapi.yaml `CrewCreate`, closed (ADR-0026 d8).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CrewCreateBody {
+    /// Required, and optional here only so that an absent name is refused
+    /// with `details.field: /name`, as on key issuance.
+    name: Option<String>,
+    charter_uri: Option<String>,
+    external_manager: Option<String>,
+}
+
+/// openapi.yaml `CrewUpdate`, closed: the name is not updatable.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CrewUpdateBody {
+    charter_uri: Option<String>,
+    external_manager: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct BootstrapClaimBody {
     enrollment_token: String,
+    /// The key's name: required, and checked after the token, so optional
+    /// here for the same reason as `KeyIssueBody`'s (ADR-0026 d5, d9).
+    #[serde(default)]
+    name: Option<String>,
     // PoC extensions: the standalone ceremony names its tenant here.
     #[serde(default)]
     tenant_name: Option<String>,
@@ -1073,12 +1535,91 @@ struct BootstrapClaimBody {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// A value that names a workarea, crew, key or tenant, classified at parse
+/// as an id or a name, before any check that consults state. One that is
+/// neither — a derived path, an uppercase spelling, hex-and-dash text of
+/// version 8 — is `request.validation` with `details.field` naming its place
+/// as errors.md spells it: the parameter for a path or query parameter, the
+/// header's name, an RFC 6901 JSON Pointer for a body member (http-api.md
+/// names and ids; ADR-0026 d3). The app resolves a name after the verb
+/// ceiling (ADR-0026 d4).
+fn reference(field: &str, value: &str) -> Result<Reference, ApiError> {
+    Reference::parse(value).map_err(|refusal| {
+        ApiError::validation(format!(
+            "{field} {value:?} is neither an id nor a name: {refusal}"
+        ))
+        .with_details(json!({ "field": field }))
+    })
+}
+
+/// The `limit` and `cursor` of a listing that takes no other query
+/// parameter (http-api.md pagination): each at most once, and an unknown
+/// one refused rather than ignored, so a mistyped filter never widens a
+/// listing.
+fn page_params(params: &[(String, String)]) -> Result<(usize, Option<&str>), ApiError> {
+    let (mut limit, mut cursor) = (PAGE_LIMIT_DEFAULT, None);
+    let mut seen = HashSet::new();
+    for (name, value) in params {
+        if !seen.insert(name.as_str()) {
+            return Err(ApiError::validation(format!(
+                "the query parameter {name} is given more than once"
+            )));
+        }
+        match name.as_str() {
+            "limit" => limit = page_limit(value)?,
+            "cursor" => cursor = Some(value.as_str()),
+            other => {
+                return Err(ApiError::validation(format!(
+                    "unknown query parameter {other:?}"
+                )));
+            }
+        }
+    }
+    Ok((limit, cursor))
+}
+
+/// [`reference`] over an optional value.
+fn optional_reference(field: &str, value: Option<&str>) -> Result<Option<Reference>, ApiError> {
+    value.map(|value| reference(field, value)).transpose()
+}
+
+/// A name a creation sends, under the creation grammar: one it refuses is
+/// `request.validation` naming the field by its JSON Pointer, at parse,
+/// never coerced into a name it resembles (http-api.md names and ids;
+/// errors.md; ADR-0026 d2, d3).
+fn creation_name(field: &'static str, value: &str) -> Result<Name, ApiError> {
+    Name::parse(value).map_err(|refusal| {
+        ApiError::validation(format!("{field} {value:?}: {refusal}"))
+            .with_details(json!({ "field": field }))
+    })
+}
+
+/// A name a creation must send: absent, `request.validation` naming the
+/// field; present, [`creation_name`]'s (ADR-0026 d9).
+fn required_creation_name(field: &'static str, value: Option<&str>) -> Result<Name, ApiError> {
+    let value = value.ok_or_else(|| {
+        ApiError::validation(format!(
+            "{field} is required: every creation names its row (ADR-0026 d1)"
+        ))
+        .with_details(json!({ "field": field }))
+    })?;
+    creation_name(field, value)
+}
+
 async fn healthz() -> Response {
     let rid = new_request_id();
     finish(
         &rid,
         Ok(json_response(StatusCode::OK, &json!({"status": "ok"}))),
     )
+}
+
+/// Every route but the probes while the store holds rows that predate
+/// names: the replica cannot serve them safely, so it serves nothing
+/// (errors.md `system.unavailable`; ADR-0026 d11).
+async fn names_unassigned() -> Response {
+    let rid = new_request_id();
+    finish(&rid, Err(ApiError::unavailable("names_assigned")))
 }
 
 fn new_uuid() -> Uuid {
@@ -1144,18 +1685,32 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(key.to_owned())
 }
 
-/// `X-OML-Workarea`: the provider ring's explicit per-request target override
-/// (ADR-0022 d4); absent, the key's journalled default resolves in the app.
-fn workarea_override(headers: &HeaderMap) -> Result<Option<Uuid>, ApiError> {
-    match headers.get("x-oml-workarea") {
-        None => Ok(None),
-        Some(value) => value
-            .to_str()
-            .ok()
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .map(Some)
-            .ok_or_else(|| ApiError::validation("X-OML-Workarea must be a workarea node id")),
-    }
+/// `X-OML-Workarea`: the provider ring's explicit per-request target
+/// override (ADR-0022 d4), the node's id or its name, which the app
+/// resolves after step 1 of the refusal order and before the idempotency
+/// record is looked up (ADR-0026 d4); absent, the key's journalled default
+/// resolves in the app. A refusal names the header (errors.md).
+fn workarea_override(headers: &HeaderMap) -> Result<Option<Reference>, ApiError> {
+    const FIELD: &str = "X-OML-Workarea";
+    let Some(value) = headers.get("x-oml-workarea") else {
+        return Ok(None);
+    };
+    let value = value.to_str().map_err(|_| {
+        ApiError::validation(format!("{FIELD} must be visible ASCII"))
+            .with_details(json!({ "field": FIELD }))
+    })?;
+    reference(FIELD, value).map(Some)
+}
+
+/// A page's `limit`, at most `api.page_limit_max` (openapi.yaml `Limit`).
+fn page_limit(value: &str) -> Result<usize, ApiError> {
+    value
+        .parse()
+        .ok()
+        .filter(|l| (1..=PAGE_LIMIT_MAX).contains(l))
+        .ok_or_else(|| {
+            ApiError::validation(format!("limit must be between 1 and {PAGE_LIMIT_MAX}"))
+        })
 }
 
 fn parse_json<T: serde::de::DeserializeOwned>(
@@ -1213,29 +1768,13 @@ fn parse_grant_role(role: &str) -> Result<Role, ApiError> {
 /// it, each stored grant with its id and epoch, the key's permission epoch
 /// and the value, shown once (ADR-0025 d2).
 fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
-    let grants: Vec<Value> = issued
-        .access
-        .grants
-        .iter()
-        .map(|g| {
-            json!({
-                "grant_id": g.grant.grant_id,
-                "workarea_node_id": g.grant.node,
-                "role": g.grant.role.as_str(),
-                "deny": g
-                    .grant
-                    .deny
-                    .iter()
-                    .map(|d| json!({ "subtree_node_id": d }))
-                    .collect::<Vec<_>>(),
-                "epoch": g.epoch,
-            })
-        })
-        .collect();
+    let grants: Vec<Value> = issued.access.grants.iter().map(grant_json).collect();
     json!({
         "key_id": issued.key_id,
+        "name": issued.name.as_str(),
         "role": issued.role.as_str(),
         "principal": issued.principal,
+        "crew_id": issued.crew_id,
         "default_workarea_id": issued.default_workarea,
         "held_by": issued.held_by.map(HeldBy::as_str),
         "label": label,
@@ -1248,6 +1787,62 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         // Show-once: the value appears exactly here, journalled as
         // issued-without-value (D14).
         "value": issued.value,
+    })
+}
+
+/// openapi.yaml `Grant`: a stored grant with its id and its epoch, the seq
+/// of its `grant.issued` (ADR-0025 d2).
+fn grant_json(g: &GrantRecord) -> Value {
+    json!({
+        "grant_id": g.grant.grant_id,
+        "workarea_node_id": g.grant.node,
+        "role": g.grant.role.as_str(),
+        "deny": g
+            .grant
+            .deny
+            .iter()
+            .map(|d| json!({ "subtree_node_id": d }))
+            .collect::<Vec<_>>(),
+        "epoch": g.epoch,
+    })
+}
+
+/// openapi.yaml `Key` as the key read serves it: the row, its attestation as
+/// `key.issued` journalled it, its stored grants, its denials in force and
+/// its permission epoch, and never the value (ADR-0025 d2; ADR-0026 d8, d9).
+/// `revoked_at` is the row's, the `at` of the key's `key.revoked`, and null
+/// for a live key, so a revoked key, whose name still resolves, reads as
+/// history and never as live (ADR-0026 d10). Expiry and rotation are
+/// unbuilt, so `expiry` and `rotated_from` are null. Nothing stores the
+/// label, so the read omits `label` rather than serve a value it has not
+/// read.
+fn key_json(detail: &KeyDetail) -> Value {
+    let key = &detail.key;
+    json!({
+        "key_id": key.key_id,
+        "name": key.name.as_ref().map(Name::as_str),
+        "role": key.role.as_str(),
+        "principal": key.principal,
+        "crew_id": key.crew_id,
+        "default_workarea_id": key.default_workarea,
+        "held_by": detail.held_by.map(HeldBy::as_str),
+        "expiry": Value::Null,
+        "revoked_at": key.revoked_at.as_ref().map(|at| at.as_str()),
+        "rotated_from": Value::Null,
+        "grants": detail.access.grants.iter().map(grant_json).collect::<Vec<_>>(),
+        "denials": detail
+            .access
+            .denials
+            .iter()
+            .map(|d| json!({
+                "denial_id": d.denial.denial_id,
+                "workarea_node_id": d.denial.node,
+                "epoch": d.epoch,
+                // Only the denials in force are listed (ADR-0025 d2).
+                "lifted": false,
+            }))
+            .collect::<Vec<_>>(),
+        "epoch": detail.access.permission_epoch(),
     })
 }
 
@@ -1290,12 +1885,7 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
                     _ => return Err(ApiError::validation("own must be true or false")),
                 };
             }
-            "workarea_id" => {
-                req.workarea_id =
-                    Some(Uuid::parse_str(value).map_err(|_| {
-                        ApiError::validation("workarea_id must be a workarea node id")
-                    })?);
-            }
+            "workarea_id" => req.workarea_id = Some(reference("workarea_id", value)?),
             "claim_key" => req.claim_key = Some(value.clone()),
             "state" => req.state = Some(parse_state(value)?),
             "kind" => req.kind = Some(parse_kind(value)?),
@@ -1451,37 +2041,88 @@ pub fn memory_json(served: &ServedMemory, include_body: bool) -> Value {
     value
 }
 
-/// openapi.yaml `WorkareaView`: the `Workarea` fields — `crew` absent when
-/// none was recorded — and the calling key's children, edges, effective
-/// verbs and permission epoch (ADR-0025 d14).
+/// openapi.yaml `RecallBudget`: how the `max_tokens` cut was applied
+/// (retrieval.md token budgets; ADR-0025 d7).
+fn budget_json(budget: &Budget) -> Value {
+    json!({
+        "max_tokens": budget.max_tokens,
+        "counter": COUNTER_ID,
+        "steering_tokens": budget.steering_tokens,
+        "used_tokens": budget.used_tokens,
+        "truncated": budget.truncated,
+        "hits_omitted": budget.hits_omitted,
+        "next_hit_tokens": budget.next_hit_tokens,
+    })
+}
+
+/// openapi.yaml `Crew`: a crew record, recorded and not operated
+/// (ADR-0026 d8).
+fn crew_json(crew: &CrewRecord) -> Value {
+    json!({
+        "crew_id": crew.crew_id,
+        "name": crew.name.as_str(),
+        "charter_uri": crew.charter_uri,
+        "external_manager": crew.external_manager,
+    })
+}
+
+/// openapi.yaml `Workarea`: the node, its name, its derived path, its
+/// status and the crew record it names, or null when it names none
+/// (ADR-0025 d14; ADR-0026 d1, d8).
+fn workarea_json(workarea: &WorkareaRecord, path: &str, crew: Option<&CrewRecord>) -> Value {
+    json!({
+        "id": workarea.workarea_id,
+        "name": workarea.name.as_str(),
+        "parent_id": workarea.parent_id,
+        "path": path,
+        "status": workarea.status(),
+        "crew": crew.map(crew_json),
+    })
+}
+
+/// openapi.yaml `WorkareaView`: the `Workarea` fields and the calling key's
+/// children, edges, effective verbs and permission epoch (ADR-0025 d14;
+/// ADR-0026 d8).
 #[must_use]
 pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
-    let w = &info.workarea;
-    let mut value = json!({
-        "id": w.workarea_id,
-        "parent_id": w.parent_id,
-        "path": info.path,
-        "status": w.status(),
-        "children": info.children.iter().map(|c| json!({
-            "id": c.workarea_id,
-            "path_leaf": c.name,
-            "status": c.status(),
-        })).collect::<Vec<_>>(),
+    let mut value = workarea_json(&info.workarea, &info.path, info.crew.as_ref());
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "children".to_owned(),
+            info.children
+                .iter()
+                .map(|c| {
+                    json!({
+                        "id": c.workarea_id,
+                        "path_leaf": c.name.as_str(),
+                        "status": c.status(),
+                    })
+                })
+                .collect(),
+        );
         // No workarea edge can exist in this build (ADR-0025 d14).
-        "edges": [],
-        "my_effective_verbs": info.my_effective_verbs,
-        "permission_epoch": info.permission_epoch,
-    });
-    if let (Some(crew), Some(obj)) = (&w.crew, value.as_object_mut()) {
-        obj.insert("crew".to_owned(), json!(crew));
+        obj.insert("edges".to_owned(), json!([]));
+        obj.insert(
+            "my_effective_verbs".to_owned(),
+            json!(info.my_effective_verbs),
+        );
+        obj.insert("permission_epoch".to_owned(), json!(info.permission_epoch));
     }
     value
 }
 
 /// The event-catalog envelope as the tail serves it (digest-only payloads by
-/// construction — the journal never stored plaintext).
+/// construction — the journal never stored plaintext), with the actor named
+/// only to a key in its own key set and the payload as the app serves it
+/// (http-api.md events tail; ADR-0025 d15).
 #[must_use]
-pub fn event_json(e: &SignedEnvelope) -> Value {
+pub fn event_json(tailed: &TailedEvent) -> Value {
+    let e = &tailed.event;
+    let (principal, api_key_id) = if tailed.names_actor {
+        (json!(e.envelope.principal), json!(e.envelope.api_key_id))
+    } else {
+        (Value::Null, Value::Null)
+    };
     json!({
         "seq": e.envelope.seq,
         "event_id": e.envelope.event_id,
@@ -1489,9 +2130,9 @@ pub fn event_json(e: &SignedEnvelope) -> Value {
         "prev_hash": e.envelope.prev_hash.to_prefixed(),
         "hash": e.hash.to_prefixed(),
         "sig": hex::encode(e.sig.to_bytes()),
-        "principal": e.envelope.principal,
-        "api_key_id": e.envelope.api_key_id,
+        "principal": principal,
+        "api_key_id": api_key_id,
         "at": e.envelope.at.as_str(),
-        "payload": e.envelope.payload,
+        "payload": tailed.payload,
     })
 }

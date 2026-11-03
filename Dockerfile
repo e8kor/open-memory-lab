@@ -15,6 +15,13 @@
 # "Release artifacts"; .github/workflows/release.yml, jobs image and merge).
 
 FROM rust:1-bookworm AS builder
+# What /readyz reports about the build (docs/api/http-api.md "Health"). The
+# context carries no .git (.dockerignore), so the release workflow passes the
+# commit and its time; left empty, they read `unknown`. SOURCE_DATE_EPOCH,
+# when given, fixes the reported build time so the build stays reproducible.
+ARG OML_BUILD_COMMIT
+ARG OML_BUILD_COMMIT_TIME
+ARG SOURCE_DATE_EPOCH
 WORKDIR /build
 COPY . .
 # Cargo.lock is committed (the workspace ships binaries), so build --locked.

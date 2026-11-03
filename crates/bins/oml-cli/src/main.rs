@@ -2,23 +2,27 @@
 //! HTTP API (ADR-0015, cli/reference.md). Exit codes per the reference's
 //! conventions: 0 success, 1 a typed server refusal (or a failed
 //! verification/doctor verdict), 2 local failure. `--json` emits exactly one
-//! JSON document on stdout — the server's typed response, unreshaped.
+//! JSON document on stdout — the server's typed response, unreshaped. The one
+//! exception is `oml hook session-start`, which always exits 0 and prints the
+//! hook document Claude Code reads, or nothing (ADR-0029).
 
 // The argument doc comments are clap's --help text, where a placeholder such
 // as <role> must print as written rather than as markdown code.
 #![allow(rustdoc::invalid_html_tags)]
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
-use ed25519_dalek::VerifyingKey;
+use clap::{ArgGroup, Args, Parser, Subcommand};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
-use oml_cli::client::{CallOpts, CliError, Client};
+use oml_cli::client::{CallOpts, CliError, Client, encode, segment};
 use oml_cli::creds::{self, Credentials};
-use oml_cli::verify::{TailEvent, parse_verifying_key, verify_chain};
+use oml_cli::hook;
+use oml_cli::issue::{KeyFile, sh_quote, with_reader_beside_writers};
+use oml_cli::verify::parse_verifying_key;
 
 #[derive(Parser)]
 #[command(
@@ -67,6 +71,11 @@ enum Command {
         #[command(subcommand)]
         command: WorkareasCommand,
     },
+    /// Crew records: named, recorded, not operated (admin key role).
+    Crews {
+        #[command(subcommand)]
+        command: CrewsCommand,
+    },
     /// Submit a claim (writer convenience for the demo).
     Submit(SubmitArgs),
     /// The review ceremony.
@@ -85,6 +94,19 @@ enum Command {
     },
     /// Each health signal with a verdict; exit 1 on any fail.
     Doctor,
+    /// Claude Code hooks of the agent plugin, run under the agent's own key.
+    Hook {
+        #[command(subcommand)]
+        command: HookCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCommand {
+    /// Print the SessionStart context from OML_URL and OML_API_KEY alone —
+    /// steering, this key's recent submissions, the matching memories — or
+    /// nothing; always exits 0 (ADR-0029).
+    SessionStart,
 }
 
 #[derive(Subcommand)]
@@ -92,6 +114,9 @@ enum BootstrapCommand {
     /// Exchange the single-use enrollment token for the first admin key and
     /// store the credentials locally (0600).
     Claim {
+        /// The name of the key the claim mints, unique in its namespace and
+        /// never released (ADR-0026 d9, d12).
+        key_name: String,
         /// The enrollment token the lead printed at first boot.
         #[arg(long)]
         token: String,
@@ -114,23 +139,46 @@ enum TenantsCommand {
 enum KeysCommand {
     /// Issue a key; the value is printed exactly once.
     Issue(KeysIssueArgs),
+    /// Issue the one key the agent plugin needs, in one POST /v2/keys, and
+    /// print the OML_URL and OML_API_KEY export lines it reads (ADR-0028 d1).
+    IssueAgent(IssueAgentArgs),
+    /// One key, by id or name, a revoked key's included: grants, denials,
+    /// crew and epoch, never its value.
+    Show {
+        /// The key's id or name.
+        // Not `key`: clap would merge that id with the global --key.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+    },
 }
 
 #[derive(Args)]
 struct KeysIssueArgs {
+    /// The key's name, unique in the tenant and never released; distinct
+    /// from its principal and label (ADR-0026 d9, d12).
+    key_name: String,
     /// reader | writer | dreamer | admin
     #[arg(long)]
     role: String,
     /// agent | human | service
     #[arg(long, default_value = "agent")]
     held_by: String,
-    /// Workarea node the provider ring targets when a request names none;
-    /// some grant must cover it. Omitted, the first grant's node.
+    /// Workarea (id or name) the provider ring targets when a request names
+    /// none; some grant must cover it. Omitted, the first grant's node.
     #[arg(long)]
-    default_workarea: Option<Uuid>,
-    /// Grant as <workarea-node-id>:<role>; repeatable.
+    default_workarea: Option<String>,
+    /// Grant as <workarea>:<role>, the workarea by id or name; repeatable. A
+    /// writer grant brings a reader grant on the same workarea unless
+    /// --write-only.
     #[arg(long = "grant", value_parser = parse_grant)]
-    grants: Vec<(Uuid, String)>,
+    grants: Vec<(String, String)>,
+    /// The key's crew record, by id or name, fixed for the key's life.
+    #[arg(long)]
+    crew: Option<String>,
+    /// Send the writer grants alone, with no reader grant beside them
+    /// (ADR-0028 d2).
+    #[arg(long)]
+    write_only: bool,
     /// Principal the key acts as.
     #[arg(long)]
     principal: Option<String>,
@@ -138,15 +186,47 @@ struct KeysIssueArgs {
     label: Option<String>,
 }
 
+#[derive(Args)]
+struct IssueAgentArgs {
+    /// The key's name, unique in the tenant and never released; never
+    /// derived from the principal (ADR-0026 d9, d12).
+    key_name: String,
+    /// Principal the key acts as; give each agent its own.
+    #[arg(long)]
+    principal: String,
+    /// The workarea, by id or name, the key writes and recalls on, and its
+    /// default.
+    #[arg(long)]
+    workarea: String,
+    /// The key's crew record, by id or name, fixed for the key's life
+    /// (ADR-0026 d12).
+    #[arg(long)]
+    crew: Option<String>,
+    /// Who holds the key.
+    #[arg(long, default_value = "agent", value_parser = ["agent", "human"])]
+    held_by: String,
+    /// Send the writer grant alone, with no reader grant beside it
+    /// (ADR-0028 d2).
+    #[arg(long)]
+    write_only: bool,
+    /// Write the key value to this new file (mode 0600, never overwritten)
+    /// and print a line that reads it back instead of the value.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
 #[derive(Subcommand)]
 enum DenyCommand {
     /// Create or extend the key's global deny object over a subtree. Distinct
     /// from a per-grant deny; journalled as key.denied.
     Set {
-        /// The key the denial binds.
-        key_id: Uuid,
-        /// The workarea node id whose subtree the key no longer reaches.
-        subtree: Uuid,
+        /// The key the denial binds, by id or name.
+        // Not `key`: clap would merge that id with the global --key.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// The workarea, by id or name, whose subtree the key no longer
+        /// reaches.
+        subtree: String,
         /// Why; the server accepts it and journals no reason.
         #[arg(long)]
         reason: Option<String>,
@@ -157,10 +237,83 @@ enum DenyCommand {
 enum WorkareasCommand {
     /// Create a child workarea in development status.
     Create {
-        /// Parent workarea node id.
-        parent: Uuid,
+        /// The parent workarea, by id or name.
+        parent: String,
+        /// The new workarea's name, unique in the tenant and never changed.
         name: String,
+        /// The crew record the workarea names, by id or name.
+        #[arg(long)]
+        crew: Option<String>,
     },
+    /// The tree from a workarea down, with each node's path, id, status
+    /// and crew: every page of one tree read.
+    Tree {
+        /// The workarea the listing starts at, by id or name.
+        #[arg(long, default_value = "universe")]
+        root: String,
+    },
+    /// One workarea, by id or name: path, status, crew, children.
+    Show {
+        /// The workarea's id or name.
+        workarea: String,
+    },
+    /// The crew record a workarea names (admin key role).
+    Crew {
+        #[command(subcommand)]
+        command: WorkareaCrewCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkareaCrewCommand {
+    /// Point the workarea at a crew record (workarea.crew_updated); allowed
+    /// on validated workareas.
+    Set {
+        /// The workarea, by id or name.
+        workarea: String,
+        /// The crew record, by id or name.
+        #[arg(long)]
+        crew: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CrewsCommand {
+    /// Create a crew record (crew.created); its name never changes.
+    Create {
+        /// The crew's name, unique in the tenant.
+        name: String,
+        #[arg(long)]
+        charter_uri: Option<String>,
+        #[arg(long)]
+        external_manager: Option<String>,
+    },
+    /// Update a crew record's charter URI or external manager
+    /// (crew.updated); at least one flag, never the name.
+    Update(CrewsUpdateArgs),
+    /// The tenant's crew records.
+    List,
+    /// One crew record, by id or name.
+    Show {
+        /// The crew's id or name.
+        crew: String,
+    },
+}
+
+#[derive(Args)]
+#[command(group(
+    ArgGroup::new("change")
+        .required(true)
+        .multiple(true)
+        .args(["charter_uri", "external_manager"])
+))]
+struct CrewsUpdateArgs {
+    /// The crew's id or name.
+    crew: String,
+    #[arg(long)]
+    charter_uri: Option<String>,
+    #[arg(long)]
+    external_manager: Option<String>,
 }
 
 #[derive(Args)]
@@ -179,9 +332,9 @@ struct SubmitArgs {
     /// Lineage artifact ids; repeatable.
     #[arg(long = "derives-from")]
     derives_from: Vec<Uuid>,
-    /// X-OML-Workarea override (workarea node id).
+    /// X-OML-Workarea override (workarea id or name).
     #[arg(long)]
-    workarea: Option<Uuid>,
+    workarea: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -212,9 +365,9 @@ struct RecallArgs {
     query: String,
     #[arg(long, default_value_t = 8)]
     k: usize,
-    /// X-OML-Workarea override (workarea node id).
+    /// X-OML-Workarea override (workarea id or name).
     #[arg(long)]
-    workarea: Option<Uuid>,
+    workarea: Option<String>,
 }
 
 #[derive(Args)]
@@ -229,15 +382,14 @@ struct SupersedeArgs {
 
 #[derive(Subcommand)]
 enum AuditCommand {
-    /// Pull the events tail and verify the chain per chain-format.md.
+    /// Verify the chain per chain-format.md from the chain export; refused
+    /// while the server serves none (the events tail is a filtered feed).
     VerifyChain(VerifyChainArgs),
 }
 
 #[derive(Args)]
 struct VerifyChainArgs {
-    /// Run the full-history verification from genesis. The PoC tail always
-    /// serves from seq 1, so this names the intent; both modes verify all
-    /// served events.
+    /// Run the full-history verification from genesis.
     #[arg(long)]
     genesis: bool,
     /// A deployment signing public key: 64 hex chars (the 32 raw ed25519
@@ -245,17 +397,20 @@ struct VerifyChainArgs {
     /// input, confirmed out of band (chain-format.md).
     #[arg(long = "signing-key", env = "OML_CLI_SIGNING_KEY")]
     signing_keys: Vec<String>,
-    /// Tenant id (defaults to the stored credentials' tenant).
+    /// Tenant, by id or name (defaults to the stored credentials' tenant).
     #[arg(long)]
-    tenant: Option<Uuid>,
+    tenant: Option<String>,
 }
 
-fn parse_grant(s: &str) -> Result<(Uuid, String), String> {
+/// `<workarea>:<role>`, the workarea by id or name, sent as typed: the
+/// server classifies and resolves it, the CLI neither (cli/reference.md
+/// conventions; ADR-0026 d4). Neither an id nor a name holds a `:`, so the
+/// first one splits the two.
+fn parse_grant(s: &str) -> Result<(String, String), String> {
     let (node, role) = s
         .split_once(':')
-        .ok_or_else(|| format!("{s:?} is not <workarea-node-id>:<role>"))?;
-    let id = Uuid::parse_str(node).map_err(|_| format!("{node:?} is not a workarea node id"))?;
-    Ok((id, role.to_owned()))
+        .ok_or_else(|| format!("{s:?} is not <workarea>:<role>"))?;
+    Ok((node.to_owned(), role.to_owned()))
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +456,7 @@ fn main() -> ExitCode {
             }
             ExitCode::from(1)
         }
-        Err(CliError::Local(message)) => {
+        Err(CliError::Local(message) | CliError::Unanswered(message)) => {
             eprintln!("error: {message}");
             ExitCode::from(2)
         }
@@ -313,18 +468,28 @@ fn main() -> ExitCode {
     reason = "one flat dispatch arm per CLI verb; splitting it would only scatter the verb table"
 )]
 fn run(cli: &Cli) -> Result<ExitCode, CliError> {
+    // The hook reads OML_URL and OML_API_KEY alone, so it runs before the
+    // stored admin credentials are loaded, and ignores --server and --key
+    // (ADR-0029 d4).
+    if let Command::Hook {
+        command: HookCommand::SessionStart,
+    } = &cli.command
+    {
+        return Ok(run_session_start());
+    }
     let stored = creds::load();
     match &cli.command {
         Command::Bootstrap {
             command:
                 BootstrapCommand::Claim {
+                    key_name,
                     token,
                     tenant_name,
                     principal,
                 },
         } => {
             let client = resolve(cli, &stored)?;
-            let mut body = json!({ "enrollment_token": token });
+            let mut body = json!({ "enrollment_token": token, "name": key_name });
             if let Some(name) = tenant_name {
                 body["tenant_name"] = json!(name);
             }
@@ -356,6 +521,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 );
                 println!("first admin key — SHOWN ONCE, NOT RECOVERABLE, NOT JOURNALLED AS VALUE");
                 println!();
+                println!("    key name: {}", field(&response, "name"));
                 println!("    key id  : {}", field(&response, "key_id"));
                 println!("    key     : {}", field(&response, "value"));
                 println!("    tenant  : {}", field(&response, "tenant_id"));
@@ -386,18 +552,26 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: KeysCommand::Issue(args),
         } => {
             let client = resolve(cli, &stored)?;
-            let grants: Vec<Value> = args
-                .grants
-                .iter()
-                .map(|(node, role)| json!({ "workarea_node_id": node, "role": role }))
-                .collect();
+            let grants = with_reader_beside_writers(&args.grants, args.write_only);
+            if !cli.json {
+                for (node, _) in grants.iter().filter(|g| !args.grants.contains(g)) {
+                    eprintln!(
+                        "adding {node}:reader beside {node}:writer \
+                         (pass --write-only to send the writer grants alone)"
+                    );
+                }
+            }
             let mut body = json!({
                 "role": args.role,
+                "name": args.key_name,
                 "held_by": args.held_by,
-                "grants": grants,
+                "grants": grants_json(&grants),
             });
-            if let Some(wa) = args.default_workarea {
+            if let Some(wa) = &args.default_workarea {
                 body["default_workarea_id"] = json!(wa);
+            }
+            if let Some(crew) = &args.crew {
+                body["crew"] = json!(crew);
             }
             if let Some(p) = &args.principal {
                 body["principal"] = json!(p);
@@ -411,6 +585,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             } else {
                 println!("key issued — SHOWN ONCE");
                 println!();
+                println!("    name   : {}", field(&response, "name"));
                 println!("    key id : {}", field(&response, "key_id"));
                 println!("    key    : {}", field(&response, "value"));
                 println!("    role   : {}", field(&response, "role"));
@@ -430,10 +605,57 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Keys {
+            command: KeysCommand::IssueAgent(args),
+        } => run_issue_agent(cli, &stored, args),
+
+        Command::Keys {
+            command: KeysCommand::Show { key_ref },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.get(&format!("/v2/keys/{}", segment(key_ref)?))?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "key {} ({})",
+                    field(&response, "name"),
+                    field(&response, "key_id")
+                );
+                println!("    role     : {}", field(&response, "role"));
+                println!("    principal: {}", field(&response, "principal"));
+                println!("    held by  : {}", field(&response, "held_by"));
+                println!("    crew     : {}", field(&response, "crew_id"));
+                println!("    default  : {}", field(&response, "default_workarea_id"));
+                for g in response["grants"].as_array().into_iter().flatten() {
+                    println!(
+                        "    grant    : {} : {}",
+                        field(g, "workarea_node_id"),
+                        field(g, "role")
+                    );
+                }
+                for d in response["denials"].as_array().into_iter().flatten() {
+                    println!(
+                        "    denial   : {} ({})",
+                        field(d, "workarea_node_id"),
+                        field(d, "denial_id")
+                    );
+                }
+                println!("    epoch    : {}", response["epoch"]);
+                // A revoked key's name still resolves, so the read says
+                // whether the key is history (ADR-0026 d10).
+                match response["revoked_at"].as_str() {
+                    Some(at) => println!("    revoked  : {at}"),
+                    None => println!("    revoked  : no (live)"),
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
         Command::Deny {
             command:
                 DenyCommand::Set {
-                    key_id,
+                    key_ref,
                     subtree,
                     reason,
                 },
@@ -443,13 +665,16 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(reason) = reason {
                 body["reason"] = json!(reason);
             }
-            let (_, response) =
-                client.post(&format!("/v2/keys/{key_id}/denials"), &body, &write_opts())?;
+            let (_, response) = client.post(
+                &format!("/v2/keys/{}/denials", segment(key_ref)?),
+                &body,
+                &write_opts(),
+            )?;
             if cli.json {
                 print_json(&response);
             } else {
                 println!(
-                    "denial journalled — key {key_id} no longer reaches {} (epoch {})",
+                    "denial journalled — key {key_ref} no longer reaches {} (epoch {})",
                     field(&response, "workarea_node_id"),
                     response["epoch"]
                 );
@@ -459,19 +684,20 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Workareas {
-            command: WorkareasCommand::Create { parent, name },
+            command: WorkareasCommand::Create { parent, name, crew },
         } => {
             let client = resolve(cli, &stored)?;
-            let (_, response) = client.post(
-                "/v2/workareas",
-                &json!({ "parent_id": parent, "name": name }),
-                &write_opts(),
-            )?;
+            let mut body = json!({ "parent_id": parent, "name": name });
+            if let Some(crew) = crew {
+                body["crew"] = json!(crew);
+            }
+            let (_, response) = client.post("/v2/workareas", &body, &write_opts())?;
             if cli.json {
                 print_json(&response);
             } else {
                 println!(
-                    "created {} {} (status: {})",
+                    "created {} ({}) {} (status: {})",
+                    field(&response, "name"),
                     field(&response, "id"),
                     field(&response, "path"),
                     field(&response, "status")
@@ -479,6 +705,80 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             Ok(ExitCode::SUCCESS)
         }
+
+        Command::Workareas {
+            command: WorkareasCommand::Tree { root },
+        } => run_workareas_tree(cli, &stored, root),
+
+        Command::Workareas {
+            command: WorkareasCommand::Show { workarea },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.get(&format!("/v2/workareas/{}", segment(workarea)?))?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "workarea {} ({})",
+                    field(&response, "name"),
+                    field(&response, "id")
+                );
+                println!("    path    : {}", field(&response, "path"));
+                println!("    parent  : {}", field(&response, "parent_id"));
+                println!("    status  : {}", field(&response, "status"));
+                println!("    crew    : {}", crew_line(&response["crew"]));
+                for c in response["children"].as_array().into_iter().flatten() {
+                    println!(
+                        "    child   : {} ({}, {})",
+                        field(c, "path_leaf"),
+                        field(c, "id"),
+                        field(c, "status")
+                    );
+                }
+                let verbs: Vec<&str> = response["my_effective_verbs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                println!(
+                    "    my verbs: {}",
+                    if verbs.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        verbs.join(", ")
+                    }
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workareas {
+            command:
+                WorkareasCommand::Crew {
+                    command: WorkareaCrewCommand::Set { workarea, crew },
+                },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                &format!("/v2/workareas/{}/crew", segment(workarea)?),
+                &json!({ "crew": crew }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "workarea {} ({}) names crew {}",
+                    field(&response, "name"),
+                    field(&response, "id"),
+                    crew_line(&response["crew"])
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Crews { command } => run_crews(cli, &stored, command),
 
         Command::Submit(args) => {
             let client = resolve(cli, &stored)?;
@@ -496,7 +796,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             let opts = CallOpts {
                 auth: true,
                 idempotency: true,
-                workarea: args.workarea.map(|w| w.to_string()),
+                workarea: args.workarea.clone(),
             };
             let (_, response) = client.post("/v1/memories", &body, &opts)?;
             if cli.json {
@@ -594,7 +894,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             let opts = CallOpts {
                 auth: true,
                 idempotency: false, // read-shaped POST (http-api.md idempotency)
-                workarea: args.workarea.map(|w| w.to_string()),
+                workarea: args.workarea.clone(),
             };
             let (_, response) = client.post(
                 "/v1/memories/recall",
@@ -652,7 +952,42 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         } => run_verify_chain(cli, &stored, args),
 
         Command::Doctor => run_doctor(cli, &stored),
+        Command::Hook { .. } => unreachable!("the hook ran before the credentials were loaded"),
     }
+}
+
+/// `oml hook session-start`: the hook document on stdout, or nothing, and at
+/// most one line on stderr; exit 0 whatever happened, so a session always
+/// starts (ADR-0029 d5). The hook runs on its own thread under
+/// `hook::DEADLINE`: returning from `main` ends the process even while that
+/// thread is stuck where no timeout reaches, as in a DNS lookup.
+fn run_session_start() -> ExitCode {
+    use std::io::Write as _;
+    let (done, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let var = |name: &str| std::env::var(name).ok();
+        let _ = done.send(hook::session_start(&var, &mut std::io::stdin().lock()));
+    });
+    let reason = match outcome.recv_timeout(hook::DEADLINE) {
+        Ok(Ok(document)) => {
+            // A closed stream is not a reason to exit non-zero: writes are
+            // not unwrapped, as println! would.
+            let _ = writeln!(std::io::stdout(), "{document}");
+            None
+        }
+        Ok(Err(reason)) => reason,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(format!(
+            "no answer within {} seconds, so no context was loaded",
+            hook::DEADLINE.as_secs()
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Some("the hook stopped before it finished, so no context was loaded".to_owned())
+        }
+    };
+    if let Some(reason) = reason {
+        let _ = writeln!(std::io::stderr(), "oml hook session-start: {reason}");
+    }
+    ExitCode::SUCCESS
 }
 
 fn write_opts() -> CallOpts {
@@ -667,25 +1002,291 @@ fn field<'a>(v: &'a Value, name: &str) -> &'a str {
     v[name].as_str().unwrap_or("—")
 }
 
+/// A crew record as one line: its name and id, or `—` for none.
+fn crew_line(crew: &Value) -> String {
+    if crew.is_object() {
+        format!("{} ({})", field(crew, "name"), field(crew, "crew_id"))
+    } else {
+        "—".to_owned()
+    }
+}
+
+/// The issuance body's `grants` (openapi.yaml `GrantRequest`), each
+/// workarea as the operator spelled it.
+fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
+    grants
+        .iter()
+        .map(|(node, role)| json!({ "workarea_node_id": node, "role": role }))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// oml keys issue-agent (ADR-0028 d1)
+// ---------------------------------------------------------------------------
+
+/// One `POST /v2/keys` for a writer key named `<key-name>`, with writer and
+/// reader grants on the workarea, that workarea as its default and the
+/// `--crew` when one is given, each reference as the operator spelled it,
+/// then exactly two lines on stdout: `export OML_URL=…` and `export
+/// OML_API_KEY=…`, the second reading the value back from the `--out` file
+/// when one is named. Every other line goes to stderr, and no key value
+/// reaches either stream once `--out` is given (cli/reference.md `oml keys
+/// issue-agent`; ADR-0028 d1; ADR-0026 d12).
+fn run_issue_agent(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &IssueAgentArgs,
+) -> Result<ExitCode, CliError> {
+    if cli.json && args.out.is_some() {
+        return Err(CliError::local(
+            "refused: --out with --json, because the 201 body --json prints carries the key \
+             value; nothing was sent (ADR-0028 d1)",
+        ));
+    }
+    let client = resolve(cli, stored)?;
+    let key_file = match &args.out {
+        Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
+        None => None,
+    };
+    let grants = with_reader_beside_writers(
+        &[(args.workarea.clone(), "writer".to_owned())],
+        args.write_only,
+    );
+    let mut body = json!({
+        "role": "writer",
+        "name": args.key_name,
+        "held_by": args.held_by,
+        "principal": args.principal,
+        "default_workarea_id": args.workarea,
+        "grants": grants_json(&grants),
+    });
+    if let Some(crew) = &args.crew {
+        body["crew"] = json!(crew);
+    }
+    let response = match client.post("/v2/keys", &body, &write_opts()) {
+        Ok((_, response)) => response,
+        Err(failure) => {
+            // The empty file holds nothing either way, so it goes.
+            if let Some(Err(e)) = key_file.map(KeyFile::discard) {
+                eprintln!("note: {e}");
+            }
+            return Err(match failure {
+                // Sent, and no usable answer: a key may exist whose value
+                // nothing kept. Only a refusal, or a failure before sending,
+                // means no key exists (ADR-0028 d1).
+                CliError::Unanswered(why) => CliError::Unanswered(format!(
+                    "{why}. A key named {name} for principal {principal} may have been issued. If \
+                     it was, its value is lost, since the server keeps only its hash and the CLI \
+                     kept none of the answer: `oml keys show {name}` answers whether it exists. \
+                     Issue a new key under a new name, since no name is released, and revoke \
+                     this one; until key revocation is built, `oml deny set {name} universe` \
+                     keeps it from every workarea (ADR-0028 d1; ADR-0026 d10)",
+                    name = args.key_name,
+                    principal = args.principal,
+                )),
+                refused_or_unsent => refused_or_unsent,
+            });
+        }
+    };
+    if cli.json {
+        print_json(&response);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let key_id = field(&response, "key_id");
+    let key_name = field(&response, "name");
+    let lost = |why: &str| {
+        CliError::local(format!(
+            "key {key_name} ({key_id}) was issued, but {why}: its value is lost and the key is \
+             live. Revoke key {key_id}; until key revocation is built, `oml deny set {key_id} \
+             universe` keeps it from every workarea (ADR-0028 d1)"
+        ))
+    };
+    let value = response["value"]
+        .as_str()
+        .ok_or_else(|| lost("the 201 carried no value"))?;
+    let key_line = match key_file {
+        None => format!("export OML_API_KEY={}", sh_quote(value)),
+        Some(file) => {
+            let shown = file.shown().to_owned();
+            file.write_value(value)
+                .map_err(|e| lost(&format!("writing {shown} failed ({e})")))?;
+            format!("export OML_API_KEY=\"$(cat {})\"", sh_quote(&shown))
+        }
+    };
+    println!("export OML_URL={}", sh_quote(client.server()));
+    println!("{key_line}");
+
+    let granted: Vec<String> = response["grants"]
+        .as_array()
+        .map(|grants| {
+            grants
+                .iter()
+                .map(|g| format!("{}:{}", field(g, "workarea_node_id"), field(g, "role")))
+                .collect()
+        })
+        .unwrap_or_default();
+    eprintln!(
+        "key {key_name} ({key_id}) issued to {} (writer, held by {}): {}; default workarea {}",
+        field(&response, "principal"),
+        args.held_by,
+        granted.join(", "),
+        field(&response, "default_workarea_id"),
+    );
+    match &args.out {
+        Some(_) => eprintln!(
+            "the value is only in the key file (0600); delete it once the key is in the \
+             environment that needs it"
+        ),
+        None => eprintln!("the value is shown once, above, and never again"),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+}
+
+// ---------------------------------------------------------------------------
+// oml workareas tree (ADR-0026 d15)
+// ---------------------------------------------------------------------------
+
+/// The tree from `root` down, by id or name, the default `universe`
+/// (ADR-0026 d6): every page of `GET /v2/workareas/{workarea_id}/tree`, in
+/// the server's path order. Under an admin key the read answers by the key
+/// role, for every workarea of the tenant and structure only; under a reader
+/// key it answers within reader effective access, every node outside it
+/// absent (http-api.md workareas; ADR-0026 d15). `--json` prints the pages'
+/// items as one page (cli/reference.md `oml workareas`).
+fn run_workareas_tree(cli: &Cli, stored: &Credentials, root: &str) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let tree = format!("/v2/workareas/{}/tree", segment(root)?);
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut path = tree.clone();
+    loop {
+        let (_, page) = client.get(&path)?;
+        nodes.extend(page["items"].as_array().into_iter().flatten().cloned());
+        match page["next_cursor"].as_str() {
+            Some(cursor) => path = format!("{tree}?cursor={}", encode(cursor)),
+            None => break,
+        }
+    }
+    if cli.json {
+        print_json(&json!({ "items": nodes, "next_cursor": Value::Null }));
+    } else {
+        for node in &nodes {
+            println!(
+                "{}  {}  {}  crew: {}",
+                field(node, "path"),
+                field(node, "id"),
+                field(node, "status"),
+                crew_line(&node["crew"])
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+// ---------------------------------------------------------------------------
+// oml crews (ADR-0026 d8)
+// ---------------------------------------------------------------------------
+
+/// The crew verbs, admin key role throughout, each crew by id or name, sent
+/// as typed (cli/reference.md `oml crews`; http-api.md crews; ADR-0026 d4,
+/// d8). `oml crews list` reads every page, and `--json` prints their items as
+/// one page.
+fn run_crews(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &CrewsCommand,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let (verb, response) = match command {
+        CrewsCommand::Create {
+            name,
+            charter_uri,
+            external_manager,
+        } => {
+            let mut body = json!({ "name": name });
+            if let Some(uri) = charter_uri {
+                body["charter_uri"] = json!(uri);
+            }
+            if let Some(manager) = external_manager {
+                body["external_manager"] = json!(manager);
+            }
+            (
+                "created ",
+                client.post("/v2/crews", &body, &write_opts())?.1,
+            )
+        }
+        CrewsCommand::Update(args) => {
+            let mut body = json!({});
+            if let Some(uri) = &args.charter_uri {
+                body["charter_uri"] = json!(uri);
+            }
+            if let Some(manager) = &args.external_manager {
+                body["external_manager"] = json!(manager);
+            }
+            let path = format!("/v2/crews/{}/update", segment(&args.crew)?);
+            ("updated ", client.post(&path, &body, &write_opts())?.1)
+        }
+        CrewsCommand::Show { crew } => {
+            ("", client.get(&format!("/v2/crews/{}", segment(crew)?))?.1)
+        }
+        CrewsCommand::List => {
+            let mut items: Vec<Value> = Vec::new();
+            let mut path = "/v2/crews".to_owned();
+            loop {
+                let (_, page) = client.get(&path)?;
+                items.extend(page["items"].as_array().into_iter().flatten().cloned());
+                match page["next_cursor"].as_str() {
+                    Some(cursor) => path = format!("/v2/crews?cursor={}", encode(cursor)),
+                    None => break,
+                }
+            }
+            ("", json!({ "items": items, "next_cursor": Value::Null }))
+        }
+    };
+    if cli.json {
+        print_json(&response);
+    } else if let CrewsCommand::List = command {
+        for crew in response["items"].as_array().into_iter().flatten() {
+            println!(
+                "{}  charter: {}  external manager: {}",
+                crew_line(crew),
+                field(crew, "charter_uri"),
+                field(crew, "external_manager")
+            );
+        }
+    } else {
+        println!("{verb}crew {}", crew_line(&response));
+        println!("    charter uri     : {}", field(&response, "charter_uri"));
+        println!(
+            "    external manager: {}",
+            field(&response, "external_manager")
+        );
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 // ---------------------------------------------------------------------------
 // oml audit verify-chain
 // ---------------------------------------------------------------------------
 
-const EVENTS_PAGE: usize = 200; // the server's api.page_limit_max
-
+/// Live verification reads the chain export (`kind: chain`), the one
+/// surface that serves the whole per-tenant chain: the events tail is a
+/// filtered feed whose omitted events and nulled identities break
+/// recomputation (http-api.md events tail; ADR-0025 d15). This server serves
+/// no chain export yet, so after the local checks the verb refuses by name
+/// instead of reporting breaks it did not find.
 fn run_verify_chain(
     cli: &Cli,
     stored: &Credentials,
     args: &VerifyChainArgs,
 ) -> Result<ExitCode, CliError> {
-    let client = resolve(cli, stored)?;
+    resolve(cli, stored)?;
     let tenant = args
         .tenant
-        .map(|t| t.to_string())
+        .clone()
         .or_else(|| stored.tenant_id.clone())
         .ok_or_else(|| {
             CliError::local(
@@ -700,87 +1301,15 @@ fn run_verify_chain(
              (chain-format.md, \"How the public key reaches an export recipient\")",
         ));
     }
-    let keys: Vec<VerifyingKey> = args
-        .signing_keys
-        .iter()
-        .map(|s| parse_verifying_key(s).map_err(CliError::Local))
-        .collect::<Result<_, _>>()?;
-
-    // Pull the whole tail, seq ascending (GET /v2/events pages by after_seq).
-    let mut events: Vec<TailEvent> = Vec::new();
-    let mut head_seq = 0_u64;
-    loop {
-        let after = events.last().map_or(0, |e| e.seq);
-        let (_, page) = client.get(&format!("/v2/events?after_seq={after}&limit={EVENTS_PAGE}"))?;
-        head_seq = page["head_seq"].as_u64().unwrap_or(head_seq);
-        let items = page["items"].as_array().cloned().unwrap_or_default();
-        let n = items.len();
-        for item in &items {
-            events.push(TailEvent::from_value(item).map_err(CliError::Local)?);
-        }
-        if n < EVENTS_PAGE {
-            break;
-        }
+    for key in &args.signing_keys {
+        parse_verifying_key(key).map_err(CliError::Local)?;
     }
-
-    let report = verify_chain(&tenant, &events, head_seq, &keys);
-    if cli.json {
-        print_json(&json!({
-            "tenant_id": report.tenant_id,
-            "events": report.events,
-            "head_seq": report.head_seq,
-            "head_hash": format!("sha256:{}", report.head_hash),
-            "verified": report.verified(),
-            "breaks": report.breaks,
-            "notes": report.notes,
-            "signing_keys": report
-                .key_events
-                .iter()
-                .map(|(fp, n)| json!({ "fingerprint": fp, "events_verified": n }))
-                .collect::<Vec<_>>(),
-        }));
-    } else {
-        let mode = if args.genesis {
-            "from genesis (full history)"
-        } else {
-            "from genesis"
-        };
-        println!("verifying tenant {tenant} {mode}…");
-        println!(
-            "  signing key set ({} key(s), fingerprints to confirm out of band):",
-            report.key_events.len()
-        );
-        for (fp, n) in &report.key_events {
-            println!("    {fp} — verified {n} event(s)");
-        }
-        for note in &report.notes {
-            println!("  note: {note}");
-        }
-        if report.verified() {
-            println!(
-                "  seq 1..{}: prev_hash links ok, sha-256 hashes ok, ed25519 signatures ok",
-                report.events
-            );
-            println!(
-                "chain verified. head: seq {}, hash sha256:{}",
-                report.head_seq, report.head_hash
-            );
-        } else {
-            for b in &report.breaks {
-                println!("  BREAK: {b}");
-            }
-            println!(
-                "chain verification FAILED — {} break(s) over {} event(s).",
-                report.breaks.len(),
-                report.events
-            );
-        }
-    }
-    Ok(if report.verified() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    })
+    let mode = if args.genesis { " from genesis" } else { "" };
+    Err(CliError::local(format!(
+        "live verification of tenant {tenant}{mode} reads the chain export (kind: chain), which \
+         this server does not serve yet; the events tail is a filtered feed, not a verification \
+         surface (http-api.md events tail)"
+    )))
 }
 
 // ---------------------------------------------------------------------------
