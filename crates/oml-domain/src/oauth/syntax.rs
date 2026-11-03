@@ -1,11 +1,12 @@
-//! The two pieces of URL grammar the redirect matcher, the document URL and
-//! the issuer share. Each admits a subset of what a WHATWG URL parser
-//! leaves unchanged, so that an admitted string is already its own
-//! serialization (ADR-0031 d5, d6; `docs/operations/configuration.md`,
+//! The two pieces of URL grammar the document URL and the issuer share.
+//! Each admits a subset of what a WHATWG URL parser leaves unchanged, so
+//! that an admitted string is already its own serialization (ADR-0031 d5;
+//! `docs/operations/configuration.md`,
 //! `oauth.issuer`); the one gap is an `xn--` label, below.
 
 /// A port as written after `:`: one to five ASCII digits, no leading zero,
-/// a value from 1 to 65535 (ADR-0031 d6).
+/// a value from 1 to 65535 (`docs/operations/configuration.md`,
+/// `oauth.issuer`).
 pub(super) fn port(digits: &str) -> Option<u16> {
     if !(1..=5).contains(&digits.len())
         || digits.starts_with('0')

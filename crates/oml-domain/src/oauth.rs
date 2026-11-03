@@ -68,8 +68,7 @@ pub use pkce::{
     STATE_MAX_BYTES, check_authorize_bounds, check_pkce_method, s256_challenge, verify_s256,
 };
 pub use redirect::{
-    CLAUDE_CALLBACK, RedirectKind, SelectedRedirect, admit_redirect_uri, redirect_matches,
-    select_redirect,
+    CLAUDE_CALLBACK, SelectedRedirect, admit_redirect_uri, redirect_matches, select_redirect,
 };
 pub use refusal::{
     AuthorizationCodeInvalid, AuthorizationExpired, ClientInvalid, ConnectRefused, OAUTH_CODES,

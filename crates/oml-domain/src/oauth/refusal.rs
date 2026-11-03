@@ -40,7 +40,7 @@ pub enum Refusal {
     )]
     ClientInvalid(ClientInvalid),
     #[error(
-        "oauth.redirect_refused: an authorization code goes only to https://claude.ai/api/mcp/auth_callback or a loopback address, by exact match (ADR-0031 d6)"
+        "oauth.redirect_refused: An authorization code goes only to https://claude.ai/api/mcp/auth_callback, by exact match; a refused redirect is never followed (ADR-0031 d6; RFC 6749 §4.1.2.1)."
     )]
     RedirectRefused(RedirectRefused),
     #[error(

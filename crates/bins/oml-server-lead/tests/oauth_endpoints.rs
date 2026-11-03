@@ -483,6 +483,39 @@ async fn an_oauth_refusals_error_description_begins_with_its_oml_code() {
     }
 }
 
+/// The redirect allowlist is Claude's hosted callback alone: a registration
+/// naming a loopback redirect, on any host form or port, writes nothing and
+/// answers `400 invalid_redirect_uri` whose `error_description` is
+/// `oauth.redirect_refused` and its errors.md rule (ADR-0031 d6, d13).
+#[tokio::test]
+async fn a_registration_with_a_loopback_redirect_is_refused_as_invalid_redirect_uri() {
+    let rig = rig(Some(ISSUER));
+    for loopback in [
+        "http://127.0.0.1:53682/callback",
+        "http://127.0.0.1/callback",
+        "http://[::1]:8080/cb",
+        "http://localhost:1/cb",
+        "http://localhost/",
+    ] {
+        let mut body = registration();
+        body["redirect_uris"] = json!([loopback]);
+        let (status, _, response) = send(&rig.router, register_request(&body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{loopback}");
+        assert_eq!(
+            rfc_error(&response, "oauth.redirect_refused"),
+            "invalid_redirect_uri",
+            "{loopback}"
+        );
+        assert_eq!(
+            json_of(&response)["error_description"],
+            "oauth.redirect_refused: An authorization code goes only to \
+             https://claude.ai/api/mcp/auth_callback, by exact match; a refused redirect is \
+             never followed (ADR-0031 d6; RFC 6749 §4.1.2.1).",
+            "{loopback}"
+        );
+    }
+}
+
 /// A registration answers `201` with a minted `client_id`, no secret and
 /// `token_endpoint_auth_method` `none`; past the cap of unused
 /// registrations it writes nothing and answers `429 limit.rate` as

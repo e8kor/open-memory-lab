@@ -11,11 +11,11 @@ use oml_domain::oauth::{
     ATTEMPTS_PER_PAGE, AuthorizationCodeInvalid, AuthorizationExpired, CLAUDE_CALLBACK,
     CROCKFORD_ALPHABET, ChallengeCause, ClientId, ClientInvalid, ConnectCode, ConnectRefused,
     ConnectionAct, ConnectionState, ExchangeDecision, ExchangeRequest, ExchangeRow, Issuer,
-    IssuerError, KeyState, OAUTH_CODES, PkceRequired, RedirectKind, RedirectRefused,
-    RefreshDecision, RefreshInvalid, RefreshRow, Refusal, RevokedCause, SelectedRedirect, Token,
-    TokenKind, Validation, admit_fetch_answers, admit_redirect_uri, admitted_fetch_address,
-    after_wrong_entry, authorization_server_document, base62_43, check_authorize_bounds,
-    check_code_entry, check_confirmation, check_pkce_method, check_resource, classify_client_id,
+    IssuerError, KeyState, OAUTH_CODES, PkceRequired, RedirectRefused, RefreshDecision,
+    RefreshInvalid, RefreshRow, Refusal, RevokedCause, SelectedRedirect, Token, TokenKind,
+    Validation, admit_fetch_answers, admit_redirect_uri, admitted_fetch_address, after_wrong_entry,
+    authorization_server_document, base62_43, check_authorize_bounds, check_code_entry,
+    check_confirmation, check_pkce_method, check_resource, classify_client_id,
     connection_transition, decide_exchange, decide_refresh, is_key_value, mcp_challenge,
     protected_resource_document, redirect_matches, refresh_token_digest, s256_challenge,
     select_redirect, token_kind, validate_document, validate_registration, verify_s256,
@@ -340,25 +340,11 @@ fn authorize_parameters_past_their_bounds_are_request_validation() {
 // ---------------------------------------------------------------- d6
 
 #[test]
-fn only_the_claude_callback_and_loopback_redirects_are_admitted() {
+fn only_the_claude_callback_redirect_is_admitted() {
     assert_eq!(
         admit_redirect_uri("https://claude.ai/api/mcp/auth_callback"),
-        Ok(RedirectKind::ClaudeCallback)
+        Ok(())
     );
-    for loopback in [
-        "http://127.0.0.1/callback",
-        "http://127.0.0.1:53682/callback",
-        "http://[::1]:8080/cb",
-        "http://localhost:1/cb",
-        "http://localhost:65535/cb?x=1",
-        "http://localhost/",
-    ] {
-        assert_eq!(
-            admit_redirect_uri(loopback),
-            Ok(RedirectKind::Loopback),
-            "{loopback}"
-        );
-    }
     for refused in [
         "https://claude.ai/api/mcp/auth_callback/",
         "https://claude.ai/api/mcp/auth_callback?x=1",
@@ -372,33 +358,6 @@ fn only_the_claude_callback_and_loopback_redirects_are_admitted() {
         "http://example.com/cb",
         "https://127.0.0.1/cb",
         "https://localhost/cb",
-        // the ADR's refusals
-        "http://localhost:1@evil.example/cb",
-        "http://localhost:/cb",
-        "http://localhost:08080/cb",
-        "http://localhost:65536/cb",
-        "http://127.1/cb",
-        "http://0x7f000001/cb",
-        "http://localhost./cb",
-        "http://LOCALHOST/cb",
-        // and the rest of the grammar
-        "http://localhost:0/cb",
-        "http://localhost:123456/cb",
-        "http://localhost",
-        "http://localhost?x=1",
-        "http://localhost/cb#f",
-        "http://localhost/a\\b",
-        "http://localhost/a%2Fb",
-        "http://localhost/a%2fb",
-        "http://localhost/a%5Cb",
-        "http://localhost/a%5cb",
-        "http://localhost/a b",
-        "http://localhost/a\nb",
-        "http://localhost/a\u{7f}",
-        "http://localhost/cb\u{a0}",
-        "http://localhost/cb@x",
-        "http://[0:0:0:0:0:0:0:1]/cb",
-        "http://127.0.0.2/cb",
         "*",
         "",
     ] {
@@ -410,98 +369,114 @@ fn only_the_claude_callback_and_loopback_redirects_are_admitted() {
     }
 }
 
+/// Loopback redirects are deferred (ADR-0031 d6, "Loopback redirects for
+/// Claude Code"): every loopback form is outside the allowlist, on any
+/// host spelling and any port.
 #[test]
-fn a_loopback_redirect_matches_on_any_port_with_its_exact_path() {
-    assert!(redirect_matches(
+fn every_loopback_redirect_is_refused() {
+    for loopback in [
         "http://127.0.0.1/callback",
-        "http://127.0.0.1:53682/callback"
-    ));
-    assert!(redirect_matches(
-        "http://127.0.0.1:8080/callback",
-        "http://127.0.0.1:9090/callback"
-    ));
-    assert!(redirect_matches(
-        "http://localhost/cb?x=1",
-        "http://localhost:1234/cb?x=1"
-    ));
-    assert!(redirect_matches("http://[::1]:5/cb", "http://[::1]/cb"));
-    assert!(redirect_matches(CLAUDE_CALLBACK, CLAUDE_CALLBACK));
-
-    assert!(!redirect_matches(
-        "http://127.0.0.1/callback",
-        "http://localhost:53682/callback"
-    ));
-    assert!(!redirect_matches(
-        "http://127.0.0.1/callback",
-        "http://127.0.0.1:53682/callbac"
-    ));
-    assert!(!redirect_matches(
-        "http://127.0.0.1/callback",
-        "http://127.0.0.1:53682/Callback"
-    ));
-    assert!(!redirect_matches(
-        "http://127.0.0.1/callback",
-        "http://127.0.0.1:08080/callback"
-    ));
-
-    let registered = ["http://127.0.0.1/callback".to_owned()];
-    assert_eq!(
-        select_redirect(&registered, Some("http://127.0.0.1:53682/callback")),
-        Ok(SelectedRedirect {
-            uri: "http://127.0.0.1:53682/callback",
-            sent: true,
-        })
-    );
-    assert_eq!(
-        select_redirect(&registered, None),
-        Ok(SelectedRedirect {
-            uri: "http://127.0.0.1/callback",
-            sent: false,
-        })
-    );
-}
-
-#[test]
-fn a_redirect_differing_by_a_trailing_slash_or_query_is_refused() {
-    assert!(!redirect_matches(
-        CLAUDE_CALLBACK,
-        "https://claude.ai/api/mcp/auth_callback/"
-    ));
-    assert!(!redirect_matches(
-        CLAUDE_CALLBACK,
-        "https://claude.ai/api/mcp/auth_callback?x=1"
-    ));
-    assert!(!redirect_matches(
-        "http://127.0.0.1/cb",
-        "http://127.0.0.1:5000/cb/"
-    ));
-    assert!(!redirect_matches(
-        "http://127.0.0.1/cb",
-        "http://127.0.0.1:5000/cb?x=1"
-    ));
-    assert!(!redirect_matches(
-        "http://127.0.0.1/cb?x=1",
-        "http://127.0.0.1:5000/cb?x=2"
-    ));
-
-    let claude = [CLAUDE_CALLBACK.to_owned()];
-    assert_eq!(
-        select_redirect(&claude, Some("https://claude.ai/api/mcp/auth_callback/")),
-        Err(Refusal::RedirectRefused(RedirectRefused::OutsideAllowlist))
-    );
-    let loopback = ["http://127.0.0.1/cb".to_owned()];
-    for presented in ["http://127.0.0.1:5000/cb/", "http://127.0.0.1:5000/cb?x=1"] {
+        "http://127.0.0.1:53682/callback",
+        "http://[::1]:8080/cb",
+        "http://[::1]/cb",
+        "http://localhost:1/cb",
+        "http://localhost:65535/cb?x=1",
+        "http://localhost/",
+        "http://localhost:1@evil.example/cb",
+        "http://localhost:08080/cb",
+        "http://127.1/cb",
+        "http://0x7f000001/cb",
+        "http://localhost./cb",
+        "http://LOCALHOST/cb",
+        "http://[0:0:0:0:0:0:0:1]/cb",
+        "http://127.0.0.2/cb",
+    ] {
         assert_eq!(
-            select_redirect(&loopback, Some(presented)),
-            Err(Refusal::RedirectRefused(RedirectRefused::NotRegistered)),
-            "{presented}"
+            admit_redirect_uri(loopback),
+            Err(Refusal::RedirectRefused(RedirectRefused::OutsideAllowlist)),
+            "{loopback:?}"
+        );
+    }
+    let registered = ["http://127.0.0.1/callback".to_owned()];
+    for presented in [
+        Some("http://127.0.0.1:53682/callback"),
+        Some("http://127.0.0.1/callback"),
+        None,
+    ] {
+        assert_eq!(
+            select_redirect(&registered, presented),
+            Err(Refusal::RedirectRefused(RedirectRefused::OutsideAllowlist)),
+            "{presented:?}"
         );
     }
 }
 
 #[test]
+fn a_redirect_matches_only_the_claude_callback_byte_for_byte() {
+    assert!(redirect_matches(CLAUDE_CALLBACK, CLAUDE_CALLBACK));
+    for (registered, presented) in [
+        ("http://127.0.0.1/callback", "http://127.0.0.1/callback"),
+        (
+            "http://127.0.0.1/callback",
+            "http://127.0.0.1:53682/callback",
+        ),
+        ("http://[::1]:5/cb", "http://[::1]/cb"),
+        ("http://localhost/cb", "http://localhost/cb"),
+        (CLAUDE_CALLBACK, "https://claude.ai/api/mcp/auth_callback/"),
+        (
+            CLAUDE_CALLBACK,
+            "https://claude.ai/api/mcp/auth_callback?x=1",
+        ),
+        (
+            CLAUDE_CALLBACK,
+            "https://claude.ai:443/api/mcp/auth_callback",
+        ),
+        ("https://evil.example/cb", "https://evil.example/cb"),
+    ] {
+        assert!(
+            !redirect_matches(registered, presented),
+            "{registered} against {presented}"
+        );
+    }
+}
+
+#[test]
+fn a_redirect_differing_by_a_trailing_slash_or_query_is_refused() {
+    let claude = [CLAUDE_CALLBACK.to_owned()];
+    for presented in [
+        "https://claude.ai/api/mcp/auth_callback/",
+        "https://claude.ai/api/mcp/auth_callback?x=1",
+    ] {
+        assert_eq!(
+            select_redirect(&claude, Some(presented)),
+            Err(Refusal::RedirectRefused(RedirectRefused::OutsideAllowlist)),
+            "{presented}"
+        );
+    }
+    assert_eq!(
+        select_redirect(&claude, None),
+        Ok(SelectedRedirect {
+            uri: CLAUDE_CALLBACK,
+            sent: false,
+        })
+    );
+}
+
+/// The register refusal's `error_description` is the code and errors.md's
+/// rule, word for word (ADR-0031 d13; errors.md, `oauth.redirect_refused`).
+#[test]
+fn the_redirect_refusal_names_the_errors_md_rule_word_for_word() {
+    assert_eq!(
+        Refusal::RedirectRefused(RedirectRefused::OutsideAllowlist).to_string(),
+        "oauth.redirect_refused: An authorization code goes only to \
+         https://claude.ai/api/mcp/auth_callback, by exact match; a refused redirect is never \
+         followed (ADR-0031 d6; RFC 6749 §4.1.2.1)."
+    );
+}
+
+#[test]
 fn a_client_with_several_redirects_must_name_one() {
-    let registered = [CLAUDE_CALLBACK.to_owned(), "http://127.0.0.1/cb".to_owned()];
+    let registered = [CLAUDE_CALLBACK.to_owned(), CLAUDE_CALLBACK.to_owned()];
     assert_eq!(
         select_redirect(&registered, None),
         Err(Refusal::RedirectRefused(RedirectRefused::Omitted))
@@ -685,7 +660,7 @@ fn a_document_url_outside_the_admitted_form_is_refused() {
 fn registration() -> Value {
     json!({
         "client_name": "Example client",
-        "redirect_uris": ["http://127.0.0.1/callback"],
+        "redirect_uris": [CLAUDE_CALLBACK],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
@@ -696,7 +671,7 @@ fn registration() -> Value {
 fn a_registration_asking_for_client_authentication_is_refused() {
     let admitted = validate_registration(&bytes(&registration())).expect("admitted");
     assert_eq!(admitted.client_name, "Example client");
-    assert_eq!(admitted.redirect_uris, vec!["http://127.0.0.1/callback"]);
+    assert_eq!(admitted.redirect_uris, vec![CLAUDE_CALLBACK]);
 
     // Absent reads as client_secret_basic (RFC 7591 §2) and is registered as none.
     let absent = without(registration(), "token_endpoint_auth_method");
@@ -753,12 +728,19 @@ fn a_registration_without_a_name_or_outside_its_grants_or_redirects_is_refused()
         refused(Validation::NotJsonObject)
     );
 
-    let mut body = registration();
-    body["redirect_uris"] = json!(["http://127.0.0.1/callback", "myapp://callback"]);
-    assert_eq!(
-        validate_registration(&bytes(&body)).map(|_| ()),
-        Err(Refusal::RedirectRefused(RedirectRefused::OutsideAllowlist))
-    );
+    for redirect_uris in [
+        json!([CLAUDE_CALLBACK, "myapp://callback"]),
+        json!(["http://127.0.0.1/callback"]),
+        json!([CLAUDE_CALLBACK, "http://localhost:53682/callback"]),
+    ] {
+        let mut body = registration();
+        body["redirect_uris"] = redirect_uris.clone();
+        assert_eq!(
+            validate_registration(&bytes(&body)).map(|_| ()),
+            Err(Refusal::RedirectRefused(RedirectRefused::OutsideAllowlist)),
+            "{redirect_uris}"
+        );
+    }
 
     // grant_types and response_types default when absent (RFC 7591 §2).
     let body = without(without(registration(), "grant_types"), "response_types");

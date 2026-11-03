@@ -475,7 +475,7 @@ fn oauth_refusal(refusal: Refusal) -> ApiError {
         ),
         Refusal::RedirectRefused(_) => (
             StatusCode::BAD_REQUEST,
-            "An authorization code goes only to https://claude.ai/api/mcp/auth_callback or a loopback address, by exact match (ADR-0031 d6).",
+            "An authorization code goes only to https://claude.ai/api/mcp/auth_callback, by exact match; a refused redirect is never followed (ADR-0031 d6; RFC 6749 §4.1.2.1).",
         ),
         Refusal::PkceRequired(_) => (
             StatusCode::BAD_REQUEST,
