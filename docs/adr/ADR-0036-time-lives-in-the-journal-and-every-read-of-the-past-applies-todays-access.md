@@ -94,12 +94,12 @@ the maintainer's reading, which the user confirms before acceptance. Proposed, n
       watermark does not exceed, answers `request.as_of_ahead` (`409`, `{applied_seq}`) on the
       lead and a follower ([ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) d13) alike,
       so an instant that answers once names one S everywhere, and every page of a listing reads
-      the same S. No answer carries S or an instant; only the read log records S (d4).
+      the same S. No answer carries S or echoes the instant asked; only the read log records S (d4).
     - **The fold records exactly those two facts.** `memories.submitted_seq` holds each version's
       submission seq; `tip_intervals` (`tenant_id`, `artifact_id`, `from_seq`, `to_seq` null while
       open) holds every tip move: `lifecycle.promote`, `lifecycle.supersede` and
-      `lifecycle.tip_override` each open a row for the version they make a tip and close the row
-      of the version they take the tip from, in round trip two's statement. No other event writes
+      `lifecycle.tip_override` each open a row for the version whose `is_tip` they set and close
+      the row of the version whose `is_tip` they clear, in round trip two's statement. No other event writes
       either, since demotion, erasure, rejection and reassignment move no tip. Both are fenced per
       tenant as `memories` is and rebuild from the journal, a disagreeing row being a
       `state-mismatch` finding ([ADR-0017](ADR-0017-reconciliation.md) d4). Cost unmeasured —
@@ -196,7 +196,7 @@ the maintainer's reading, which the user confirms before acceptance. Proposed, n
     | Step | Lands | Check, tests named as sentences |
     |---|---|---|
     | S1 | d2 on every submission path: the clear ends, the fold, the serve | `a_valid_from_not_before_valid_to_is_refused`, `a_date_compares_as_utc_midnight_and_is_served_as_a_date`, `a_successor_that_omits_valid_time_is_open`, `steering_vocabulary_kinds_and_retirements_refuse_valid_time`, `an_event_written_before_valid_time_folds_as_open`, `the_review_serve_shows_both_ends_beside_the_words` |
-    | S2 | d3 on get and the scoped listing: `submitted_seq`, `tip_intervals`, the watermark, `as_of`, `as_of_seq`, the code | `the_tip_intervals_and_watermarks_equal_a_replay_of_the_journal_after_every_event`, `an_instant_resolves_to_the_longest_prefix_stamped_at_or_before_it`, `no_as_of_answer_carries_the_seq_or_an_instant`, `lead_and_follower_refuse_a_point_they_have_not_applied`, `an_as_of_read_never_serves_a_version_demoted_or_erased_today`, `an_as_of_read_applies_todays_grants_and_denials`, `a_get_at_s_of_a_version_submitted_after_s_is_not_found` |
+    | S2 | d3 on get and the scoped listing: `submitted_seq`, `tip_intervals`, the watermark, `as_of`, `as_of_seq`, the code | `the_tip_intervals_and_watermarks_equal_a_replay_of_the_journal_after_every_event`, `an_instant_resolves_to_the_longest_prefix_stamped_at_or_before_it`, `no_as_of_answer_carries_the_seq_or_echoes_the_instant`, `lead_and_follower_refuse_a_point_they_have_not_applied`, `an_as_of_read_never_serves_a_version_demoted_or_erased_today`, `an_as_of_read_applies_todays_grants_and_denials`, `a_get_at_s_of_a_version_submitted_after_s_is_not_found` |
     | S3 | d3 on recall; d4 on recall and both listings; the digest members | `valid_at_removes_hits_and_never_reorders_the_rest`, `valid_at_never_removes_steering`, `a_filtered_row_takes_no_place_in_k_or_the_budget`, `recall_as_of_and_valid_at_answers_the_q3_example`, `the_request_digest_carries_the_point_asked_and_the_log_row_s` |
     | S4 | d5 over claims: the capability, the claim template, list, read, the segment rule, the error mapping | `initialize_declares_resources_without_subscribe_or_list_changed`, `a_claim_resource_resolves_at_its_named_workarea`, `a_uri_holding_a_percent_or_a_reserved_character_in_a_segment_is_refused`, `a_missing_and_an_unreadable_claim_resource_answer_the_same_bytes`, `no_resources_method_writes` |
     | S5 | d6 over claims and bodies | `fs_export_refuses_a_non_empty_directory`, `fs_export_skips_unaddressable_keys_and_case_twins`, `fs_under_an_admin_key_reads_no_content`, in `cli_e2e.rs` |
@@ -213,7 +213,7 @@ reader key, `rev-1` and `rev-2` dreamer keys, each addressed by its name. Seqs a
 |---|---|---|---|---|
 | 1 | 2026-07-03, 07-04 | `agent-a`, then `rev-1` | `oml_remember {workarea: "finance", claim_key: "q3-forecast", text: "The Q3 forecast is 12M.", valid_from: "2026-07-01", valid_to: "2026-10-01"}`, then an approving verdict | held `V1` at seq 1040; `lifecycle.promote` at 1052 opens `V1`'s tip interval [1052, —) |
 | 2 | 2026-10-14, 10-15 | `agent-a`, then `rev-2` | `oml_supersede {artifact_id: V1, text: "The Q3 forecast is 12.4M.", valid_from: "2026-07-01", valid_to: "2026-10-01"}`, then an approving verdict | held `V2` at 2310; `lifecycle.supersede` at 2321: `V1` [1052, 2321), `V2` [2321, —) |
-| 3 | today | `agent-c` | `oml_recall {query: "Q3 forecast", as_of: "2026-10-10T00:00:00Z", valid_at: "2026-08-01"}` | `V1`, "12M", `tip_as_of: true`, `tip: false`; no seq and no instant in the answer |
+| 3 | today | `agent-c` | `oml_recall {query: "Q3 forecast", as_of: "2026-10-10T00:00:00Z", valid_at: "2026-08-01"}` | `V1`, "12M", `tip_as_of: true`, `tip: false`; no seq and no echo of `as_of` in the answer |
 | 4 | today | `agent-c` | the same without `as_of` | `V2`, "12.4M" |
 | 5 | today | `agent-c` | step 3 with `valid_at: "2026-11-01"` | no hit: `V1`'s interval ends 2026-10-01 |
 | 6 | today | `agent-a` | `oml_get {artifact_id: V2, as_of_seq: 2300}` | `access.not_found`: `V2` was submitted at 2310 |
@@ -237,10 +237,8 @@ acceptance: this record and its row become `accepted design`, dated; ADR-0005, A
 and ADR-0025 gain "· amended by ADR-0036" on their Status lines and frontmatter, text unedited;
 the erasure inventory names the valid ends and d6's export; FR-31's row names the newest `at` the
 refusal's edge shows; in whichever of this record and ADR-0030 is accepted second, `P-R3-BOUNDARY`
-leaves out an as-of read's seq and `request.as_of_ahead`; retrieval, storage, the event catalog,
-Postgres schema, HTTP API, errors, `openapi.yaml`, `mcp-tools.json`, the agent plugin and the CLI
-reference take d3, d4 and d7; FR-25 names the as-of recall and the interval write; the D4, D12,
-D13 and D14 cells name this record; the spec tag is cut.
+leaves out an as-of read's seq and `request.as_of_ahead`; FR-25 names the as-of recall and the
+interval write; the D4, D12, D13 and D14 cells name this record; the spec tag is cut.
 
 ## Rejected and deferred alternatives
 

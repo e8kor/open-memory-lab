@@ -43,7 +43,7 @@ nothing before its acceptance, and no accepted record changes until then.
   `valid_to` as clear, signed metadata outside the encrypted body, reviewed and never inherited
   (d2); the as-of read at one resolved seq under rule `oml-asof/1`, with existence and the tip
   taken at that seq, a fold of exactly those two facts, the `at` watermark, `request.as_of_ahead`
-  on the lead and a follower alike, and no answer carrying the seq or an instant (d3); `valid_at`
+  on the lead and a follower alike, and no answer carrying the seq or echoing the instant asked (d3); `valid_at`
   and valid ranges as filters that never rank (d4); MCP resources with no subscription, whose path
   segments are refused when they hold a reserved character or a `%` (d5); `oml fs` and its export
   (d6); the wire, one code and three vocabulary rows (d7); the build order, with the steps that
