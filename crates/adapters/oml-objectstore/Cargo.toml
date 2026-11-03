@@ -1,0 +1,23 @@
+[package]
+name = "oml-objectstore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Object-store adapter: the one store over the object_store crate that storage.url picks, file:// under the data directory by default (proposed ADR-0035 d10)."
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+object_store.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

@@ -29,6 +29,15 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — `oml-objectstore`: the one object-store port and its conformance suite (implementation, ADR-0035 d12 S1, proposed)
+
+A crate with its tests, wired into no binary; no decision changes and no record's Status moves.
+The new crate builds the one store `storage.url` picks with `object_store` 0.13.2, the version
+deltalake 1.1.x requires: `file://` under `oml-data` by default, its file store syncing each
+written file and its directories before it returns, every put but a part's `PutMode::Create`, and
+the `memory` and `http` schemes refused naming the setting. The suite runs on the filesystem, and
+on MinIO in CI's `test` job, where it fails rather than skips without one.
+
 ### 2026-10-31 — Names as keys (implementation)
 
 An implementation milestone; no decision changes. The code now serves what the proposed

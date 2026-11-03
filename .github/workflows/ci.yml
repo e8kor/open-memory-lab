@@ -39,7 +39,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   test:
-    name: cargo test (Postgres)
+    name: cargo test (Postgres, MinIO)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -53,10 +53,42 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U oml -d oml_dev"
           --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # The object-store conformance suite's S3 run
+      # (crates/adapters/oml-objectstore/tests/object_store.rs; proposed
+      # ADR-0035 d10, d12 S1): it fails rather than skips in CI when
+      # OML_TEST_S3_URL is unset.
+      MINIO_IMAGE: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+      OML_TEST_S3_URL: s3://oml-ci
+      AWS_ENDPOINT: http://127.0.0.1:9000
+      AWS_ACCESS_KEY_ID: oml
+      AWS_SECRET_ACCESS_KEY: oml_dev_only
+      AWS_REGION: us-east-1
+      AWS_ALLOW_HTTP: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # A step rather than a service: a service container takes no command,
+      # and the image's default command prints MinIO's help and exits. The
+      # image is pinned by tag: minio/minio publishes no image now, and
+      # pgsty/minio is the community build of its source.
+      - name: MinIO, with the suite's bucket
+        run: |
+          docker run --detach --name minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" \
+            --env MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
+            "$MINIO_IMAGE" server /data
+          for _ in $(seq 1 60); do
+            curl -fsS "$AWS_ENDPOINT/minio/health/live" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS --aws-sigv4 "aws:amz:$AWS_REGION:s3" \
+            --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+            -X PUT "$AWS_ENDPOINT/oml-ci"
       - run: cargo test --workspace --locked
+      - name: MinIO's log on failure
+        if: failure()
+        run: docker logs minio
 
   e2e:
     name: demo and quickstart (release binaries)
