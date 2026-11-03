@@ -1,17 +1,25 @@
 // A real oml-server-lead on a throwaway database, for the SDK's tests.
 //
-// docs/engineering/sdks.md, "Tests": create a uniquely named database, boot the
-// server on it with a keyring in a scratch directory, read the enrollment
-// token from its stdout, claim the bootstrap and issue the keys with the `oml`
-// CLI, and drop the database afterwards.
+// docs/engineering/sdks.md, "Tests": mint a uniquely named owner/serving role
+// pair and a database the owner owns, boot the server on it, migrating under
+// the owner and serving under the serving role (ADR-0034 d2, d4, d8), with a
+// keyring in a scratch directory, read the enrollment token from its stdout,
+// claim the bootstrap and issue the keys with the `oml` CLI, and drop the
+// database and the pair afterwards.
+//
+// Minting takes a superuser. When the admin role is not one, as a role holding
+// CREATEDB alone is not, mintsRoles() prints `did not run: <role> cannot create
+// roles` and the server tests skip; under OML_TEST_REQUIRE_SPLIT=1, which CI
+// sets, the same condition throws, so no run passes vacuously.
 //
 // Environment (all optional):
 //   OML_SERVER_BIN              the lead binary (default: oml-server-lead on PATH)
 //   OML_CLI_BIN                 the CLI binary (default: oml on PATH)
-//   OML_SDK_TEST_DATABASE_URL   a role with CREATEDB
+//   OML_SDK_TEST_DATABASE_URL   a superuser that can mint roles
 //                               (default: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev)
 //   OML_SDK_TEST_PORT           the port to listen on (default: one the OS hands out)
 //   OML_SDK_TEST_SCRATCH        where the scratch directory goes (default: the OS temp dir)
+//   OML_TEST_REQUIRE_SPLIT      1: throw, never skip, when the admin role cannot mint
 //
 // The server and the CLI get an environment built from an allow-list, so a key
 // in the caller's environment never reaches either.
@@ -48,15 +56,37 @@ function cleanEnv(extra: Record<string, string> = {}): Record<string, string> {
   return { ...env, ...extra };
 }
 
-function psql(sql: string): void {
-  execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-c", sql], {
+function psql(sql: string): string {
+  return execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-t", "-A", "-c", sql], {
     env: cleanEnv(),
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
-function databaseUrl(name: string): string {
+/**
+ * Whether the admin role can mint the role pair, a superuser (ADR-0034 d8);
+ * `false`, with `did not run: <role> cannot create roles` printed, when it
+ * cannot, and a throw instead under OML_TEST_REQUIRE_SPLIT=1.
+ */
+export function mintsRoles(): boolean {
+  const [role, superuser] = psql(
+    "SELECT current_user || ' ' || rolsuper FROM pg_roles WHERE rolname = current_user",
+  ).split(" ");
+  if (superuser === "t") return true;
+  if (process.env.OML_TEST_REQUIRE_SPLIT === "1") {
+    throw new Error(
+      `${role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)`,
+    );
+  }
+  console.log(`did not run: ${role} cannot create roles`);
+  return false;
+}
+
+function databaseUrl(name: string, role: string, password: string): string {
   const url = new URL(ADMIN_URL);
+  url.username = role;
+  url.password = password;
   url.pathname = `/${name}`;
   return url.toString();
 }
@@ -87,12 +117,19 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function startServer(): Promise<OmlServer> {
   const scratch = mkdtempSync(join(process.env.OML_SDK_TEST_SCRATCH ?? tmpdir(), "oml-sdk-ts-"));
   const database = `oml_sdk_ts_${randomBytes(6).toString("hex")}`;
+  const owner = `${database}_owner`;
+  const serving = `${database}_serving`;
+  const password = randomBytes(12).toString("hex");
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const stdoutPath = join(scratch, "server.stdout");
   const stderrPath = join(scratch, "server.stderr");
 
-  psql(`CREATE DATABASE ${database}`);
+  // One statement string is one transaction: both roles exist, or neither.
+  psql(
+    `CREATE ROLE ${owner} LOGIN PASSWORD '${password}'; ` +
+      `CREATE ROLE ${serving} LOGIN PASSWORD '${password}'`,
+  );
   let server: ChildProcess | undefined;
   const stop = async () => {
     if (server && server.exitCode === null && server.signalCode === null) {
@@ -103,16 +140,20 @@ export async function startServer(): Promise<OmlServer> {
       clearTimeout(timer);
     }
     psql(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    psql(`DROP ROLE IF EXISTS ${owner}`);
+    psql(`DROP ROLE IF EXISTS ${serving}`);
     rmSync(scratch, { recursive: true, force: true });
   };
 
   try {
+    psql(`CREATE DATABASE ${database} OWNER ${owner}`);
     const out = openSync(stdoutPath, "w");
     const err = openSync(stderrPath, "w");
     server = spawn(SERVER_BIN, [], {
       stdio: ["ignore", out, err],
       env: cleanEnv({
-        OML_POSTGRES__URL: databaseUrl(database),
+        OML_POSTGRES__URL: databaseUrl(database, serving, password),
+        OML_POSTGRES__OWNER_URL: databaseUrl(database, owner, password),
         OML_SERVER__LISTEN: `127.0.0.1:${port}`,
         OML_KMS__KEYRING_PATH: join(scratch, "keyring"),
       }),

@@ -63,6 +63,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.postgres.secretName | quote }}
                   key: {{ .Values.postgres.secretKey | quote }}
+            # The owner login the lead migrates under before it serves under
+            # the URL above (ADR-0034 d4); the same Secret holds both.
+            - name: OML_POSTGRES__OWNER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName | quote }}
+                  key: {{ .Values.postgres.ownerSecretKey | quote }}
           ports:
             - name: http
               containerPort: 8080

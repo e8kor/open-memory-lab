@@ -16,16 +16,19 @@ image:
   digest: ""
   pullPolicy: IfNotPresent
 
-# Postgres is external (ADR-0033 d6). The lead reads its connection URL from
-# this Secret's key; the chart never takes the URL or a password as a value.
-# Create it before the install:
+# Postgres is external (ADR-0033 d6). The lead reads two connection URLs from
+# two keys of this one Secret; the chart never takes a URL or a password as a
+# value. secretKey holds the serving role's URL, a role that owns nothing, and
+# ownerSecretKey the owner role's, which owns the database and runs the
+# migrations at boot (ADR-0034 d2, d4). The lead refuses to start when the two
+# log in as one role. Create it before the install:
 #   kubectl create secret generic oml-postgres \
-#     --from-literal=OML_POSTGRES__URL='postgres://USER:PASSWORD@HOST:5432/DATABASE'
-# The lead applies migrations at boot with this URL, so its role needs the
-# rights to migrate.
+#     --from-literal=OML_POSTGRES__URL='postgres://SERVING_ROLE:PASSWORD@HOST:5432/DATABASE' \
+#     --from-literal=OML_POSTGRES__OWNER_URL='postgres://OWNER_ROLE:PASSWORD@HOST:5432/DATABASE'
 postgres:
   secretName: oml-postgres
   secretKey: OML_POSTGRES__URL
+  ownerSecretKey: OML_POSTGRES__OWNER_URL
 
 # The keyring claim holds the deployment signing key (ADR-0033 d3). helm
 # uninstall leaves it; a reinstall under the same release name and namespace

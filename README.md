@@ -118,6 +118,12 @@ docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <reviewe
     review verdict --memory <artifact_id> --approve
 ```
 
+Compose creates two database roles on a new volume: `oml_owner`, which owns the database and
+runs the migrations through `OML_POSTGRES__OWNER_URL`, and `oml_server`, which owns nothing and
+serves through `OML_POSTGRES__URL`. A volume an earlier release created holds neither role and is
+split once before this release starts
+([ADR-0034](docs/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d7).
+
 The compose credentials are for a laptop, and the server listens on the loopback interface
 only. For production, see [Run it your way](#run-it-your-way).
 

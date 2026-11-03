@@ -1,27 +1,38 @@
 #!/usr/bin/env bash
 # poc-demo.sh — the whole PoC story, end to end, against a throwaway database.
 #
-# Boots ./target/release/oml-server-lead on a fresh `oml_poc` database and
-# drives every ceremony through ./target/release/oml (the lab client speaks
+# Boots ./target/release/oml-server-lead on a fresh, uniquely named database
+# and drives every ceremony through ./target/release/oml (the lab client speaks
 # only the public HTTP API, ADR-0015), naming the workarea by its name
 # wherever an id would go (ADR-0026 d4): bootstrap claim → workarea → keys →
 # submit → (recall withholds the held row) → review + approve → recall hit →
 # the R2 reviewer-is-author refusal → supersede → verify-chain → doctor →
 # graceful shutdown.
 #
-# Re-runnable: the database is dropped and recreated on every run; the
-# keyring and credentials live in a per-run temp directory.
+# The lead migrates as an owner role and serves as a role that owns nothing
+# (ADR-0034 d2, d4). The demo runs on a shared cluster, so it mints its own
+# uniquely named pair, oml_poc_<hex>_owner and oml_poc_<hex>_serving, with
+# LOGIN alone, refuses to run when the cluster already holds a role of that
+# name, and drops the database and both roles on exit. The keyring and
+# credentials live in a per-run temp directory.
 #
-# Prerequisites: the release binaries (cargo build --release), a local
-# PostgreSQL with role oml/oml_dev_only holding CREATEDB, and jq.
+# Prerequisites: the release binaries (cargo build --release), jq, and a
+# local PostgreSQL whose role PGUSER (default oml; password PGPASSWORD,
+# default oml_dev_only) is a superuser, since minting the role pair takes
+# one (ADR-0034 d8). A role holding CREATEDB alone is refused by name.
 
 set -u -o pipefail
 cd "$(dirname "$0")/.."
 
 PGHOST=127.0.0.1
-PGUSER=oml
+PGUSER="${PGUSER:-oml}"
 export PGPASSWORD="${PGPASSWORD:-oml_dev_only}"
-DB=oml_poc
+TAG="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+DB="oml_poc_$TAG"
+OWNER="${DB}_owner"
+SERVING="${DB}_serving"
+PAIR_PASSWORD="$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
+MINTED=""
 PORT="${OML_DEMO_PORT:-8321}"
 SERVER_BIN=./target/release/oml-server-lead
 OML=./target/release/oml
@@ -40,10 +51,22 @@ fail() {
     exit 1
 }
 
+# admin <psql args…> — the administrator's session on the maintenance
+# database, unaligned and quiet, stopping at the first error.
+admin() {
+    psql -h "$PGHOST" -U "$PGUSER" -d oml_dev -v ON_ERROR_STOP=1 -qtA "$@"
+}
+
 cleanup() {
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         kill -TERM "$SERVER_PID" 2>/dev/null
         wait "$SERVER_PID" 2>/dev/null
+    fi
+    # Only what this run created: MINTED is set once both roles exist.
+    if [ -n "$MINTED" ]; then
+        admin -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" \
+            -c "DROP ROLE IF EXISTS $OWNER" -c "DROP ROLE IF EXISTS $SERVING" \
+            || echo "could not drop $DB, $OWNER and $SERVING; drop them by hand" >&2
     fi
 }
 trap cleanup EXIT
@@ -67,18 +90,27 @@ step() {
 
 jqf() { jq -r "$1" "$OUT"; }
 
-# --- a fresh database and a cold boot --------------------------------------
-echo "=== fresh database $DB"
+# --- a role pair, a fresh database and a cold boot -------------------------
+echo "=== role pair $OWNER / $SERVING and fresh database $DB"
 if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
     fail "port $PORT is already in use (a previous server still running?)"
 fi
-psql -h "$PGHOST" -U "$PGUSER" -d oml_dev -v ON_ERROR_STOP=1 \
-    -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" \
-    -c "CREATE DATABASE $DB" || fail "database reset (is PostgreSQL up?)"
+SUPERUSER="$(admin -c "SELECT rolsuper FROM pg_roles WHERE rolname = current_user")" \
+    || fail "cannot read $PGUSER's attributes (is PostgreSQL up?)"
+[ "$SUPERUSER" = "t" ] || fail "PostgreSQL role $PGUSER cannot create roles: the demo mints its own \
+owner/serving role pair, which takes a superuser (ADR-0034 d8); set PGUSER and PGPASSWORD to one"
+TAKEN="$(admin -c "SELECT string_agg(rolname, ', ') FROM pg_roles WHERE rolname IN ('$OWNER', '$SERVING')")" \
+    || fail "cannot list the cluster's roles"
+[ -z "$TAKEN" ] || fail "the cluster already holds role $TAKEN; the demo creates and drops only roles of its own"
+admin -c "CREATE ROLE $OWNER LOGIN PASSWORD '$PAIR_PASSWORD'; CREATE ROLE $SERVING LOGIN PASSWORD '$PAIR_PASSWORD'" \
+    || fail "could not create the role pair"
+MINTED=1
+admin -c "CREATE DATABASE $DB OWNER $OWNER" || fail "could not create $DB"
 
 echo
-echo "=== booting oml-server-lead (migrate on boot, keyring minted in $DEMO_DIR)"
-OML_POSTGRES__URL="postgres://$PGUSER:$PGPASSWORD@$PGHOST:5432/$DB" \
+echo "=== booting oml-server-lead (migrate under $OWNER, serve under $SERVING, keyring minted in $DEMO_DIR)"
+OML_POSTGRES__URL="postgres://$SERVING:$PAIR_PASSWORD@$PGHOST:5432/$DB" \
+OML_POSTGRES__OWNER_URL="postgres://$OWNER:$PAIR_PASSWORD@$PGHOST:5432/$DB" \
 OML_SERVER__LISTEN="127.0.0.1:$PORT" \
 OML_KMS__KEYRING_PATH="$DEMO_DIR/keyring" \
     "$SERVER_BIN" >"$DEMO_DIR/server.stdout" 2>"$DEMO_DIR/server.stderr" &
@@ -231,4 +263,4 @@ SERVER_PID=""
 grep -q "graceful shutdown complete" "$DEMO_DIR/server.stderr" || fail "no graceful shutdown in the server log"
 echo "server stopped gracefully."
 echo
-echo "DEMO PASSED — database $DB left in place for inspection; run artifacts in $DEMO_DIR"
+echo "DEMO PASSED — database $DB and its role pair are dropped on exit; run artifacts in $DEMO_DIR"

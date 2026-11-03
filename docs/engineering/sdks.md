@@ -110,12 +110,17 @@ after the last retry).
 Both suites run against a real `oml-server-lead` on a throwaway database, never against a
 double. Each suite:
 
-1. creates a database with a unique name, boots the server on it with a keyring in a scratch
-   directory, and reads the enrollment token from its stdout;
+1. mints a uniquely named owner/serving role pair and a database the owner owns, boots the
+   server on it, migrating under the owner and serving under the serving role
+   ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4, d8),
+   with a keyring in a scratch directory, and reads the enrollment token from its stdout;
+   minting takes a superuser, and under a role that cannot mint the server tests skip with
+   `did not run: <role> cannot create roles`, or fail under `OML_TEST_REQUIRE_SPLIT=1`, as CI
+   sets;
 2. claims the bootstrap and issues keys with the `oml` CLI: an agent key (writer, with writer
    and reader grants on two workareas) and a dreamer key on the second workarea only, so the
    review test's queue holds only that test's rows;
-3. runs its tests, then stops the server and drops the database.
+3. runs its tests, then stops the server and drops the database and the role pair.
 
 | Test | Proves |
 |---|---|

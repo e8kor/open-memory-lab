@@ -39,7 +39,9 @@ sessions yet.
 
 `src/generated/schema.ts` is generated and never edited by hand; `python3 scripts/generate_sdks.py`
 regenerates it. The tests run against a real `oml-server-lead` on a throwaway database
-(`test/harness.ts` names the environment they read), on Node 24:
+(`test/harness.ts` names the environment they read), on Node 24. The harness mints an owner
+and a serving role for that database, so its admin URL names a superuser that can mint roles;
+under a role that cannot, the server tests skip with `did not run: <role> cannot create roles`:
 
 ```sh
 cd sdks/typescript && npm ci && npm run check && npm test
