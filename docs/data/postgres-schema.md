@@ -1124,12 +1124,17 @@ serving role until that migration grants its row here, under the sync rule.
 | `connect_codes` | ✓ | ✓ | ✓ | | |
 | `oauth_connections` | ✓ | ✓ | ✓ | ✓ | |
 | `oauth_tokens` | ✓ | ✓ | ✓ | ✓ | |
+| `oauth_clients` | ✓ | ✓ | ✓ | ✓ | |
+| `oauth_authorizations` | ✓ | ✓ | | ✓ | |
 | `_sqlx_migrations` | | | | | |
 
 - **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
   privilege (`42501`) before the guard trigger runs (ADR-0002 d4).
 - **`review_queue`** is deleted from at a verdict; **`oauth_connections`** and **`oauth_tokens`**
-  only by the operational removal that [connections](#connections-adr-0031) states (0012).
+  only by the operational removal that [connections](#connections-adr-0031) states (0012);
+  **`oauth_clients`** by the cache's eviction and the removal of an unused registration, and
+  **`oauth_authorizations`** by the confirmation's `DELETE … RETURNING` and the removal 24 hours
+  after a row lapses unused (0013). An `oauth_authorizations` row is never updated.
 - **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the
   `bigserial` sequence.
 - **No table** grants `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`, whole-table operations
