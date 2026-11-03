@@ -3237,6 +3237,131 @@ async fn the_tool_failure_query_never_carries_the_oml_key_or_a_bearer_token() {
     crew.lab.stop().await;
 }
 
+/// The query `oml hook tool-failure` sends for each `(error, query)` case,
+/// asserted exactly, one session per case.
+fn assert_failure_queries(crew: &Crew, prefix: &str, cases: &[(&str, &str)]) {
+    for (n, (error, query)) in cases.iter().enumerate() {
+        let (code, _, stderr) = crew.failure_hook(
+            &[],
+            &failure(&format!("s-{prefix}-{n}"), "cargo build", error),
+        );
+        assert_eq!(code, 0, "{stderr}");
+        let seen = crew.lab.take_requests();
+        assert_eq!(routes(&seen), ["POST /v1/memories/recall"], "{error:?}");
+        assert_eq!(seen[0].body["query"], *query, "{error:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_tool_failure_query_never_carries_a_urls_user_password_or_host() {
+    let crew = Crew::with_pitfall().await;
+    assert_failure_queries(
+        &crew,
+        "url",
+        &[
+            (
+                "Exit code 2\npsql: error: could not connect to \
+                 postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev in lake_writer.rs",
+                "oml_dev lake_writer.rs",
+            ),
+            (
+                "Exit code 128\nfatal: unable to access \
+                 'https://x-access-token:ghs_16C7e42F292c6912E7710c838347Ae178B4a@github.com/org/repo.git/': \
+                 The requested URL returned error: 403",
+                "repo.git",
+            ),
+            (
+                "Exit code 1\nError: P1001: Can't reach database server at \
+                 `postgresql://admin:s3cret_pw@db.internal:5432/app_db`",
+                "P1001 app_db",
+            ),
+        ],
+    );
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_tool_failure_query_never_carries_a_common_token_shape_or_a_secret_assignment() {
+    let crew = Crew::with_pitfall().await;
+    let cases: Vec<String> = [
+        concat!(
+            "charge failed with key s",
+            "k_live_4eC39HqLyjWDarjtT1zdp7dc"
+        ),
+        concat!(
+            "push failed with g",
+            "hp_1234567890abcdefghijklmnopqrstuvwxyzAB"
+        ),
+        concat!(
+            "publish failed with n",
+            "pm_abcdefghijklmnopqrstuvwxyz0123456789"
+        ),
+        concat!(
+            "download failed with h",
+            "f_abcdefghijklmnopqrstuvwxyzABCDEFGH"
+        ),
+        concat!(
+            "post failed with x",
+            "oxb-1234567890-0987654321-AbCdEfGhIjKlMnOp"
+        ),
+        concat!("clone failed with g", "lpat-xxxxxxxxxxxxxxxxxxxx"),
+        concat!(
+            "maps failed with A",
+            "IzaSyA1b2C3d4E5f6G7h8I9j0KlMnOpQrStUvW"
+        ),
+        concat!("jwt e", "yJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl"),
+        "export PGPASSWORD=hunter2_prod.2026",
+        "--db-password= hunter2_prod.2026",
+        concat!("Authorization:Bearer e", "yJhbGciOi.payload_part.sig"),
+        "header bearer=abc.def_ghi",
+        "nonce Q7xK2mPz9LwR4tYv8NbJ3cHs_x",
+    ]
+    .iter()
+    .map(|secret| format!("Exit code 1\n{secret} in lake_writer.rs"))
+    .collect();
+    let cases: Vec<(&str, &str)> = cases
+        .iter()
+        .map(|e| (e.as_str(), "lake_writer.rs"))
+        .collect();
+    assert_failure_queries(&crew, "token", &cases);
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_tool_failure_query_comes_from_the_error_lines_not_the_progress_lines() {
+    let crew = Crew::with_pitfall().await;
+    let cargo = "Exit code 101\n   Compiling oml-core v0.3.0 (/home/op/src/oml/crates/oml-core)\n   \
+                 Compiling oml-app v0.3.0 (/home/op/src/oml/crates/oml-app)\n   \
+                 Compiling oml-cli v0.3.0 (/home/op/src/oml/crates/bins/oml-cli)\n\
+                 error[E0599]: no method named `connect_timeout` found for struct \
+                 `sqlx_core::pool::PoolOptions` in the current scope\n  --> src/db.rs:42:10\n\
+                 error: could not compile `oml-app` (lib) due to 1 previous error";
+    let pytest = "Exit code 1\n\
+        ============================= test session starts ==============================\n\
+        platform linux -- Python 3.11.4, pytest-7.4.0, pluggy-1.2.0\n\
+        rootdir: /home/op/src/proj\n\
+        collected 3 items\n\n\
+        tests/test_lake.py F..                                                   [100%]\n\n\
+        =================================== FAILURES ===================================\n\
+        _______________________________ test_writes_row ________________________________\n\n    \
+        def test_writes_row():\n>       assert lake_writer.flush() == 1\n\
+        E       AttributeError: module 'lake_writer' has no attribute 'flush'\n\n\
+        tests/test_lake.py:3: AttributeError\n\
+        =========================== short test summary info ============================\n\
+        FAILED tests/test_lake.py::test_writes_row - AttributeError: module 'lake_writer' has \
+        no attribute 'flush'\n\
+        ============================== 1 failed in 0.05s ===============================";
+    assert_failure_queries(
+        &crew,
+        "progress",
+        &[
+            (cargo, SQLX_QUERY),
+            (pytest, "lake_writer flush test_lake.py"),
+        ],
+    );
+    crew.lab.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_error_with_no_distinctive_word_sends_no_request() {
     let crew = Crew::with_pitfall().await;

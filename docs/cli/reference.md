@@ -499,12 +499,20 @@ characters or has no `_`, `.` or `::`; the `session_id` is not letters, digits, 
 cache directory is set; this session already recalled the same words; or an earlier request of
 this session failed.
 
-**The query** is at most three words from the first five non-empty lines of `error` after its
-`Exit code N` line, in the order they appear: identifiers with `_`, `.` or `::`, error codes such
-as `E0599` or `ENOENT`, quoted names, and the base names of paths, a trailing `:line:column`
-removed. Bare numbers, words without a letter and stop words are dropped. Before any word is
-taken the verb removes the `OML_API_KEY` value, the word after `Bearer`, `sk-` and `AKIA` keys,
-any `oml_` key and `HOME`. For
+**The query** is at most three words from at most five non-empty lines of `error` after its
+`Exit code N` line: from a Python traceback's exception line, else from the first line holding
+`error[`, `error:`, `Error:`, `panicked at`, `fatal:` or pytest's `E   `, else the last five lines.
+The words are kept in the order they appear: identifiers with `_`, `.` or `::`, error codes such
+as `E0599` or `ENOENT`, quoted names (the apostrophe of `Can't` opens no quote), and the base names
+of paths, a trailing `:line:column` removed. Bare numbers, version words such as `v0.3.0` or
+`pytest-7.4.0`, one-character words, words without a letter and stop words are dropped. Before any
+word is taken the verb removes the `OML_API_KEY` value; the scheme, user, password, host and port
+of every URL; the word after `Bearer` in any case and the chunk holding it; the value of a
+`NAME=value` whose name holds `PASS`, `TOKEN`, `SECRET`, `KEY` or `AUTH`; `sk-` and `AKIA` keys;
+keys shaped like `sk_`, `rk_`, `pk_live_`, `ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`, `github_pat_`,
+`npm_`, `hf_`, `xox?-`, `glpat-`, `AIza` or `eyJ` with at least 16 characters after the prefix;
+any run of 20 or more letters and digits mixing upper case, lower case and digits; any `oml_` key;
+and `HOME`. For
 
 ```text
 Exit code 101

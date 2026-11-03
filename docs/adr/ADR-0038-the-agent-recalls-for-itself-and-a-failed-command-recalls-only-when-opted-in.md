@@ -84,14 +84,26 @@ change merges.
   format".
 
 - **d5 — The query is at most three distinctive words of the error, with every secret removed
-  first.** From the first five non-empty lines after Claude Code's `Exit code N` line, the hook
-  keeps identifiers with `_`, `.` or `::`, error codes such as `E0599` or `ENOENT`, quoted names
-  such as a module, and the base names of paths, in the order they appear; bare numbers, words
-  without a letter and stop words never. Before any word is taken it removes the `OML_API_KEY`
-  value, the word after `Bearer`, `sk-` and `AKIA` keys, any OML key (`oml_` and 43 base62
-  characters) and the `HOME` directory. The cost: a secret of another shape that also looks like
-  an identifier can still reach the server; [FR-63](../product/roadmap.md) asks for the labelled
-  check before the matcher widens.
+  first.** The words come from at most five non-empty lines after Claude Code's `Exit code N`
+  line: from a Python traceback's exception line, else from the first line that carries an error
+  marker (`error[`, `error:`, `Error:`, `panicked at`, `fatal:`, pytest's `E   `), else the last
+  five lines, so a build's `Compiling` lines and a test runner's header never make the query. The
+  hook keeps identifiers with `_`, `.` or `::`, error codes such as `E0599` or `ENOENT`, quoted
+  names such as a module (an apostrophe inside a word such as `Can't` opens no quote), and the
+  base names of paths, in the order they appear; bare numbers, version words (`v0.3.0`,
+  `pytest-7.4.0`), one-character words, words without a letter and stop words never. Before any
+  word is taken it removes the `OML_API_KEY` value; the scheme, user, password, host and port of
+  every URL, so `postgres://u:p@host:5432/db` gives only `db`; the word after `Bearer` in any case
+  and any chunk that holds it (`Authorization:Bearer`, `bearer=x`); the value of a `NAME=value`
+  whose name holds `PASS`, `TOKEN`, `SECRET`, `KEY` or `AUTH`; `sk-` and `AKIA` keys; keys of the
+  common token shapes (`sk_`, `rk_`, `pk_live_`, `ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`,
+  `github_pat_`, `npm_`, `hf_`, `xox?-`, `glpat-`, `AIza` and `eyJ`, each with at least 16
+  characters after the prefix, so `hf_hub_download` stays a name); any run of 20 or more letters
+  and digits that mixes upper case, lower case and digits; any OML key (`oml_` and 43 base62
+  characters); and the `HOME` directory. The cost: a secret of another shape that also looks like
+  an identifier can still reach the server, and a long mixed-case name with digits is dropped as
+  if it were random; [FR-63](../product/roadmap.md) asks for the labelled check before the matcher
+  widens.
 
 - **d6 — No score gates the recall; the words do.** Matching every word under AND is the gate.
   The hook sends nothing when no word survives; when one word survives that is shorter than 8
