@@ -48,8 +48,8 @@ record changes until then.
   alone (d3); applicability under the key's own reader access, ADR-0008 d4 unchanged, and its
   `guardrail_scope`, `workarea` or `ancestors` (default `ancestors`, the maintainer's reading to
   confirm), set by an admin with `--guardrail-scope` on `oml keys issue` and
-  `oml keys issue-agent`, journalled in `key.issued` and changed only by rotation, with no
-  client setting and no `off` value; severity-first order and shown conflicts, the strictest
+  `oml keys issue-agent`, journalled in `key.issued` and changed only by rotation, the
+  maintainer's reading to confirm, with no client setting and no `off` value; severity-first order and shown conflicts, the strictest
   winning (d4);
   `GET /v1/guardrails`, never in recall (d5); `oml hook guardrails` on SessionStart, after a
   compaction and on SubagentStart, in its own frame with provenance on every line (d6); a cap
@@ -64,8 +64,15 @@ record changes until then.
 - **Pages touched:** the record, its register row and nav entry, `llms.txt`, a new engineering
   page, [session claims](engineering/session-claims.md), which catalogues the other claim kinds
   the same hook points could carry, proposed and not decided, with its sources quoted, and
-  FR-50 to FR-59 on the roadmap, each marked proposed. No contract page changes, so
-  `info.version` stays `0.3.0-design`.
+  FR-50 to FR-59 on the roadmap, each marked proposed. On 2026-11-02 the catalogue took the
+  maintainer's design for workarea context at session start, proposed and not decided: a
+  workarea brief of existing claims joined by a ratified brief edge and scoped by a separate key
+  attribute, `brief_scope`, defaulting to the workarea; a workarea digest, a crew's reviewed
+  `derived_fact` summary with its sources, after GraphRAG's community summaries and RAPTOR's
+  recursive ones; session-start recall over the session's own workarea, queried by repository,
+  branch and changed files with a match on any word; and the layering of guardrails, steering,
+  brief, digest and corpus, with no new kind; FR-60 to FR-62 on the roadmap track them. No
+  contract page changes, so `info.version` stays `0.3.0-design`.
 - **Amends, on acceptance:** ADR-0001 (d5), ADR-0012 (d5), ADR-0013 (d5), ADR-0014 (d2),
   ADR-0018 (d4), ADR-0025 (d2, d11, d12), ADR-0026 (d9), ADR-0028 (d1) and ADR-0029 (d7); their
   Status lines gain the back-pointer then, and proposed ADR-0036 (d2, d4) and ADR-0030 (d8) take
