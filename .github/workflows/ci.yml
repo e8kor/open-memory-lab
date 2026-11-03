@@ -56,7 +56,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # POSTGRES_USER is the container's superuser, so every Postgres suite
+      # mints its owner/serving role pair; a suite that cannot fails here
+      # rather than printing its did-not-run line (ADR-0034 d8).
       - run: cargo test --workspace --locked
+        env:
+          OML_TEST_REQUIRE_SPLIT: "1"
 
   e2e:
     name: demo and quickstart (release binaries)

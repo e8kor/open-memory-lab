@@ -33,31 +33,106 @@ fn base_url() -> String {
         .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
 }
 
-fn db_url(name: &str) -> String {
+/// The password of every minted test role; the roles live only as long as
+/// their throwaway database.
+const PAIR_PASSWORD: &str = "oml_test_pair";
+
+/// `db` at `DATABASE_URL`'s host, logged in as `role`.
+fn role_url(db: &str, role: &str) -> String {
     let base = base_url();
-    let (prefix, _) = base
-        .rsplit_once('/')
+    let (scheme, rest) = base
+        .split_once("://")
+        .expect("DATABASE_URL is a postgres:// URL");
+    let (_, host_path) = rest.rsplit_once('@').expect("DATABASE_URL names its user");
+    let (host, _) = host_path
+        .split_once('/')
         .expect("DATABASE_URL names a database path");
-    format!("{prefix}/{name}")
+    format!("{scheme}://{role}:{PAIR_PASSWORD}@{host}/{db}")
+}
+
+/// `db` through the owner login of its role pair (ADR-0034 d2, d8).
+fn owner_url(db: &str) -> String {
+    role_url(db, &format!("{db}_owner"))
+}
+
+/// `db` through the serving login of its role pair (ADR-0034 d2, d8).
+fn serving_url(db: &str) -> String {
+    role_url(db, &format!("{db}_serving"))
+}
+
+/// Eight hex digits of the clock, so a name a crashed earlier run left
+/// behind on the cluster under the same pid and counter is not reused.
+fn run_tag() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .subsec_nanos();
+    format!("{nanos:08x}")
+}
+
+/// Mints `db`'s owner/serving role pair, `LOGIN` and no other attribute,
+/// and creates `db` owned by the owner (ADR-0034 d2, d8); `false`, with
+/// `did not run: <role> cannot create roles` printed, when `DATABASE_URL`'s
+/// role is not the superuser minting takes, as the maintainer's local `oml`
+/// (CREATEDB alone) is not. Under `OML_TEST_REQUIRE_SPLIT=1`, which CI sets,
+/// the same condition fails the test, so no run passes vacuously.
+async fn mint_database(db: &str) -> bool {
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
+    let (role, mints): (String, bool) = sqlx::query_as(
+        "SELECT current_user::text, rolsuper FROM pg_roles WHERE rolname = current_user",
+    )
+    .fetch_one(&mut admin)
+    .await
+    .expect("role attributes");
+    if !mints {
+        assert!(
+            std::env::var("OML_TEST_REQUIRE_SPLIT").as_deref() != Ok("1"),
+            "{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
+        );
+        println!("did not run: {role} cannot create roles");
+        return false;
+    }
+    for role in ["owner", "serving"] {
+        admin
+            .execute(format!("CREATE ROLE {db}_{role} LOGIN PASSWORD '{PAIR_PASSWORD}'").as_str())
+            .await
+            .expect("mint the role pair");
+    }
+    admin
+        .execute(format!("CREATE DATABASE {db} OWNER {db}_owner").as_str())
+        .await
+        .expect("create throwaway database");
+    true
+}
+
+/// A store over `db`'s serving login, migrated through its owner login with
+/// `oml.serving_role` set (ADR-0034 d4, d8).
+async fn serving_store(db: &str) -> PgStore {
+    let store = PgStore::connect(&serving_url(db)).await.expect("connect");
+    store
+        .migrate(&owner_url(db))
+        .await
+        .expect("embedded migrations apply");
+    store
 }
 
 static DB_N: AtomicU64 = AtomicU64::new(0);
 
-async fn fresh_router() -> (Router, String) {
+/// The lead's router over the serving login of a fresh database and its
+/// name, or `None` when this run cannot mint the role pair (ADR-0034 d8).
+async fn fresh_router() -> Option<(Router, String)> {
     let db_name = format!(
-        "oml_test_mcp_{}_{}",
+        "oml_test_mcp_{}_{}_{}",
         std::process::id(),
-        DB_N.fetch_add(1, Ordering::SeqCst)
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
     );
-    let mut admin = PgConnection::connect(&base_url())
-        .await
-        .expect("admin connect");
-    admin
-        .execute(format!("CREATE DATABASE {db_name}").as_str())
-        .await
-        .expect("create throwaway database");
-    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
-    store.migrate().await.expect("embedded migrations apply");
+    if !mint_database(&db_name).await {
+        return None;
+    }
+    let store = serving_store(&db_name).await;
     let signing = SigningKey::from_bytes(&OsIds.new_secret());
     let router = lead_state(
         &store,
@@ -67,7 +142,7 @@ async fn fresh_router() -> (Router, String) {
         Some(ENROLLMENT.to_owned()),
     )
     .into_router();
-    (router, db_name)
+    Some((router, db_name))
 }
 
 async fn drop_db(name: &str) {
@@ -75,6 +150,11 @@ async fn drop_db(name: &str) {
         let _ = admin
             .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
             .await;
+        for role in ["serving", "owner"] {
+            let _ = admin
+                .execute(format!("DROP ROLE IF EXISTS {name}_{role}").as_str())
+                .await;
+        }
     }
 }
 
@@ -214,7 +294,9 @@ async fn crew_with_writer_grants(
 
 #[tokio::test]
 async fn the_mcp_endpoint_refuses_a_call_without_a_valid_key_before_any_dispatch() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let list = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
 
     let (status, body) = send(&router, "POST", "/mcp", None, None, Some(&list)).await;
@@ -238,7 +320,9 @@ async fn the_mcp_endpoint_refuses_a_call_without_a_valid_key_before_any_dispatch
 
 #[tokio::test]
 async fn the_transport_is_stateless_and_serves_the_catalog_slice_from_mcp_tools_json() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, _, _, _) = crew(&router).await;
 
     // GET, the server-initiated stream, does not exist.
@@ -325,7 +409,9 @@ async fn the_transport_is_stateless_and_serves_the_catalog_slice_from_mcp_tools_
 
 #[tokio::test]
 async fn no_promote_sign_demote_delete_or_admin_verb_is_a_tool() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, _, _, _) = crew(&router).await;
 
     let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
@@ -364,7 +450,9 @@ async fn no_promote_sign_demote_delete_or_admin_verb_is_a_tool() {
 
 #[tokio::test]
 async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_ratifies() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, dreamer, reader, crew) = crew(&router).await;
     let quote = "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.";
     let remember = json!({
@@ -444,7 +532,9 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
 
 #[tokio::test]
 async fn oml_events_tail_accepts_scope_and_answers_events_head_seq_next_after_seq_idle() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, dreamer, reader, crew) = crew(&router).await;
     let held = call_tool(
         &router,
@@ -584,7 +674,9 @@ async fn oml_events_tail_accepts_scope_and_answers_events_head_seq_next_after_se
 
 #[tokio::test]
 async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, _, reader, _) = crew(&router).await;
 
     // learn without lineage: the ring's typed refusal, not a transport error.
@@ -654,7 +746,9 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
 
 #[tokio::test]
 async fn tools_list_serves_exactly_the_eight_built_tools() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, _, _, _) = crew(&router).await;
 
     // The served subset of mcp-tools.json, in catalog order (ADR-0025 d12).
@@ -738,7 +832,9 @@ fn hit_ids(result: &Value) -> Vec<&str> {
 
 #[tokio::test]
 async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_everyone_else() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     // The writer holds no reader grant: its own rows need none
     // (roles-and-keys.md#own; ADR-0025 d3).
     let (writer, dreamer, reader, crew) = crew(&router).await;
@@ -840,7 +936,9 @@ async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_eve
 
 #[tokio::test]
 async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, dreamer, reader, crew) = crew(&router).await;
     let v1 = ratified(&router, &writer, &dreamer).await;
 
@@ -948,7 +1046,9 @@ async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified()
 
 #[tokio::test]
 async fn oml_supersede_with_retirement_proposes_retiring_the_claim() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, dreamer, reader, _) = crew(&router).await;
     let v1 = ratified(&router, &writer, &dreamer).await;
     let why = "Retired: quote AM-7741 lapsed on 2026-12-01 and was not renewed.";
@@ -1007,7 +1107,9 @@ async fn oml_supersede_with_retirement_proposes_retiring_the_claim() {
 
 #[tokio::test]
 async fn a_replayed_oml_supersede_is_an_idempotent_replay() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, dreamer, _, _) = crew(&router).await;
     let v1 = ratified(&router, &writer, &dreamer).await;
     let args = json!({
@@ -1063,7 +1165,9 @@ async fn a_replayed_oml_supersede_is_an_idempotent_replay() {
 
 #[tokio::test]
 async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, dreamer, _, _) = crew(&router).await;
     remember_all(
         &router,
@@ -1137,7 +1241,9 @@ async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supers
 /// errors.md `details.field`; ADR-0026 d4, d7).
 #[tokio::test]
 async fn oml_remember_with_a_workarea_name_submits_into_it() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (agent, _, _, crew) = agent_crew(&router).await;
 
     let remembered = call_tool(
@@ -1210,7 +1316,9 @@ async fn oml_remember_with_a_workarea_name_submits_into_it() {
 
 #[tokio::test]
 async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (status, boot) = send(
         &router,
         "POST",
@@ -1344,7 +1452,9 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
 
 #[tokio::test]
 async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_default() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (status, boot) = send(
         &router,
         "POST",
@@ -1400,7 +1510,9 @@ async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_defa
 
 #[tokio::test]
 async fn oml_my_work_pages_with_a_client_held_cursor() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, _, reader, crew) = crew(&router).await;
     let mut written = Vec::new();
     for n in 1..=3_u64 {
@@ -1528,7 +1640,9 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
 
 #[tokio::test]
 async fn oml_my_work_limit_is_at_most_200_as_on_the_ring() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, _, _, _) = crew(&router).await;
 
     // The served schema states the ring's page bound, so an agent never
@@ -1558,7 +1672,9 @@ async fn oml_my_work_limit_is_at_most_200_as_on_the_ring() {
 
 #[tokio::test]
 async fn oml_recall_serves_steering_as_claim_items_with_text_and_no_score() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (writer, dreamer, reader, _crew) = crew(&router).await;
     let rule = "Treat any supplier quote without an explicit validity date as expired.";
     let held = call_tool(
@@ -1706,7 +1822,9 @@ const ALLOY: &str =
 
 #[tokio::test]
 async fn oml_recall_takes_include_own_held_and_max_tokens_from_the_catalog_schema() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (agent, _, reader, _) = agent_crew(&router).await;
 
     // tools/list advertises both inputs and the ring's k and max_tokens
@@ -1811,7 +1929,9 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_from_the_catalog_schem
 
 #[tokio::test]
 async fn oml_recall_steering_items_carry_text_and_tokens_not_body() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (agent, dreamer, _, crew) = agent_crew(&router).await;
     remember_all(
         &router,
@@ -1890,7 +2010,9 @@ async fn oml_recall_steering_items_carry_text_and_tokens_not_body() {
 
 #[tokio::test]
 async fn oml_recall_under_max_tokens_returns_the_budget_object() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (agent, dreamer, _, _) = agent_crew(&router).await;
     remember_all(
         &router,
@@ -2002,7 +2124,9 @@ fn type_valid(schema: &Value, tag: &str) -> Value {
 
 #[tokio::test]
 async fn every_advertised_input_property_is_accepted() {
-    let (router, db) = fresh_router().await;
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
     let (agent, _, _, _) = agent_crew(&router).await;
 
     // tools/list is the served subset of mcp-tools.json, so the server must
