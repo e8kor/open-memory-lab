@@ -461,6 +461,7 @@ join this table:
 | `GET /v2/vocab/suggest` · `GET /v2/vocab/terms/{curie}` · `GET /v2/vocab/terms/{curie}/hierarchy` · `GET /v2/vocab/mappings` | reader |
 | `GET /v2/review/queue` · `POST /v2/review/next` · `POST /v2/review/verdicts` · `POST /v2/review/reopen` | dreamer(review); refused per row by lineage-closure exclusion |
 | `POST /v2/keys` and every key, grant, denial verb | admin (key role); operator only for operator keys and a tenant's first admin key |
+| `GET /v2/whoami` | any live key, of any role; its own record only ([Whoami](#whoami-get-v2whoami)) |
 | `GET /v2/bans` · `POST /v2/bans` · `POST /v2/bans/{ban_id}/lift` | admin (key role) |
 | `GET /v2/simulations` · `GET /v2/simulations/{id}` · `POST /v2/simulations` · `POST /v2/simulations/{id}/audience` · `POST /v2/simulations/{id}/end` | admin (key role) |
 | `POST /v2/memories/{artifact_id}/reassign` · `/demote` · `/erase`, `POST /v2/claims/tip-override` | admin (key role) |
@@ -941,6 +942,22 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 | `POST /v2/keys/{key_id}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. A denial on an admin key is refused, `request.validation` with `details.field: key_id`: denials attenuate grants, and an admin key carries none ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). |
 | `POST /v2/keys/{key_id}/denials/{denial_id}/lift` | Journalled lift. |
 | `GET /v2/keys/{key_id}/effective-access?workarea=…` | The resolved answer: what this key may do where, and which deny produced each hole — reproducible from journalled grants by construction (permission epoch). |
+
+### Whoami — `GET /v2/whoami`
+
+Any live key reads its own record, whatever its role, so a client started from its URL and key
+alone derives everything else from this one read ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d15): `getKey` is admin-only and needs the key's own reference, and the workarea read names no
+tenant, role or key. The answer is `{key_id, name, role, principal, held_by, tenant,
+default_workarea, crew, grants}`: each reference is `{id, name}`, the default workarea also carries
+its derived `path`, `held_by` is the attestation as the key's row stores it, and `grants` are the
+key's stored grants as `GET /v2/keys/{key_id}` lists them. `tenant`, `default_workarea` and `crew`
+are null where the key names none; an operator key, which no tenant holds, has all three null and
+no grants.
+
+The key's denials are omitted: they name subtrees the key may not read. The read journals
+nothing, since it reads no claim. A revoked or unknown key answers `auth.invalid`, and a request
+without a key `auth.missing`, as on every route.
 
 `POST /v2/tenants` (**operator**) creates a tenant, `{name}` — unique in the deployment
 (`name.taken`) — together with its root workarea, named `universe`; the operator then issues its

@@ -41,7 +41,8 @@ use crate::types::{
     ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
     RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
     SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, Whoami, WorkareaInfo,
+    WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -523,22 +524,41 @@ where
     /// access: one hash lookup and one access read per request (workareas.md
     /// effective access; ADR-0025 d1).
     async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
-        let hash = sha256_digest_string(api_key.as_bytes());
-        let key = self
-            .journal
-            .key_by_hash(&hash)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
+        let (key, access) = self.key_and_access(api_key).await?;
         // A provider-level key carries no grant and no denial, since no
         // tenant's row can name it (postgres-schema.md): it holds no access,
         // so every verb refuses it by its role (ADR-0025 d13).
-        if key.tenant_id == PROVIDER_TENANT {
+        let Some(access) = access else {
             return Ok(Caller {
                 key,
                 grants: Vec::new(),
                 denials: Vec::new(),
                 permission_epoch: 0,
             });
+        };
+        Ok(Caller {
+            key,
+            permission_epoch: access.permission_epoch(),
+            grants: access.grants.into_iter().map(|g| g.grant).collect(),
+            denials: access.denials.into_iter().map(|d| d.denial).collect(),
+        })
+    }
+
+    /// The live key the value names and its access as stored, `None` for a
+    /// provider-level key, which no tenant's row can name; a value that
+    /// names no live key is `Unauthorized`.
+    async fn key_and_access(
+        &self,
+        api_key: &str,
+    ) -> Result<(KeyRecord, Option<KeyAccess>), AppError> {
+        let hash = sha256_digest_string(api_key.as_bytes());
+        let key = self
+            .journal
+            .key_by_hash(&hash)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        if key.tenant_id == PROVIDER_TENANT {
+            return Ok((key, None));
         }
         // The access read answers nothing only for a key its own tenant
         // does not hold: fail closed.
@@ -547,12 +567,7 @@ where
             .key_access(key.tenant_id, key.key_id)
             .await?
             .ok_or(AppError::Unauthorized)?;
-        Ok(Caller {
-            key,
-            permission_epoch: access.permission_epoch(),
-            grants: access.grants.into_iter().map(|g| g.grant).collect(),
-            denials: access.denials.into_iter().map(|d| d.denial).collect(),
-        })
+        Ok((key, Some(access)))
     }
 
     /// The id `reference` names for `key`: an id as sent; a name replaced by
@@ -1741,6 +1756,39 @@ where
             key: record,
             held_by,
             access,
+        })
+    }
+
+    /// The calling key's own record, which any live key reads, whatever its
+    /// role: its row, its tenant, its default workarea with its derived path
+    /// and its crew record, each by id and name, and its stored grants. It
+    /// omits the key's denials, which name subtrees the key may not read,
+    /// and journals nothing, since it reads no claim. The references are one
+    /// store read after the two every request makes (ADR-0039 d15).
+    pub async fn whoami(&self, api_key: &str) -> Result<Whoami, AppError> {
+        let (key, access) = self.key_and_access(api_key).await?;
+        let Some(access) = access else {
+            return Ok(Whoami {
+                key,
+                tenant: None,
+                default_workarea: None,
+                crew: None,
+                grants: Vec::new(),
+            });
+        };
+        // The key read above holds the row: a tenant whose references read
+        // nothing for it has lost it since, so fail closed.
+        let references = self
+            .journal
+            .key_references(key.tenant_id, key.key_id)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        Ok(Whoami {
+            key,
+            tenant: Some(references.tenant),
+            default_workarea: references.default_workarea,
+            crew: references.crew,
+            grants: access.grants,
         })
     }
 

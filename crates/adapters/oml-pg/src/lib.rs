@@ -23,8 +23,8 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
-    UnnamedRows, WorkareaRecord,
+    KeyReferences, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
+    PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2417,6 +2417,98 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         row.as_ref().map(key_from_row).transpose()
+    }
+
+    async fn key_references(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Option<KeyReferences>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // One query under the tenant's fence: the key row, its tenant, its
+        // crew record, and its default workarea with the path the walk up
+        // the parent_id links derives, root first, and whether that walk
+        // reached a root (ADR-0039 d15).
+        let row = sqlx::query(
+            "WITH RECURSIVE k AS ( \
+                 SELECT default_workarea_id, crew_id FROM api_keys \
+                  WHERE tenant_id = $1 AND id = $2 \
+             ), up AS ( \
+                 SELECT w.id, w.parent_id, w.name, 0 AS depth \
+                   FROM workareas w JOIN k ON w.id = k.default_workarea_id \
+                  WHERE w.tenant_id = $1 \
+                 UNION ALL \
+                 SELECT w.id, w.parent_id, w.name, up.depth + 1 \
+                   FROM workareas w JOIN up ON w.id = up.parent_id \
+                  WHERE w.tenant_id = $1 \
+             ) \
+             SELECT t.name::text AS tenant_name, \
+                    k.default_workarea_id, \
+                    (SELECT up.name::text FROM up WHERE up.depth = 0) AS workarea_name, \
+                    (SELECT string_agg(up.name::text, '.' ORDER BY up.depth DESC) FROM up) \
+                        AS workarea_path, \
+                    (SELECT bool_and(up.name IS NOT NULL) \
+                            AND bool_or(up.parent_id IS NULL) FROM up) AS workarea_whole, \
+                    k.crew_id, c.name::text AS crew_name \
+               FROM k \
+               JOIN tenants t ON t.id = $1 \
+               LEFT JOIN crews c ON c.tenant_id = $1 AND c.id = k.crew_id",
+        )
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let tenant = NamedRef {
+            id: tenant_id,
+            name: stored_name(&row, "tenant_name")?
+                .ok_or_else(|| StoreError::Backend(format!("tenant {tenant_id} has no name")))?,
+        };
+        let default_workarea = match row
+            .try_get::<Option<Uuid>, _>("default_workarea_id")
+            .map_err(backend)?
+        {
+            None => None,
+            Some(workarea_id) => {
+                // A default the tenant does not hold, or whose walk names a
+                // row with no name or stops short of a root, fails closed,
+                // as the ancestry read does.
+                let whole: Option<bool> = row.try_get("workarea_whole").map_err(backend)?;
+                let path: Option<String> = row.try_get("workarea_path").map_err(backend)?;
+                match (whole, stored_name(&row, "workarea_name")?, path) {
+                    (Some(true), Some(name), Some(path)) => Some(WorkareaRef {
+                        id: workarea_id,
+                        name,
+                        path,
+                    }),
+                    _ => {
+                        return Err(StoreError::Backend(format!(
+                            "key {key_id}'s default workarea {workarea_id} has no named \
+                             ancestry to a root in this tenant"
+                        )));
+                    }
+                }
+            }
+        };
+        let crew = match row.try_get::<Option<Uuid>, _>("crew_id").map_err(backend)? {
+            None => None,
+            Some(crew_id) => Some(NamedRef {
+                id: crew_id,
+                name: stored_name(&row, "crew_name")?.ok_or_else(|| {
+                    StoreError::Backend(format!("key {key_id}'s crew {crew_id} names no crew"))
+                })?,
+            }),
+        };
+        Ok(Some(KeyReferences {
+            tenant,
+            default_workarea,
+            crew,
+        }))
     }
 
     async fn unnamed_rows(&self, tenant_id: Uuid) -> Result<UnnamedRows, StoreError> {

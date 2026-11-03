@@ -689,6 +689,46 @@ pub struct KeyDetail {
     pub access: KeyAccess,
 }
 
+/// A row a key's record references, as `whoami` serves it: its id and its
+/// name (ADR-0039 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedRef {
+    pub id: Uuid,
+    pub name: Name,
+}
+
+/// A key's default workarea as `whoami` serves it: its id, its name and the
+/// path derived from its ancestry, root first (ADR-0039 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkareaRef {
+    pub id: Uuid,
+    pub name: Name,
+    pub path: String,
+}
+
+/// The rows a key's own record references, read in one store query: its
+/// tenant, its default workarea and its crew record, `None` where the key
+/// names none (ADR-0039 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyReferences {
+    pub tenant: NamedRef,
+    pub default_workarea: Option<WorkareaRef>,
+    pub crew: Option<NamedRef>,
+}
+
+/// `GET /v2/whoami`: the calling key's own record, the references it names
+/// and its stored grants, never its denials, which name subtrees it may not
+/// read (ADR-0039 d15). A provider-level key names no tenant, workarea or
+/// crew and holds no grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Whoami {
+    pub key: KeyRecord,
+    pub tenant: Option<NamedRef>,
+    pub default_workarea: Option<WorkareaRef>,
+    pub crew: Option<NamedRef>,
+    pub grants: Vec<GrantRecord>,
+}
+
 /// `POST /v1/memories/{artifact_id}/supersede` (http-api.md supersede;
 /// ADR-0025 d10, d11). The successor's `claim_key` and workarea are always
 /// the target's.

@@ -27,8 +27,8 @@ use crate::ports::{
 };
 use crate::types::{
     ClaimKeyState, Crew, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
-    UnnamedRows, WorkareaRecord,
+    KeyReferences, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
+    PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord, WorkareaRef,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -1454,6 +1454,67 @@ impl JournalStore for MemStore {
             .values()
             .find(|k| k.key_id == key_id)
             .cloned())
+    }
+
+    async fn key_references(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Option<KeyReferences>, StoreError> {
+        let Some(key) = self.key(tenant_id, key_id).await? else {
+            return Ok(None);
+        };
+        let tenant_name = self
+            .tenant_names
+            .lock()
+            .expect("tenant names lock")
+            .get(&tenant_id)
+            .cloned()
+            .ok_or_else(|| StoreError::Backend(format!("tenant {tenant_id} has no name")))?;
+        // The walk and the crew read are the port's own: the double answers
+        // what they answer, where the adapter reads all three in one query.
+        let default_workarea = match key.default_workarea {
+            Some(workarea_id) => {
+                let ancestry = self
+                    .workarea_ancestry(tenant_id, workarea_id)
+                    .await?
+                    .unwrap_or_default();
+                let path = ancestry
+                    .iter()
+                    .rev()
+                    .map(|w| w.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                // A default the tenant does not hold fails closed, as the
+                // adapter's read does.
+                let node = ancestry.into_iter().next().ok_or_else(|| {
+                    StoreError::Backend(format!(
+                        "key {key_id}'s default workarea {workarea_id} is not this tenant's"
+                    ))
+                })?;
+                Some(WorkareaRef {
+                    id: node.workarea_id,
+                    name: node.name,
+                    path,
+                })
+            }
+            None => None,
+        };
+        let crew = match key.crew_id {
+            Some(crew_id) => self.crew(tenant_id, crew_id).await?.map(|c| NamedRef {
+                id: c.crew_id,
+                name: c.name,
+            }),
+            None => None,
+        };
+        Ok(Some(KeyReferences {
+            tenant: NamedRef {
+                id: tenant_id,
+                name: tenant_name,
+            },
+            default_workarea,
+            crew,
+        }))
     }
 
     async fn unnamed_rows(&self, tenant_id: Uuid) -> Result<UnnamedRows, StoreError> {

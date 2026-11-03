@@ -5665,3 +5665,82 @@ async fn a_global_denial_on_an_admin_key_is_refused_naming_key_id() {
         .await
         .expect("a denial on a writer key");
 }
+
+/// `whoami` answers the calling key's own record and nothing of any other
+/// key: its id, name, role, principal and attestation, its tenant, its
+/// default workarea with the derived path and its crew record, each as an
+/// id and a name, and its stored grants. It reads no claim, so it journals
+/// nothing, and a value that names no live key is refused as every request
+/// is (ADR-0039 d15).
+#[tokio::test]
+async fn whoami_returns_the_calling_keys_own_record_and_no_other() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let metals = metals_crew(&app, admin).await;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let agent = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                name: name("claude-laptop"),
+                crew: Some(by_name("metals-crew")),
+                default_workarea: Some(by_name("q1-2027")),
+                ..issue_req(
+                    Role::Writer,
+                    "claude/laptop",
+                    vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("issue the agent key");
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let me = app.whoami(&agent.value).await.expect("whoami");
+    assert_eq!(me.key.key_id, agent.key_id);
+    assert_eq!(me.key.name, Some(name("claude-laptop")));
+    assert_eq!(me.key.role, Role::Writer);
+    assert_eq!(me.key.principal, "claude/laptop");
+    assert_eq!(me.key.held_by, HeldBy::Agent);
+    let tenant = me.tenant.expect("a tenant key names its tenant");
+    assert_eq!((tenant.id, tenant.name), (boot.tenant_id, name("acme")));
+    let default = me.default_workarea.expect("the journalled default");
+    assert_eq!(
+        (default.id, default.name, default.path.as_str()),
+        (quarter, name("q1-2027"), "universe.crew.q1-2027")
+    );
+    let named_crew = me.crew.expect("the crew record named at issuance");
+    assert_eq!(
+        (named_crew.id, named_crew.name),
+        (metals.crew_id, name("metals-crew"))
+    );
+    assert_eq!(
+        me.grants
+            .iter()
+            .map(|g| (g.grant.node, g.grant.role))
+            .collect::<Vec<_>>(),
+        vec![(crew, Role::Writer), (crew, Role::Reader)]
+    );
+
+    // Another key answers its own record, never the first key's.
+    let other = app.whoami(&reader.value).await.expect("whoami");
+    assert_eq!(other.key.key_id, reader.key_id);
+    assert_eq!(other.key.role, Role::Reader);
+    assert_eq!(other.crew, None);
+    assert_eq!(
+        other.default_workarea.map(|w| (w.id, w.path)),
+        Some((crew, "universe.crew".to_owned()))
+    );
+    assert_eq!(other.grants.len(), 1);
+    // The admin key holds no grant and reads itself the same way.
+    let root = app.whoami(admin).await.expect("whoami");
+    assert_eq!(root.key.key_id, boot.admin_key.key_id);
+    assert_eq!(root.key.role, Role::Admin);
+
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    let err = app.whoami("oml_not_a_real_key").await.unwrap_err();
+    assert!(matches!(err, AppError::Unauthorized), "{err:?}");
+}

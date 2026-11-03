@@ -160,6 +160,10 @@ from .vocab_term_definition_state import VocabTermDefinitionState
 from .vocab_term_successors_item import VocabTermSuccessorsItem
 from .vocab_term_successors_item_relation import VocabTermSuccessorsItemRelation
 from .vocab_term_term_status import VocabTermTermStatus
+from .whoami import Whoami
+from .whoami_held_by import WhoamiHeldBy
+from .whoami_ref import WhoamiRef
+from .whoami_workarea import WhoamiWorkarea
 from .workarea_create import WorkareaCreate
 from .workarea_crew_update import WorkareaCrewUpdate
 from .workarea_edge import WorkareaEdge
@@ -328,6 +332,10 @@ __all__ = (
     "VocabTermSuccessorsItem",
     "VocabTermSuccessorsItemRelation",
     "VocabTermTermStatus",
+    "Whoami",
+    "WhoamiHeldBy",
+    "WhoamiRef",
+    "WhoamiWorkarea",
     "WorkareaCreate",
     "WorkareaCrewUpdate",
     "WorkareaEdge",

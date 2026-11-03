@@ -48,7 +48,7 @@ use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
     AppError, BootstrapRequest, CrewCreateRequest, CrewRecord, CrewUpdate, GrantRecord,
     GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, RecallRequest, ServedMemory,
-    SubmitRequest, SupersedeRequest, TailedEvent, Verdict, WorkareaInfo, WorkareaRecord,
+    SubmitRequest, SupersedeRequest, TailedEvent, Verdict, Whoami, WorkareaInfo, WorkareaRecord,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -210,6 +210,7 @@ where
             .route("/v2/keys", post(Self::issue_key))
             .route("/v2/keys/{key_id}", get(Self::get_key))
             .route("/v2/keys/{key_id}/denials", post(Self::deny_key))
+            .route("/v2/whoami", get(Self::whoami))
             .route("/v2/crews", post(Self::create_crew).get(Self::list_crews))
             .route("/v2/crews/{crew_id}", get(Self::get_crew))
             .route("/v2/crews/{crew_id}/update", post(Self::update_crew))
@@ -1158,6 +1159,24 @@ where
         Ok(json_response(StatusCode::OK, &key_json(&detail)))
     }
 
+    async fn whoami(State(st): State<Self>, headers: HeaderMap) -> Response {
+        let rid = new_request_id();
+        finish(&rid, Self::whoami_inner(&st, &headers).await)
+    }
+
+    /// `GET /v2/whoami`: the calling key's own record, for any live key;
+    /// never its denials, and no read is journalled (http-api.md whoami;
+    /// ADR-0039 d15).
+    async fn whoami_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let whoami = st
+            .app
+            .whoami(&token)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &whoami_json(&whoami)))
+    }
+
     async fn create_crew(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
         let rid = new_request_id();
         finish(&rid, Self::create_crew_inner(&st, &headers, &body).await)
@@ -1843,6 +1862,29 @@ fn key_json(detail: &KeyDetail) -> Value {
             }))
             .collect::<Vec<_>>(),
         "epoch": detail.access.permission_epoch(),
+    })
+}
+
+/// openapi.yaml `Whoami`: the calling key's own record, each reference
+/// `{id, name}` and the default workarea with its `path`, its stored grants
+/// and never its denials (ADR-0039 d15).
+fn whoami_json(whoami: &Whoami) -> Value {
+    let key = &whoami.key;
+    let named = |r: &oml_app::types::NamedRef| json!({ "id": r.id, "name": r.name.as_str() });
+    json!({
+        "key_id": key.key_id,
+        "name": key.name.as_ref().map(Name::as_str),
+        "role": key.role.as_str(),
+        "principal": key.principal,
+        "held_by": key.held_by.as_str(),
+        "tenant": whoami.tenant.as_ref().map(named),
+        "default_workarea": whoami.default_workarea.as_ref().map(|w| json!({
+            "id": w.id,
+            "name": w.name.as_str(),
+            "path": w.path,
+        })),
+        "crew": whoami.crew.as_ref().map(named),
+        "grants": whoami.grants.iter().map(grant_json).collect::<Vec<_>>(),
     })
 }
 

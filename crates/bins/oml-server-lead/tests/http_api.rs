@@ -6767,3 +6767,200 @@ async fn an_approval_whose_target_lost_the_tip_is_tip_conflict_and_journals_noth
     assert_eq!(verdict["state"], "rejected");
     drop_db(&rig.db_name).await;
 }
+
+// ---------------------------------------------------------------------------
+// GET /v2/whoami (ADR-0039 d15)
+// ---------------------------------------------------------------------------
+
+async fn whoami(router: &Router, token: &str) -> (StatusCode, Value) {
+    let (status, _, body) = send(router, "GET", "/v2/whoami", Call::auth(token)).await;
+    (status, body)
+}
+
+/// A tenant with a `metals-crew` workarea, a `q1-2027` workarea under it, a
+/// `metals-crew` crew record and the agent key `claude-laptop`, writer and
+/// reader on the crew workarea, defaulting to the quarter, its crew the
+/// record: (admin, tenant, crew workarea, quarter, the 201 body of the
+/// agent key's issuance, the crew record).
+async fn whoami_tenant(router: &Router) -> (String, Uuid, Uuid, Uuid, Value, Value) {
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let crew_record = create_crew(router, &admin, "metals-crew").await;
+    let (status, _, issued) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("issue-laptop").body(json!({
+            "role": "writer",
+            "name": "claude-laptop",
+            "principal": "claude/laptop",
+            "held_by": "agent",
+            "crew": "metals-crew",
+            "grants": [
+                { "workarea_node_id": "metals-crew", "role": "writer" },
+                { "workarea_node_id": "metals-crew", "role": "reader" },
+            ],
+            "default_workarea_id": "q1-2027",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    (admin, tenant, crew, quarter, issued, crew_record)
+}
+
+/// `GET /v2/whoami` answers any live key with its own record: an agent key,
+/// a reviewer key and an admin key each read their id, name, role,
+/// principal and attestation, their tenant, their default workarea with its
+/// derived path and their crew record, each reference an id and a name,
+/// and their stored grants (http-api.md whoami; ADR-0039 d15).
+#[tokio::test]
+async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_workarea() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, tenant, crew, quarter, issued, crew_record) = whoami_tenant(router).await;
+    let agent = issued["value"].as_str().expect("value").to_owned();
+
+    let (status, me) = whoami(router, &agent).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(
+        me,
+        json!({
+            "key_id": issued["key_id"],
+            "name": "claude-laptop",
+            "role": "writer",
+            "principal": "claude/laptop",
+            "held_by": "agent",
+            "tenant": { "id": tenant, "name": "test-tenant" },
+            "default_workarea": {
+                "id": quarter,
+                "name": "q1-2027",
+                "path": "universe.metals-crew.q1-2027",
+            },
+            "crew": { "id": crew_record["crew_id"], "name": "metals-crew" },
+            "grants": issued["grants"],
+        })
+    );
+
+    let reviewer = issue_key_with(
+        router,
+        &admin,
+        "dreamer",
+        "dana/review",
+        json!([
+            { "workarea_node_id": crew, "role": "reader" },
+            { "workarea_node_id": crew, "role": "dreamer" },
+        ]),
+    )
+    .await;
+    let (status, review) = whoami(router, reviewer["value"].as_str().expect("value")).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(review["key_id"], reviewer["key_id"], "{review}");
+    assert_eq!(review["name"], "dreamer-dana-review", "{review}");
+    assert_eq!(review["role"], "dreamer", "{review}");
+    assert_eq!(review["tenant"]["name"], "test-tenant", "{review}");
+    assert_eq!(
+        review["default_workarea"],
+        json!({ "id": crew, "name": "metals-crew", "path": "universe.metals-crew" })
+    );
+    assert_eq!(review["crew"], Value::Null, "{review}");
+    assert_eq!(review["grants"], reviewer["grants"], "{review}");
+
+    let (status, root) = whoami(router, &admin).await;
+    assert_eq!(status, StatusCode::OK, "{root}");
+    assert_eq!(root["name"], "root-admin", "{root}");
+    assert_eq!(root["role"], "admin", "{root}");
+    assert_eq!(root["principal"], "platform/admin", "{root}");
+    assert_eq!(root["held_by"], "human", "{root}");
+    assert_eq!(
+        root["tenant"],
+        json!({ "id": tenant, "name": "test-tenant" })
+    );
+    assert_eq!(root["grants"], json!([]), "{root}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The key's denials name subtrees it may not read, so `whoami` never
+/// serves them, a key under a denial included (ADR-0039 d15).
+#[tokio::test]
+async fn whoami_omits_the_keys_denials() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, _crew, _quarter, issued, _) = whoami_tenant(router).await;
+    let agent = issued["value"].as_str().expect("value").to_owned();
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        "/v2/keys/claude-laptop/denials",
+        Call::auth(&admin)
+            .idem("deny-laptop")
+            .body(json!({ "workarea_node_id": "q1-2027" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    let (status, me) = whoami(router, &agent).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert!(me.get("denials").is_none(), "{me}");
+    assert!(
+        !me.to_string()
+            .contains(denial["denial_id"].as_str().expect("denial id")),
+        "{me}"
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+/// `whoami` reads no claim, so it journals nothing: the tenant's chain head
+/// is where it was before the read (ADR-0039 d15).
+#[tokio::test]
+async fn whoami_records_no_read_event() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, tenant, _crew, _quarter, issued, _) = whoami_tenant(router).await;
+    let agent = issued["value"].as_str().expect("value").to_owned();
+    let head = head_seq(&rig, tenant).await;
+    for token in [&agent, &admin] {
+        let (status, body) = whoami(router, token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head);
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A revoked key, like an unknown one, gets the refusal every route gives a
+/// value that names no live key, `401 auth.invalid` (errors.md; ADR-0039
+/// d15).
+#[tokio::test]
+async fn whoami_refuses_a_revoked_key_with_the_auth_code() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, tenant, _crew, _quarter, issued, _) = whoami_tenant(router).await;
+    let agent = issued["value"].as_str().expect("value").to_owned();
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
+    let (status, live) = whoami(router, &agent).await;
+    assert_eq!(status, StatusCode::OK, "{live}");
+    let (_, _, root_admin) = send(router, "GET", "/v2/keys/root-admin", Call::auth(&admin)).await;
+    revoke_in_the_store(&rig, tenant, &root_admin, key_id).await;
+
+    let (status, revoked) = whoami(router, &agent).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{revoked}");
+    assert_envelope(&revoked, "auth.invalid");
+    let (status, unknown) = whoami(router, "oml_not_a_real_key").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{unknown}");
+    assert_envelope(&unknown, "auth.invalid");
+    let (status, _, missing) = send(router, "GET", "/v2/whoami", Call::default()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{missing}");
+    assert_envelope(&missing, "auth.missing");
+
+    drop_db(&rig.db_name).await;
+}

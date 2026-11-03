@@ -16,8 +16,8 @@ use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{
-    ClaimKeyState, CrewRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
-    RecallCandidate, UnnamedRows, WorkareaRecord,
+    ClaimKeyState, CrewRecord, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
+    MemoryRecord, RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -542,6 +542,16 @@ pub trait JournalStore: Send + Sync {
         tenant_id: Uuid,
         key_id: Uuid,
     ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send;
+
+    /// The rows a key of the tenant references, read in one query under the
+    /// tenant's fence: the tenant's id and name, the key's default workarea
+    /// with the path its ancestry derives, and its crew record; `None` for a
+    /// key the tenant does not hold (ADR-0039 d15).
+    fn key_references(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<KeyReferences>, StoreError>> + Send;
 
     /// The tenant's rows that have no name yet: its own row, its workareas
     /// and its keys, which the lead names before it serves (http-api.md

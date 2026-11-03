@@ -788,6 +788,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/whoami": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials.
+         * @description Requires: any live key; it reads only its own record. Each reference is {id, name} and the default workarea carries its derived path. The key's denials, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+         */
+        get: operations["whoami"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/keys/{key_id}": {
         parameters: {
             query?: never;
@@ -2025,6 +2045,39 @@ export interface components {
             grants?: components["schemas"]["Grant"][];
             denials?: components["schemas"]["Denial"][];
             epoch?: number;
+        };
+        /** @description A row the calling key's record references, by its id and its name (ADR-0039 d15). */
+        WhoamiRef: {
+            id: string;
+            name: string;
+        };
+        /** @description The calling key's default workarea, by its id and its name, with the path derived from its ancestry, root first (ADR-0039 d15). */
+        WhoamiWorkarea: {
+            id: string;
+            name: string;
+            /** @description The names from the root to the node, joined by '.'; derived, never stored. */
+            path: string;
+        };
+        /** @description The calling key's own record (GET /v2/whoami): everything a client derives from its URL and key alone. Never the key's value and never its denials (ADR-0039 d15). */
+        Whoami: {
+            key_id: string;
+            /** @description The key's name; null only for a key that predates names, which the lead names before it serves (ADR-0026 d11). */
+            name: string | null;
+            role: components["schemas"]["Role"];
+            principal: string;
+            /**
+             * @description As the key's row stores it: the issuing admin's attestation, agent when none was sent.
+             * @enum {string}
+             */
+            held_by: "agent" | "human" | "service";
+            /** @description The key's tenant; null for an operator key, which no tenant holds. */
+            tenant: components["schemas"]["WhoamiRef"] | null;
+            /** @description The key's journalled default workarea; null when it has none. */
+            default_workarea: components["schemas"]["WhoamiWorkarea"] | null;
+            /** @description The key's crew record, fixed for its life; null when none was named. */
+            crew: components["schemas"]["WhoamiRef"] | null;
+            /** @description The key's stored grants, each with its epoch. */
+            grants: components["schemas"]["Grant"][];
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
@@ -4588,6 +4641,60 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    whoami: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The calling key's own record. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "claude-laptop",
+                     *       "role": "writer",
+                     *       "principal": "claude/laptop",
+                     *       "held_by": "agent",
+                     *       "tenant": {
+                     *         "id": "6f1c2a3e-0b7d-4e59-9a41-2c8d5e7f9b10",
+                     *         "name": "acme"
+                     *       },
+                     *       "default_workarea": {
+                     *         "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *         "name": "q1-2027",
+                     *         "path": "universe.metals-crew.q1-2027"
+                     *       },
+                     *       "crew": {
+                     *         "id": "0d2e4f6a-8b1c-4d3e-9f5a-7b9c1d3e5f70",
+                     *         "name": "metals-crew"
+                     *       },
+                     *       "grants": [
+                     *         {
+                     *           "workarea_node_id": "3a5c7e9b-1d2f-4a6c-8e0b-2d4f6a8c0e1b",
+                     *           "role": "writer",
+                     *           "grant_id": "9c1e3a5b-7d9f-4b2d-8a4c-6e8a0c2e4a6c",
+                     *           "deny": [],
+                     *           "epoch": 41
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Whoami"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             default: components["responses"]["Error"];
         };
     };
