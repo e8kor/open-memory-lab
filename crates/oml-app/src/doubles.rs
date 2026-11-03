@@ -27,7 +27,7 @@ use crate::ports::{
     ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use crate::types::{
-    ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimKeyState, Crew, CrewRecord,
+    ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, Crew, CrewRecord,
     DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
     ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord,
 };
@@ -1826,7 +1826,7 @@ impl JournalStore for MemStore {
     async fn claim_edges(
         &self,
         tenant_id: Uuid,
-        filter: &ClaimEdgeFilter,
+        selection: &ClaimEdgeSelection,
         after: Option<&ClaimEdgePosition>,
         limit: usize,
     ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
@@ -1835,6 +1835,13 @@ impl JournalStore for MemStore {
         };
         let state = tenant.lock().expect("tenant lock");
         let node_of = |id: Uuid| state.memories.get(&id).map(|m| m.workarea_id);
+        let in_scope = |id: Uuid| {
+            state.memories.get(&id).is_some_and(|m| {
+                selection.readable_nodes.contains(&m.workarea_id)
+                    && (m.status == MemoryStatus::Promoted
+                        || m.author_key_id == selection.reader_key_id)
+            })
+        };
         let position = |e: &ClaimEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);
         let mut edges: Vec<&ClaimEdgeRecord> = state.claim_edges.values().collect();
         edges.sort_by_key(|e| std::cmp::Reverse(position(e)));
@@ -1843,14 +1850,17 @@ impl JournalStore for MemStore {
             .filter(|e| {
                 after.is_none_or(|p| position(e) < (p.created_at.as_str().to_owned(), p.edge_id))
             })
+            .filter(|e| in_scope(e.src_artifact_id) && in_scope(e.dst_artifact_id))
             .filter(|e| {
-                filter
+                selection
                     .artifact_id
                     .is_none_or(|a| e.src_artifact_id == a || e.dst_artifact_id == a)
             })
             .filter(|e| {
-                filter.workarea_id.is_none_or(|w| {
-                    node_of(e.src_artifact_id) == Some(w) || node_of(e.dst_artifact_id) == Some(w)
+                selection.within.as_ref().is_none_or(|within| {
+                    [e.src_artifact_id, e.dst_artifact_id]
+                        .into_iter()
+                        .any(|id| node_of(id).is_some_and(|w| within.contains(&w)))
                 })
             })
             .take(limit)

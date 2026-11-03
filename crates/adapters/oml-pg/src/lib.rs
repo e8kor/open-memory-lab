@@ -23,9 +23,9 @@ use oml_app::ports::{
     StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
-    ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimKeyState, CrewRecord, DenialRecord,
-    GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord,
+    ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, CrewRecord,
+    DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2768,32 +2768,49 @@ impl JournalStore for PgStore {
     async fn claim_edges(
         &self,
         tenant_id: Uuid,
-        filter: &ClaimEdgeFilter,
+        selection: &ClaimEdgeSelection,
         after: Option<&ClaimEdgePosition>,
         limit: usize,
     ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        // Each endpoint's row, its scan naming its tenant as every statement
+        // on memories does (ADR-0034 d13).
         let mut sql = QueryBuilder::<Postgres>::new(format!(
             "SELECT {CLAIM_EDGE_COLUMNS} FROM claim_edges e \
              JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             JOIN memories s ON s.tenant_id = e.tenant_id AND s.id = e.src_artifact_id \
+             JOIN memories d ON d.tenant_id = e.tenant_id AND d.id = e.dst_artifact_id \
              WHERE e.tenant_id = "
         ));
         sql.push_bind(tenant_id);
-        if let Some(artifact_id) = filter.artifact_id {
+        sql.push(" AND s.tenant_id = ")
+            .push_bind(tenant_id)
+            .push(" AND d.tenant_id = ")
+            .push_bind(tenant_id);
+        // Read scope: both endpoints in a reader node, each promoted or the
+        // key's own (roles-and-keys.md footnote 5).
+        for row in ["s", "d"] {
+            sql.push(format!(" AND {row}.workarea_id = ANY("))
+                .push_bind(selection.readable_nodes.clone())
+                .push(format!(
+                    "::uuid[]) AND ({row}.status = 'promoted' OR {row}.author_key_id = "
+                ))
+                .push_bind(selection.reader_key_id)
+                .push(")");
+        }
+        if let Some(artifact_id) = selection.artifact_id {
             sql.push(" AND (e.src_artifact_id = ")
                 .push_bind(artifact_id)
                 .push(" OR e.dst_artifact_id = ")
                 .push_bind(artifact_id)
                 .push(")");
         }
-        // Either endpoint's workarea; the scan of memories names its
-        // tenant, as every statement on it does (ADR-0034 d13).
-        if let Some(workarea_id) = filter.workarea_id {
-            sql.push(" AND EXISTS (SELECT 1 FROM memories m WHERE m.tenant_id = ")
-                .push_bind(tenant_id)
-                .push(" AND m.id IN (e.src_artifact_id, e.dst_artifact_id) AND m.workarea_id = ")
-                .push_bind(workarea_id)
-                .push(")");
+        if let Some(within) = &selection.within {
+            sql.push(" AND (s.workarea_id = ANY(")
+                .push_bind(within.clone())
+                .push("::uuid[]) OR d.workarea_id = ANY(")
+                .push_bind(within.clone())
+                .push("::uuid[]))");
         }
         // Keyset: strictly after the position in the listing's order.
         if let Some(after) = after {
