@@ -2,7 +2,7 @@
 id: adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing
 tier: engineering
 status: proposed
-answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role split fences instead; the two Postgres roles and their privileges; how the lead migrates under postgres.owner_url and serves under postgres.url; why one URL is refused at startup; why _sqlx_migrations is the one table without row-level security; how a single-role install, the live host among them, is split; the per-tenant FTS index, how a read reaches its tenant's partition, who creates a partition and which channels stay open; foreign keys that carry tenant_id; the checks and the CI change that close it; the build order after iteration 3; why v0.3.1 ships the partitions with no LEAKPROOF wrapper and what decides the wrapper later
+answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role split fences instead; the two Postgres roles and their privileges; how the lead migrates under postgres.owner_url and serves under postgres.url; why one URL is refused at startup; why _sqlx_migrations is the one table without row-level security; how a single-role install, the live host among them, is split; the per-tenant FTS index, how a read reaches its tenant's partition, who creates a partition, with which DDL and locks, and which channels stay open; foreign keys that carry tenant_id; the checks and the CI change that close it; the build order after iteration 3; why v0.3.1 ships the partitions with no LEAKPROOF wrapper and what decides the wrapper later
 -->
 
 # ADR-0034 — The lead migrates as an owner role and serves as a role that owns nothing; `_sqlx_migrations` is the one table without row-level security
@@ -43,11 +43,18 @@ Decided, not built.
   d2–d5 keep the owner's `pg_stats` view and DDL from workloads. No split closes EXPLAIN's row
   estimate, which reached both roles on 17.11; FR-45 holds it, with `reltuples`.
 
-- **d2 — Two roles: an owner that owns everything, a serving role that owns nothing.** The operator
-  names them; this repository's payloads call them `oml_owner` and `oml_server`. Each holds no
-  attribute but `LOGIN` (`rolsuper`, `rolcreatedb`, `rolcreaterole`, `rolreplication` and
-  `rolbypassrls` false). The **owner** logs in through `postgres.owner_url`, owns the database,
-  everything in `public` and `_sqlx_migrations`, and runs every migration. The **serving role** logs
+- **d2 — Two roles: an owner that owns what the migrations create, a serving role that owns
+  nothing.** The operator names them. Only the payloads that own their cluster, `docker-compose.yml`,
+  the chart and CI's service containers, call them `oml_owner` and `oml_server`; the demo and the
+  suites mint uniquely named pairs (d8), since the live role on the maintainer's cluster is named
+  `oml_server`. Each holds no attribute but `LOGIN` (`rolsuper`, `rolcreatedb`, `rolcreaterole`,
+  `rolreplication` and `rolbypassrls` false). The **owner** logs in through `postgres.owner_url`,
+  owns the database, every object the migrations create in `public` and `_sqlx_migrations`, and runs
+  every migration. An extension's member objects are not among them: they stay with whoever
+  `CREATE EXTENSION` makes their owner, which for 0006's `ltree` run by a role that is not a
+  superuser is the bootstrap superuser (probed on the host's 18.6 on 2026-11-03, in a rolled-back
+  transaction), so d5 and d8 skip objects that `pg_depend` marks as extension members (`deptype`
+  `'e'`). The **serving role** logs
   in through `postgres.url`, owns nothing, is a member of no role, has no `CREATE` on the database
   or `public`, and holds beyond `PUBLIC`'s only `CONNECT`, `USAGE` on `public` and d3's privileges.
   The server reads no role name from configuration: each is its URL's `current_user`.
@@ -107,9 +114,14 @@ Decided, not built.
   superuser, after checking `pg_database`, since it moves every database the role owns on the
   cluster ([REASSIGN OWNED](https://www.postgresql.org/docs/17/sql-reassign-owned.html)), and for a
   superuser, which that refuses as the bootstrap role (`pg_shdepend.c`, `REL_17_STABLE` at
-  `ce2797d`; all three fetched 2026-10-31), by `ALTER … OWNER TO` on the database and each table and
-  function in `public`, whose indexes, TOAST tables and owned sequences follow (`tablecmds.c`); then
-  `postgres.owner_url` and the build carrying this record. Until that build starts, rollback
+  `ce2797d`; all three fetched 2026-10-31), by `ALTER … OWNER TO` on the database and each table,
+  function and type in `public`, `ALTER DOMAIN oml_name OWNER TO <owner>` among them, whose indexes,
+  TOAST tables and owned sequences follow (`tablecmds.c`), skipping extension members (`pg_depend`
+  `deptype` `'e'`); then `postgres.owner_url` and the build carrying this record. The stated
+  exception is the `ltree` extension, which stays the superuser's with its members, since PostgreSQL
+  has no `ALTER EXTENSION … OWNER TO`: on such an install an `ALTER EXTENSION ltree UPDATE` is run
+  by that superuser, outside the migrations, and no migration this record lands alters an
+  extension. Until that build starts, rollback
   reverses the move; after it, the backup and [restore](../operations/restore.md). The live host's
   split is **not run** and waits for the maintainer; its success is both role names in its log and
   `/readyz` 200, recorded here with date and output.
@@ -118,7 +130,10 @@ Decided, not built.
   uniquely named role pair minted for its database, `oml.serving_role` set, and asserts over the
   serving login, the journal guard law excepted: it runs as the owner, since privileges refuse the
   serving role first (`42501`, asserted beside it). Minting takes a superuser, as CI's `cargo test
-  (Postgres)` job has; a suite that cannot mint fails, as one without Postgres does:
+  (Postgres)` job and the SDK jobs have. A suite whose role cannot mint, as the maintainer's local
+  `oml` cannot (`CREATEDB` alone), prints `did not run: <role> cannot create roles` and returns; CI
+  sets `OML_TEST_REQUIRE_SPLIT=1`, under which the same condition fails, so CI cannot pass
+  vacuously. The checks:
     - the serving role sees nothing of another tenant in a tenant table's `pg_stats`, two tenants
       seeded and analysed, while the control, the owner's view, shows tenant B's lexemes;
     - the serving role cannot `ALTER`, `DROP` or create a table, lift `FORCE`, `TRUNCATE` a table,
@@ -140,15 +155,23 @@ Decided, not built.
     2. The split, in one landing: its migration (d6's revoke, `REVOKE CREATE ON SCHEMA public FROM
        PUBLIC`, each table's grants), postgres-schema.md's matrix, d4, d5, d8, d9, both roles and
        URLs in `docker-compose.yml`, `scripts/poc-demo.sh`, CI's demo job, README's "Running the
-       PoC" and the Dockerfile's comment, and a second Secret key and the kind job's role pair in
-       the proposed ADR-0033's chart. Check: d8's tests, `rls-spike` recording the two `estimate`
-       checks alone, and CI's `cargo test (Postgres)`, `demo and quickstart`, `docker profile` and
-       `kubernetes chart` jobs.
+       PoC" and the Dockerfile's comment, both SDK harnesses (`sdks/python/tests/conftest.py`,
+       `sdks/typescript/test/harness.ts`), which mint a pair as d8's suites do and pass both URLs,
+       the SDK READMEs' prerequisite line, the docker and chart install notes in `release.yml`, and
+       a second Secret key and the kind job's role pair in the proposed ADR-0033's chart.
+       `poc-demo.sh` targets a shared cluster, so it mints a uniquely named pair, refuses to run when
+       the cluster already holds a role it would create, and states its new prerequisite: the
+       superuser d8's minting takes. Check: d8's tests, `rls-spike` recording the two `estimate`
+       checks alone, and CI's `cargo test (Postgres)`, `demo and quickstart`, `docker profile`,
+       `kubernetes chart`, `Python SDK against the release server` and `TypeScript SDK against the
+       release server` jobs.
     3. d12's migration. Check: under tenant A, a reference to tenant B's row fails as one to a
        random id does (`23503`, one constraint) for each key d12 rewrites, in the integration tier
        and `rls-spike`; `pg_constraint` shows every key into a table with `tenant_id` carrying it.
     4. d11's migration and tenant predicate, and postgres-schema.md's FTS sketch. Check: a tenant's
-       fenced partition exists before its row commits, and a failed creation commits no tenant; the
+       fenced partition exists before its row commits, and a failed creation commits no tenant and
+       spends no enrollment token; a partition left by a failed genesis commit is empty, fenced and
+       accepted by d5; the
        adapter's FTS read scans its tenant's partition alone; the serving role sees no partition's
        `pg_stats`; d5 holds over partitions; `rls-spike` as in step 2.
     5. v0.3.1, which carries steps 2–4 with no `LEAKPROOF` wrapper (d13), then the live host's
@@ -166,9 +189,23 @@ Decided, not built.
     - *Who creates a partition:* the owner, before the commit whose fold creates the tenant's row
       (`tenant.genesis`, in the bootstrap claim today; `tenant.created` once built). The use case
       mints the id and calls a store port that `oml-pg` serves on an owner connection opened for
-      that call alone, creating the partition with `ENABLE`, `FORCE` and its parent's policy; a
-      failed DDL fails the act before any commit. `memory_embeddings`' partitions (ADR-0013 d4) take
-      the same path once that table is built.
+      that call alone, while the act holds no serving transaction open, so neither connection waits on
+      a lock the other holds. The port runs, in one owner transaction under `SET LOCAL lock_timeout
+      = '5s'`: `CREATE TABLE memories_t_<tenant id, 32 hex> (LIKE memories INCLUDING ALL)`, then
+      `ENABLE` and `FORCE ROW LEVEL SECURITY` and its parent's policy, then `ALTER TABLE memories
+      ATTACH PARTITION … FOR VALUES IN ('<tenant id>')`. A partition is named by the tenant's id,
+      never its name, which would put every tenant's name in `pg_class` for every role. Not
+      `CREATE TABLE … PARTITION OF`: on the host's 18.6 (probed 2026-11-03, in rolled-back
+      transactions on temp tables) it took `AccessExclusiveLock` on the parent, stopping every
+      tenant's reads and writes, where `ATTACH PARTITION` took `ShareUpdateExclusiveLock`; both
+      took `ShareRowExclusiveLock` on `review_queue`, which d12's key into `memories` gives, so
+      `review_queue`'s writes wait for the attach, bounded by the timeout. A DDL that fails fails the
+      act before any commit, journals nothing and spends no enrollment token: a lock timeout
+      (`55P03`) answers `system.unavailable`, retryable, `details.reason` `partition_lock_timeout`,
+      and any other failure `system.internal`. A partition whose DDL committed when the genesis
+      commit then failed is kept: it is empty, owned by the owner and fenced, so d5 accepts it, and
+      the retry mints a fresh id; dropping it waits with `DROP`'s other uses (Consequences).
+      `memory_embeddings`' partitions (ADR-0013 d4) take the same path once that table is built.
     - *Stays open:* EXPLAIN's estimate (d1) and each partition's `reltuples` and bound, which give
       every role one tenant's row count and id, are FR-45's; by this record's reading of the planner
       (`REL_17_STABLE` at `f1ba2b8`, fetched 2026-10-31), a partition's GIN index serves no
@@ -210,14 +247,16 @@ Decided, not built.
   row adds FR-45's channels. configuration.md, deployment.md's lead row, upgrades.md,
   postgres-schema.md, retrieval.md's FTS paragraph, the critical path's S3.1 row and the register's
   D6 cell follow. FR-25's exit criterion names search latency at stated tenant sizes, the numbers
-  d13's later record waits on.
-- **Costs** beyond those the decisions state: a superuser for the test suites and the demo (d8);
+  d13's later record waits on. errors.md's `system.unavailable` row names d11's
+  `partition_lock_timeout` reason.
+- **Costs** beyond those the decisions state: a superuser for the test suites and the demo, so the
+  Postgres suites run fully only in CI on a host whose role cannot create roles (d8);
   planning that grows with tenants where a statement is not pruned at planning (d11). `read_events`
   partition creation and `DROP`, its retention act ([postgres-schema](../data/postgres-schema.md)),
   wait for the bootstrap workload or a record of their own.
 - **No surface change:** no HTTP operation, error code or event type, so `info.version` stays
   `0.3.0-design`; `postgres.role_split` is a startup error outside the [error
-  taxonomy](../api/errors.md).
+  taxonomy](../api/errors.md), and d11's lock timeout is a new `details.reason` of an existing code.
 
 ## Rejected alternatives
 

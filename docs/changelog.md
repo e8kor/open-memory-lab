@@ -40,6 +40,14 @@ by #8 and #9, released as v0.3.0, and its step 5 names v0.3.1 as the release tha
 to 4. The record's Context links the spike 3 findings, now in this tree, and d9 names the harness
 by its path.
 
+A confirming review narrowed the record: d11 states the DDL that creates a partition (`LIKE`, then
+`ATTACH PARTITION` under a lock timeout, named by tenant id), that it runs with no serving
+transaction open, the codes a failed DDL answers and the partition a failed genesis leaves; d2's owner
+owns what the migrations create, extension members excepted, and d7's superuser path moves
+`oml_name` and leaves `ltree` with the superuser; d8 names the local not-run and CI's
+`OML_TEST_REQUIRE_SPLIT`; d10's step 2 adds the SDK harnesses, their jobs and the release notes, and
+the demo mints its role pair instead of using d2's fixed names.
+
 - **Roadmap:** no row opens or closes. At the record's acceptance FR-25's exit criterion names
   search latency at stated tenant sizes.
 - **No surface change:** `info.version` stays `0.3.0-design`.
