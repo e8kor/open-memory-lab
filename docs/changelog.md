@@ -27,6 +27,28 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
+## 0.4.0-design (in progress)
+
+Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+records. `info.version` stays `0.3.0-design` until that record's build step 1 moves it to
+`0.4.0-design`; entries land here as the build does.
+
+### 2026-11-03 — The API rewrite and the plugin setup retargeted to v0.4.0 (ADR-0039, ADR-0040, proposed)
+
+The maintainer moved the rewrite from v0.3.2 to v0.4.0 the same day it was proposed. Both
+proposed records now name v0.4.0, and the spec version the build moves to is `0.4.0-design`.
+ADR-0039 is renamed to `ADR-0039-the-api-rewritten-for-v0-4-0.md`, with its `id:` header and
+every link, while nothing outside the branch links to it. ADR-0039 d12's alias window becomes
+hidden through v0.4.x and removed in v0.5.0, and a v0.3.0 credentials file's `server` and `key`
+are read through v0.4.x. **The maintainer has not decided that window**; the other reading is no
+aliases at all, which drops d14's step 3. Turn context (ADR-0038), the mobile OAuth connector
+(ADR-0031) and the librarian subagent also land in v0.4.0 from their own branches and rebase onto
+ADR-0039's build.
+
+- **Pages touched:** the two records, their [register](adr/index.md) rows, `mkdocs.yml`,
+  `llms.txt`, the roadmap's FR-65 and FR-67 rows and this page.
+- **Not built.**
+
 ## 0.3.0-design
 
 ### 2026-11-03 — Releases ship the Claude Code plugins and an agent kit (implementation)
@@ -38,7 +60,7 @@ agent kit of MCP configurations for other agent tools, signed and summed with th
 
 ### 2026-11-03 — The API rewritten for v0.3.2, and the plugin configured in Claude Code (ADR-0039, ADR-0040, proposed)
 
-[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-3-2.md), proposed on 2026-11-03, records the
+[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), proposed on 2026-11-03, records the
 maintainer's choice that day to rewrite the API while OML is pre-release instead of layering on it,
 to ship the rewrite as v0.3.2, and the maintainer's answers to its open questions and to six
 findings of the use-case call map. It decides the three MCP tools `oml_write`, `oml_read` and

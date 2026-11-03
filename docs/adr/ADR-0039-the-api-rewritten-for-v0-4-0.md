@@ -1,11 +1,11 @@
 <!--
-id: adr/ADR-0039-the-api-rewritten-for-v0-3-2
+id: adr/ADR-0039-the-api-rewritten-for-v0-4-0
 tier: engineering
 status: proposed
-answers: why the agent and HTTP surfaces are rewritten for v0.3.2 while OML is pre-release instead of layered; the three MCP tools that replace the eight served ones, their hints and their argument rules; why the events tail leaves MCP and no file tool returns; the server-derived claim_key beside a required idempotency_key; one workarea field in place of the X-OML-Workarea header; one include_unreviewed flag; which HTTP routes collapse and where the 49 declared-but-unrouted operations go; the old-to-new mapping that shows nothing is lost; the breaking changes, their migration and the alias window; one error shape on HTTP and MCP; the URL and key that are every client's only start settings, and the whoami read that derives the rest; the build plan and its tests
+answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is pre-release instead of layered; the three MCP tools that replace the eight served ones, their hints and their argument rules; why the events tail leaves MCP and no file tool returns; the server-derived claim_key beside a required idempotency_key; one workarea field in place of the X-OML-Workarea header; one include_unreviewed flag; which HTTP routes collapse and where the 49 declared-but-unrouted operations go; the old-to-new mapping that shows nothing is lost; the breaking changes, their migration and the alias window; one error shape on HTTP and MCP; the URL and key that are every client's only start settings, and the whoami read that derives the rest; the build plan and its tests
 -->
 
-# ADR-0039 — The API is rewritten for v0.3.2 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
+# ADR-0039 — The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
 
 **Status:** proposed · 2026-11-03
 
@@ -13,7 +13,8 @@ answers: why the agent and HTTP surfaces are rewritten for v0.3.2 while OML is p
 
 ## Context
 
-On 2026-11-03 the maintainer chose to **rewrite the API while pre-release**, as v0.3.2, over
+On 2026-11-03 the maintainer chose to **rewrite the API while pre-release**, first as a patch
+release and then, the same day, as v0.4.0 ("we should be targeting 0.4.0"), over
 the delivery plan's layering of markers, wrappers and aliases, then settled the first draft's
 open questions and took six findings of the use-case call map, which applies Occam's razor to
 every use case (`docs/engineering/use-case-call-map.md` on `feat/use-cases`, not on this branch).
@@ -34,6 +35,10 @@ The v1 covenant binds only from FR-21's v1-stable declaration
 `oml.doublegate.io`, and a renamed tool breaks users' permission rules for
 `mcp__plugin_oml_oml__<tool>` ([ADR-0029](ADR-0029-session-start-hook.md) d8). This record pays
 those costs once, before the freeze. Decided, not built.
+
+v0.4.0 also carries three changes this record does not decide, each from its own branch and
+pull request: turn context (ADR-0038), the mobile OAuth connector (ADR-0031) and the librarian
+subagent. Each rebases onto this record's build, d14's steps, rather than ahead of it.
 
 ## Decision
 
@@ -92,7 +97,7 @@ those costs once, before the freeze. Decided, not built.
     on MCP) read the key's default workarea, and the own-work listing everything the key wrote.
     Every mode returns ADR-0025 d12's claim item, with its text, under a `mode` field. The lineage
     mode is served once the lineage read is routed. **One flag for unreviewed rows** (call map
-    M3): `include_unreviewed` replaces `include_own_held` everywhere; in v0.3.2 it reaches the
+    M3): `include_unreviewed` replaces `include_own_held` everywhere; in v0.4.0 it reaches the
     key's own held rows (ADR-0025 d4), default `false`. The proposed ADR-0030 widens its reach and
     sets its default inside an in-progress subtree, under this name, with no flag of its own.
 
@@ -118,7 +123,7 @@ those costs once, before the freeze. Decided, not built.
   names, except `body`.** A request field that references a workarea, crew, key or tenant is
   named after the kind and takes an id or a name ([ADR-0026](ADR-0026-names-are-keys.md) d4):
 
-    | Where | v0.3.0 | v0.3.2 |
+    | Where | v0.3.0 | v0.4.0 |
     |---|---|---|
     | `POST /v2/keys` | `default_workarea_id`; `tenant_id`; each grant's `workarea_node_id`; `deny[].subtree_node_id` | `default_workarea`; `tenant`; `workarea`; `deny[].workarea` |
     | `POST /v2/keys/{key}/denials`; `POST /v2/workareas` | `workarea_node_id`; `parent_id` | `workarea`; `parent` |
@@ -158,7 +163,7 @@ those costs once, before the freeze. Decided, not built.
 
 - **d10 — Every served tool, route, CLI verb and SDK method maps to its successor.**
 
-    | v0.3.0 | v0.3.2 |
+    | v0.3.0 | v0.4.0 |
     |---|---|
     | `oml_remember`, `oml_learn` `{workarea, claim_key, text, kind, derives_from, idempotency_key}` | `oml_write`, `claim_key` and `kind` optional; `derives_from` journals learn (d3) |
     | `oml_supersede {artifact_id, …, retirement?, reason}` | `oml_write {replaces, …, retirement?, reason}` |
@@ -177,7 +182,7 @@ those costs once, before the freeze. Decided, not built.
     defaulting to the reviewer key's one open review item and refused naming `serve_id` when it
     holds none or several (call map D5); `GET /v2/whoami` is added (d15).
 
-    | CLI, v0.3.0 | v0.3.2 |
+    | CLI, v0.3.0 | v0.4.0 |
     |---|---|
     | `oml submit --claim <text> [--verb] [--claim-key] [--derives-from …] [--workarea]` | `oml write <text> [--claim-key] [--kind] [--derives-from …] [--workarea]` |
     | `oml supersede …` | `oml write <text> --replaces <artifact_id> [--retirement] [--reason]` |
@@ -199,8 +204,12 @@ those costs once, before the freeze. Decided, not built.
   protocol faults, -32602 for a tool not served. No code is added: a renamed field or header is
   `request.validation` with `details.renamed_to`.
 
-- **d12 — The old names stay callable but hidden through v0.3.x on MCP and the CLI only, and
-  v0.4.0 removes them. Confirmed by the maintainer on 2026-11-03.**
+- **d12 — The old names stay callable but hidden through v0.4.x on MCP and the CLI only, and
+  v0.5.0 removes them.** The maintainer confirmed a window on 2026-11-03 while the rewrite was a
+  patch release: hidden through v0.3.x, removed in v0.4.0. Moving the rewrite to v0.4.0 the same
+  day left that window empty, so this record reads it as one minor release later. **The
+  maintainer has not decided this reading.** The other reading is no aliases at all: v0.4.0
+  answers only the new names, and d14's step 3 and the alias rows of d13 drop out.
     - **MCP.** The eight v0.3.0 tool names keep their v0.3.0 inputs, outputs and refusal codes,
       translated at the facade, `oml_events_tail` onto `GET /v2/events`. None is in `tools/list`;
       each call logs `mcp_alias_called`. The window serves raw MCP clients such as
@@ -217,8 +226,8 @@ those costs once, before the freeze. Decided, not built.
     | Break | Who it reaches | Migration |
     |---|---|---|
     | Three tool names replace the eight | `permissions.allow` rules naming old read tools | allow `mcp__plugin_oml_oml__oml_read` and `__oml_workarea`, or the server-wide `mcp__plugin_oml_oml`; the README carries both (amends ADR-0029 d8) |
-    | The events tail leaves MCP | callers of `oml_events_tail` | `oml_read {state}` for an agent's own writes; `GET /v2/events`, SDK `events` or `oml events` to audit; the alias answers until v0.4.0 |
-    | The cached skill and the hook name old tools | plugin 0.3.0 installs | `claude plugin update oml@open-memory-lab` and the v0.3.2 CLI (amends ADR-0029 d6) |
+    | The events tail leaves MCP | callers of `oml_events_tail` | `oml_read {state}` for an agent's own writes; `GET /v2/events`, SDK `events` or `oml events` to audit; the alias answers until v0.5.0 |
+    | The cached skill and the hook name old tools | plugin 0.3.0 installs | `claude plugin update oml@open-memory-lab` and the v0.4.0 CLI (amends ADR-0029 d6) |
     | Request renames and the header removed (d7), `auto-` keys refused (d6) | HTTP callers, the CLI, the hook | upgrade the CLI with the server; the refusal names the new spelling. The hook sends `include_text` and `include_unreviewed` (amends ADR-0029 d2) |
     | `body` → `text` in responses | HTTP readers, the SDKs | read `text` |
     | `remember` with `derives_from` journalled `submission.learn` | journal readers | none; an explicit HTTP `verb` keeps the old event |
@@ -237,7 +246,7 @@ those costs once, before the freeze. Decided, not built.
        tools with hints), `mcp-tools.designed.json`, http-api.md, errors.md, mcp-plugin.md, the
        router, the facade, the skill, the README's permission rules, `check_plugin.py`, the
        quickstart, the CLI's and the hook's request spellings and the hook's lines; `info.version`
-       becomes `0.3.2-design`. `the_served_openapi_document_declares_exactly_the_routed_operations`,
+       becomes `0.4.0-design`. `the_served_openapi_document_declares_exactly_the_routed_operations`,
        `tools_list_names_three_tools_each_with_its_annotations`,
        `the_x_oml_workarea_header_is_refused_naming_workarea`,
        `whoami_answers_any_live_key_with_its_tenant_role_name_and_default_workarea`.
@@ -271,7 +280,7 @@ those costs once, before the freeze. Decided, not built.
       else, to the owner-only credentials file. It replaces the designed `oml context add`, `oml
       doctor` replaces `oml context show`, and a second server is a second file through
       `OML_CLI_CREDENTIALS`. `bootstrap claim` writes the same two fields; a v0.3.0 file's
-      `server` and `key` are read through v0.3.x and its other fields ignored.
+      `server` and `key` are read through v0.4.x and its other fields ignored.
     - **`GET /v2/whoami` derives the rest**, since no served read does: `getKey` is admin-only and
       needs the key's own reference, and `getWorkarea` names no tenant, role or key. Any live key
       calls it for itself and gets `{key_id, name, role, principal, held_by, tenant,
@@ -294,11 +303,11 @@ those costs once, before the freeze. Decided, not built.
 - **Rebases owed.** The proposed ADR-0027, ADR-0030, ADR-0031, ADR-0035, ADR-0036, ADR-0037 and
   ADR-0038 rebase onto d2, d7 and d9: ADR-0030 uses `include_unreviewed` (d4) rather than its own
   flag, ADR-0035 names files through the upload verbs, and ADR-0030 and ADR-0031 move
-  `info.version` from `0.3.2-design`.
+  `info.version` from `0.4.0-design`.
 - **The serve binding is not fixed here.** `serve_id` is built from the memory's id
   (`lib.rs:669-673`) and binds the reviewer only through the claimed queue row, on which d10's
   default rests, not a serve record ([review](../api/http-api.md#review)); that is FR-66.
-- **Opened:** FR-65 (the rewrite as v0.3.2, the aliases removed in v0.4.0) and FR-66 (the serve
+- **Opened:** FR-65 (the rewrite as v0.4.0, the aliases removed in v0.5.0) and FR-66 (the serve
   binding) on the [roadmap](../product/roadmap.md), marked proposed.
 
 ## Rejected alternatives
@@ -319,7 +328,7 @@ those costs once, before the freeze. Decided, not built.
 | **`serve_id` required on approve** (the first draft's d10) | The reviewer copies what `review next` printed though it holds one item (call map D5). |
 | **Make `idempotency_key` optional** | Two deliberate identical writes would collapse into one. |
 | **Derive `claim_key` from the text alone** | An exact-text oracle through `submission.claim_key_conflict` (d6). |
-| **Aliases past v0.3.x, or on HTTP and the SDKs** | Each aliased release is a second surface to test; HTTP callers ship with the server or install from a checkout. |
+| **Aliases past v0.4.x, or on HTTP and the SDKs** | Each aliased release is a second surface to test; HTTP callers ship with the server or install from a checkout. |
 | **`bootstrap claim --token <secret>`, as built** | The secret enters argv and shell history. |
 | **Keep `OML_CLI_SERVER` and `OML_CLI_KEY` beside the plugin's pair** (call map K7) | Two names for one pair. An admin key still never feeds an agent's context: the hook never reads the credentials file (ADR-0040 d3), and an admin key recalls no claim content ([roles and keys](../architecture/roles-and-keys.md)). |
 | **Resolve the URL and the key independently across sources** | A flag's URL could be paired with an exported key meant for another server. |

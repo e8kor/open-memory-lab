@@ -33,8 +33,8 @@ user's environment and sends it to a server, README examples included
 ([pre-submission checklist](https://claude.com/docs/plugins/pre-submission-checklist), "Review
 what the plugin runs and connects to", fetched 2026-11-03). Today's entry meets both findings.
 
-On 2026-11-03 the maintainer chose to configure the plugin in Claude Code, placed it in v0.3.2
-beside [ADR-0039](ADR-0039-the-api-rewritten-for-v0-3-2.md), and decided where the environment
+On 2026-11-03 the maintainer chose to configure the plugin in Claude Code, placed it in v0.4.0
+beside [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), and decided where the environment
 fallback stops: **the MCP entry reads the plugin's settings only, and the hooks and the CLI keep
 the `OML_URL` and `OML_API_KEY` fallback**. The same day the maintainer set the rule that every
 client starts from a URL and a key and nothing else (ADR-0039 d15). Every decision below is the
