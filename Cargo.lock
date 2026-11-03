@@ -1407,6 +1407,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "object_store",
+ "rustix",
  "thiserror",
  "tokio",
  "url",

@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use bytes::Bytes;
 use oml_objectstore::object_store::path::Path;
 use oml_objectstore::{
-    DEFAULT_DATA_DIRECTORY, ObjectStorage, STORAGE_URL, StorageError, StorageSettings,
+    DEFAULT_DATA_DIRECTORY, ObjectStorage, STORAGE_OPTIONS, STORAGE_URL, StorageError,
+    StorageSettings,
 };
 
 /// The variable naming the S3 bucket the suite also runs against.
@@ -89,13 +90,21 @@ fn name(prefix: &str, rest: &str) -> Path {
     Path::parse(format!("{prefix}/{rest}")).expect("a valid object name")
 }
 
-/// The suite of d10: put, get, list, conditional put, the part path's
-/// re-put, and delete as expiry uses it (twice, the second finding nothing).
+/// `len` bytes of `fill`, so each assembled part is told apart.
+fn filled(fill: u8, len: usize) -> Bytes {
+    Bytes::from(vec![fill; len])
+}
+
+/// The suite of d10: put, get, list, copy, conditional put, the part path
+/// (put a part, re-put it, assemble) and delete as expiry uses it (twice, the
+/// second finding nothing).
 async fn conformance(storage: &ObjectStorage, backend: &str) {
     let prefix = run_prefix(backend);
     let body = name(&prefix, "oml-quarantine/t/d/o");
     let other = name(&prefix, "oml-quarantine/t/d/p");
     let part = name(&prefix, "oml-quarantine/t/uploads/s/1");
+    let promoted = name(&prefix, "oml-bodies/t/d/o");
+    let file = name(&prefix, "oml-quarantine/t/d/f");
 
     // put and get
     storage
@@ -136,6 +145,75 @@ async fn conformance(storage: &ObjectStorage, backend: &str) {
         Bytes::from_static(b"part-b"),
         "{backend}: the retried part replaced its first"
     );
+
+    // copy: the promotion copy to oml-bodies, a plain copy an interrupted
+    // move repeats; the source stays
+    for attempt in ["copy", "the repeated copy"] {
+        storage
+            .copy(&body, &promoted)
+            .await
+            .unwrap_or_else(|e| panic!("{backend}: {attempt}: {e}"));
+        assert_eq!(
+            storage.get(&promoted).await.expect("get the copy"),
+            Bytes::from_static(b"first"),
+            "{backend}: {attempt} holds the source's bytes"
+        );
+    }
+    assert_eq!(
+        storage.get(&body).await.expect("get the source"),
+        Bytes::from_static(b"first"),
+        "{backend}: the copy left its source"
+    );
+    let absent = name(&prefix, "oml-quarantine/t/d/absent");
+    match storage.copy(&absent, &promoted).await {
+        Err(StorageError::NotFound { name }) => {
+            assert_eq!(
+                name,
+                absent.to_string(),
+                "{backend}: the refusal names the source"
+            )
+        }
+        other => panic!("{backend}: copying a missing object answered {other:?}"),
+    }
+    storage.delete(&promoted).await.expect("delete the copy");
+
+    // assemble: several parts streamed in order into one object through one
+    // multipart upload, then the parts deleted. Two parts of 3 MiB and a
+    // third of 1 MiB cross S3's 5 MiB minimum part size, so the upload sends
+    // more than one part.
+    let parts: Vec<Path> = (1..=3)
+        .map(|n| name(&prefix, &format!("oml-quarantine/t/uploads/a/{n}")))
+        .collect();
+    let contents = [
+        filled(b'a', 3 << 20),
+        filled(b'b', 3 << 20),
+        filled(b'c', 1 << 20),
+    ];
+    for (part, bytes) in parts.iter().zip(&contents) {
+        storage
+            .put_part(part, bytes.clone())
+            .await
+            .expect("put a part to assemble");
+    }
+    storage
+        .assemble(&parts, &file)
+        .await
+        .unwrap_or_else(|e| panic!("{backend}: assemble: {e}"));
+    assert_eq!(
+        storage.get(&file).await.expect("get the assembled object"),
+        contents.concat(),
+        "{backend}: the assembled object is its parts in order"
+    );
+    for part in &parts {
+        assert!(
+            matches!(storage.get(part).await, Err(StorageError::NotFound { .. })),
+            "{backend}: assembly deleted the part {part}"
+        );
+    }
+    storage
+        .delete(&file)
+        .await
+        .expect("delete the assembled object");
 
     // list: every name under the prefix, relative to the root, and no other
     storage
@@ -202,19 +280,179 @@ async fn the_filesystem_and_minio_backends_pass_one_object_store_conformance_sui
     let storage = ObjectStorage::open(&file_settings(&scratch.0), &scratch.0).expect("file store");
     conformance(&storage, "file").await;
 
-    match s3_settings() {
-        Some(settings) => {
-            let storage = ObjectStorage::open(&settings, &scratch.0).expect("s3 store");
-            conformance(&storage, "s3").await;
-        }
-        // GitHub Actions sets CI; there the MinIO run is required.
-        None if std::env::var_os("CI").is_some() => panic!(
-            "{S3_URL_VARIABLE} is unset in CI: the MinIO run of the conformance suite is required"
-        ),
-        None => eprintln!(
-            "{S3_URL_VARIABLE} is unset: the conformance suite ran on the filesystem only"
-        ),
+    if let Some(settings) = required_s3_settings("the conformance suite") {
+        let storage = ObjectStorage::open(&settings, &scratch.0).expect("s3 store");
+        conformance(&storage, "s3").await;
     }
+}
+
+/// The S3 run's settings, or `None` off CI when no bucket is named; in CI an
+/// unnamed bucket fails the test rather than skipping it.
+fn required_s3_settings(test: &str) -> Option<StorageSettings> {
+    match s3_settings() {
+        Some(settings) => Some(settings),
+        // GitHub Actions sets CI; there the MinIO run is required.
+        None if std::env::var_os("CI").is_some() => {
+            panic!("{S3_URL_VARIABLE} is unset in CI: the MinIO run of {test} is required")
+        }
+        None => {
+            eprintln!("{S3_URL_VARIABLE} is unset: {test} ran on the filesystem only");
+            None
+        }
+    }
+}
+
+/// `settings` with `segment` appended to its URL's path.
+fn beneath(settings: &StorageSettings, segment: &str) -> StorageSettings {
+    let url = settings.url.as_deref().expect("a URL");
+    StorageSettings {
+        url: Some(format!("{}/{segment}", url.trim_end_matches('/'))),
+        options: settings.options.clone(),
+    }
+}
+
+/// Opens `settings` beneath a fresh sub-path, writes once through `put` and
+/// once through `store()`, and checks through a store opened at the parent
+/// that both landed under the sub-path.
+async fn rooted(parent_settings: &StorageSettings, working_dir: &std::path::Path, backend: &str) {
+    use oml_objectstore::object_store::{ObjectStoreExt, PutPayload};
+
+    let sub = run_prefix(backend).replace('/', "-");
+    let parent = ObjectStorage::open(parent_settings, working_dir).expect("parent store");
+    let storage =
+        ObjectStorage::open(&beneath(parent_settings, &sub), working_dir).expect("rooted store");
+    let through_put = Path::from("oml-bodies/t/d/put");
+    let through_store = Path::from("oml-bodies/t/d/store");
+    storage
+        .put(&through_put, Bytes::from_static(b"put"))
+        .await
+        .expect("put");
+    storage
+        .store()
+        .put(&through_store, PutPayload::from_static(b"store"))
+        .await
+        .expect("put through store()");
+
+    let sub_path = Path::from(sub.as_str());
+    assert_eq!(
+        parent.list(&sub_path).await.expect("list the parent"),
+        vec![
+            name(&sub, "oml-bodies/t/d/put"),
+            name(&sub, "oml-bodies/t/d/store")
+        ],
+        "{backend}: put and store() both write beneath the URL's path"
+    );
+    assert_eq!(
+        storage.list(&Path::default()).await.expect("list"),
+        vec![through_put.clone(), through_store.clone()],
+        "{backend}: the rooted store names its objects relative to its root"
+    );
+    for n in [&through_put, &through_store] {
+        storage.delete(n).await.expect("delete");
+    }
+}
+
+#[tokio::test]
+async fn the_store_and_its_puts_are_rooted_at_the_urls_path_on_every_backend() {
+    let scratch = Scratch::new("rooted");
+    rooted(&file_settings(&scratch.0), &scratch.0, "file").await;
+    if let Some(settings) = required_s3_settings("the rooted store's check") {
+        rooted(&settings, &scratch.0, "s3").await;
+    }
+}
+
+#[tokio::test]
+async fn the_self_test_proves_put_if_absent_and_leaves_no_scratch_key() {
+    let scratch = Scratch::new("self-test");
+    let mut backends = vec![("file", file_settings(&scratch.0))];
+    backends.extend(required_s3_settings("the self-test").map(|s| {
+        (
+            "s3",
+            beneath(&s, &run_prefix("self-test").replace('/', "-")),
+        )
+    }));
+    for (backend, settings) in backends {
+        let storage = ObjectStorage::open(&settings, &scratch.0).expect("store");
+        storage
+            .self_test()
+            .await
+            .unwrap_or_else(|e| panic!("{backend}: the self-test: {e}"));
+        assert!(
+            storage
+                .list(&Path::default())
+                .await
+                .expect("list")
+                .is_empty(),
+            "{backend}: the self-test left nothing behind"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_s3_store_without_conditional_put_fails_the_self_test_naming_the_setting() {
+    let Some(settings) = required_s3_settings("the conditional-put refusal") else {
+        return;
+    };
+    let mut settings = beneath(
+        &settings,
+        &run_prefix("no-conditional-put").replace('/', "-"),
+    );
+    settings
+        .options
+        .insert("aws_conditional_put".to_owned(), "disabled".to_owned());
+    let storage = ObjectStorage::open(&settings, std::path::Path::new(".")).expect("store");
+    let err = storage.self_test().await.expect_err("no put-if-absent");
+    assert!(matches!(err, StorageError::SelfTest { .. }), "{err:?}");
+    assert!(err.to_string().contains(STORAGE_URL), "{err}");
+}
+
+#[test]
+fn an_unknown_storage_option_is_refused_naming_the_setting() {
+    let scratch = Scratch::new("options");
+    for (url, key) in [
+        ("s3://bucket/root", "aws_endpont"),
+        ("az://container/root", "aws_endpoint"),
+        ("gs://bucket/root", "google_service_acount"),
+        ("file:///", "aws_endpoint"),
+    ] {
+        let url = if url == "file:///" {
+            url::Url::from_directory_path(&scratch.0)
+                .expect("absolute")
+                .to_string()
+        } else {
+            url.to_owned()
+        };
+        let settings = StorageSettings {
+            url: Some(url.clone()),
+            options: BTreeMap::from([(key.to_owned(), "x".to_owned())]),
+        };
+        let err = ObjectStorage::open(&settings, &scratch.0).expect_err(&url);
+        assert!(
+            matches!(&err, StorageError::RefusedOption { key: k, .. } if k == key),
+            "{url}: {err:?}"
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains(STORAGE_OPTIONS) && message.contains(key),
+            "{url}: the refusal names the setting and the key: {message}"
+        );
+    }
+    // the keys the CI run passes are known
+    let settings = StorageSettings {
+        url: Some("s3://bucket".to_owned()),
+        options: S3_OPTION_VARIABLES
+            .iter()
+            .zip([
+                "http://127.0.0.1:9000",
+                "oml",
+                "oml_dev_only",
+                "us-east-1",
+                "true",
+            ])
+            .map(|(v, value)| (v.to_lowercase(), value.to_owned()))
+            .collect(),
+    };
+    ObjectStorage::open(&settings, &scratch.0).expect("the standard keys open");
 }
 
 #[tokio::test]

@@ -58,6 +58,9 @@ object_store = { version = "0.13.2", default-features = false, features = [
     "azure",
     "gcp",
 ] }
+# statfs(2) for ADR-0023 d3's NFS and SMB refusal of a file:// data directory
+# (oml-objectstore, Linux only); already in the graph through tempfile.
+rustix = { version = "1.1", default-features = false, features = ["std", "fs"] }
 proptest = "1.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
