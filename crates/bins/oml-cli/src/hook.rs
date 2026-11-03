@@ -444,8 +444,46 @@ const FAILURE_LINE_CAP: usize = 400;
 pub const FAILURE_CONTEXT_CAP: usize = 1600;
 /// The most words a failure query keeps (ADR-0038 d5).
 pub const MAX_ERROR_WORDS: usize = 3;
-/// The error lines the words are taken from, after the `Exit code N` line.
+/// The error lines the words are taken from: from the first error line, or
+/// the last lines when none is marked (ADR-0038 d5).
 const ERROR_LINES: usize = 5;
+/// What marks a line as an error rather than progress: a compiler, a
+/// runtime, git, or pytest's `E` lines (ADR-0038 d5).
+const ERROR_MARKERS: [&str; 5] = ["error[", "error:", "Error:", "panicked at", "fatal:"];
+/// A word kept from the error has at least this many characters.
+const WORD_MIN: usize = 2;
+/// A run of letters and digits this long that mixes upper case, lower case
+/// and digits is taken for a random token.
+const RANDOM_RUN_MIN: usize = 20;
+/// Token prefixes whose rest, at least [`TOKEN_REST_MIN`] characters, is a
+/// key: Stripe, GitHub, npm, Hugging Face, Slack, GitLab, Google and JWT.
+const TOKEN_PREFIXES: &[&str] = &[
+    "sk_",
+    "rk_",
+    "pk_live_",
+    "ghp_",
+    "gho_",
+    "ghs_",
+    "ghu_",
+    "ghr_",
+    "github_pat_",
+    "npm_",
+    "hf_",
+    "xoxa-",
+    "xoxb-",
+    "xoxp-",
+    "xoxs-",
+    "xoxe-",
+    "glpat-",
+    "AIza",
+    "eyJ",
+];
+/// The characters after a token prefix that make it a key, not a name such
+/// as `hf_hub_download`.
+const TOKEN_REST_MIN: usize = 16;
+/// A `NAME=value` whose name holds one of these, upper case, has a secret
+/// value.
+const SECRET_NAMES: [&str; 5] = ["PASS", "TOKEN", "SECRET", "KEY", "AUTH"];
 /// A query of one word needs at least this many characters (ADR-0038 d6).
 const SINGLE_WORD_MIN: usize = 8;
 /// A word longer than this is a digest or an encoded blob, never a name.
@@ -779,22 +817,23 @@ pub fn expected_nonzero(command: &str) -> bool {
 /// The distinctive words of a failed command's error, at most
 /// [`MAX_ERROR_WORDS`], in the order they first appear (ADR-0038 d5).
 ///
-/// The words come from the first lines after Claude Code's `Exit code N`
-/// line. A word is kept when it is an identifier with `_`, `.` or `::`, an
-/// error code such as `E0599` or `ENOENT`, a quoted name such as a module,
-/// or the base name of a path; bare numbers and stop words never are.
-/// Every `secrets` value, a word after `Bearer`, an `sk-` or `AKIA` key, an
-/// OML key and the `home` directory are removed before any word is taken,
-/// so none of them can reach the query.
+/// The words come from up to five lines after Claude Code's `Exit code N`
+/// line: from the exception line of a Python traceback, else from the first
+/// line that carries an error marker (`error[`, `error:`, `Error:`,
+/// `panicked at`, `fatal:`, pytest's `E   `), else the last lines, so a
+/// build's progress lines never make the query. A word is kept when it is
+/// an identifier with `_`, `.` or `::`, an error code such as `E0599` or
+/// `ENOENT`, a quoted name such as a module, or the base name of a path;
+/// bare numbers, version words, one-character words and stop words never
+/// are. Every `secrets` value, the scheme, user, password and host of a
+/// URL, the word after `Bearer`, the value of a `NAME=value` whose name
+/// holds `PASS`, `TOKEN`, `SECRET`, `KEY` or `AUTH`, a key of a known
+/// token shape, a long random-looking run, an OML key and the `home`
+/// directory are removed before any word is taken, so none of them can
+/// reach the query.
 #[must_use]
 pub fn error_words(error: &str, secrets: &[&str], home: Option<&str>) -> Vec<String> {
-    let lines: Vec<&str> = error
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !is_exit_code_line(l))
-        .take(ERROR_LINES)
-        .collect();
-    let mut text = lines.join("\n");
+    let mut text = error_lines(error).join("\n");
     for secret in secrets.iter().filter(|s| !s.is_empty()) {
         text = text.replace(secret, " ");
     }
@@ -803,20 +842,17 @@ pub fn error_words(error: &str, secrets: &[&str], home: Option<&str>) -> Vec<Str
     }
 
     let mut words: Vec<String> = Vec::new();
-    let mut after_bearer = false;
+    let mut skip_next = false;
     for chunk in text.split_whitespace() {
-        if after_bearer {
-            after_bearer = false;
+        if std::mem::take(&mut skip_next) {
             continue;
         }
-        if chunk
-            .trim_matches(|c: char| !c.is_alphanumeric())
-            .eq_ignore_ascii_case("bearer")
-        {
-            after_bearer = true;
+        if let Some(value) = secret_label_value(chunk) {
+            // The whole chunk goes; an empty value is the next chunk.
+            skip_next = value.is_empty();
             continue;
         }
-        for (token, quoted) in tokens_of(chunk) {
+        for (token, quoted) in tokens_of(&without_url_authority(chunk)) {
             if words.len() == MAX_ERROR_WORDS {
                 return words;
             }
@@ -841,6 +877,100 @@ pub fn failure_query(words: &[String]) -> Option<String> {
     }
 }
 
+/// The lines the words are taken from, trimmed: up to [`ERROR_LINES`]
+/// from a traceback's exception line or the first marked error line, else
+/// the last [`ERROR_LINES`].
+fn error_lines(error: &str) -> Vec<&str> {
+    let raw: Vec<&str> = error
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !is_exit_code_line(l.trim()))
+        .collect();
+    let traceback = raw
+        .iter()
+        .rposition(|l| {
+            l.trim_start()
+                .starts_with("Traceback (most recent call last)")
+        })
+        .and_then(|at| {
+            raw.iter()
+                .enumerate()
+                .skip(at + 1)
+                .filter(|(_, l)| !l.starts_with(char::is_whitespace))
+                .map(|(i, _)| i)
+                .next_back()
+        });
+    let start = traceback
+        .or_else(|| raw.iter().position(|l| is_error_line(l)))
+        .unwrap_or_else(|| raw.len().saturating_sub(ERROR_LINES));
+    raw.iter()
+        .skip(start)
+        .take(ERROR_LINES)
+        .map(|l| l.trim())
+        .collect()
+}
+
+fn is_error_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    ERROR_MARKERS.iter().any(|m| trimmed.contains(m))
+        || trimmed
+            .strip_prefix('E')
+            .is_some_and(|rest| rest.starts_with("   "))
+}
+
+/// The value of a chunk that labels a secret, or `None`: anything after
+/// `bearer` in any case (`Bearer`, `Bearer:`, `bearer=x`,
+/// `Authorization:Bearer`), or after the `=` of a `NAME=value` whose name
+/// holds one of [`SECRET_NAMES`]. An empty value means the secret is the
+/// next chunk.
+fn secret_label_value(chunk: &str) -> Option<&str> {
+    let lower = chunk.to_ascii_lowercase();
+    if let Some(at) = lower.find("bearer") {
+        let rest = &chunk[at + "bearer".len()..];
+        return Some(rest.trim_matches(|c: char| !c.is_alphanumeric()));
+    }
+    let (name, value) = chunk.split_once('=')?;
+    let name = name.to_ascii_uppercase();
+    SECRET_NAMES
+        .iter()
+        .any(|n| name.contains(n))
+        .then(|| value.trim_matches(|c: char| !c.is_alphanumeric()))
+}
+
+/// `chunk` with the scheme, user, password, host and port of every URL in
+/// it removed, so `postgres://u:p@host:5432/db` keeps only `/db`.
+fn without_url_authority(chunk: &str) -> String {
+    let mut out = String::new();
+    let mut rest = chunk;
+    while let Some(at) = rest.find("://") {
+        let scheme_start = rest[..at]
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')))
+            .map_or(0, |i| i + 1);
+        out.push_str(&rest[..scheme_start]);
+        let mut after = &rest[at + 3..];
+        // A password may hold a `/`; the host follows the last `@`.
+        if let Some(userinfo_end) = after.rfind('@') {
+            after = &after[userinfo_end + 1..];
+        }
+        let host_end = after
+            .find(['/', '?', '#', '\'', '"', '`', ')', ']', '>'])
+            .unwrap_or(after.len());
+        rest = &after[host_end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `v0.3.0`, `3.11.4`, `pytest-7.4.0`: a version, or a name and a version.
+fn is_version(word: &str) -> bool {
+    let bare = |s: &str| {
+        let s = s.strip_prefix('v').unwrap_or(s);
+        s.contains('.')
+            && s.split('.')
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    };
+    bare(word) || word.rsplit_once('-').is_some_and(|(_, tail)| bare(tail))
+}
+
 fn has_separator(word: &str) -> bool {
     word.contains('_') || word.contains('.') || word.contains("::")
 }
@@ -859,15 +989,19 @@ fn tokens_of(chunk: &str) -> Vec<(String, bool)> {
     let mut current = String::new();
     let mut quoted = false;
     let mut previous: Option<char> = None;
+    let mut before_previous: Option<char> = None;
     for c in chunk.chars() {
         if name_char(c) {
             if current.is_empty() {
-                quoted = previous.is_some_and(quote);
+                // The apostrophe of `Can't` opens no quote.
+                quoted = previous.is_some_and(quote)
+                    && !before_previous.is_some_and(char::is_alphanumeric);
             }
             current.push(c);
         } else if !current.is_empty() {
             out.push((std::mem::take(&mut current), quoted));
         }
+        before_previous = previous;
         previous = Some(c);
     }
     if !current.is_empty() {
@@ -899,10 +1033,11 @@ fn distinctive(token: &str, quoted: bool) -> Option<String> {
             }
         }
     }
-    if word.is_empty()
+    if word.chars().count() < WORD_MIN
         || word.chars().count() > WORD_MAX
         || !word.chars().any(char::is_alphabetic)
         || is_secret(&word)
+        || is_version(&word)
         || STOP_WORDS.contains(&word.to_lowercase().as_str())
     {
         return None;
@@ -922,14 +1057,28 @@ fn is_error_code(word: &str) -> bool {
     }
 }
 
-/// An `sk-` or `AKIA` key, or an OML key: `oml_` and 43 base62 characters.
+/// An `sk-` or `AKIA` key, a key of a known token shape
+/// ([`TOKEN_PREFIXES`]), an OML key (`oml_` and 43 base62 characters), or
+/// a word holding a run of [`RANDOM_RUN_MIN`] letters and digits that
+/// mixes upper case, lower case and digits.
 fn is_secret(word: &str) -> bool {
     let base62 = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric());
+    let random = |run: &str| {
+        run.len() >= RANDOM_RUN_MIN
+            && run.bytes().any(|b| b.is_ascii_uppercase())
+            && run.bytes().any(|b| b.is_ascii_lowercase())
+            && run.bytes().any(|b| b.is_ascii_digit())
+    };
     word.starts_with("sk-")
         || (word.starts_with("AKIA") && word.len() >= 16)
         || word
             .strip_prefix("oml_")
             .is_some_and(|rest| rest.len() >= 40 && base62(rest))
+        || TOKEN_PREFIXES.iter().any(|p| {
+            word.strip_prefix(p)
+                .is_some_and(|rest| rest.chars().count() >= TOKEN_REST_MIN)
+        })
+        || word.split(|c: char| !c.is_ascii_alphanumeric()).any(random)
 }
 
 /// The SHA-256 of a failure's query, hex: the cache records which errors
@@ -1124,6 +1273,143 @@ mod tests {
         for word in &got {
             assert!(!word.contains("eyJ") && !word.contains("oml_") && !word.contains("op"));
         }
+    }
+
+    #[test]
+    fn a_url_never_gives_its_user_password_or_host_to_the_query() {
+        assert_eq!(
+            words("could not connect to postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev"),
+            ["oml_dev"]
+        );
+        assert_eq!(
+            words(
+                "Error: P1001: Can't reach database server at \
+                 `postgresql://admin:s3cret_pw@db.internal:5432/app`"
+            ),
+            ["P1001", "app"]
+        );
+        assert_eq!(
+            words(
+                "fatal: unable to access \
+                 'https://x-access-token:ghs_16C7e42F292c6912E7710c838347Ae178B4a@github.com/org/repo.git/'"
+            ),
+            ["repo.git"]
+        );
+        for got in [
+            words("postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev"),
+            words("see https://user:pa/ss_word@host.internal/x_y.git"),
+        ] {
+            for word in &got {
+                assert!(
+                    !word.contains(':') && !word.contains("oml_dev_only") && !word.contains("ss_"),
+                    "{got:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_common_token_shapes_and_secret_assignments_never_reach_the_query() {
+        for error in [
+            concat!(
+                "charge failed with key s",
+                "k_live_4eC39HqLyjWDarjtT1zdp7dc in lake_writer.rs"
+            ),
+            concat!(
+                "push failed with g",
+                "hp_1234567890abcdefghijklmnopqrstuvwxyzAB in lake_writer.rs"
+            ),
+            concat!(
+                "publish failed with n",
+                "pm_abcdefghijklmnopqrstuvwxyz0123456789 in lake_writer.rs"
+            ),
+            concat!(
+                "download failed with h",
+                "f_abcdefghijklmnopqrstuvwxyzABCDEFGH in lake_writer.rs"
+            ),
+            concat!(
+                "post failed with x",
+                "oxb-1234567890-0987654321-AbCdEfGhIjKlMnOp in lake_writer.rs"
+            ),
+            concat!(
+                "clone failed with g",
+                "lpat-xxxxxxxxxxxxxxxxxxxx in lake_writer.rs"
+            ),
+            concat!(
+                "maps failed with A",
+                "IzaSyA1b2C3d4E5f6G7h8I9j0KlMnOpQrStUvW in lake_writer.rs"
+            ),
+            concat!(
+                "jwt e",
+                "yJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl in lake_writer.rs"
+            ),
+            "export PGPASSWORD=hunter2_prod.2026 in lake_writer.rs",
+            "--db-password= hunter2_prod.2026 in lake_writer.rs",
+            concat!(
+                "Authorization:Bearer e",
+                "yJhbGciOi.payload_part.sig in lake_writer.rs"
+            ),
+            "header bearer=abc.def_ghi in lake_writer.rs",
+            "header Bearer: abc.def_ghi in lake_writer.rs",
+            "nonce Q7xK2mPz9LwR4tYv8NbJ3cHs_x in lake_writer.rs",
+        ] {
+            let got = words(&format!("Exit code 1\n{error}"));
+            assert_eq!(
+                failure_query(&got).as_deref(),
+                Some("lake_writer.rs"),
+                "{error}"
+            );
+        }
+        // Identifiers that share a prefix with a token shape are kept.
+        assert_eq!(
+            words("undefined hf_hub_download and sk_buff in net_core.c"),
+            ["hf_hub_download", "sk_buff", "net_core.c"]
+        );
+    }
+
+    #[test]
+    fn an_apostrophe_inside_a_word_opens_no_quoted_name() {
+        assert_eq!(words("Can't find 'x_y'"), ["x_y"]);
+        assert_eq!(
+            words("Error: Can't resolve 'left_pad_legacy' in src"),
+            ["left_pad_legacy"]
+        );
+        assert_eq!(
+            words("fatal: couldn't find remote ref feature_branch_x"),
+            ["feature_branch_x"]
+        );
+        assert_eq!(words("cannot import name 'q'"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_query_starts_at_the_first_error_line_and_drops_version_words() {
+        assert_eq!(
+            words(
+                "Exit code 101\n   Compiling oml-core v0.3.0 (/home/op/src/oml/crates/oml-core)\n\
+                 \x20  Compiling oml-app v0.3.0 (/home/op/src/oml/crates/oml-app)\n\
+                 \x20  Compiling oml-cli v0.3.0 (/home/op/src/oml/crates/bins/oml-cli)\n\
+                 error[E0599]: no method named `connect_timeout` found for struct \
+                 `sqlx_core::pool::PoolOptions` in the current scope"
+            ),
+            ["E0599", "connect_timeout", "sqlx_core::pool::PoolOptions"]
+        );
+        assert_eq!(
+            words(
+                "Traceback (most recent call last):\n  File \"/srv/app/run.py\", line 3, in \
+                 <module>\n    import lake_writer.flush\nModuleNotFoundError: No module named \
+                 'lake_writer'"
+            ),
+            ["lake_writer"]
+        );
+        // With no error line, the last lines are taken, not the first.
+        assert_eq!(
+            words("one_progress.rs\n2_progress.rs\nthree.rs\nfour.rs\nfive.rs\nsix_last.rs"),
+            ["2_progress.rs", "three.rs", "four.rs"]
+        );
+        assert_eq!(
+            words("platform linux -- Python 3.11.4, pytest-7.4.0, pluggy-1.2.0 v0.3.0 x_y.z"),
+            ["x_y.z"]
+        );
     }
 
     #[test]
