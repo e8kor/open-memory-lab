@@ -2947,15 +2947,23 @@ async fn created_event(store: &PgStore, tenant: Uuid, memory: Uuid) -> Uuid {
     event
 }
 
-/// Commits a held memory with its review_queue row under `rig`'s tenant.
-async fn hold(store: &PgStore, rig: &mut ChainRig, workarea: Uuid, memory: Uuid, author: Uuid) {
+/// Commits a held memory under `rig`'s tenant, with its review_queue row
+/// when `enqueue` is set.
+async fn hold(
+    store: &PgStore,
+    rig: &mut ChainRig,
+    workarea: Uuid,
+    memory: Uuid,
+    author: Uuid,
+    enqueue: bool,
+) {
     rig.commit(
         store,
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": memory.to_string() }),
         MetadataFold::MemoryHeld {
             memory: held_memory(rig.tenant_id, workarea, memory, "wanda", author, "held"),
-            enqueue: true,
+            enqueue,
         },
         None,
     )
@@ -3007,8 +3015,12 @@ async fn under_tenant_a_a_reference_to_tenant_bs_row_fails_as_one_to_a_random_id
     b.issue_key(&store, key_record(b.tenant_id, b_key, Role::Writer, None))
         .await;
     let (a_memory, b_memory) = (Uuid::from_u128(0xC180), Uuid::from_u128(0xC190));
-    hold(&store, &mut a, a_child, a_memory, a_key).await;
-    hold(&store, &mut b, b_root, b_memory, b_key).await;
+    // Tenant B's memory holds no review_queue row: review_queue's primary key
+    // is the global memory_id, so moving tenant A's queue row onto a queued B
+    // memory fails the unique check (23505) before the foreign key's AFTER
+    // trigger runs, and the test would not reach the reference it proves.
+    hold(&store, &mut a, a_child, a_memory, a_key, true).await;
+    hold(&store, &mut b, b_root, b_memory, b_key, false).await;
     let a_event = created_event(&store, a.tenant_id, a_memory).await;
     let b_event = created_event(&store, b.tenant_id, b_memory).await;
 
