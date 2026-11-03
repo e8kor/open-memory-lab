@@ -261,7 +261,14 @@ sig  = ed25519:2c38c30d096ee592ad0e26166665382a998775c7efb8c4165935c1c4db50cac03
 Running the [verification procedure](#verification) over these three events against the test
 public key passes steps 1–7 and 9 (step 8 needs a provider chain these vectors deliberately do
 not include; the referenced `created_event_id` is a placeholder). Any single changed byte in any
-`signed_bytes` fails step 3 and step 4; any reordering or omission fails step 1 or step 5.
+`signed_bytes` fails step 3 and step 4; any reordering, and the omission of any event but the
+last, fails step 1 or step 5; omitting the last event fails step 9 alone, against the stated
+head.
+
+On 2026-10-31 these vectors were reproduced byte for byte outside Rust, by two RFC 8785 and two
+Ed25519 implementations, and `scripts/check_chain_vectors.py` keeps them reproduced; the
+[recorded finding](../engineering/spikes/chain-vectors.md) names the implementations and
+versions.
 
 ## Decision record
 

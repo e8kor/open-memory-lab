@@ -18,25 +18,30 @@ use oml_domain::access::{
     tail_visible,
 };
 use oml_domain::budget::{budget_tokens, cut, hit_order};
+use oml_domain::name::{
+    Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
+    assign_names, unresolved_value,
+};
 use oml_domain::{
     ChainHead, Envelope, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
     sha256_digest_string, transition,
 };
 
-use crate::cursor::ListingCursor;
+use crate::cursor::{ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, OutboxRow, ScanOutcome,
     Scanner, Signer, StoreError, SubjectRow, TailEvent,
 };
 use crate::types::{
-    AppError, BootstrapRequest, BootstrapResult, CreatedWorkarea, Crew, DenialRecord, GrantRecord,
-    HIT_KINDS, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, ListRequest, ListingFilter,
-    ListingPosition, ListingScope, MemoryPage, MemoryRecord, PROVIDER_TENANT, RecallHit,
+    AppError, AssignedNames, BootstrapRequest, BootstrapResult, CreatedWorkarea, CrewCreateRequest,
+    CrewPage, CrewRecord, CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS, IssueKeyRequest,
+    IssuedKey, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
+    ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
     RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, Verdict,
-    VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -44,6 +49,15 @@ const EVENTS_PAGE: usize = 512;
 /// The fixed reason a failed issuance's `key.revoked` digests
 /// (roles-and-keys.md issuance order; ADR-0025 d2).
 const ISSUANCE_INCOMPLETE: &str = "issuance_incomplete";
+
+/// The rule `system.names_assigned` applies, as its payload names it
+/// (event-catalog.md `system.names_assigned`).
+const NAMES_RULE: &str = "ADR-0026 d11";
+
+/// The fixed reason the lead's lift of a denial on an admin key digests, in
+/// the commit that names the chain (event-catalog.md `key.denial_lifted`;
+/// ADR-0026 d11, rule 5).
+const ADMIN_DENIAL_LIFT_REASON: &str = "adr-0026-d15";
 
 /// The application, generic over its driven ports.
 pub struct App<J, S, C, I, Sc> {
@@ -297,6 +311,194 @@ fn commit_request(
     }
 }
 
+/// A string field of a payload as journalled; `None` when absent or not a
+/// string.
+fn payload_str(payload: &Value, field: &str) -> Option<String> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// A field of a payload naming a row by its id.
+fn payload_id(payload: &Value, field: &str) -> Option<Uuid> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+}
+
+/// A crew object as a PoC `workarea.create` or `workarea.crew_updated`
+/// carried it; `None` for null or absent (ADR-0026 d11, rule 4).
+fn crew_object(value: Option<&Value>) -> Option<CrewObject> {
+    let object = value?.as_object()?;
+    let member = |field: &str| object.get(field).and_then(Value::as_str).map(str::to_owned);
+    Some(CrewObject {
+        name: member("name"),
+        charter_uri: member("charter_uri"),
+        external_manager: member("external_manager"),
+    })
+}
+
+/// The payload of `system.names_assigned` (event-catalog.md): every row
+/// named, kept names included, and every crew record made.
+fn names_assigned_payload(naming: &Naming) -> Value {
+    json!({
+        "rule": NAMES_RULE,
+        "names": naming.names.iter().map(|a| json!({
+            "kind": a.kind.as_str(),
+            "id": a.id.to_string(),
+            "name": a.name.as_str(),
+            "prior_name": a.prior_name,
+        })).collect::<Vec<_>>(),
+        "crews": naming.crews.iter().map(|c| json!({
+            "crew_id": c.crew_id.to_string(),
+            "name": c.name.as_str(),
+            "charter_uri": c.charter_uri,
+            "external_manager": c.external_manager,
+            "workarea_ids": c.workarea_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// One chain's rows that predate names, read in journal order of creation
+/// from the chain itself (http-api.md rows created before names).
+struct PredatingChain {
+    tenant_id: Uuid,
+    /// The tenant's own row, named in the deployment's namespace.
+    tenant: Option<UnnamedRow>,
+    /// The root workarea, which rule 1 names `universe`.
+    root: Option<Uuid>,
+    /// The chain's workareas and keys.
+    rows: Vec<UnnamedRow>,
+    /// Each workarea's current crew object, in journal order.
+    crews: Vec<(Uuid, CrewObject)>,
+    /// Every global denial on an admin key not yet lifted, as `(denial_id,
+    /// key_id)` in journal order: rule 5 lifts each in the commit that names
+    /// the chain.
+    lifts: Vec<(Uuid, Uuid)>,
+}
+
+/// The rows of `unnamed` as the chain's creation events carry them, and the
+/// denials on admin keys rule 5 lifts, or the refusal that keeps the chain
+/// unnamed: a `system.names_assigned` already journalled, or a row with no
+/// creation event (ADR-0026 d11).
+fn predating_chain(
+    tenant_id: Uuid,
+    unnamed: &UnnamedRows,
+    events: &[SignedEnvelope],
+) -> Result<PredatingChain, AppError> {
+    let refuse = |refusal| AppError::NamingRefused { tenant_id, refusal };
+    let (mut tenant, mut root, mut rows) = (None, None, Vec::new());
+    let mut crews: Vec<(Uuid, Option<CrewObject>)> = Vec::new();
+    let (mut admin_keys, mut denials) = (BTreeSet::new(), Vec::new());
+    for event in events {
+        let envelope = &event.envelope;
+        let payload = &envelope.payload;
+        match envelope.event_type.as_str() {
+            event_types::SYSTEM_NAMES_ASSIGNED => {
+                return Err(refuse(NamingRefusal::AlreadyAssigned { seq: envelope.seq }));
+            }
+            // The PoC journalled the tenant's name as `tenant_name`.
+            event_types::TENANT_GENESIS if unnamed.tenant => {
+                tenant = Some(UnnamedRow {
+                    kind: NamedKind::Tenant,
+                    id: tenant_id,
+                    prior_name: payload_str(payload, "name")
+                        .or_else(|| payload_str(payload, "tenant_name")),
+                });
+            }
+            event_types::WORKAREA_CREATE => {
+                if let Some(id) = payload_id(payload, "workarea_id")
+                    && unnamed.workareas.contains(&id)
+                {
+                    if payload.get("parent_id").is_none_or(Value::is_null) {
+                        root = Some(id);
+                    }
+                    rows.push(UnnamedRow {
+                        kind: NamedKind::Workarea,
+                        id,
+                        prior_name: payload_str(payload, "name"),
+                    });
+                    crews.push((id, crew_object(payload.get("crew"))));
+                }
+            }
+            // The latest crew object of a workarea is its current one.
+            event_types::WORKAREA_CREW_UPDATED => {
+                if let Some(id) = payload_id(payload, "workarea_id")
+                    && let Some(object) = crew_object(payload.get("crew"))
+                    && let Some(slot) = crews.iter_mut().find(|(w, _)| *w == id)
+                {
+                    slot.1 = Some(object);
+                }
+            }
+            event_types::KEY_ISSUED => {
+                if let Some(id) = payload_id(payload, "key_id") {
+                    if payload.get("role").and_then(Value::as_str) == Some(Role::Admin.as_str()) {
+                        admin_keys.insert(id);
+                    }
+                    if unnamed.keys.contains(&id) {
+                        rows.push(UnnamedRow {
+                            kind: NamedKind::Key,
+                            id,
+                            prior_name: payload_str(payload, "name"),
+                        });
+                    }
+                }
+            }
+            event_types::KEY_DENIED => {
+                if let (Some(denial), Some(key)) = (
+                    payload_id(payload, "denial_id"),
+                    payload_id(payload, "key_id"),
+                ) {
+                    denials.push((denial, key));
+                }
+            }
+            event_types::KEY_DENIAL_LIFTED => {
+                let lifted = payload_id(payload, "denial_id");
+                denials.retain(|(denial, _)| Some(*denial) != lifted);
+            }
+            _ => {}
+        }
+    }
+    // Rule 5: every denial on an admin key still in force is lifted.
+    let lifts = denials
+        .into_iter()
+        .filter(|(_, key)| admin_keys.contains(key))
+        .collect();
+    let created = |kind: NamedKind, id: Uuid| rows.iter().any(|r| r.kind == kind && r.id == id);
+    let missing = (unnamed.tenant && tenant.is_none())
+        .then_some((NamedKind::Tenant, tenant_id))
+        .or_else(|| {
+            unnamed
+                .workareas
+                .iter()
+                .find(|w| !created(NamedKind::Workarea, **w))
+                .map(|w| (NamedKind::Workarea, *w))
+        })
+        .or_else(|| {
+            unnamed
+                .keys
+                .iter()
+                .find(|k| !created(NamedKind::Key, **k))
+                .map(|k| (NamedKind::Key, *k))
+        });
+    if let Some((kind, id)) = missing {
+        return Err(refuse(NamingRefusal::NoCreationEvent { kind, id }));
+    }
+    Ok(PredatingChain {
+        tenant_id,
+        tenant,
+        root,
+        rows,
+        crews: crews
+            .into_iter()
+            .filter_map(|(w, object)| object.map(|o| (w, o)))
+            .collect(),
+        lifts,
+    })
+}
+
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
     J: JournalStore,
@@ -351,6 +553,84 @@ where
             grants: access.grants.into_iter().map(|g| g.grant).collect(),
             denials: access.denials.into_iter().map(|d| d.denial).collect(),
         })
+    }
+
+    /// The id `reference` names for `key`: an id as sent; a name replaced by
+    /// the id of the row of `kind` that holds it in the caller's namespace,
+    /// or by its unresolved value when no row holds it. The request then
+    /// runs exactly as the same request by id runs, so an unknown name and a
+    /// name outside the key's access answer what the id would. Every
+    /// use-case resolves after the verb ceiling, which needs no row, and
+    /// before every check that reads one (http-api.md names and ids;
+    /// ADR-0026 d4).
+    async fn resolve(
+        &self,
+        key: &KeyRecord,
+        kind: NamedKind,
+        reference: &Reference,
+    ) -> Result<Uuid, AppError> {
+        let name = match reference {
+            Reference::Id(id) => return Ok(*id),
+            Reference::Name(name) => name,
+        };
+        // A tenant's key resolves every name in its tenant; an operator
+        // key, a tenant name in the deployment and any other in the
+        // provider's namespace, which no tenant read consults.
+        let namespace = match (key.tenant_id == PROVIDER_TENANT, kind) {
+            (false, _) => Namespace::Tenant(key.tenant_id),
+            (true, NamedKind::Tenant) => Namespace::Deployment,
+            (true, _) => Namespace::Provider,
+        };
+        Ok(self
+            .journal
+            .resolve_name(key.tenant_id, kind, name)
+            .await?
+            .unwrap_or_else(|| unresolved_value(namespace, kind, name)))
+    }
+
+    /// [`Self::resolve`] over an optional reference.
+    async fn resolve_opt(
+        &self,
+        key: &KeyRecord,
+        kind: NamedKind,
+        reference: Option<&Reference>,
+    ) -> Result<Option<Uuid>, AppError> {
+        match reference {
+            Some(reference) => Ok(Some(self.resolve(key, kind, reference).await?)),
+            None => Ok(None),
+        }
+    }
+
+    /// A workarea the request names, else the key's journalled default,
+    /// else `request.workarea_unresolved`; called only after step 1 of the
+    /// refusal order (ADR-0025 d1; ADR-0026 d4).
+    async fn target_workarea(
+        &self,
+        key: &KeyRecord,
+        named: Option<&Reference>,
+    ) -> Result<Uuid, AppError> {
+        self.resolve_opt(key, NamedKind::Workarea, named)
+            .await?
+            .or(key.default_workarea)
+            .ok_or(AppError::WorkareaUnresolved)
+    }
+
+    /// Every event of the tenant's chain, in seq order.
+    async fn whole_chain(&self, tenant_id: Uuid) -> Result<Vec<SignedEnvelope>, AppError> {
+        let mut events = Vec::new();
+        let mut from = 1_u64;
+        loop {
+            let page = self
+                .journal
+                .events_range(tenant_id, from, EVENTS_PAGE)
+                .await?;
+            let n = page.len();
+            events.extend(page);
+            if n < EVENTS_PAGE {
+                return Ok(events);
+            }
+            from += n as u64;
+        }
     }
 
     /// The node's ancestry as ids, node to root; empty for a node the tenant
@@ -618,6 +898,7 @@ where
         tenant_id: Uuid,
         req: &IssueKeyRequest,
         default_workarea: Option<Uuid>,
+        crew_id: Option<Uuid>,
         issued_by: Option<Uuid>,
     ) -> (KeyRecord, String) {
         let secret = self.ids.new_secret();
@@ -633,6 +914,9 @@ where
             default_workarea,
             issued_by,
             key_hash: sha256_digest_string(value.as_bytes()),
+            name: Some(req.name.clone()),
+            crew_id,
+            revoked_at: None,
         };
         (record, value)
     }
@@ -649,6 +933,8 @@ where
             "value_disclosed": false,
             "held_by": held_by.map(HeldBy::as_str),
             "default_workarea_id": record.default_workarea.map(|w| w.to_string()),
+            "name": record.name.as_ref().map(Name::as_str),
+            "crew_id": record.crew_id.map(|c| c.to_string()),
         })
     }
 
@@ -743,19 +1029,22 @@ where
             event_types::TENANT_GENESIS,
             "operator",
             None,
-            json!({ "tenant_name": req.tenant_name }),
+            json!({ "tenant_id": tenant_id.to_string(), "name": req.tenant_name.as_str() }),
         )?;
         let mut prev = genesis.clone();
-        self.commit(genesis, MetadataFold::TenantGenesis, None)
-            .await?;
+        let fold = MetadataFold::TenantGenesis {
+            name: req.tenant_name.clone(),
+        };
+        self.commit(genesis, fold, None).await?;
 
         let root_workarea_id = self.ids.new_id();
         let workarea = WorkareaRecord {
             workarea_id: root_workarea_id,
             tenant_id,
             parent_id: None,
-            name: "universe".to_owned(),
+            name: Name::parse(UNIVERSE).expect("universe is a name (ADR-0026 d6)"),
             crew: None,
+            crew_id: None,
         };
         let event = self.seal(
             Some(&prev),
@@ -766,9 +1055,9 @@ where
             json!({
                 "workarea_id": root_workarea_id.to_string(),
                 "parent_id": Value::Null,
-                "name": workarea.name,
+                "name": workarea.name.as_str(),
                 "status": workarea.status(),
-                "crew": Value::Null,
+                "crew_id": Value::Null,
                 "prefix": Value::Null,
             }),
         )?;
@@ -776,14 +1065,18 @@ where
         self.commit(event, MetadataFold::WorkareaCreated(workarea), None)
             .await?;
 
+        // The ceremony's admin key takes the name the claim gives it
+        // (ADR-0026 d9).
         let issue = IssueKeyRequest {
             role: Role::Admin,
+            name: req.admin_key_name.clone(),
             principal: req.admin_principal.clone(),
             held_by: Some(HeldBy::Human),
-            default_workarea: Some(root_workarea_id),
+            default_workarea: Some(root_workarea_id.into()),
+            crew: None,
             grants: Vec::new(),
         };
-        let (record, value) = self.mint_key(tenant_id, &issue, Some(root_workarea_id), None);
+        let (record, value) = self.mint_key(tenant_id, &issue, Some(root_workarea_id), None, None);
         let key_id = record.key_id;
         let event = self.seal(
             Some(&prev),
@@ -806,11 +1099,14 @@ where
                 role: issue.role,
                 principal: issue.principal,
                 held_by: issue.held_by,
-                default_workarea: issue.default_workarea,
+                default_workarea: Some(root_workarea_id),
+                name: issue.name,
+                crew_id: None,
                 access: KeyAccess {
                     issued_seq: receipt.seq,
                     grants: Vec::new(),
                     denials: Vec::new(),
+                    lift_epochs: Vec::new(),
                 },
             },
         })
@@ -818,12 +1114,18 @@ where
 
     /// Issue a key with its grants, validated in the issuance order of
     /// roles-and-keys.md (ADR-0025 d2): the two-key rule, the issuer ceiling,
-    /// grant admissibility, node existence, deny containment, the default's
-    /// coverage. `key.issued` commits first and one `grant.issued` per grant
-    /// follows; the value is returned only after the last of them commits.
-    /// An issuance that fails after `key.issued` journals `key.revoked` over
-    /// the fixed reason and answers the failure: the value was never
-    /// disclosed, so the key authenticates nothing either way.
+    /// grant admissibility, node and crew existence, deny containment, the
+    /// default's coverage, and last the key's name. Every workarea and crew
+    /// reference is resolved, in the issuer's tenant, once the issuer's role
+    /// admits the verb and before step 1, so an unknown name fails step 4 as
+    /// an unknown id does (ADR-0026 d4, d8). `key.issued`, journalling the
+    /// key's name and crew, commits first, and a name the tenant already
+    /// holds refuses that commit with `name.taken`, journalling nothing
+    /// (ADR-0026 d5, d9); one `grant.issued` per grant follows, and the value
+    /// is returned only after the last of them commits. An issuance that
+    /// fails after `key.issued` journals `key.revoked` over the fixed reason
+    /// and answers the failure: the value was never disclosed, so the key
+    /// authenticates nothing either way.
     pub async fn issue_key(
         &self,
         api_key: &str,
@@ -837,19 +1139,30 @@ where
             });
         }
         let tenant_id = issuer.tenant_id;
-        let grants: Vec<Grant> = req
-            .grants
-            .iter()
-            .map(|g| Grant {
+        let mut grants = Vec::with_capacity(req.grants.len());
+        for g in &req.grants {
+            let node = self.resolve(&issuer, NamedKind::Workarea, &g.node).await?;
+            let mut deny = Vec::with_capacity(g.deny.len());
+            for d in &g.deny {
+                deny.push(self.resolve(&issuer, NamedKind::Workarea, d).await?);
+            }
+            grants.push(Grant {
                 grant_id: self.ids.new_id(),
-                node: g.node,
+                node,
                 role: g.role,
-                deny: g.deny.clone(),
-            })
-            .collect();
+                deny,
+            });
+        }
+        let default_workarea = self
+            .resolve_opt(&issuer, NamedKind::Workarea, req.default_workarea.as_ref())
+            .await?;
+        let crew_id = self
+            .resolve_opt(&issuer, NamedKind::Crew, req.crew.as_ref())
+            .await?;
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
         check_issuance(issuer.role, req.role, &grants).map_err(issuance_refusal)?;
-        // Step 4: every grant node and deny node is the tenant's.
+        // Step 4: every grant node and deny node is the tenant's, and so is
+        // the crew record.
         let mut ancestries: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
         for node in grants
             .iter()
@@ -863,37 +1176,53 @@ where
                 slot.insert(ancestry);
             }
         }
-        // Step 5: each deny node lies inside its own grant's subtree.
+        if let Some(crew_id) = crew_id
+            && self.journal.crew(tenant_id, crew_id).await?.is_none()
+        {
+            return Err(AppError::NotFound);
+        }
+        // Step 5: each deny node lies inside its own grant's subtree; the
+        // refusal echoes the deny as the request spelled it.
         for (grant_index, grant) in grants.iter().enumerate() {
-            if let Some(&outside) = grant
+            if let Some(outside) = grant
                 .deny
                 .iter()
-                .find(|d| !ancestries[*d].contains(&grant.node))
+                .position(|d| !ancestries[d].contains(&grant.node))
             {
                 return Err(AppError::DenyOutsideGrant {
                     grant_index,
-                    subtree_node_id: outside,
+                    subtree_node: req.grants[grant_index].deny[outside].clone(),
                 });
             }
         }
         // Step 6: a sent default lies in some grant's subtree and outside
         // that grant's denies; absent, it is the first grant's node, and
         // never the issuer's (workareas.md per-grant attenuation).
-        let default_workarea = match req.default_workarea {
-            None => grants.first().map(|g| g.node),
-            Some(workarea_id) => {
+        let default_workarea = match (default_workarea, &req.default_workarea) {
+            (Some(workarea_id), Some(sent)) => {
                 let ancestry = self.ancestry(tenant_id, workarea_id).await?;
                 let covered = grants.iter().any(|g| {
                     ancestry.contains(&g.node) && !g.deny.iter().any(|d| ancestry.contains(d))
                 });
                 if !covered {
-                    return Err(AppError::DefaultUncovered { workarea_id });
+                    return Err(AppError::DefaultUncovered {
+                        workarea: sent.clone(),
+                    });
                 }
                 Some(workarea_id)
             }
+            _ => grants.first().map(|g| g.node),
         };
 
-        let (record, value) = self.mint_key(tenant_id, req, default_workarea, Some(issuer.key_id));
+        // Step 7, the name, is the unique index's, at the commit of
+        // `key.issued` below.
+        let (record, value) = self.mint_key(
+            tenant_id,
+            req,
+            default_workarea,
+            crew_id,
+            Some(issuer.key_id),
+        );
         let key_id = record.key_id;
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
@@ -931,31 +1260,42 @@ where
             principal: req.principal.clone(),
             held_by: req.held_by,
             default_workarea,
+            name: req.name.clone(),
+            crew_id,
             access: KeyAccess {
                 issued_seq: receipt.seq,
                 grants: stored,
                 denials: Vec::new(),
+                lift_epochs: Vec::new(),
             },
         })
     }
 
-    /// Journal a global per-key denial on `key_id` over the subtree at
-    /// `node`: deny-wins across all of the key's grants, its epoch its own
-    /// `key.denied` seq. Admin key role only; a key or node the tenant does
-    /// not hold is absent (http-api.md keys, grants, denials; ADR-0025 d2).
+    /// Journal a global per-key denial on `key` over the subtree at `node`,
+    /// each by id or name: deny-wins across all of the key's grants, its
+    /// epoch its own `key.denied` seq. Admin key role only; a key or node the
+    /// tenant does not hold is absent (http-api.md keys, grants, denials;
+    /// ADR-0025 d2), and a denial on an admin key, which carries no grant to
+    /// attenuate, is refused (ADR-0026 d15).
     pub async fn deny_key(
         &self,
         api_key: &str,
-        key_id: Uuid,
-        node: Uuid,
+        key: Reference,
+        node: Reference,
     ) -> Result<DenialRecord, AppError> {
         let admin = self.authenticate(api_key).await?.key;
         require_role(&admin, Role::Admin, "deny")?;
         let tenant_id = admin.tenant_id;
-        if self.journal.key_access(tenant_id, key_id).await?.is_none()
-            || self.journal.workarea(tenant_id, node).await?.is_none()
-        {
+        let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
+        let node = self.resolve(&admin, NamedKind::Workarea, &node).await?;
+        let Some(target) = self.journal.key(tenant_id, key_id).await? else {
             return Err(AppError::NotFound);
+        };
+        if self.journal.workarea(tenant_id, node).await?.is_none() {
+            return Err(AppError::NotFound);
+        }
+        if target.role == Role::Admin {
+            return Err(AppError::DenialOnAdminKey);
         }
         let denial = KeyDenial {
             denial_id: self.ids.new_id(),
@@ -994,35 +1334,56 @@ where
         })
     }
 
-    /// Create a node under `parent_id`, admin by key role. The crew is
-    /// recorded, not operated: `workarea.create` journals it and the fold
-    /// stores it, so the workarea read serves it from the store (event-
-    /// catalog.md `workarea.create`; ADR-0025 d14). The answer carries the
-    /// node's path derived from the parent's stored ancestry, as the read
-    /// derives it.
+    /// Create a node under `parent`, admin by key role, the parent and the
+    /// crew each by id or name. A parent the tenant does not hold is absent,
+    /// and so, checked after it, is a `crew` that names no crew record of
+    /// the tenant (ADR-0026 d8). The crew is recorded, not operated:
+    /// `workarea.create` journals its `crew_id` and the fold stores it, so
+    /// the workarea read serves the record from the store (event-catalog.md
+    /// `workarea.create`; ADR-0025 d14). The answer carries the node's path
+    /// derived from the parent's stored ancestry, as the read derives it. A
+    /// name the tenant already holds, `universe` included, is checked last,
+    /// by the store's unique index: `name.taken`, and nothing is journalled
+    /// (ADR-0026 d5, d6).
     pub async fn create_workarea(
         &self,
         api_key: &str,
-        name: &str,
-        parent_id: Option<Uuid>,
-        crew: Option<Crew>,
+        name: &Name,
+        parent: Option<Reference>,
+        crew: Option<Reference>,
     ) -> Result<CreatedWorkarea, AppError> {
         let key = self.authenticate(api_key).await?.key;
         require_role(&key, Role::Admin, "create_workarea")?;
+        let parent_id = self
+            .resolve_opt(&key, NamedKind::Workarea, parent.as_ref())
+            .await?;
+        let crew_id = self
+            .resolve_opt(&key, NamedKind::Crew, crew.as_ref())
+            .await?;
         let ancestors = match parent_id {
             Some(parent) => self
                 .journal
                 .workarea_ancestry(key.tenant_id, parent)
                 .await?
-                .unwrap_or_default(),
+                .ok_or(AppError::NotFound)?,
             None => Vec::new(),
+        };
+        let crew = match crew_id {
+            Some(crew_id) => Some(
+                self.journal
+                    .crew(key.tenant_id, crew_id)
+                    .await?
+                    .ok_or(AppError::NotFound)?,
+            ),
+            None => None,
         };
         let workarea = WorkareaRecord {
             workarea_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
             parent_id,
-            name: name.to_owned(),
-            crew,
+            name: name.clone(),
+            crew: None,
+            crew_id,
         };
         let prev = self.head_event(key.tenant_id).await?;
         let event = self.seal(
@@ -1034,9 +1395,9 @@ where
             json!({
                 "workarea_id": workarea.workarea_id.to_string(),
                 "parent_id": parent_id.map(|p| p.to_string()),
-                "name": workarea.name,
+                "name": workarea.name.as_str(),
                 "status": workarea.status(),
-                "crew": workarea.crew,
+                "crew_id": crew_id.map(|c| c.to_string()),
                 "prefix": Value::Null,
             }),
         )?;
@@ -1047,28 +1408,33 @@ where
         Ok(CreatedWorkarea {
             path: derived_path(&ancestry),
             workarea,
+            crew,
         })
     }
 
     /// One workarea as the calling key may see it, at reader effective
     /// access by the refusal order and otherwise absent (http-api.md
-    /// workareas; ADR-0025 d14): the node and its derived path, the
-    /// immediate children the key can read, the verbs its effective roles
-    /// on the node confer, and the permission epoch of the access this
-    /// request read. An omitted node is the key's journalled default,
-    /// resolved only after step 1 of the refusal order, as recall resolves
-    /// it (roles-and-keys.md refusal order; mcp-plugin.md
-    /// `oml_workarea_info`).
+    /// workareas; ADR-0025 d14): the node and its derived path, the crew
+    /// record it names, the immediate children the key can read, the verbs
+    /// its effective roles on the node confer, and the permission epoch of
+    /// the access this request read. An admin key reads it by its key role,
+    /// with no grant and no denial entering: every child, no effective verb,
+    /// and nothing of the node's claims (roles-and-keys.md permission matrix,
+    /// footnote 6; ADR-0026 d15). The node, by id or name, or else the key's
+    /// journalled default, is resolved only after step 1 of the refusal
+    /// order, as recall resolves it (roles-and-keys.md refusal order;
+    /// mcp-plugin.md `oml_workarea_info`; ADR-0026 d4).
     pub async fn workarea_info(
         &self,
         api_key: &str,
-        node: Option<Uuid>,
+        node: Option<Reference>,
     ) -> Result<WorkareaInfo, AppError> {
         let caller = self.authenticate(api_key).await?;
-        require_admissible(&caller.key, Role::Reader, "workarea_info")?;
-        let node = node
-            .or(caller.key.default_workarea)
-            .ok_or(AppError::WorkareaUnresolved)?;
+        let structure = caller.key.role == Role::Admin;
+        if !structure {
+            require_admissible(&caller.key, Role::Reader, "workarea_info")?;
+        }
+        let node = self.target_workarea(&caller.key, node.as_ref()).await?;
         let tenant_id = caller.key.tenant_id;
         let ancestry = self
             .journal
@@ -1077,8 +1443,10 @@ where
             .unwrap_or_default();
         let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workarea_id).collect();
         let effective = caller.effective(&ids);
-        resolve(caller.key.role, &effective, Role::Reader)
-            .map_err(|refusal| access_refusal(refusal, node, "workarea_info"))?;
+        if !structure {
+            resolve(caller.key.role, &effective, Role::Reader)
+                .map_err(|refusal| access_refusal(refusal, node, "workarea_info"))?;
+        }
         let workarea = ancestry.first().cloned().ok_or(AppError::NotFound)?;
         let mut children = Vec::new();
         // A child's ancestry is the node's with the child in front.
@@ -1086,17 +1454,475 @@ where
             let child_ancestry: Vec<Uuid> = std::iter::once(child.workarea_id)
                 .chain(ids.iter().copied())
                 .collect();
-            if caller.effective(&child_ancestry).contains(&Role::Reader) {
+            if structure || caller.effective(&child_ancestry).contains(&Role::Reader) {
                 children.push(child);
             }
         }
+        let crew = match workarea.crew_id {
+            Some(crew_id) => self.journal.crew(tenant_id, crew_id).await?,
+            None => None,
+        };
         Ok(WorkareaInfo {
             path: derived_path(&ancestry),
             workarea,
+            crew,
             children,
-            my_effective_verbs: effective_verbs(&effective, caller.key.held_by),
+            // The field lists grant-role verbs, and an admin key holds none.
+            my_effective_verbs: if structure {
+                Vec::new()
+            } else {
+                effective_verbs(&effective, caller.key.held_by)
+            },
             permission_epoch: caller.permission_epoch,
         })
+    }
+
+    /// One page of the subtree at `node`, by id or name, in path order: a
+    /// node before its children, and siblings by name in byte order, so the
+    /// derived paths' names, compared one by one, order the walk. Each node
+    /// carries its derived path and the crew record it names. A key past
+    /// step 1 needs reader effective access on `node` by the refusal order,
+    /// and the nodes outside its read access are omitted, a node below one
+    /// it cannot read included when a grant reaches it; an admin key reads
+    /// every node by its key role (roles-and-keys.md permission matrix,
+    /// footnote 6; ADR-0026 d15). A page holds at most `limit` nodes, after
+    /// the path `cursor` resumes at, and the cursor of the next page, bound
+    /// to the key and to `api.cursor_ttl` like every listing cursor; a stale
+    /// or foreign one is refused (http-api.md workareas and pagination). The
+    /// read is one store walk and one crew read per crew the page names.
+    pub async fn workarea_tree(
+        &self,
+        api_key: &str,
+        node: Reference,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<TreePage, AppError> {
+        let caller = self.authenticate(api_key).await?;
+        let structure = caller.key.role == Role::Admin;
+        if !structure {
+            require_admissible(&caller.key, Role::Reader, "workarea_tree")?;
+        }
+        let now = self.clock.now();
+        let after = cursor
+            .map(|cursor| PathCursor::resume(cursor, caller.key.key_id, &now))
+            .transpose()?;
+        let tenant_id = caller.key.tenant_id;
+        let node = self
+            .resolve(&caller.key, NamedKind::Workarea, &node)
+            .await?;
+        let readable: Option<BTreeSet<Uuid>> = if structure {
+            None
+        } else {
+            self.require_access(&caller, node, Role::Reader, "workarea_tree")
+                .await?;
+            Some(
+                self.nodes_with(&caller, node, Role::Reader)
+                    .await?
+                    .into_iter()
+                    .collect(),
+            )
+        };
+        let Some(ancestry) = self.journal.workarea_ancestry(tenant_id, node).await? else {
+            return Err(AppError::NotFound);
+        };
+        // The subtree lists a parent before its children, so each node's
+        // names, from `universe` down, are its parent's and its own.
+        let mut names: BTreeMap<Uuid, Vec<Name>> = BTreeMap::from([(
+            node,
+            ancestry.iter().rev().map(|w| w.name.clone()).collect(),
+        )]);
+        let mut tree: Vec<(Vec<Name>, WorkareaRecord)> = Vec::new();
+        for workarea in self.journal.workarea_subtree(tenant_id, node).await? {
+            let id = workarea.workarea_id;
+            if id != node {
+                let mut own = workarea
+                    .parent_id
+                    .and_then(|p| names.get(&p))
+                    .cloned()
+                    .ok_or_else(|| {
+                        StoreError::Backend(format!(
+                            "the subtree of {node} lists {id} before its parent"
+                        ))
+                    })?;
+                own.push(workarea.name.clone());
+                names.insert(id, own);
+            }
+            if readable.as_ref().is_none_or(|nodes| nodes.contains(&id)) {
+                tree.push((names[&id].clone(), workarea));
+            }
+        }
+        // A node's names are a prefix of its children's, and names are
+        // unique in the tenant, so no two nodes tie.
+        tree.sort_by(|(a, _), (b, _)| a.cmp(b));
+        // One node past the page says whether another page exists.
+        let mut page: Vec<(Vec<Name>, WorkareaRecord)> = tree
+            .into_iter()
+            .filter(|(names, _)| after.as_ref().is_none_or(|after| names > after))
+            .take(limit.saturating_add(1))
+            .collect();
+        let more = page.len() > limit;
+        page.truncate(limit);
+        let next_cursor = page.last().filter(|_| more).map(|(names, _)| {
+            PathCursor {
+                key_id: caller.key.key_id,
+                after: names.clone(),
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        // Many nodes may name one crew, which is read once.
+        let mut crews: BTreeMap<Uuid, Option<CrewRecord>> = BTreeMap::new();
+        let mut items = Vec::with_capacity(page.len());
+        for (names, workarea) in page {
+            let path = names.iter().map(Name::as_str).collect::<Vec<_>>().join(".");
+            let crew = match workarea.crew_id {
+                None => None,
+                Some(crew_id) => match crews.entry(crew_id) {
+                    Entry::Occupied(read) => read.get().clone(),
+                    Entry::Vacant(unread) => unread
+                        .insert(self.journal.crew(tenant_id, crew_id).await?)
+                        .clone(),
+                },
+            };
+            items.push(TreeNode {
+                workarea,
+                path,
+                crew,
+            });
+        }
+        Ok(TreePage { items, next_cursor })
+    }
+
+    /// Create a crew record, admin by key role (http-api.md crews;
+    /// ADR-0026 d8), journalled as `crew.created` with its name; a name the
+    /// tenant already holds is `name.taken`, and nothing is journalled.
+    pub async fn create_crew(
+        &self,
+        api_key: &str,
+        req: &CrewCreateRequest,
+    ) -> Result<CrewRecord, AppError> {
+        let key = self.authenticate(api_key).await?.key;
+        require_role(&key, Role::Admin, "create_crew")?;
+        let crew = CrewRecord {
+            crew_id: self.ids.new_id(),
+            tenant_id: key.tenant_id,
+            name: req.name.clone(),
+            charter_uri: req.charter_uri.clone(),
+            external_manager: req.external_manager.clone(),
+        };
+        let prev = self.head_event(key.tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::CREW_CREATED,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "crew_id": crew.crew_id.to_string(),
+                "name": crew.name.as_str(),
+                "charter_uri": crew.charter_uri,
+                "external_manager": crew.external_manager,
+                "created_by_key_id": key.key_id.to_string(),
+            }),
+        )?;
+        self.commit(event, MetadataFold::CrewCreated(crew.clone()), None)
+            .await?;
+        Ok(crew)
+    }
+
+    /// One crew record, by id or name, admin by key role; one the tenant
+    /// does not hold is absent (http-api.md crews; ADR-0026 d8).
+    pub async fn crew(&self, api_key: &str, crew: Reference) -> Result<CrewRecord, AppError> {
+        let key = self.authenticate(api_key).await?.key;
+        require_role(&key, Role::Admin, "crew")?;
+        let crew_id = self.resolve(&key, NamedKind::Crew, &crew).await?;
+        self.journal
+            .crew(key.tenant_id, crew_id)
+            .await?
+            .ok_or(AppError::NotFound)
+    }
+
+    /// One page of the tenant's crew records in name order, admin by key
+    /// role: at most `limit` of them, after the name `cursor` resumes at,
+    /// and the cursor of the next page, bound to the key and to
+    /// `api.cursor_ttl` like every listing cursor; a stale or foreign one
+    /// is refused (http-api.md crews and pagination; ADR-0026 d8). The read
+    /// is one store query.
+    pub async fn crews(
+        &self,
+        api_key: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<CrewPage, AppError> {
+        let key = self.authenticate(api_key).await?.key;
+        require_role(&key, Role::Admin, "crews")?;
+        let now = self.clock.now();
+        let after = cursor
+            .map(|cursor| NameCursor::resume(cursor, key.key_id, &now))
+            .transpose()?;
+        // One row past the page says whether another page exists.
+        let mut items: Vec<CrewRecord> = self
+            .journal
+            .crews(key.tenant_id)
+            .await?
+            .into_iter()
+            .filter(|crew| after.as_ref().is_none_or(|after| crew.name > *after))
+            .take(limit.saturating_add(1))
+            .collect();
+        let more = items.len() > limit;
+        items.truncate(limit);
+        let next_cursor = items.last().filter(|_| more).map(|last| {
+            NameCursor {
+                key_id: key.key_id,
+                after: last.name.clone(),
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        Ok(CrewPage { items, next_cursor })
+    }
+
+    /// One key of the tenant, by id or name, admin by key role: a revoked
+    /// key's included, since its name still resolves and its row stays as
+    /// history; one the tenant does not hold is absent (http-api.md keys,
+    /// grants, denials; ADR-0026 d4, d9, d10). The attestation is read from
+    /// the key's `key.issued`, which journals it as sent, where the row
+    /// holds the schema default; never the value, which no store holds.
+    pub async fn key(&self, api_key: &str, key: Reference) -> Result<KeyDetail, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "key")?;
+        let tenant_id = admin.tenant_id;
+        let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
+        let Some(record) = self.journal.key(tenant_id, key_id).await? else {
+            return Err(AppError::NotFound);
+        };
+        let access = self
+            .journal
+            .key_access(tenant_id, key_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let issued = self
+            .journal
+            .events_range(tenant_id, access.issued_seq, 1)
+            .await?
+            .into_iter()
+            .next()
+            .filter(|e| {
+                e.envelope.event_type == event_types::KEY_ISSUED
+                    && payload_id(&e.envelope.payload, "key_id") == Some(key_id)
+            })
+            .ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "key {key_id}'s issued_seq {} names no key.issued of it",
+                    access.issued_seq
+                ))
+            })?;
+        let held_by = match payload_str(&issued.envelope.payload, "held_by").as_deref() {
+            None => None,
+            Some("agent") => Some(HeldBy::Agent),
+            Some("human") => Some(HeldBy::Human),
+            Some("service") => Some(HeldBy::Service),
+            Some(other) => {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id}'s key.issued journals held_by {other:?}"
+                ))
+                .into());
+            }
+        };
+        Ok(KeyDetail {
+            key: record,
+            held_by,
+            access,
+        })
+    }
+
+    /// Change a crew record's charter URI or external manager, never its
+    /// name, admin by key role: at least one field is sent, a field not
+    /// sent keeps its value, and `crew.updated` journals the full new
+    /// values, so its fold needs no earlier event (http-api.md crews;
+    /// event-catalog.md `crew.updated`; ADR-0026 d8).
+    pub async fn update_crew(
+        &self,
+        api_key: &str,
+        crew: Reference,
+        update: &CrewUpdate,
+    ) -> Result<CrewRecord, AppError> {
+        let key = self.authenticate(api_key).await?.key;
+        require_role(&key, Role::Admin, "update_crew")?;
+        if update.charter_uri.is_none() && update.external_manager.is_none() {
+            return Err(AppError::EmptyCrewUpdate);
+        }
+        let crew_id = self.resolve(&key, NamedKind::Crew, &crew).await?;
+        let current = self
+            .journal
+            .crew(key.tenant_id, crew_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let updated = CrewRecord {
+            charter_uri: update.charter_uri.clone().or(current.charter_uri),
+            external_manager: update.external_manager.clone().or(current.external_manager),
+            ..current
+        };
+        let prev = self.head_event(key.tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::CREW_UPDATED,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "crew_id": updated.crew_id.to_string(),
+                "charter_uri": updated.charter_uri,
+                "external_manager": updated.external_manager,
+                "updated_by_key_id": key.key_id.to_string(),
+            }),
+        )?;
+        self.commit(event, MetadataFold::CrewUpdated(updated.clone()), None)
+            .await?;
+        Ok(updated)
+    }
+
+    /// Point a workarea at a crew record, each by id or name, admin by key
+    /// role: the journalled crew-metadata update `workarea.crew_updated`,
+    /// carrying the record's `crew_id`. A workarea the tenant does not hold
+    /// is absent, and so, checked after it, is a crew (http-api.md
+    /// workareas; ADR-0026 d8). No status transition is built, so no
+    /// workarea is `validated` and none refuses it.
+    pub async fn set_workarea_crew(
+        &self,
+        api_key: &str,
+        workarea: Reference,
+        crew: Reference,
+    ) -> Result<WorkareaRecord, AppError> {
+        let key = self.authenticate(api_key).await?.key;
+        require_role(&key, Role::Admin, "set_workarea_crew")?;
+        let workarea_id = self.resolve(&key, NamedKind::Workarea, &workarea).await?;
+        let crew_id = self.resolve(&key, NamedKind::Crew, &crew).await?;
+        let workarea = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if self.journal.crew(key.tenant_id, crew_id).await?.is_none() {
+            return Err(AppError::NotFound);
+        }
+        let prev = self.head_event(key.tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::WORKAREA_CREW_UPDATED,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "crew_id": crew_id.to_string(),
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::WorkareaCrewUpdated {
+                workarea_id,
+                crew_id,
+            },
+            None,
+        )
+        .await?;
+        Ok(WorkareaRecord {
+            crew_id: Some(crew_id),
+            ..workarea
+        })
+    }
+
+    /// The lead's start on the names schema, before it serves: each chain of
+    /// `tenants` that holds rows with no name gets one `system.names_assigned`
+    /// naming them under rules 1–4 of http-api.md "Rows created before
+    /// names", signed by the server, no key acting; its fold alone gives the
+    /// rows their names, and every earlier event stays as it was signed. In
+    /// the same commit, after it and in journal order, rule 5 lifts every
+    /// global denial on an admin key still in force, each as one
+    /// `key.denial_lifted` over the fixed reason `adr-0026-d15`, its epoch
+    /// its own seq, so the names and the lifts commit together or not at
+    /// all. A chain with no row to name journals nothing, so a second start
+    /// journals nothing (ADR-0026 d11, d15). Tenant names are the deployment's,
+    /// so rule 2 holds them across the chains, in the order `tenants` lists
+    /// them; the PoC has no provider chain, so each tenant's name is
+    /// journalled in its own chain's event, as the PoC journals the tenant's
+    /// creation there. Every chain is read before any is named, so a chain
+    /// that cannot be named answers [`AppError::NamingRefused`] with nothing
+    /// journalled anywhere; a commit refused later answers its refusal and
+    /// leaves named the chains it follows.
+    pub async fn name_rows_that_predate_names(
+        &self,
+        tenants: &[Uuid],
+    ) -> Result<Vec<AssignedNames>, AppError> {
+        let mut chains = Vec::new();
+        for &tenant_id in tenants {
+            let unnamed = self.journal.unnamed_rows(tenant_id).await?;
+            if unnamed.is_empty() {
+                continue;
+            }
+            let events = self.whole_chain(tenant_id).await?;
+            chains.push(predating_chain(tenant_id, &unnamed, &events)?);
+        }
+        let tenant_rows: Vec<UnnamedRow> = chains.iter().filter_map(|c| c.tenant.clone()).collect();
+        let tenant_names: BTreeMap<Uuid, Assignment> =
+            assign_names(None, &tenant_rows, &[], Uuid::nil)
+                .names
+                .into_iter()
+                .map(|a| (a.id, a))
+                .collect();
+        let mut assigned = Vec::with_capacity(chains.len());
+        for chain in chains {
+            let tenant_id = chain.tenant_id;
+            let rows = assign_names(chain.root, &chain.rows, &chain.crews, || self.ids.new_id());
+            let naming = Naming {
+                names: tenant_names
+                    .get(&tenant_id)
+                    .cloned()
+                    .into_iter()
+                    .chain(rows.names)
+                    .collect(),
+                crews: rows.crews,
+            };
+            let prev = self.head_event(tenant_id).await?;
+            let names = self.seal(
+                prev.as_ref(),
+                tenant_id,
+                event_types::SYSTEM_NAMES_ASSIGNED,
+                "oml-server",
+                None,
+                names_assigned_payload(&naming),
+            )?;
+            let journal_seq = names.envelope.seq;
+            let mut last = names.clone();
+            let mut links = vec![(names, MetadataFold::NamesAssigned(naming.clone()))];
+            for &(denial_id, key_id) in &chain.lifts {
+                let lift = self.seal(
+                    Some(&last),
+                    tenant_id,
+                    event_types::KEY_DENIAL_LIFTED,
+                    "oml-server",
+                    None,
+                    json!({
+                        "denial_id": denial_id.to_string(),
+                        "key_id": key_id.to_string(),
+                        "lifted_by_key_id": Value::Null,
+                        "reason_digest": sha256_digest_string(ADMIN_DENIAL_LIFT_REASON.as_bytes()),
+                        "epoch": last.envelope.seq + 1,
+                    }),
+                )?;
+                last = lift.clone();
+                links.push((lift, MetadataFold::KeyDenialLifted { key_id, denial_id }));
+            }
+            self.commit_chain(links).await?;
+            assigned.push(AssignedNames {
+                tenant_id,
+                journal_seq,
+                naming,
+                lifted_denials: chain.lifts.iter().map(|(denial, _)| *denial).collect(),
+            });
+        }
+        Ok(assigned)
     }
 
     /// `GET /v1/memories` (http-api.md search; ADR-0025 d3, d13). With
@@ -1136,7 +1962,10 @@ where
                 });
             }
             // A filter names only a node the naming rule names to the key.
-            let subtree = match req.workarea_id {
+            let filter = self
+                .resolve_opt(key, NamedKind::Workarea, req.workarea_id.as_ref())
+                .await?;
+            let subtree = match filter {
                 None => None,
                 Some(node) => {
                     let ancestry = self.ancestry(tenant_id, node).await?;
@@ -1157,14 +1986,14 @@ where
             (scope, subtree)
         } else {
             require_admissible(key, Role::Reader, "list")?;
-            let scope = req
-                .scope
-                .or(key.default_workarea)
-                .ok_or(AppError::WorkareaUnresolved)?;
+            let scope = self.target_workarea(key, req.scope.as_ref()).await?;
+            let filter = self
+                .resolve_opt(key, NamedKind::Workarea, req.workarea_id.as_ref())
+                .await?;
             self.require_access(&caller, scope, Role::Reader, "list")
                 .await?;
             let mut nodes = self.nodes_with(&caller, scope, Role::Reader).await?;
-            if let Some(node) = req.workarea_id {
+            if let Some(node) = filter {
                 let ancestry = self.ancestry(tenant_id, node).await?;
                 if !caller.effective(&ancestry).contains(&Role::Reader) {
                     return Err(AppError::NotFound);
@@ -1247,10 +2076,10 @@ where
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Writer, "submit")?;
-        let workarea_id = req
-            .workarea_id
-            .or(key.default_workarea)
-            .ok_or(AppError::WorkareaUnresolved)?;
+        // The header, by id or name, resolves after step 1 and before the
+        // record is looked up, so either spelling is one request (ADR-0026
+        // d4).
+        let workarea_id = self.target_workarea(key, req.workarea_id.as_ref()).await?;
         self.require_access(&caller, workarea_id, Role::Writer, "submit")
             .await?;
 
@@ -1662,10 +2491,7 @@ where
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "recall")?;
-        let scope = req
-            .workarea_id
-            .or(key.default_workarea)
-            .ok_or(AppError::WorkareaUnresolved)?;
+        let scope = self.target_workarea(key, req.workarea_id.as_ref()).await?;
         self.require_access(&caller, scope, Role::Reader, "recall")
             .await?;
         // The query is its NFC text, searched and digested alike (ADR-0025
@@ -1796,21 +2622,17 @@ where
     /// else sees promoted rows, replaced versions included, with reader
     /// effective access on the row's workarea; anything else is absence,
     /// indistinguishable from no row. `derives_from` names only the
-    /// ancestors the caller can read (http-api.md; ADR-0025 d3). An
-    /// operator key never reads content and is refused by its role before
-    /// any lookup (step 1 of the refusal order; ADR-0025 d1).
+    /// ancestors the caller can read (http-api.md; ADR-0025 d3). Get needs
+    /// reader, so an admin or operator key, which no reader grant can be
+    /// admitted on, never reads content and is refused by its role before
+    /// any lookup (step 1 of the refusal order; ADR-0025 d1; ADR-0026 d15).
     pub async fn get_memory(
         &self,
         api_key: &str,
         memory_id: Uuid,
     ) -> Result<ServedMemory, AppError> {
         let caller = self.authenticate(api_key).await?;
-        if caller.key.role == Role::Operator {
-            return Err(AppError::VerbCeiling {
-                role: caller.key.role,
-                verb: "get",
-            });
-        }
+        require_admissible(&caller.key, Role::Reader, "get")?;
         let memory = self
             .journal
             .memory(caller.key.tenant_id, memory_id)
@@ -1857,6 +2679,10 @@ where
                 verb: "supersede",
             });
         }
+        // The header, by id or name, resolves after step 1 (ADR-0026 d4).
+        let header = self
+            .resolve_opt(key, NamedKind::Workarea, req.workarea_id.as_ref())
+            .await?;
 
         // The record is looked up between steps 1 and 2 and replays its
         // stored response whatever the target or the key's access now: the
@@ -1907,10 +2733,12 @@ where
         // target is the served tip, the kind stays in its class and a
         // retirement keeps the target's kind and never retires a term, and
         // on oml_supersede the target is of no vocabulary kind (ADR-0025 d12).
-        if let Some(workarea_id) = req.workarea_id
+        if let (Some(workarea_id), Some(sent)) = (header, &req.workarea_id)
             && workarea_id != target.workarea_id
         {
-            return Err(AppError::WorkareaNotTarget { workarea_id });
+            return Err(AppError::WorkareaNotTarget {
+                workarea: sent.clone(),
+            });
         }
         if target.status != MemoryStatus::Promoted || !target.is_tip {
             return Err(AppError::TipConflict {
@@ -2113,20 +2941,7 @@ where
     pub async fn verify_chain(&self, api_key: &str) -> Result<ChainHead, AppError> {
         let key = self.authenticate(api_key).await?.key;
         require_role(&key, Role::Admin, "verify_chain")?;
-        let mut events = Vec::new();
-        let mut from = 1_u64;
-        loop {
-            let page = self
-                .journal
-                .events_range(key.tenant_id, from, EVENTS_PAGE)
-                .await?;
-            let n = page.len();
-            events.extend(page);
-            if n < EVENTS_PAGE {
-                break;
-            }
-            from += n as u64;
-        }
+        let events = self.whole_chain(key.tenant_id).await?;
         let stated_head = self.journal.chain_head(key.tenant_id).await?;
         let keys = KeySet::new(vec![self.signer.verifying_key()]);
         Ok(oml_domain::verify_chain(
@@ -2151,16 +2966,14 @@ where
     pub async fn tail_events(
         &self,
         api_key: &str,
-        workarea_id: Option<Uuid>,
+        workarea_id: Option<Reference>,
         after_seq: u64,
         limit: usize,
     ) -> Result<TailPage, AppError> {
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "events_tail")?;
-        let scope = workarea_id
-            .or(key.default_workarea)
-            .ok_or(AppError::WorkareaUnresolved)?;
+        let scope = self.target_workarea(key, workarea_id.as_ref()).await?;
         self.require_access(&caller, scope, Role::Reader, "events_tail")
             .await?;
         let scan = self

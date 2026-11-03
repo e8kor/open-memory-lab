@@ -3,9 +3,13 @@
 //! one tenant serialize, the journal refuses UPDATE/DELETE by mechanism
 //! (ADR-0002 d4), the fork check verifies the stored head (ADR-0002 d7),
 //! grants and denials stay inside their tenant under row-level security, the
-//! served-tip index holds one tip per claim, and 0005 migrates the PoC's
+//! served-tip index holds one tip per claim, 0005 migrates the PoC's
 //! superseded rows to versions and tips and refuses two live first versions
-//! of one claim_key (ADR-0025 d10, d18).
+//! of one claim_key (ADR-0025 d10, d18), and 0006's names hold: the
+//! `oml_name` domain checks the reference grammar, operator keys share one
+//! namespace, the root's `universe` is the tenant's alone, paths derive from
+//! names, and a PoC database keeps every row and event (ADR-0026 d1, d2, d6,
+//! d7, d11).
 //!
 //! Each law runs against a throwaway database (`oml_test_<pid>_<n>`) created
 //! through `DATABASE_URL` (the role needs CREATEDB), migrated by the embedded
@@ -14,17 +18,22 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use oml_app::App;
 use oml_app::domain::access::{Grant, KeyDenial};
+use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::{
-    Envelope, EventTime, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash, event_types, sign,
-    verify_chain,
+    Envelope, EventDraft, EventTime, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
+    SignedEnvelope, event_types, next_envelope, sign, verify_chain,
 };
+use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, JournalStore, MetadataFold, OutboxRow, StoreError,
 };
+use oml_app::types::KeyRecord;
 use oml_pg::{ForkCheckError, MIGRATOR, PgStore};
 use oml_port_contracts::{
-    ChainRig, held_memory, key_record, run_journal_store_suite, test_signing_key, workarea_record,
+    ChainRig, held_memory, key_record, name, run_journal_store_suite, test_signing_key,
+    workarea_record,
 };
 use serde_json::{Value, json};
 use sqlx::migrate::Migrate as _;
@@ -128,7 +137,7 @@ async fn commit_at(
     store
         .commit(CommitRequest {
             event: event.clone(),
-            fold: MetadataFold::TenantGenesis,
+            fold: MetadataFold::TenantGenesis { name: name("race") },
             outbox: OutboxRow {
                 event_id,
                 topic: event.envelope.event_type.clone(),
@@ -423,6 +432,12 @@ async fn fork_check_verifies_and_detects() {
 /// A throwaway database at the pre-0005 schema, 0001–0004 applied; its name
 /// and a connection to it for seeding PoC rows.
 async fn poc_schema(created: &Mutex<Vec<String>>) -> (String, PgConnection) {
+    schema_through(created, 4).await
+}
+
+/// A throwaway database with the migrations up to `version` applied and no
+/// later one; its name and a connection to it for seeding rows.
+async fn schema_through(created: &Mutex<Vec<String>>, version: i64) -> (String, PgConnection) {
     let name = fresh_database(created).await;
     let mut conn = PgConnection::connect(&db_url(&name))
         .await
@@ -430,8 +445,10 @@ async fn poc_schema(created: &Mutex<Vec<String>>) -> (String, PgConnection) {
     conn.ensure_migrations_table()
         .await
         .expect("migrations table");
-    for migration in MIGRATOR.iter().filter(|m| m.version < 5) {
-        conn.apply(migration).await.expect("0001-0004 apply");
+    for migration in MIGRATOR.iter().filter(|m| m.version <= version) {
+        conn.apply(migration)
+            .await
+            .expect("the earlier migrations apply");
     }
     (name, conn)
 }
@@ -1038,5 +1055,973 @@ async fn the_served_tip_index_refuses_a_second_tip() {
         "got: {err}"
     );
     drop(tx);
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Names (migrations/0006_names.sql)
+// ---------------------------------------------------------------------------
+
+/// The `oml_name` domain every named column carries checks the reference
+/// grammar: a lowercase RFC 1035 label of 1–63 characters that reads as no
+/// id, the derived form admitted, since the fold of the lead's naming writes
+/// it (postgres-schema.md names and tenants; ADR-0026 d2).
+#[tokio::test]
+async fn the_oml_name_domain_admits_the_reference_grammar_and_nothing_else() {
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let longest = format!("a{}", "b".repeat(62));
+    for value in [
+        "universe",
+        "metals-crew",
+        "q1-2027",
+        "a",
+        "key-0190f2a47c3e4b1d9a6fe2d8c51b3a07",
+        longest.as_str(),
+    ] {
+        let stored: String = sqlx::query_scalar("SELECT ($1::oml_name)::text")
+            .bind(value)
+            .fetch_one(store.pool())
+            .await
+            .unwrap_or_else(|e| panic!("{value:?} is a name: {e}"));
+        assert_eq!(stored, value, "stored byte for byte");
+    }
+    let too_long = format!("a{}", "b".repeat(63));
+    for value in [
+        "",
+        "Zulu",
+        "metals_crew",
+        "universe.procurement",
+        "crew-procure/agent-7",
+        "-metals",
+        "metals-",
+        "2027-q1",
+        "étude",
+        "0190f2a4-7c3e-4b1d-9a6f-e2d8c51b3a07",
+        "abcdef01-2345-6789-abcd-ef0123456789",
+        "deadbeefdeadbeefdeadbeefdeadbeef",
+        too_long.as_str(),
+    ] {
+        let err = sqlx::query("SELECT $1::oml_name")
+            .bind(value)
+            .execute(store.pool())
+            .await
+            .expect_err("refused, never coerced");
+        assert!(err.to_string().contains("oml_name"), "{value:?}: {err}");
+    }
+    drop_dbs(&created).await;
+}
+
+/// Operator keys carry no tenant and share the provider's one namespace:
+/// the `api_keys` name index takes their NULL tenant as one value, so a
+/// second operator key of a name is refused, while a tenant's key of that
+/// name stands beside it and keys with no name never collide
+/// (postgres-schema.md `api_keys`; ADR-0026 d1).
+#[tokio::test]
+async fn two_operator_keys_cannot_share_a_name_though_their_tenant_is_null() {
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(96);
+    rig.seed_chain(&store, 0).await;
+    let tenant_key = KeyRecord {
+        name: Some(name("root-operator")),
+        ..key_record(rig.tenant_id, Uuid::from_u128(0xD960), Role::Admin, None)
+    };
+    rig.issue_key(&store, tenant_key).await;
+
+    // Provider-level rows are the operator path's, which is not built; the
+    // owner writes them here by lifting FORCE inside a transaction that
+    // rolls back (postgres-schema.md row-level security).
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("ALTER TABLE api_keys NO FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .expect("the owner lifts FORCE");
+    let insert = "INSERT INTO api_keys (id, tenant_id, hash, role, principal, issued_seq, name) \
+                  VALUES ($1, NULL, $2, 'operator', 'provider/operator', 1, $3)";
+    for (n, key_name) in [(1_u8, None), (2, None), (3, Some("root-operator"))] {
+        sqlx::query(insert)
+            .bind(Uuid::from_u128(0xD970 + u128::from(n)))
+            .bind(vec![n; 32])
+            .bind(key_name)
+            .execute(&mut *tx)
+            .await
+            .expect("unnamed operator keys and a tenant key's name stand together");
+    }
+    let err = sqlx::query(insert)
+        .bind(Uuid::from_u128(0xD974))
+        .bind(vec![4_u8; 32])
+        .bind(Some("root-operator"))
+        .execute(&mut *tx)
+        .await
+        .expect_err("a second operator key of one name is refused");
+    assert!(
+        err.to_string().contains("api_keys_tenant_id_name"),
+        "got: {err}"
+    );
+    drop(tx);
+    drop_dbs(&created).await;
+}
+
+/// The schema itself refuses a non-root workarea named `universe`, whatever
+/// wrote it: 0006's CHECK ties `universe` to the root, so the refusal holds
+/// under a root that predates names and has no name yet, as every tenant
+/// 0006 migrates has, and not only under a root that already holds
+/// `universe`. The CHECK passes every unnamed row, so it is laid beside the
+/// nullable names. The store answers the creation with `NameTaken`, as
+/// errors.md answers a non-root `universe` (postgres-schema.md `workareas`
+/// and "The migration that adds names"; ADR-0026 d5, d6).
+#[tokio::test]
+async fn the_schema_refuses_a_non_root_workarea_named_universe() {
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 5).await;
+    let (poc, poc_root) = (Uuid::from_u128(0xA960), Uuid::from_u128(0xB960));
+    let mut tx = conn.begin().await.expect("begin");
+    poc_tenant(&mut tx, poc).await;
+    sqlx::query(
+        "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+         VALUES ($1, $2, NULL, 'root', 'committed')",
+    )
+    .bind(poc_root)
+    .bind(poc)
+    .execute(&mut *tx)
+    .await
+    .expect("PoC root");
+    tx.commit().await.expect("commit the PoC rows");
+    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
+    store.migrate().await.expect("0006 applies over PoC rows");
+
+    let mut rig = ChainRig::new(97);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let root = Uuid::from_u128(0xB970);
+    rig.create_workarea(&store, workarea_record(t, root, None, "universe"))
+        .await;
+
+    let impostor = Uuid::from_u128(0xB971);
+    let refused = rig
+        .commit(
+            &store,
+            event_types::WORKAREA_CREATE,
+            json!({ "workarea_id": impostor.to_string(), "name": "universe" }),
+            MetadataFold::WorkareaCreated(workarea_record(t, impostor, Some(root), "universe")),
+            None,
+        )
+        .await;
+    assert_eq!(
+        refused,
+        Err(StoreError::NameTaken {
+            kind: NamedKind::Workarea,
+            name: name("universe"),
+        })
+    );
+
+    for (tenant, parent, under) in [
+        (poc, poc_root, "a root that has no name yet"),
+        (t, root, "the root named universe"),
+    ] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        let err = sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+             VALUES ($1, $2, $3, 'universe', 'development')",
+        )
+        .bind(impostor)
+        .bind(tenant)
+        .bind(parent)
+        .execute(&mut *tx)
+        .await
+        .expect_err("the schema refuses a non-root universe");
+        assert!(
+            err.to_string().contains("workareas_universe_is_root"),
+            "under {under}, got: {err}"
+        );
+    }
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// A workarea is stored with its `path`, derived at creation from its
+/// parent's path and its own name: the `ltree` value of the names from
+/// `universe` down (postgres-schema.md `workareas`; ADR-0026 d7).
+#[tokio::test]
+async fn a_workarea_is_stored_with_the_path_its_names_derive() {
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(98);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let (root, procurement, metals) = (
+        Uuid::from_u128(0xB980),
+        Uuid::from_u128(0xB981),
+        Uuid::from_u128(0xB982),
+    );
+    for w in [
+        workarea_record(t, root, None, "universe"),
+        workarea_record(t, procurement, Some(root), "procurement"),
+        workarea_record(t, metals, Some(procurement), "metals-crew"),
+    ] {
+        rig.create_workarea(&store, w).await;
+    }
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(t.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let paths: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, path::text FROM workareas WHERE tenant_id = $1 ORDER BY id")
+            .bind(t)
+            .fetch_all(&mut *tx)
+            .await
+            .expect("paths");
+    tx.rollback().await.expect("rollback");
+    assert_eq!(
+        paths,
+        vec![
+            (root, "universe".to_owned()),
+            (procurement, "universe.procurement".to_owned()),
+            (metals, "universe.procurement.metals-crew".to_owned()),
+        ]
+    );
+    drop_dbs(&created).await;
+}
+
+/// The PoC tables 0006 reaches, besides the journal, in the order a
+/// snapshot lists them.
+const POC_TABLES: [&str; 10] = [
+    "tenants",
+    "workareas",
+    "api_keys",
+    "journal_chain_head",
+    "outbox",
+    "memories",
+    "review_queue",
+    "idempotency",
+    "grants",
+    "key_denials",
+];
+
+/// Every row `tenant`'s row-level security shows of the PoC tables and the
+/// journal, one sorted JSON text per row. `renamed` reads the schema after
+/// 0006: the columns it adds are left out, and `prior_name` is read under
+/// the name the PoC schema gave it, so a row 0006 kept compares equal.
+async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<String> {
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let mut rows = Vec::new();
+    for table in POC_TABLES.iter().copied().chain(["journal"]) {
+        let row = match (renamed, table) {
+            (true, "tenants" | "workareas") => {
+                "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path') \
+                 || jsonb_build_object('name', t.prior_name)"
+            }
+            (true, "api_keys") => "to_jsonb(t) - 'name' - 'crew_id'",
+            (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
+            _ => "to_jsonb(t)",
+        };
+        // Row-level security does not bind a superuser, as CI's Postgres role
+        // is, so the tenant is also named in the query: either role counts the
+        // same rows.
+        let owner = if table == "tenants" {
+            "id"
+        } else {
+            "tenant_id"
+        };
+        let sql = format!("SELECT '{table} ' || ({row})::text FROM {table} t WHERE t.{owner} = $1");
+        let texts: Vec<String> = sqlx::query_scalar(&sql)
+            .bind(tenant)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap_or_else(|e| panic!("{table}: {e}"));
+        rows.extend(texts);
+    }
+    tx.rollback().await.expect("rollback");
+    rows.sort();
+    rows
+}
+
+/// The PoC's duplicate, ungrammatical and reserved names do not stop 0006:
+/// every row of every table survives with every value it held, the PoC's
+/// names as `prior_name`, and no row gains a name, since only the lead's
+/// first start names rows, in a journalled event (ADR-0026 d11). The
+/// journal is untouched and still verifies, and the store serves no
+/// workarea that has no name yet (postgres-schema.md names and tenants).
+#[tokio::test]
+async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 5).await;
+    let (tenant, twin) = (Uuid::from_u128(0xA600), Uuid::from_u128(0xA601));
+    let id = |n: u128| Uuid::from_u128(0xB600 + n);
+    let (root, procurement, team, again, impostor) = (id(0), id(1), id(2), id(3), id(4));
+    let (admin, writer) = (Uuid::from_u128(0xD600), Uuid::from_u128(0xD601));
+    let memory = Uuid::from_u128(0xC600);
+    let created_wa = |w: Uuid, parent: Option<Uuid>, wa_name: &str, crew: Value| {
+        json!({
+            "workarea_id": w, "parent_id": parent, "name": wa_name,
+            "status": if parent.is_none() { "committed" } else { "development" },
+            "crew": crew, "prefix": null,
+        })
+    };
+    // The PoC's chain, signed: its root named `root`, a crew object, an
+    // ungrammatical name, a duplicate one and a non-root `universe`.
+    let drafts = [
+        (event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" })),
+        (
+            event_types::WORKAREA_CREATE,
+            created_wa(root, None, "root", Value::Null),
+        ),
+        (
+            event_types::WORKAREA_CREATE,
+            created_wa(
+                procurement,
+                Some(root),
+                "procurement",
+                json!({ "name": "Procurement Crew" }),
+            ),
+        ),
+        (
+            event_types::WORKAREA_CREATE,
+            created_wa(team, Some(root), "Procurement Team", Value::Null),
+        ),
+        (
+            event_types::WORKAREA_CREATE,
+            created_wa(again, Some(team), "procurement", Value::Null),
+        ),
+        (
+            event_types::WORKAREA_CREATE,
+            created_wa(impostor, Some(team), "universe", Value::Null),
+        ),
+        (
+            event_types::KEY_ISSUED,
+            json!({ "key_id": admin, "role": "admin", "principal": "oml/admin" }),
+        ),
+        (
+            event_types::KEY_ISSUED,
+            json!({ "key_id": writer, "role": "writer", "principal": "crew/agent-7" }),
+        ),
+        (
+            event_types::GRANT_ISSUED,
+            json!({ "grant_id": id(10), "key_id": writer, "workarea_node_id": procurement }),
+        ),
+        (
+            event_types::KEY_DENIED,
+            json!({ "denial_id": id(11), "key_id": admin, "workarea_node_id": team }),
+        ),
+        (
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": memory, "workarea_id": procurement }),
+        ),
+        (event_types::KEY_REVOKED, json!({ "key_id": writer })),
+    ];
+    let mut head: Option<SignedEnvelope> = None;
+    let mut events = Vec::new();
+    for (n, (event_type, payload)) in drafts.into_iter().enumerate() {
+        let n = u64::try_from(n).expect("seq");
+        let draft = EventDraft {
+            tenant_id: tenant,
+            event_id: Uuid::from_u128(0xE600 + u128::from(n)),
+            event_type: event_type.to_owned(),
+            principal: "oml/admin".to_owned(),
+            api_key_id: None,
+            at: EventTime::parse(&format!("2026-10-01T09:00:{n:02}.000000Z")).expect("time"),
+            payload,
+        };
+        let event = sign(
+            next_envelope(head.as_ref(), draft).expect("lawful"),
+            &test_signing_key(),
+        )
+        .expect("signing");
+        head = Some(event.clone());
+        events.push(event);
+    }
+
+    let mut tx = conn.begin().await.expect("begin");
+    let set_tenant = "SELECT set_config('oml.tenant_id', $1, true)";
+    // A second tenant the PoC gave the same name, with its own `root`.
+    sqlx::query(set_tenant)
+        .bind(twin.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, 'oml')")
+        .bind(twin)
+        .execute(&mut *tx)
+        .await
+        .expect("twin tenant");
+    sqlx::query(
+        "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+         VALUES ($1, $2, NULL, 'root', 'committed')",
+    )
+    .bind(id(9))
+    .bind(twin)
+    .execute(&mut *tx)
+    .await
+    .expect("twin root");
+
+    sqlx::query(set_tenant)
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, 'oml')")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    for event in &events {
+        let env = &event.envelope;
+        sqlx::query(
+            "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+             api_key_id, at, payload, signed_bytes, signed_bytes_hash, sig) \
+             VALUES ($1, $2, $3, $4, $5, $6, NULL, ($7)::timestamptz, $8, $9, $10, $11)",
+        )
+        .bind(tenant)
+        .bind(i64::try_from(env.seq).expect("seq"))
+        .bind(env.event_id)
+        .bind(&env.event_type)
+        .bind(env.prev_hash.0.to_vec())
+        .bind(&env.principal)
+        .bind(env.at.as_str())
+        .bind(&env.payload)
+        .bind(&event.signed_bytes)
+        .bind(event.hash.0.to_vec())
+        .bind(event.sig.to_bytes().to_vec())
+        .execute(&mut *tx)
+        .await
+        .expect("journal row");
+        sqlx::query(
+            "INSERT INTO outbox (tenant_id, tenant_seq, kind, payload) \
+             VALUES ($1, $2, 'bronze-event', $3)",
+        )
+        .bind(tenant)
+        .bind(i64::try_from(env.seq).expect("seq"))
+        .bind(json!({ "event_id": env.event_id }))
+        .execute(&mut *tx)
+        .await
+        .expect("outbox row");
+    }
+    let last = head.expect("the chain has a head");
+    sqlx::query("INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES ($1, $2, $3)")
+        .bind(tenant)
+        .bind(i64::try_from(last.envelope.seq).expect("seq"))
+        .bind(last.hash.0.to_vec())
+        .execute(&mut *tx)
+        .await
+        .expect("chain head");
+    for (w, parent, wa_name, crew) in [
+        (root, None, "root", None),
+        (
+            procurement,
+            Some(root),
+            "procurement",
+            Some(json!({ "name": "Procurement Crew" })),
+        ),
+        (team, Some(root), "Procurement Team", None),
+        (again, Some(team), "procurement", None),
+        (impostor, Some(team), "universe", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status, crew) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(w)
+        .bind(tenant)
+        .bind(parent)
+        .bind(wa_name)
+        .bind(if parent.is_none() {
+            "committed"
+        } else {
+            "development"
+        })
+        .bind(crew)
+        .execute(&mut *tx)
+        .await
+        .expect("workarea row");
+    }
+    for (key_id, role, principal, seq) in [
+        (admin, "admin", "oml/admin", 7_i64),
+        (writer, "writer", "crew/agent-7", 8),
+    ] {
+        sqlx::query(
+            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
+             default_workarea_id, issued_seq) VALUES ($1, $2, $3, $4, $5, 'agent', $6, $7)",
+        )
+        .bind(key_id)
+        .bind(tenant)
+        .bind(Sha256Hash::digest(key_id.as_bytes()).0.to_vec())
+        .bind(role)
+        .bind(principal)
+        .bind(root)
+        .bind(seq)
+        .execute(&mut *tx)
+        .await
+        .expect("key row");
+    }
+    sqlx::query("UPDATE api_keys SET revoked_at = '2026-10-01T09:00:11Z' WHERE id = $1")
+        .bind(writer)
+        .execute(&mut *tx)
+        .await
+        .expect("revocation");
+    sqlx::query(
+        "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, epoch) \
+         VALUES ($1, $2, $3, 'writer', $4, 9)",
+    )
+    .bind(id(10))
+    .bind(tenant)
+    .bind(writer)
+    .bind(procurement)
+    .execute(&mut *tx)
+    .await
+    .expect("grant row");
+    sqlx::query(
+        "INSERT INTO key_denials (id, tenant_id, key_id, workarea_node_id, epoch, created_by) \
+         VALUES ($1, $2, $3, $4, 10, $3)",
+    )
+    .bind(id(11))
+    .bind(tenant)
+    .bind(admin)
+    .bind(team)
+    .execute(&mut *tx)
+    .await
+    .expect("denial row");
+    sqlx::query(
+        "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, \
+         created_event_id, claim_key, author_principal, author_key_id, version, kind, \
+         body_bytes) VALUES ($1, $2, $3, 'nickel quote', $4, 'held', $5, 'quote', \
+         'crew/agent-7', $6, 1, 'memory', 12)",
+    )
+    .bind(memory)
+    .bind(tenant)
+    .bind(procurement)
+    .bind(Sha256Hash::digest(b"nickel quote").0.to_vec())
+    .bind(events[10].envelope.event_id)
+    .bind(writer)
+    .execute(&mut *tx)
+    .await
+    .expect("memory row");
+    sqlx::query("INSERT INTO review_queue (memory_id, tenant_id) VALUES ($1, $2)")
+        .bind(memory)
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("queue row");
+    sqlx::query(
+        "INSERT INTO idempotency (tenant_id, key, request_digest, response, committed_at) \
+         VALUES ($1, 'poc-receipt', $2, $3, now())",
+    )
+    .bind(tenant)
+    .bind(vec![0_u8])
+    .bind(json!({ "memory_id": memory, "version": 1 }))
+    .execute(&mut *tx)
+    .await
+    .expect("idempotency row");
+    tx.commit().await.expect("commit the PoC rows");
+
+    let before = [
+        poc_rows(&mut conn, tenant, false).await,
+        poc_rows(&mut conn, twin, false).await,
+    ];
+    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
+    store
+        .migrate()
+        .await
+        .expect("0006 applies over the PoC's names");
+    let after = [
+        poc_rows(&mut conn, tenant, true).await,
+        poc_rows(&mut conn, twin, true).await,
+    ];
+    assert_eq!(
+        after, before,
+        "every row keeps every value, the PoC's names as prior_name"
+    );
+    assert_eq!(before[0].len(), 2 * events.len() + 14, "the seeded rows");
+
+    for t in [tenant, twin] {
+        let mut tx = conn.begin().await.expect("begin");
+        sqlx::query(set_tenant)
+            .bind(t.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        let named: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM tenants WHERE name IS NOT NULL) \
+             + (SELECT count(*) FROM workareas \
+                WHERE name IS NOT NULL OR crew_id IS NOT NULL OR path IS NOT NULL) \
+             + (SELECT count(*) FROM api_keys WHERE name IS NOT NULL OR crew_id IS NOT NULL) \
+             + (SELECT count(*) FROM crews) \
+             + (SELECT count(*) FROM key_denials WHERE lifted_epoch IS NOT NULL)",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .expect("named rows");
+        tx.rollback().await.expect("rollback");
+        assert_eq!(
+            named, 0,
+            "the migration names nothing, makes no crew and lifts no denial"
+        );
+    }
+
+    let keys = KeySet::new(vec![test_signing_key().verifying_key()]);
+    let verified = store
+        .verify_stored_chain(tenant, &keys)
+        .await
+        .expect("the journal verifies as signed");
+    assert_eq!(verified.seq, last.envelope.seq);
+    assert!(
+        matches!(
+            store.workarea(tenant, root).await,
+            Err(StoreError::Backend(_))
+        ),
+        "a workarea with no name yet is not served"
+    );
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// The store reports, per table, the rows that predate names: after 0006 a
+/// PoC tenant row, each of its workarea rows and each of its keys has none,
+/// while a tenant created since, with its `universe` root, a workarea and a
+/// key issued under its name, reports nothing (ADR-0026 d9, d11; http-api.md
+/// "Rows created before names").
+#[tokio::test]
+async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_are_not() {
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 5).await;
+    let poc = Uuid::from_u128(0xA700);
+    let (poc_root, poc_team) = (Uuid::from_u128(0xB700), Uuid::from_u128(0xB701));
+    let mut tx = conn.begin().await.expect("begin");
+    poc_tenant(&mut tx, poc).await;
+    for (w, parent, poc_name, status) in [
+        (poc_root, None, "root", "committed"),
+        (poc_team, Some(poc_root), "Procurement Team", "development"),
+    ] {
+        sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(w)
+        .bind(poc)
+        .bind(parent)
+        .bind(poc_name)
+        .bind(status)
+        .execute(&mut *tx)
+        .await
+        .expect("PoC workarea");
+    }
+    sqlx::query(
+        "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, issued_seq) \
+         VALUES ($1, $2, $3, 'admin', 'oml/admin', 'human', 3)",
+    )
+    .bind(Uuid::from_u128(0xD700))
+    .bind(poc)
+    .bind(Sha256Hash::digest(b"poc admin key").0.to_vec())
+    .execute(&mut *tx)
+    .await
+    .expect("PoC key");
+    tx.commit().await.expect("commit the PoC rows");
+    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
+    store.migrate().await.expect("0006 applies over PoC rows");
+
+    let mut rig = ChainRig::new(97);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let (root, crew, key) = (
+        Uuid::from_u128(0xB970),
+        Uuid::from_u128(0xB971),
+        Uuid::from_u128(0xD970),
+    );
+    rig.create_workarea(&store, workarea_record(t, root, None, "universe"))
+        .await;
+    rig.create_workarea(&store, workarea_record(t, crew, Some(root), "metals-crew"))
+        .await;
+    rig.issue_key(
+        &store,
+        KeyRecord {
+            name: Some(name("agent-7")),
+            ..key_record(t, key, Role::Writer, None)
+        },
+    )
+    .await;
+
+    assert_eq!(
+        store
+            .rows_without_names(&[poc, t])
+            .await
+            .expect("the check reads"),
+        vec![("tenants", 1), ("workareas", 2), ("api_keys", 1)],
+        "the PoC tenant, both its workareas and its key, and nothing created since"
+    );
+    assert_eq!(
+        store
+            .rows_without_names(&[t])
+            .await
+            .expect("the check reads"),
+        Vec::<(&str, u64)>::new(),
+        "a tenant created since names reports nothing"
+    );
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// The lead's naming over a database migration 0006 left: one
+/// `system.names_assigned` on the chain, whose fold alone fills the tenant's,
+/// each workarea's and each key's name, makes the crew records and points
+/// the workareas at them, and derives every path; the journal still
+/// verifies as signed, every workarea is served again, and a second run
+/// journals nothing (http-api.md rows created before names; ADR-0026 d11).
+#[tokio::test]
+async fn the_naming_fills_the_names_crews_and_paths_of_a_migrated_poc_database_once() {
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 5).await;
+    let tenant = Uuid::from_u128(0xA900);
+    let id = |n: u128| Uuid::from_u128(0xB900 + n);
+    let (root, procurement, team, again) = (id(0), id(1), id(2), id(3));
+    let (admin, writer) = (Uuid::from_u128(0xD900), Uuid::from_u128(0xD901));
+    let crew = json!({ "name": "Procurement Crew", "external_manager": "crewd.example.com" });
+    let created_wa = |w: Uuid, parent: Option<Uuid>, wa_name: &str, crew: &Value| {
+        json!({
+            "workarea_id": w, "parent_id": parent, "name": wa_name,
+            "status": if parent.is_none() { "committed" } else { "development" },
+            "crew": crew, "prefix": null,
+        })
+    };
+    let workareas = [
+        (root, None, "root", Value::Null),
+        (procurement, Some(root), "procurement", crew.clone()),
+        (team, Some(root), "Procurement Team", crew.clone()),
+        (again, Some(team), "procurement", Value::Null),
+    ];
+    let mut drafts = vec![(event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" }))];
+    for (w, parent, wa_name, crew) in &workareas {
+        drafts.push((
+            event_types::WORKAREA_CREATE,
+            created_wa(*w, *parent, wa_name, crew),
+        ));
+    }
+    drafts.push((
+        event_types::KEY_ISSUED,
+        json!({ "key_id": admin, "role": "admin", "principal": "oml/admin" }),
+    ));
+    drafts.push((
+        event_types::KEY_ISSUED,
+        json!({ "key_id": writer, "role": "writer", "principal": "crew/agent-7" }),
+    ));
+    let mut head: Option<SignedEnvelope> = None;
+    let mut events = Vec::new();
+    for (n, (event_type, payload)) in drafts.into_iter().enumerate() {
+        let n = u64::try_from(n).expect("seq");
+        let draft = EventDraft {
+            tenant_id: tenant,
+            event_id: Uuid::from_u128(0xE900 + u128::from(n)),
+            event_type: event_type.to_owned(),
+            principal: "oml/admin".to_owned(),
+            api_key_id: None,
+            at: EventTime::parse(&format!("2026-10-01T09:00:{n:02}.000000Z")).expect("time"),
+            payload,
+        };
+        let event = sign(
+            next_envelope(head.as_ref(), draft).expect("lawful"),
+            &test_signing_key(),
+        )
+        .expect("signing");
+        head = Some(event.clone());
+        events.push(event);
+    }
+
+    // The rows the PoC folded from that chain, at the pre-0006 schema.
+    let mut tx = conn.begin().await.expect("begin");
+    poc_tenant(&mut tx, tenant).await;
+    for event in &events {
+        let env = &event.envelope;
+        sqlx::query(
+            "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+             api_key_id, at, payload, signed_bytes, signed_bytes_hash, sig) \
+             VALUES ($1, $2, $3, $4, $5, $6, NULL, ($7)::timestamptz, $8, $9, $10, $11)",
+        )
+        .bind(tenant)
+        .bind(i64::try_from(env.seq).expect("seq"))
+        .bind(env.event_id)
+        .bind(&env.event_type)
+        .bind(env.prev_hash.0.to_vec())
+        .bind(&env.principal)
+        .bind(env.at.as_str())
+        .bind(&env.payload)
+        .bind(&event.signed_bytes)
+        .bind(event.hash.0.to_vec())
+        .bind(event.sig.to_bytes().to_vec())
+        .execute(&mut *tx)
+        .await
+        .expect("journal row");
+    }
+    let last = head.expect("the chain has a head");
+    sqlx::query("INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES ($1, $2, $3)")
+        .bind(tenant)
+        .bind(i64::try_from(last.envelope.seq).expect("seq"))
+        .bind(last.hash.0.to_vec())
+        .execute(&mut *tx)
+        .await
+        .expect("chain head");
+    for (w, parent, wa_name, crew) in &workareas {
+        sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status, crew) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(w)
+        .bind(tenant)
+        .bind(parent)
+        .bind(wa_name)
+        .bind(if parent.is_none() {
+            "committed"
+        } else {
+            "development"
+        })
+        .bind((!crew.is_null()).then(|| crew.clone()))
+        .execute(&mut *tx)
+        .await
+        .expect("workarea row");
+    }
+    for (key_id, role, principal, seq) in [
+        (admin, "admin", "oml/admin", 6_i64),
+        (writer, "writer", "crew/agent-7", 7),
+    ] {
+        sqlx::query(
+            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
+             default_workarea_id, issued_seq) VALUES ($1, $2, $3, $4, $5, 'agent', $6, $7)",
+        )
+        .bind(key_id)
+        .bind(tenant)
+        .bind(Sha256Hash::digest(key_id.as_bytes()).0.to_vec())
+        .bind(role)
+        .bind(principal)
+        .bind(root)
+        .bind(seq)
+        .execute(&mut *tx)
+        .await
+        .expect("key row");
+    }
+    tx.commit().await.expect("commit the PoC rows");
+    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
+    store.migrate().await.expect("0006 applies");
+
+    let app = App::new(
+        store.clone(),
+        MemSigner::new(oml_port_contracts::TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let assigned = app
+        .name_rows_that_predate_names(&[tenant])
+        .await
+        .expect("the naming folds");
+    assert_eq!(assigned.len(), 1);
+    assert_eq!(assigned[0].journal_seq, last.envelope.seq + 1);
+    let crews = &assigned[0].naming.crews;
+    assert_eq!(crews.len(), 1, "one record per distinct crew object");
+    let crew_id = crews[0].crew_id;
+    let derived = |kind: NamedKind, id: Uuid| Name::derived(kind, id).as_str().to_owned();
+
+    // Every row reads back with its name, path and crew, through the port.
+    assert!(store.unnamed_rows(tenant).await.expect("read").is_empty());
+    let named: Vec<(String, Option<Uuid>)> = {
+        let mut rows = Vec::new();
+        for w in [root, procurement, team, again] {
+            let record = store
+                .workarea(tenant, w)
+                .await
+                .expect("a named workarea is served")
+                .expect("the node");
+            rows.push((record.name.as_str().to_owned(), record.crew_id));
+        }
+        rows
+    };
+    assert_eq!(
+        named,
+        vec![
+            ("universe".to_owned(), None),
+            ("procurement".to_owned(), Some(crew_id)),
+            (derived(NamedKind::Workarea, team), Some(crew_id)),
+            (derived(NamedKind::Workarea, again), None),
+        ]
+    );
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let paths: Vec<String> =
+        sqlx::query_scalar("SELECT path::text FROM workareas WHERE tenant_id = $1 ORDER BY id")
+            .bind(tenant)
+            .fetch_all(&mut *tx)
+            .await
+            .expect("paths");
+    let tenant_name: Option<String> =
+        sqlx::query_scalar("SELECT name::text FROM tenants WHERE id = $1")
+            .bind(tenant)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("the tenant's name");
+    tx.rollback().await.expect("rollback");
+    let team_path = format!("universe.{}", derived(NamedKind::Workarea, team));
+    assert_eq!(
+        paths,
+        vec![
+            "universe".to_owned(),
+            "universe.procurement".to_owned(),
+            team_path.clone(),
+            format!("{team_path}.{}", derived(NamedKind::Workarea, again)),
+        ]
+    );
+    assert_eq!(tenant_name.as_deref(), Some("oml"));
+    let record = store
+        .crew(tenant, crew_id)
+        .await
+        .expect("read")
+        .expect("the crew record");
+    assert_eq!(record.name.as_str(), derived(NamedKind::Crew, crew_id));
+    assert_eq!(
+        record.external_manager.as_deref(),
+        Some("crewd.example.com")
+    );
+    for key in [admin, writer] {
+        let key_name = Name::parse_reference(&derived(NamedKind::Key, key)).expect("a name");
+        assert_eq!(
+            store
+                .resolve_name(tenant, NamedKind::Key, &key_name)
+                .await
+                .expect("resolve"),
+            Some(key)
+        );
+    }
+
+    let keys = KeySet::new(vec![test_signing_key().verifying_key()]);
+    let verified = store
+        .verify_stored_chain(tenant, &keys)
+        .await
+        .expect("the named chain verifies");
+    assert_eq!(verified.seq, last.envelope.seq + 1);
+
+    // A second run finds nothing to name and journals nothing.
+    assert!(
+        app.name_rows_that_predate_names(&[tenant])
+            .await
+            .expect("the second run")
+            .is_empty()
+    );
+    assert_eq!(
+        store.chain_head(tenant).await.expect("head").map(|h| h.seq),
+        Some(verified.seq)
+    );
+    drop(conn);
     drop_dbs(&created).await;
 }

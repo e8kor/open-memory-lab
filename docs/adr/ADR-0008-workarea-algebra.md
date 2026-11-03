@@ -7,7 +7,7 @@ answers: why workareas are one algebra — per-tenant universe tree, node-id gra
 
 # ADR-0008 — Workarea algebra: per-tenant universe tree, node-id grants, deny semantics, edges
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
 
 ## Context
 

@@ -23,13 +23,22 @@ is one connection:
 4. follow what happens to them once a different identity reviews them (`oml_events_tail`);
 5. revise or retire what no longer holds (`oml_supersede`).
 
+## Name a workarea
+
+Every argument that names a workarea takes its name, such as `metals-crew`, or its id:
+`workarea` on `oml_remember`, `oml_learn`, `oml_my_work` and `oml_workarea_info`, and
+`scope` on `oml_recall` and `oml_events_tail`. A workarea's name is unique in the tenant and
+never changes. A path is not a name: pass `metals-crew`, not
+`universe.procurement.metals-crew`. A name the key cannot see is refused with
+`access.not_found`, exactly as its id would be.
+
 ## Check what a workarea allows
 
 Call `oml_workarea_info` with no arguments to describe the key's default workarea, or pass
-`workarea` to name another. It returns the workarea's `path` and `status`, the child
-workareas the key can read, and `my_effective_verbs`: the verbs the key's grants allow
-there, such as `remember` or `recall`. A verb missing from the list is refused in that
-workarea: with `access.verb_ceiling` when the key's role can never call it,
+`workarea` to name another. It returns the workarea's `name`, `path` and `status`, the child
+workareas the key can read, each with its name as `path_leaf`, and `my_effective_verbs`: the
+verbs the key's grants allow there, such as `remember` or `recall`. A verb missing from the
+list is refused in that workarea: with `access.verb_ceiling` when the key's role can never call it,
 `access.grant_refused` when the key can read the workarea but holds no grant for the verb,
 and `access.not_found` when it cannot read the workarea at all.
 

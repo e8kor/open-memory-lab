@@ -7,7 +7,7 @@ answers: what the documentation set commits — the two tiers, the honesty disci
 
 # ADR-0018 — The documentation set: tiers, honesty discipline, llms.txt, frontmatter
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
 
 ## Context
 

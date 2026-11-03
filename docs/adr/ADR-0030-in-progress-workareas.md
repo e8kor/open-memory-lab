@@ -51,14 +51,14 @@ take. Proposed, not built.
   **inside** its root's subtree while it has a root, so the root's move to `committed`, the
   commit (d12), ends the subtree. The mark is not a status.
 
-    The later act is the maintainer's reading: the maintainer's crew workarea `crew/oml` already
-    exists and holds rows. Either act is refused with `workarea.in_progress_refused` unless every
-    node of the subtree is `development`, none is a vocabulary workarea, and neither the node nor
-    an ancestor or descendant has a root; `in_progress: true` with `prefix` is
-    `request.validation`. So every node inside stays `development` until the commit, and
-    `committed` and `validated` workareas keep R3 without exception. Marking an existing workarea
-    applies d4 and d5 at once to the rows already in it, by the one journalled act and no row
-    write.
+    The later act is the maintainer's reading: the maintainer's crew workarea, at
+    `universe.crew.oml`, already exists and holds rows. Either act is refused with
+    `workarea.in_progress_refused` unless every node of the subtree is `development`, none is a
+    vocabulary workarea, and neither the node nor an ancestor or descendant has a root;
+    `in_progress: true` with `prefix` is `request.validation`. So every node inside stays
+    `development` until the commit, and `committed` and `validated` workareas keep R3 without
+    exception. Marking an existing workarea applies d4 and d5 at once to the rows already in it,
+    by the one journalled act and no row write.
 
 - **d2 — Until the commit nothing crosses a subtree's boundary, and only its root moves up the
   ladder.** Each case is `workarea.in_progress_refused`:
@@ -214,15 +214,18 @@ take. Proposed, not built.
   `WorkareaCreate.in_progress` (boolean, default `false`); `POST
   /v2/workareas/{workarea_id}/in-progress`, admin key role, no body, journalled as
   `workarea.in_progress_marked`, answering `200` with the workarea; `Workarea.in_progress_root_id`,
-  the node's root computed at the read, the node itself for a root, null outside; and the CLI's
-  `oml workareas create --in-progress` and `oml workareas in-progress <workarea>`.
+  the id of the node's root computed at the read, the node itself for a root, null outside, on the
+  workarea read and on each node of the tree read; and the CLI's
+  `oml workareas create <parent> <name> --in-progress` and `oml workareas in-progress <workarea>`,
+  whose `<workarea>` takes an id or a name ([ADR-0026](ADR-0026-names-are-keys.md) d4).
   `my_effective_verbs` and `permission_epoch` are unchanged: d5 turns on a mark and a grant
   attribute, not a role, and the mark is read beside the epoch. This amends ADR-0025 d14.
 
 - **d12 — The commit is the root's `development` → `committed` transition under ADR-0009's
   rules, refused while any version inside is held.** This is the maintainer's reading. Different
   identities propose and ratify it, each a dreamer or an admin (ADR-0009 d3). Both acts are
-  refused with `workarea.held_remaining`, details `{workarea_id}` and no count, while any version
+  refused with `workarea.held_remaining`, details `{workarea_id}`, the root as the request spelled
+  it ([ADR-0026](ADR-0026-names-are-keys.md) d4), and no count, while any version
   in the subtree is in state `held`, dead-lettered ones included; rejected, demoted and erased
   versions do not block, and a refused ratification journals nothing. The ratification's test
   runs in round trip two's statement under the chain lock, which every capture takes, so no held
@@ -250,8 +253,9 @@ take. Proposed, not built.
       `MemorySummary.reviewed` and `Workarea.in_progress_root_id` required from its acceptance; the
       payload fields `workarea.create.in_progress` and `grant.issued.unreviewed`; the columns
       `workareas.in_progress` and `grants.unreviewed`.
-    - **The version** moves to `0.3.0-design`, since `/v1` shapes change; the `spec-v0.3` tag
-      waits for acceptance. [mcp-tools.json](../api/mcp-tools.json)'s `_meta.pending_design`
+    - **The version** moves to `0.4.0-design`, since `/v1` shapes change: `0.3.0-design` was
+      tagged `spec-v0.3` at ADR-0026's acceptance, and the `spec-v0.4` tag waits for this
+      record's. [mcp-tools.json](../api/mcp-tools.json)'s `_meta.pending_design`
       names what this record adds to `oml_recall` and `oml_workarea_info`.
     - **The vocabulary** of ADR-0018 d4, at acceptance: the "held" row's meaning gains "and,
       inside an in-progress workarea, the readers ADR-0030 d5 admits", its "never" column
@@ -273,7 +277,7 @@ take. Proposed, not built.
   set, and undeclared derivation stays undetectable (ADR-0001 d6). `reviewed: false` is the
   mitigation, and the `oml-memory` skill's instruction to weigh such claims lands with its code.
 - **Marking an existing workarea takes its promoted claims from every read scoped outside it**
-  until the commit; for `crew/oml`, every promoted claim in it.
+  until the commit; for `universe.crew.oml`, every promoted claim in it.
 - **The commit waits on review**: one held claim no eligible reviewer can judge holds the whole
   subtree until it is reviewed, dead-lettered and re-enqueued, or erased.
 - **Get reads at the row's node** (d4): a key with reader access on an ancestor can get a
@@ -288,7 +292,7 @@ take. Proposed, not built.
 **Process obligations**
 
 - **With the proposal**: this file, a [register](index.md) row, a `mkdocs.yml` nav entry,
-  `llms.txt`'s mention as proposed, a [changelog](../changelog.md) entry for `0.3.0-design`, and
+  `llms.txt`'s mention as proposed, a [changelog](../changelog.md) entry for `0.4.0-design`, and
   d13 on [openapi.yaml](../api/openapi.yaml), [errors](../api/errors.md), the
   [HTTP API](../api/http-api.md) and [mcp-tools.json](../api/mcp-tools.json), agreeing as
   `scripts/check_contract_sync.py` checks, each mention marked "proposed (ADR-0030)". No other
@@ -306,15 +310,15 @@ take. Proposed, not built.
       simulations, security (d10), the Postgres schema and event catalog (d13), the CLI reference,
       the agent plugin, the test strategy (`P-R3-BOUNDARY`, `P-R2-INPROGRESS`, `P-R3-VISIBILITY`),
       the roadmap (FR-31), concepts, commitments C4, the review guide, the README, the home page,
-      `llms.txt`, `CONTRIBUTING.md`, and the D7, D8, D9, D11, D12, D13 and D14 cells;
+      `llms.txt`, and the D7, D8, D9, D11, D12, D13 and D14 cells;
     - the contract surfaces drop "proposed", d13's two properties become required, and the
-      `spec-v0.3` tag is cut.
+      `spec-v0.4` tag is cut.
 
 ## Rejected alternatives
 
 | Alternative | Why not |
 |---|---|
-| **d1 — A mark set only at creation** | `crew/oml` already exists and holds rows, so it could never be marked. |
+| **d1 — A mark set only at creation** | `universe.crew.oml` already exists and holds rows, so it could never be marked. |
 | **d1 — Rows promoted before the opt-in stay visible outside** | Only a stamp per row could tell them apart, which d4 rejects, and one subtree would have two release rules. |
 | **d1 — Mark a subtree holding a `committed`, `validated` or vocabulary node** | R3 would hold on some nodes inside and not others, and a term's CURIE, cited across the tenant, could be cited before the term is reviewed. |
 | **d1 — A verb that clears the mark, or a fourth status** | The first contributes while skipping the commit's precondition; a status selects review policy (ADR-0009 d2), while the mark changes who reads. |

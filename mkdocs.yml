@@ -105,6 +105,11 @@ nav:
       - Test strategy: engineering/test-strategy.md
       - CI and toolchain: engineering/ci-and-toolchain.md
       - Benchmark harness: engineering/benchmark-harness.md
+      - M0 spikes:
+          - Harness and status: engineering/spikes/index.md
+          - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
+          - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
+      - Client SDKs: engineering/sdks.md
   - Decisions:
       - Index: adr/index.md
       - ADR template: adr/TEMPLATE.md
@@ -133,6 +138,8 @@ nav:
       - ADR-0023: adr/ADR-0023-install-profiles-and-cluster-mode.md
       - ADR-0024: adr/ADR-0024-performance-foundation.md
       - ADR-0025: adr/ADR-0025-the-agent-only-memory-surface.md
+      - ADR-0026: adr/ADR-0026-names-are-keys.md
       - ADR-0028: adr/ADR-0028-agent-key-issuance.md
       - ADR-0029: adr/ADR-0029-session-start-hook.md
       - ADR-0030: adr/ADR-0030-in-progress-workareas.md
+      - ADR-0033: adr/ADR-0033-interim-helm-chart.md
