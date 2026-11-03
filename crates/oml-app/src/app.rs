@@ -18,7 +18,9 @@ use oml_domain::access::{
     effective_verbs, resolve, resolve_verb, tail_visible,
 };
 use oml_domain::budget::{budget_tokens, cut, hit_order};
-use oml_domain::claim_edges::{Ratifier, RatifyRefusal, check_label, check_ratifier};
+use oml_domain::claim_edges::{
+    LabelRefusal, Ratifier, RatifyRefusal, check_label, check_ratifier, check_term_curies,
+};
 use oml_domain::name::{
     Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
     assign_names, unresolved_value,
@@ -264,8 +266,22 @@ fn claim_edge_ratify_request_digest(edge_id: Uuid) -> Result<String, AppError> {
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
 
+/// A claim edge's label against its endpoints: [`check_label`] on their
+/// kinds, then [`check_term_curies`] on their `claim_key`s, each refusal
+/// naming its body field (errors.md `request.validation`; ADR-0021 d2, d5).
+fn check_edge_label(label: &str, src: &MemoryRecord, dst: &MemoryRecord) -> Result<(), AppError> {
+    let refused = |reason: LabelRefusal| AppError::ClaimEdgeLabel {
+        field: reason.field(),
+        reason,
+    };
+    check_label(label, src.kind, dst.kind).map_err(refused)?;
+    check_term_curies(label, &src.claim_key, &dst.claim_key).map_err(refused)
+}
+
 /// A term endpoint's CURIE, its `claim_key` (ADR-0021 d2); anything else
-/// fails the cycle check closed.
+/// fails the cycle check closed. The label check at proposal and at
+/// ratification refuses a non-CURIE endpoint first, so this answers only a
+/// stored row that defies it.
 fn term_curie(kind: MemoryKind, claim_key: &str) -> Result<Curie, AppError> {
     let refused = || AppError::TermEndpoint {
         claim_key: claim_key.to_owned(),
@@ -3090,10 +3106,7 @@ where
             });
         }
         let (src, dst) = (&endpoints[0], &endpoints[1]);
-        check_label(&req.label, src.kind, dst.kind).map_err(|reason| AppError::ClaimEdgeLabel {
-            field: reason.field(),
-            reason,
-        })?;
+        check_edge_label(&req.label, src, dst)?;
 
         let edge_id = self.ids.new_id();
         let payload = json!({
@@ -3166,10 +3179,12 @@ where
     /// d5). The refusal order: the verb ceiling, a `held_by: service` key
     /// before any lookup, the idempotency record, the edge and both its
     /// endpoints present and in read scope, dreamer on both endpoints'
-    /// workareas, R2 — the proposer's key or principal, then either
-    /// endpoint's lineage closure — then the edge's state, then for
-    /// `oml:is_a` and `oml:replaced_by` the cycle invariant over that
-    /// label's ratified edges (roles-and-keys.md; ADR-0012; ADR-0021 d5).
+    /// workareas, the proposal's label check, R2 — the proposer's key or
+    /// principal, then either endpoint's lineage closure — then the edge's
+    /// state, then for `oml:is_a` the cycle invariant over that label's
+    /// ratified edges (roles-and-keys.md; ADR-0012; ADR-0021 d5). The
+    /// `oml:replaced_by` cycle check belongs to the deprecation verdict that
+    /// carries the pointer (ADR-0021 d3).
     /// The head is read before the edges the cycle check reads, so a
     /// ratification committing between them conflicts this one and the
     /// transport's head retry reads them again (ADR-0002).
@@ -3237,6 +3252,11 @@ where
                 .await?;
         }
         let (src, dst) = (&endpoints[0], &endpoints[1]);
+        // The proposal's label check again: an `oml:replaced_by` or
+        // `oml:consider` edge is ratified only inside its deprecation's
+        // verdict, and `oml:about` only once classification is built, so a
+        // pending one of either is refused as its proposal is (ADR-0021 d3).
+        check_edge_label(&edge.label, src, dst)?;
 
         // R2 against both endpoints' flattened closures plus their authors,
         // pending and ratified edges alike (http-api.md, claim edges).
@@ -3274,7 +3294,7 @@ where
         let state = edge_transition(&edge.label, edge.state, EdgeState::Ratified)
             .map_err(|_| AppError::EdgeConsumed { edge_id })?;
 
-        if let Some(label @ (OmlLabel::IsA | OmlLabel::ReplacedBy)) = OmlLabel::parse(&edge.label) {
+        if let Some(label @ OmlLabel::IsA) = OmlLabel::parse(&edge.label) {
             let candidate = TermEdge {
                 label,
                 from: term_curie(src.kind, &src.claim_key)?,
