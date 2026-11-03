@@ -6525,6 +6525,65 @@ async fn a_second_dreamer_ratifies_a_pending_edge_and_review_ratify_names_it_wit
     );
 }
 
+/// `review.*` and `claim_edge.*` have no key on the events tail
+/// (http-api.md#events-tail, the per-family table; `tail_visible`): no key
+/// is served the proposal or the ratification, the proposer's and the
+/// ratifier's own keys included, while the endpoints' promotions stay on
+/// the tail.
+#[tokio::test]
+async fn claim_edge_proposed_and_an_edges_review_ratify_never_appear_on_the_events_tail() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    f.app
+        .ratify_claim_edge(&rita.value, f.edge_id, None)
+        .await
+        .expect("ratify");
+    let reader = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    // Both events are in the chain, so their absence below is the tail's.
+    let journalled: Vec<String> = journal(&f.store, f.boot.tenant_id)
+        .await
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    for edge_event in [event_types::CLAIM_EDGE_PROPOSED, event_types::REVIEW_RATIFY] {
+        assert!(
+            journalled.iter().any(|t| t == edge_event),
+            "{edge_event} is journalled"
+        );
+    }
+
+    for key in [&f.pat, &rita, &reader] {
+        let tail = f
+            .app
+            .tail_events(&key.value, Some(by_name("crew")), 0, 1000)
+            .await
+            .expect("tail");
+        let types: Vec<&str> = tail
+            .events
+            .iter()
+            .map(|e| e.event.envelope.event_type.as_str())
+            .collect();
+        assert!(
+            types.contains(&event_types::LIFECYCLE_PROMOTE),
+            "{}: the endpoints' promotions are on the tail: {types:?}",
+            key.principal
+        );
+        assert!(
+            !types
+                .iter()
+                .any(|t| t.starts_with("claim_edge.") || t.starts_with("review.")),
+            "{}: no claim_edge.* or review.* event: {types:?}",
+            key.principal
+        );
+        assert_eq!(
+            tail.next_after_seq, tail.head_seq,
+            "the scan reached the ratification"
+        );
+    }
+}
+
 #[tokio::test]
 async fn the_proposers_own_key_is_refused_review_ratifier_is_proposer() {
     let f = edge_fixture().await;

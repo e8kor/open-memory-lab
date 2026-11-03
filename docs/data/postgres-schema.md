@@ -365,8 +365,9 @@ and hyphens" up to 1000 characters per label
 
 **Status:** built in `migrations/0011_claim_edges.sql` · its checks run only where a superuser
 mints the suites' role pairs, CI's `cargo test (Postgres)`
-([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8). The proposal and
-ratification use cases that write it are not built yet.
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8). `oml-pg`'s
+claim-edge statements and `oml-app`'s proposal, ratification and page use cases that write and
+read it are built; no HTTP route or MCP tool reaches them yet.
 
 A labelled edge between two claims ([ADR-0008](../adr/ADR-0008-workarea-algebra.md) d5), `pending`
 until a key that is not its proposer ratifies it, and never deleted:
