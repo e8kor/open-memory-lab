@@ -224,6 +224,61 @@ jobs:
       - name: The CLI's unit tests
         run: cargo test --locked -p oml-cli --lib --bins --target "$TARGET"
 
+  # The installers of ADR-0041 against a real, published release, as a user
+  # runs them: install.sh piped to sh on Linux and macOS, install.ps1 under
+  # PowerShell 7 and, through Invoke-Expression, Windows PowerShell 5.1, each
+  # into a user directory, then the installed `oml --version`. One Linux leg
+  # has cosign and requires the signature; the others have no cosign and take
+  # the checksum-only path.
+  install-smoke:
+    name: installer (${{ matrix.runner }}${{ matrix.cosign && ', cosign' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+          - runner: ubuntu-24.04
+            cosign: true
+          - runner: macos-15
+          - runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    env:
+      # The newest published release. The installers' default is the
+      # workspace version, which has no release until its tag.
+      OML_SMOKE_VERSION: 0.3.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@v3
+        if: matrix.cosign
+      - name: shellcheck install.sh
+        if: runner.os == 'Linux' && !matrix.cosign
+        run: shellcheck -s sh scripts/install/install.sh
+      - name: install.sh piped to sh, then oml --version
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          flags=(--version "$OML_SMOKE_VERSION" --dir "$RUNNER_TEMP/oml-bin")
+          if [ "${{ matrix.cosign }}" = "true" ]; then flags+=(--require-signature); fi
+          sh -s -- "${flags[@]}" < scripts/install/install.sh
+          got="$("$RUNNER_TEMP/oml-bin/oml" --version)"
+          [ "$got" = "oml $OML_SMOKE_VERSION" ] || { echo "got '$got'" >&2; exit 1; }
+      - name: install.ps1 under PowerShell 7, then oml --version
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & ./scripts/install/install.ps1 -Version $env:OML_SMOKE_VERSION -Dir "$env:RUNNER_TEMP\oml-pwsh"
+          $got = (& "$env:RUNNER_TEMP\oml-pwsh\oml.exe" --version | Out-String).Trim()
+          if ($got -ne "oml $env:OML_SMOKE_VERSION") { throw "got '$got'" }
+      - name: install.ps1 through Invoke-Expression under Windows PowerShell 5.1, then oml --version
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:OML_VERSION = $env:OML_SMOKE_VERSION
+          $env:OML_INSTALL_DIR = "$env:RUNNER_TEMP\oml-ps51"
+          Get-Content -Raw ./scripts/install/install.ps1 | Invoke-Expression
+          $got = (& "$env:RUNNER_TEMP\oml-ps51\oml.exe" --version | Out-String).Trim()
+          if ($got -ne "oml $env:OML_SMOKE_VERSION") { throw "got '$got'" }
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

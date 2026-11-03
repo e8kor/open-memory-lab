@@ -110,6 +110,7 @@ nav:
           - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
           - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
       - Client SDKs: engineering/sdks.md
+      - "Plan: documentation for v0.4.0": engineering/docs-upgrade-v0.4.0.md
   - Decisions:
       - Index: adr/index.md
       - ADR template: adr/TEMPLATE.md
@@ -143,3 +144,4 @@ nav:
       - ADR-0029: adr/ADR-0029-session-start-hook.md
       - ADR-0033: adr/ADR-0033-interim-helm-chart.md
       - ADR-0034: adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md
+      - ADR-0041: adr/ADR-0041-a-quick-start-in-one-command-per-role.md

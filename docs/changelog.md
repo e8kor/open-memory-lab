@@ -29,6 +29,27 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — A quick start in one command per role (proposed ADR-0041), the installers, and the v0.4.0 documentation plan
+
+Proposed [ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) decides how a person
+goes from nothing to a first memory in one command per role. Its d1–d3 and d8 are built;
+d4–d7, d9 and d10 are decided, not built. No `info.version` change: no HTTP surface moves.
+
+- **Built.** `scripts/install/install.sh` and `install.ps1` install the CLI for the user without
+  sudo. They check the archive against the release's `SHA256SUMS`, and `SHA256SUMS` with cosign
+  when it is on `PATH`, and say which happened. They install the release they were cut with unless
+  `--version` names another or `latest`, and they edit no profile.
+  `ci.yml` job `install-smoke` runs them against v0.3.1 on Linux, macOS and Windows.
+  `scripts/check_release.py` now fails a pull request if a script names a release file the
+  release does not sign, misses a target, drops cosign's identity or drifts from the workspace
+  version. The [CLI reference](cli/reference.md#installing-oml-and-what-differs-on-windows) shows
+  the one line.
+- **Decided.** `oml login` and `oml doctor` (from the proposed ADR-0039) as the onboarding step;
+  `oml setup claude-code`, which refuses an admin key; `oml quickstart` for the docker profile;
+  a redirect from `oml.doublegate.io`; the time targets.
+- **Opened:** FR-68 and FR-69 on the [roadmap](product/roadmap.md).
+- **Planned:** the [v0.4.0 documentation plan](engineering/docs-upgrade-v0.4.0.md), page by page.
+
 ### 2026-11-03 — Releases ship the Claude Code plugins and an agent kit (implementation)
 
 An implementation milestone with no decision or surface change: each tag also ships the oml and

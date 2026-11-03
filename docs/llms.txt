@@ -45,7 +45,7 @@
 - [OpenAPI document](https://e8kor.github.io/open-memory-lab/api/openapi.yaml): the machine-readable contract, identical to the HTTP API page by construction
 - [MCP plugin](https://e8kor.github.io/open-memory-lab/api/mcp-plugin/): the agent-facing MCP tools over streamable HTTP, each a facade over one HTTP call
 - [Reviewer crews](https://e8kor.github.io/open-memory-lab/api/reviewer-crews/): how an external review crew integrates over plain HTTP — queue, serve, verdict
-- [CLI reference](https://e8kor.github.io/open-memory-lab/cli/reference/): every administrative verb; the CLI is the whole administration surface
+- [CLI reference](https://e8kor.github.io/open-memory-lab/cli/reference/): every administrative verb; the CLI is the whole administration surface; installing it in one line with install.sh or install.ps1
 - [CLI sessions](https://e8kor.github.io/open-memory-lab/cli/sessions/): mockup transcripts of the ceremonies — nothing on that page has run
 
 ## Operations
@@ -69,6 +69,7 @@
 - [M0 spikes](https://e8kor.github.io/open-memory-lab/engineering/spikes/): how the critical path's M0 experiments run here, which have run, and which have not
 - [Finding: chain-format vectors](https://e8kor.github.io/open-memory-lab/engineering/spikes/chain-vectors/): the chain-format test vectors reproduced byte for byte by independent non-Rust JCS, SHA-256 and Ed25519 implementations, and the Rust tests' copies of them compared with the page
 - [Findings: spike 3, RLS](https://e8kor.github.io/open-memory-lab/engineering/spikes/spike-3-rls/): S3.1–S3.4 on PostgreSQL 18.6: what held, the cross-tenant FTS index statistics that the owner's pg_stats and any session's EXPLAIN estimate expose, S3.2 as a PostgreSQL mechanism and as an open claim about OML's roles, the no-tenant behaviour, and the GIN index under RLS
+- [Plan: documentation for v0.4.0](https://e8kor.github.io/open-memory-lab/engineering/docs-upgrade-v0.4.0/): every page the v0.4.0 upgrade rewrites or adds — Get started, the install page, simplified use-case scenarios, the architecture overview, the CLI, plugin and kit pages, and guides for Claude Code, claude.ai and mobile, other harnesses, self-hosting and upgrading — each with its source of truth and what it waits for
 - [Client SDKs](https://e8kor.github.io/open-memory-lab/engineering/sdks/): the Python and TypeScript clients generated from openapi.yaml, their pinned generators, what the hand-written wrappers add, and the regeneration rule (FR-12)
 
 ## Product
@@ -82,5 +83,6 @@
 
 ## Decisions
 
-- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0026, ADR-0028, ADR-0029, ADR-0034 and the proposed ADR-0033, what each decides, and which page owns which decision
+- [Decision register](https://e8kor.github.io/open-memory-lab/adr/): all decision records ADR-0001–ADR-0026, ADR-0028, ADR-0029, ADR-0034 and the proposed ADR-0033 and ADR-0041, what each decides, and which page owns which decision
 - [ADR-0034](https://e8kor.github.io/open-memory-lab/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing/): accepted with release v0.3.1 — the lead migrates as an owner role and serves as a role that owns nothing, refuses to start on one database URL, leaves `_sqlx_migrations` the one table without row-level security, reachable by the owner alone, gives each tenant its own FTS index partition, created by the owner at tenant creation, and makes every foreign key into a tenant table carry `tenant_id`
+- [ADR-0041](https://e8kor.github.io/open-memory-lab/adr/ADR-0041-a-quick-start-in-one-command-per-role/): proposed — one command per role: install.sh and install.ps1 install the CLI for the user without sudo, check the archive against the signed SHA256SUMS (with cosign when present, checksum only otherwise, and say which), pin the version they were released with; then `oml login`, `oml setup claude-code` and, for a self-hoster, `oml quickstart`; time-to-first-memory targets, unmeasured (FR-68)
