@@ -29,13 +29,15 @@ use std::sync::{Arc, Mutex};
 use oml_app::App;
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
+use oml_app::domain::oauth::ConnectionState;
 use oml_app::domain::{
     Envelope, EventDraft, EventTime, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, event_types, next_envelope, sign, verify_chain,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, JournalStore, MetadataFold, OutboxRow, StoreError,
+    CommitReceipt, CommitRequest, ConnectionStore, JournalStore, MetadataFold, OutboxRow,
+    StoreError,
 };
 use oml_app::types::{AppError, BootstrapRequest, KeyRecord, PROVIDER_TENANT};
 use oml_pg::{
@@ -43,8 +45,8 @@ use oml_pg::{
     role_split_postflight, role_split_preflight,
 };
 use oml_port_contracts::{
-    ChainRig, held_memory, key_record, name, run_journal_store_suite, test_signing_key,
-    workarea_record,
+    ChainRig, authorized_connection, connect_code, connector_key, held_memory, key_record, name,
+    run_connection_store_suite, run_journal_store_suite, test_signing_key, workarea_record,
 };
 use serde_json::{Value, json};
 use sqlx::migrate::Migrate as _;
@@ -211,6 +213,20 @@ async fn journal_store_contract_suite() {
     drop_dbs(&created).await;
 }
 
+/// The connection laws the double proves, against the real store: the
+/// connection folds run inside the commit's transaction under the tenant's
+/// `oml.tenant_id`, and a refused fold commits nothing (postgres-schema.md
+/// "connections (ADR-0031)"; ADR-0031 d8, d12).
+#[tokio::test]
+async fn connection_store_contract_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    run_connection_store_suite(|| fresh_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
 // ---------------------------------------------------------------------------
 // Adapter-specific laws
 // ---------------------------------------------------------------------------
@@ -329,6 +345,154 @@ async fn concurrent_commits_serialize_per_tenant() {
         .expect("head")
         .expect("head");
     verify_chain(&events, &keys, Some(&head)).expect("the concurrently written chain verifies");
+    drop_dbs(&created).await;
+}
+
+/// Signs and commits one `connection.opened` of `connection_id` at an
+/// explicit (seq, prev_hash), naming no replaced connection: what a token
+/// exchange does after reading the head.
+async fn open_at(
+    store: &PgStore,
+    tenant_id: Uuid,
+    head: &oml_app::domain::ChainHead,
+    connection_id: Uuid,
+) -> Result<CommitReceipt, StoreError> {
+    let event_id =
+        Uuid::from_u128(0xE000_0000 + u128::from(EVENT_N.fetch_add(1, Ordering::SeqCst)));
+    let envelope = Envelope {
+        tenant_id,
+        seq: head.seq + 1,
+        event_id,
+        event_type: event_types::CONNECTION_OPENED.to_owned(),
+        prev_hash: head.hash,
+        principal: "race".to_owned(),
+        api_key_id: None,
+        // Before the fixture authorization code's expiry, 13:01:00.
+        at: EventTime::parse("2026-10-29T13:00:50.000000Z").expect("fixture time"),
+        payload: json!({
+            "connection_id": connection_id.to_string(),
+            "replaces_connection_id": Value::Null,
+        }),
+    };
+    let event = sign(envelope, &test_signing_key()).expect("signing");
+    store
+        .commit(CommitRequest {
+            event: event.clone(),
+            fold: MetadataFold::ConnectionOpened {
+                connection_id,
+                replaces: None,
+            },
+            outbox: OutboxRow {
+                event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            idempotency: None,
+        })
+        .await
+}
+
+/// Two racing `connection.opened` commits for one key leave exactly one
+/// open connection: two token exchanges presenting one authorization code
+/// each retry past the chain's conflicts, one opens the connection and the
+/// other's fold, reading the row under the chain lock, is refused and
+/// commits nothing (postgres-schema.md `oauth_connections_open`, redemption
+/// is a conditional update; ADR-0031 d7, d10, d12).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_racing_connection_opened_commits_for_one_key_leave_exactly_one_open_connection() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = Arc::new(fresh_store(&created).await);
+    let mut rig = ChainRig::new(330);
+    rig.seed_chain(&*store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3300));
+    rig.issue_key(&*store, key.clone()).await;
+    let (code, connection) = (Uuid::from_u128(0xC3301), Uuid::from_u128(0xE3301));
+    rig.mint_code(&*store, connect_code(code, key.key_id), None)
+        .await
+        .expect("mint");
+    let spent_at = EventTime::parse("2026-10-29T13:00:20.000000Z").expect("fixture time");
+    assert!(
+        store
+            .connect_code_redeem(t, code, &spent_at)
+            .await
+            .expect("redeem")
+    );
+    store
+        .connection_authorize(t, authorized_connection(connection, key.key_id, code))
+        .await
+        .expect("authorize");
+
+    let start = Arc::new(tokio::sync::Barrier::new(2));
+    let racers: Vec<_> = (0..2)
+        .map(|_| {
+            let (store, start) = (Arc::clone(&store), Arc::clone(&start));
+            tokio::spawn(async move {
+                start.wait().await;
+                loop {
+                    let head = store
+                        .chain_head(t)
+                        .await
+                        .expect("head")
+                        .expect("the rig's chain has a head");
+                    match open_at(&store, t, &head, connection).await {
+                        // The chain's loser re-reads the head and retries,
+                        // so the fold is what decides (ADR-0002 d3).
+                        Err(
+                            StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. },
+                        ) => {}
+                        outcome => return outcome,
+                    }
+                }
+            })
+        })
+        .collect();
+    let mut outcomes = Vec::new();
+    for racer in racers {
+        outcomes.push(racer.await.expect("racer"));
+    }
+    let opened: Vec<&CommitReceipt> = outcomes.iter().filter_map(|o| o.as_ref().ok()).collect();
+    assert_eq!(opened.len(), 1, "exactly one exchange opens: {outcomes:?}");
+    assert!(
+        outcomes
+            .iter()
+            .any(|o| matches!(o, Err(StoreError::Backend(_)))),
+        "the other is refused by the fold: {outcomes:?}"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head").map(|h| h.seq),
+        Some(opened[0].seq),
+        "the refused opening journals nothing"
+    );
+
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(t.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM oauth_connections \
+         WHERE tenant_id = $1 AND key_id = $2 AND state = 'open'",
+    )
+    .bind(t)
+    .bind(key.key_id)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("count");
+    tx.commit().await.expect("commit");
+    assert_eq!(open, 1, "the key has exactly one open connection");
+    let row = store
+        .connection(t, connection)
+        .await
+        .expect("read")
+        .expect("the row");
+    assert_eq!(row.state, ConnectionState::Open);
+    assert_eq!(row.opened_seq, Some(opened[0].seq));
+    drop(store);
     drop_dbs(&created).await;
 }
 

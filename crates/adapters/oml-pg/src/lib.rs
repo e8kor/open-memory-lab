@@ -12,19 +12,21 @@
 
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
+use oml_app::domain::oauth::{ConnectionState, RevokedCause};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, VerifyError, verify_chain,
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold,
-    StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
+    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
+    JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
-    ClaimKeyState, Credential, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess,
-    KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT,
-    RecallCandidate, UnnamedRows, WorkareaRecord,
+    ClaimKeyState, ClientKind, ConnectCode, ConnectCodeRecord, ConnectionRecord, Credential,
+    CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter,
+    ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows,
+    WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -1551,15 +1553,20 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
-        // The connection folds are the double's laws until this store
-        // serves connector keys; until then no use-case journals one, and
-        // a commit carrying one is refused whole (ADR-0031, proposed).
-        MetadataFold::ConnectCodeIssued { .. }
-        | MetadataFold::ConnectionOpened { .. }
-        | MetadataFold::ConnectionRevoked { .. } => {
-            return Err(StoreError::Backend(
-                "this store folds no connection.* event yet (ADR-0031, proposed)".to_owned(),
-            ));
+        MetadataFold::ConnectCodeIssued { code, voids } => {
+            fold_code_issued(tx, tenant_id, seq, code, voids).await?;
+        }
+        MetadataFold::ConnectionOpened {
+            connection_id,
+            replaces,
+        } => {
+            fold_connection_opened(tx, tenant_id, seq, at, connection_id, replaces).await?;
+        }
+        MetadataFold::ConnectionRevoked {
+            connection_id,
+            cause,
+        } => {
+            fold_connection_revoked(tx, tenant_id, seq, connection_id, cause).await?;
         }
         MetadataFold::MemoryHeld { memory, enqueue } => {
             insert_memory(tx, event_id, &memory).await?;
@@ -1581,6 +1588,200 @@ async fn apply_fold(
         }
     }
     Ok(())
+}
+
+/// Voids every code of `key_id` from which no connection has opened, spent
+/// or not, their `voided_seq` this commit's seq: the mint's and the
+/// revocation's voiding (roles-and-keys.md connect codes; ADR-0031 d8).
+async fn void_unopened_codes(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    key_id: Uuid,
+    seq: i64,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "UPDATE connect_codes c SET voided_seq = $3 \
+         WHERE c.tenant_id = $1 AND c.key_id = $2 AND c.voided_seq IS NULL \
+         AND NOT EXISTS (SELECT 1 FROM oauth_connections o \
+                          WHERE o.tenant_id = c.tenant_id AND o.code_id = c.id \
+                            AND o.opened_seq IS NOT NULL)",
+    )
+    .bind(tenant_id)
+    .bind(key_id)
+    .bind(seq)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+/// `connection.code_issued`: the mint names the key's one unredeemed,
+/// unvoided code as the one it voids, or none when the key has none; it
+/// voids every code of the key from which no connection opened and inserts
+/// the new one, which `connect_codes_live` admits only once they are void.
+/// A key the tenant does not hold meets the key (tenant_id, key_id) and is
+/// refused as any `23503` is (event-catalog.md `connection.code_issued`;
+/// ADR-0031 d8; ADR-0034 d12).
+async fn fold_code_issued(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    seq: i64,
+    code: ConnectCode,
+    voids: Option<Uuid>,
+) -> Result<(), StoreError> {
+    let unredeemed: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM connect_codes \
+         WHERE tenant_id = $1 AND key_id = $2 AND redeemed_at IS NULL AND voided_seq IS NULL \
+         FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(code.key_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if unredeemed != voids {
+        return Err(StoreError::Backend(format!(
+            "the mint names {voids:?} as the unredeemed code it voids, and the key's is {unredeemed:?}"
+        )));
+    }
+    void_unopened_codes(tx, tenant_id, code.key_id, seq).await?;
+    sqlx::query(
+        "INSERT INTO connect_codes (id, tenant_id, key_id, hash, issued_seq, expires_at) \
+         VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz)",
+    )
+    .bind(code.code_id)
+    .bind(tenant_id)
+    .bind(code.key_id)
+    .bind(code.code_hash.0.to_vec())
+    .bind(seq)
+    .bind(code.expires_at.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+/// `connection.opened`, under the chain lock: the key's open connection,
+/// which `replaces` must name, is revoked as `replaced` first, then the
+/// exchange's conditional update opens the connection only while it is
+/// `authorized`, its authorization code unredeemed and live at `at`, its
+/// connect code unvoided and its key unrevoked, stamping `opened_seq` and
+/// `auth_code_redeemed_at`. A second open connection of the key, an opening
+/// that names none while one is open, is refused by
+/// `oauth_connections_open` (postgres-schema.md `oauth_connections`;
+/// ADR-0031 d7, d8, d10, d11, d12).
+async fn fold_connection_opened(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    seq: i64,
+    at: &EventTime,
+    connection_id: Uuid,
+    replaces: Option<Uuid>,
+) -> Result<(), StoreError> {
+    let key_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT key_id FROM oauth_connections WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(connection_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
+    let Some(key_id) = key_id else {
+        return Err(StoreError::Backend(format!(
+            "connection {connection_id} is not held by this tenant"
+        )));
+    };
+    if let Some(replaced) = replaces {
+        let revoked = sqlx::query(
+            "UPDATE oauth_connections \
+             SET state = 'revoked', revoked_cause = 'replaced', revoked_seq = $4 \
+             WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND state = 'open'",
+        )
+        .bind(tenant_id)
+        .bind(replaced)
+        .bind(key_id)
+        .bind(seq)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+        if revoked.rows_affected() != 1 {
+            return Err(StoreError::Backend(format!(
+                "the opening names {replaced} as the open connection it replaces, \
+                 and it is not key {key_id}'s open connection"
+            )));
+        }
+    }
+    let opened = sqlx::query(
+        "UPDATE oauth_connections o \
+         SET state = 'open', opened_seq = $3, auth_code_redeemed_at = ($4)::timestamptz \
+         WHERE o.tenant_id = $1 AND o.id = $2 AND o.state = 'authorized' \
+         AND o.auth_code_redeemed_at IS NULL AND o.auth_code_expires_at > ($4)::timestamptz \
+         AND EXISTS (SELECT 1 FROM connect_codes c \
+                      WHERE c.tenant_id = o.tenant_id AND c.id = o.code_id \
+                        AND c.voided_seq IS NULL) \
+         AND EXISTS (SELECT 1 FROM api_keys k \
+                      WHERE k.tenant_id = o.tenant_id AND k.id = o.key_id \
+                        AND k.revoked_at IS NULL)",
+    )
+    .bind(tenant_id)
+    .bind(connection_id)
+    .bind(seq)
+    .bind(at.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| match &e {
+        sqlx::Error::Database(db) if db.constraint() == Some("oauth_connections_open") => {
+            StoreError::Backend(format!(
+                "key {key_id} has an open connection, which the opening of {connection_id} \
+                 does not name as replaced"
+            ))
+        }
+        _ => backend(e),
+    })?;
+    if opened.rows_affected() != 1 {
+        return Err(StoreError::Backend(format!(
+            "connection {connection_id} is not authorized with a live, unredeemed \
+             authorization code from an unvoided connect code of a live key"
+        )));
+    }
+    Ok(())
+}
+
+/// `connection.revoked`: the open connection is revoked with `cause`, its
+/// `revoked_seq` this commit's seq, and every code of its key from which no
+/// connection opened is voided. A connection that is not open, and the
+/// cause `replaced`, which only a newer `connection.opened` gives, are
+/// refused (event-catalog.md `connection.revoked`; ADR-0031 d8, d12).
+async fn fold_connection_revoked(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    seq: i64,
+    connection_id: Uuid,
+    cause: RevokedCause,
+) -> Result<(), StoreError> {
+    if cause == RevokedCause::Replaced {
+        return Err(StoreError::Backend(
+            "only a newer connection.opened replaces a connection".to_owned(),
+        ));
+    }
+    let key_id: Option<Uuid> = sqlx::query_scalar(
+        "UPDATE oauth_connections \
+         SET state = 'revoked', revoked_cause = $3, revoked_seq = $4 \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'open' RETURNING key_id",
+    )
+    .bind(tenant_id)
+    .bind(connection_id)
+    .bind(cause.as_str())
+    .bind(seq)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
+    let Some(key_id) = key_id else {
+        return Err(StoreError::Backend(format!(
+            "connection {connection_id} is not an open connection of this tenant"
+        )));
+    };
+    void_unopened_codes(tx, tenant_id, key_id, seq).await
 }
 
 /// Appends one event inside the commit's transaction if it extends
@@ -2597,5 +2798,234 @@ impl JournalStore for PgStore {
             request_digest: String::from_utf8(digest_bytes).map_err(backend)?,
             response: response.unwrap_or(Value::Null),
         }))
+    }
+}
+
+/// A `timestamptz` column in the fixed-width signed form, so `EventTime`
+/// round-trips exactly, as a key's `revoked_at` does.
+macro_rules! utc {
+    ($column:literal) => {
+        concat!(
+            "to_char(",
+            $column,
+            " AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')"
+        )
+    };
+}
+
+const CODE_COLUMNS: &str = concat!(
+    "id, key_id, hash, issued_seq, voided_seq, ",
+    utc!("expires_at"),
+    " AS expires_at_signed, ",
+    utc!("redeemed_at"),
+    " AS redeemed_at_signed"
+);
+
+const CONNECTION_COLUMNS: &str = concat!(
+    "id, key_id, code_id, client_id, client_kind, client_metadata_digest, redirect_uri, \
+     redirect_uri_sent, resource, code_challenge, auth_code_hash, state, revoked_cause, \
+     opened_seq, revoked_seq, ",
+    utc!("auth_code_expires_at"),
+    " AS auth_code_expires_at_signed, ",
+    utc!("auth_code_redeemed_at"),
+    " AS auth_code_redeemed_at_signed, ",
+    utc!("created_at"),
+    " AS created_at_signed"
+);
+
+fn event_time_column(row: &PgRow, column: &str) -> Result<Option<EventTime>, StoreError> {
+    let at: Option<String> = row.try_get(column).map_err(backend)?;
+    at.as_deref()
+        .map(EventTime::parse)
+        .transpose()
+        .map_err(backend)
+}
+
+fn optional_seq(row: &PgRow, column: &str) -> Result<Option<u64>, StoreError> {
+    let seq: Option<i64> = row.try_get(column).map_err(backend)?;
+    seq.map(u64::try_from).transpose().map_err(backend)
+}
+
+fn code_from_row(row: &PgRow) -> Result<ConnectCodeRecord, StoreError> {
+    let hash: Vec<u8> = row.try_get("hash").map_err(backend)?;
+    Ok(ConnectCodeRecord {
+        code_id: row.try_get("id").map_err(backend)?,
+        key_id: row.try_get("key_id").map_err(backend)?,
+        code_hash: hash32(&hash)?,
+        expires_at: event_time_column(row, "expires_at_signed")?
+            .ok_or_else(|| StoreError::Backend("connect_codes.expires_at is null".to_owned()))?,
+        issued_seq: seq_from_column(row, "issued_seq")?,
+        redeemed_at: event_time_column(row, "redeemed_at_signed")?,
+        voided_seq: optional_seq(row, "voided_seq")?,
+    })
+}
+
+fn connection_from_row(row: &PgRow) -> Result<ConnectionRecord, StoreError> {
+    let kind: String = row.try_get("client_kind").map_err(backend)?;
+    let client_kind = match kind.as_str() {
+        "cimd" => ClientKind::Cimd,
+        "dcr" => ClientKind::Dcr,
+        other => {
+            return Err(StoreError::Backend(format!(
+                "oauth_connections.client_kind {other:?} is not a client kind"
+            )));
+        }
+    };
+    let state: String = row.try_get("state").map_err(backend)?;
+    let cause: Option<String> = row.try_get("revoked_cause").map_err(backend)?;
+    let state = match (state.as_str(), cause.as_deref()) {
+        ("authorized", None) => ConnectionState::Authorized,
+        ("open", None) => ConnectionState::Open,
+        ("revoked", Some("admin")) => ConnectionState::Revoked(RevokedCause::Admin),
+        ("revoked", Some("refresh_reuse")) => ConnectionState::Revoked(RevokedCause::RefreshReuse),
+        ("revoked", Some("code_reuse")) => ConnectionState::Revoked(RevokedCause::CodeReuse),
+        ("revoked", Some("replaced")) => ConnectionState::Revoked(RevokedCause::Replaced),
+        (state, cause) => {
+            return Err(StoreError::Backend(format!(
+                "oauth_connections state {state:?} with cause {cause:?} is not a connection state"
+            )));
+        }
+    };
+    let digest: Vec<u8> = row.try_get("client_metadata_digest").map_err(backend)?;
+    let auth_code_hash: Option<Vec<u8>> = row.try_get("auth_code_hash").map_err(backend)?;
+    Ok(ConnectionRecord {
+        connection_id: row.try_get("id").map_err(backend)?,
+        key_id: row.try_get("key_id").map_err(backend)?,
+        code_id: row.try_get("code_id").map_err(backend)?,
+        client_id: row.try_get("client_id").map_err(backend)?,
+        client_kind,
+        client_metadata_digest: hash32(&digest)?,
+        redirect_uri: row.try_get("redirect_uri").map_err(backend)?,
+        redirect_uri_sent: row.try_get("redirect_uri_sent").map_err(backend)?,
+        resource: row.try_get("resource").map_err(backend)?,
+        code_challenge: row.try_get("code_challenge").map_err(backend)?,
+        auth_code_hash: auth_code_hash.as_deref().map(hash32).transpose()?,
+        auth_code_expires_at: event_time_column(row, "auth_code_expires_at_signed")?,
+        auth_code_redeemed_at: event_time_column(row, "auth_code_redeemed_at_signed")?,
+        state,
+        opened_seq: optional_seq(row, "opened_seq")?,
+        revoked_seq: optional_seq(row, "revoked_seq")?,
+        created_at: event_time_column(row, "created_at_signed")?.ok_or_else(|| {
+            StoreError::Backend("oauth_connections.created_at is null".to_owned())
+        })?,
+    })
+}
+
+/// The connection rows under the tenant's RLS (postgres-schema.md
+/// "connections (ADR-0031)"). The journalled acts are folds in
+/// `apply_fold`; these are the operational writes and the reads, each in
+/// a transaction of its own under `oml.tenant_id` (ADR-0031 d8, d9, d12).
+impl ConnectionStore for PgStore {
+    async fn connect_code_redeem(
+        &self,
+        tenant_id: Uuid,
+        code_id: Uuid,
+        at: &EventTime,
+    ) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The one conditional update two racing entries cannot both pass.
+        let spent = sqlx::query(
+            "UPDATE connect_codes SET redeemed_at = ($3)::timestamptz \
+             WHERE tenant_id = $1 AND id = $2 AND redeemed_at IS NULL AND voided_seq IS NULL",
+        )
+        .bind(tenant_id)
+        .bind(code_id)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(spent.rows_affected() == 1)
+    }
+
+    async fn connection_authorize(
+        &self,
+        tenant_id: Uuid,
+        record: ConnectionRecord,
+    ) -> Result<(), StoreError> {
+        if record.state != ConnectionState::Authorized
+            || record.opened_seq.is_some()
+            || record.revoked_seq.is_some()
+        {
+            return Err(StoreError::Backend(format!(
+                "connection {} is created authorized, never {}",
+                record.connection_id,
+                record.state.as_str()
+            )));
+        }
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // A key or code the tenant does not hold meets the keys (tenant_id,
+        // key_id) and (tenant_id, code_id), and a second connection of one
+        // code meets oauth_connections_tenant_id_code_id (ADR-0034 d12).
+        sqlx::query(
+            "INSERT INTO oauth_connections (id, tenant_id, key_id, code_id, client_id, \
+             client_kind, client_metadata_digest, redirect_uri, redirect_uri_sent, resource, \
+             code_challenge, auth_code_hash, auth_code_expires_at, auth_code_redeemed_at, \
+             state, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+             ($13)::timestamptz, ($14)::timestamptz, 'authorized', ($15)::timestamptz)",
+        )
+        .bind(record.connection_id)
+        .bind(tenant_id)
+        .bind(record.key_id)
+        .bind(record.code_id)
+        .bind(&record.client_id)
+        .bind(record.client_kind.as_str())
+        .bind(record.client_metadata_digest.0.to_vec())
+        .bind(&record.redirect_uri)
+        .bind(record.redirect_uri_sent)
+        .bind(&record.resource)
+        .bind(&record.code_challenge)
+        .bind(record.auth_code_hash.map(|h| h.0.to_vec()))
+        .bind(record.auth_code_expires_at.as_ref().map(EventTime::as_str))
+        .bind(record.auth_code_redeemed_at.as_ref().map(EventTime::as_str))
+        .bind(record.created_at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn connect_codes(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Vec<ConnectCodeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {CODE_COLUMNS} FROM connect_codes \
+             WHERE tenant_id = $1 AND key_id = $2 ORDER BY issued_seq"
+        ))
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(code_from_row).collect()
+    }
+
+    async fn connection(
+        &self,
+        tenant_id: Uuid,
+        connection_id: Uuid,
+    ) -> Result<Option<ConnectionRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {CONNECTION_COLUMNS} FROM oauth_connections \
+             WHERE tenant_id = $1 AND id = $2"
+        ))
+        .bind(tenant_id)
+        .bind(connection_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(connection_from_row).transpose()
     }
 }
