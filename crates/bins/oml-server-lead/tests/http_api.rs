@@ -120,7 +120,10 @@ async fn mint_database(db: &str) -> bool {
 /// A store over `db`'s serving login, migrated through its owner login with
 /// `oml.serving_role` set (ADR-0034 d4, d8).
 async fn serving_store(db: &str) -> PgStore {
-    let store = PgStore::connect(&serving_url(db)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(db));
     store
         .migrate(&owner_url(db))
         .await
@@ -477,7 +480,8 @@ async fn poc_store() -> Option<(String, PgStore, Uuid)> {
     tx.commit().await.expect("commit the PoC rows");
     let store = PgStore::connect(&serving_url(&db_name))
         .await
-        .expect("connect");
+        .expect("connect")
+        .with_owner_url(&owner_url(&db_name));
     store
         .migrate(&owner_url(&db_name))
         .await
@@ -723,7 +727,8 @@ async fn poc_chains_store(
     }
     let store = PgStore::connect(&serving_url(&db_name))
         .await
-        .expect("connect");
+        .expect("connect")
+        .with_owner_url(&owner_url(&db_name));
     store
         .migrate(&owner_url(&db_name))
         .await
@@ -1759,6 +1764,51 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
     assert_envelope(&body, "auth.invalid");
     assert_eq!(body["error"]["details"]["reason"], "consumed", "{body}");
+    drop_db(&rig.db_name).await;
+}
+
+/// A tenant's partition DDL that waits past its lock timeout fails the
+/// claim before any commit: `system.unavailable`, retryable, with
+/// `details.reason` `partition_lock_timeout`, nothing journalled and the
+/// enrollment token still claimable, so once the lock is gone the same
+/// claim succeeds (errors.md `system.unavailable`; ADR-0034 d11).
+#[tokio::test]
+async fn a_failed_partition_creation_spends_no_enrollment_token() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let mut holder = PgConnection::connect(&owner_url(&rig.db_name))
+        .await
+        .expect("a second owner connection");
+    let mut held = holder.begin().await.expect("begin");
+    held.execute("LOCK TABLE memories IN SHARE UPDATE EXCLUSIVE MODE")
+        .await
+        .expect("a lock the partition's attach waits on");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/bootstrap/claim",
+        Call::default().body(json!({ "enrollment_token": ENROLLMENT, "name": "root-admin" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_envelope(&body, "system.unavailable");
+    assert_eq!(
+        body["error"]["details"]["reason"], "partition_lock_timeout",
+        "{body}"
+    );
+    assert_eq!(body["error"]["retryable"], true, "{body}");
+    held.rollback().await.expect("release the lock");
+    drop(holder);
+    assert!(
+        enumerate_tenants(rig.store.pool())
+            .await
+            .expect("tenants")
+            .is_empty(),
+        "the refused claim journals nothing"
+    );
+
+    bootstrap(&rig.router).await;
     drop_db(&rig.db_name).await;
 }
 
