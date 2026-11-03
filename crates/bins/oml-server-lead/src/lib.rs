@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use axum::Router;
 use oml_app::App;
+use oml_app::domain::oauth::Issuer;
 use oml_app::domain::{EventTime, KeySet};
 use oml_app::ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use oml_app::ports::{
@@ -32,8 +33,9 @@ use oml_transport_http::{ApiState, BuildInfo, DbPing, time::system_event_time};
 // ---------------------------------------------------------------------------
 
 /// The boot-configuration slice this composition reads (configuration.md
-/// per-binary table: `postgres.*`, `kms.*`, `server.listen`; `server.role` is
-/// not accepted in standalone — a standalone node is always the lead).
+/// per-binary table: `postgres.*`, `kms.*`, `server.listen`, `oauth.issuer`;
+/// `server.role` is not accepted in standalone — a standalone node is always
+/// the lead).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// The serving role's URL, which the lead serves under (ADR-0034 d2, d4).
@@ -43,6 +45,10 @@ pub struct Config {
     pub postgres_owner_url: String,
     pub listen: String,
     pub keyring_path: PathBuf,
+    /// `oauth.issuer`, the public origin the connection flow is built from;
+    /// unset, the OAuth routes do not exist and no connect code is minted
+    /// (ADR-0031 d1).
+    pub oauth_issuer: Option<Issuer>,
 }
 
 /// Why a configuration is refused: `postgres.owner_url` unset is the role
@@ -61,6 +67,7 @@ const KEY_POSTGRES_OWNER_URL: &str = "postgres.owner_url";
 const KEY_LISTEN: &str = "server.listen";
 const KEY_KMS_ADAPTER: &str = "kms.adapter";
 const KEY_KEYRING_PATH: &str = "kms.keyring_path";
+const KEY_OAUTH_ISSUER: &str = "oauth.issuer";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -123,11 +130,18 @@ impl Config {
         let listen = lookup(KEY_LISTEN).unwrap_or_else(|| "127.0.0.1:8080".to_owned());
         let keyring_path =
             lookup(KEY_KEYRING_PATH).map_or_else(|| PathBuf::from("oml-keyring"), PathBuf::from);
+        // A value that is not exactly a public origin stops the start
+        // (configuration.md, oauth.issuer; ADR-0031 d1).
+        let oauth_issuer = lookup(KEY_OAUTH_ISSUER)
+            .map(|value| Issuer::parse(&value))
+            .transpose()
+            .map_err(|e| ConfigError::Invalid(e.to_string()))?;
         Ok(Self {
             postgres_url,
             postgres_owner_url,
             listen,
             keyring_path,
+            oauth_issuer,
         })
     }
 
@@ -571,14 +585,23 @@ pub struct LeadStart {
 /// The lead's start over a migrated store, `main`'s and the tests' alike:
 /// enumerate the tenants, run the fork check, then name every row that
 /// predates names, mint the enrollment token against an empty deployment,
-/// and build the router on what they found. Only a failed tenant
-/// enumeration fails the start.
-pub async fn start_lead(store: &PgStore, signing_key: SigningKey) -> Result<LeadStart, String> {
+/// and build the router on what they found, with the OAuth routes where
+/// `oauth_issuer` is set (ADR-0031 d1). Only a failed tenant enumeration
+/// fails the start.
+pub async fn start_lead(
+    store: &PgStore,
+    signing_key: SigningKey,
+    oauth_issuer: Option<Issuer>,
+) -> Result<LeadStart, String> {
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
     let fork_check = startup_fork_check(store, signing_key.verifying_key(), &tenants).await;
     let app = lead_app(store, signing_key);
+    let app = match oauth_issuer {
+        Some(issuer) => app.with_oauth_issuer(issuer),
+        None => app,
+    };
     // The naming signs, and the lead never signs on top of a fork (ADR-0002
     // d7): after a failed fork check the start only reads whether a row has
     // no name.
@@ -712,6 +735,32 @@ mod tests {
                 "got: {err}"
             );
             assert_eq!(err.to_string(), "postgres.role_split: owner_url_missing");
+        }
+    }
+
+    #[test]
+    fn oauth_issuer_is_parsed_as_a_public_origin_and_a_bad_value_is_refused() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let cfg = Config::from_sources(None, &|k| env_of(&base).get(k).cloned())
+            .expect("a config without oauth.issuer loads");
+        assert_eq!(cfg.oauth_issuer, None);
+        let file = "[oauth]\nissuer = \"https://oml.example.com\"\n";
+        let cfg = Config::from_sources(Some(file), &|k| env_of(&base).get(k).cloned())
+            .expect("a public origin loads");
+        assert_eq!(
+            cfg.oauth_issuer.as_ref().map(Issuer::as_str),
+            Some("https://oml.example.com")
+        );
+        for bad in ["https://oml.example.com/", "http://oml.example.com"] {
+            let mut env = env_of(&base);
+            env.insert("OML_OAUTH__ISSUER".to_owned(), bad.to_owned());
+            let err = Config::from_sources(Some(file), &|k| env.get(k).cloned())
+                .expect_err("not a public origin");
+            assert!(matches!(err, ConfigError::Invalid(_)), "{bad}: {err:?}");
+            assert!(err.to_string().contains("oauth.issuer"), "{err}");
         }
     }
 

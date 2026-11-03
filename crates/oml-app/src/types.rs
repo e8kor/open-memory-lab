@@ -629,6 +629,8 @@ pub struct IssuedTokens {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisteredClient {
     pub client_id: String,
+    /// When the registration was stored: its `client_id_issued_at`.
+    pub issued_at: EventTime,
     pub client_name: String,
     pub redirect_uris: Vec<String>,
     pub token_endpoint_auth_method: &'static str,

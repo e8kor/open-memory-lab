@@ -45,7 +45,7 @@ use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
-use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
+use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
     AppError, BootstrapRequest, CrewCreateRequest, CrewRecord, CrewUpdate, GrantRecord,
     GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, RecallRequest, ServedMemory,
@@ -140,6 +140,56 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
     }
 }
 
+/// The router needs the connection store as well, for the OAuth routes; a
+/// composition's store is both ports.
+impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    /// The two rings plus the unversioned probes, as one axum router, and
+    /// where `oauth.issuer` is set the unversioned OAuth routes outside both
+    /// rings ([`oauth`]); only the probes while names are not assigned.
+    pub fn into_router(self) -> Router {
+        let probes = Router::new()
+            .route("/healthz", get(healthz))
+            .route("/readyz", get(Self::readyz));
+        if !self.names_assigned {
+            return probes.fallback(names_unassigned).with_state(self);
+        }
+        let router = probes
+            .route("/v1/memories", post(Self::submit).get(Self::list_memories))
+            .route("/v1/memories/recall", post(Self::recall))
+            .route("/v1/memories/{artifact_id}", get(Self::get_memory))
+            .route(
+                "/v1/memories/{artifact_id}/supersede",
+                post(Self::supersede),
+            )
+            .route("/v2/review/next", post(Self::review_next))
+            .route("/v2/review/verdicts", post(Self::review_verdicts))
+            .route("/v2/keys", post(Self::issue_key))
+            .route("/v2/keys/{key_id}", get(Self::get_key))
+            .route("/v2/keys/{key_id}/denials", post(Self::deny_key))
+            .route("/v2/crews", post(Self::create_crew).get(Self::list_crews))
+            .route("/v2/crews/{crew_id}", get(Self::get_crew))
+            .route("/v2/crews/{crew_id}/update", post(Self::update_crew))
+            .route("/v2/workareas", post(Self::create_workarea))
+            .route("/v2/workareas/{workarea_id}", get(Self::get_workarea))
+            .route("/v2/workareas/{workarea_id}/tree", get(Self::workarea_tree))
+            .route(
+                "/v2/workareas/{workarea_id}/crew",
+                post(Self::set_workarea_crew),
+            )
+            .route("/v2/events", get(Self::events_tail))
+            .route("/v2/bootstrap/claim", post(Self::bootstrap_claim))
+            .route("/mcp", post(Self::mcp).get(mcp::mcp_get));
+        self.with_oauth_routes(router).with_state(self)
+    }
+}
+
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
     J: JournalStore + Clone + 'static,
@@ -187,44 +237,6 @@ where
     pub fn with_names_assigned(mut self, names_assigned: bool) -> Self {
         self.names_assigned = names_assigned;
         self
-    }
-
-    /// The two rings plus the unversioned probes, as one axum router; only
-    /// the probes while names are not assigned.
-    pub fn into_router(self) -> Router {
-        let probes = Router::new()
-            .route("/healthz", get(healthz))
-            .route("/readyz", get(Self::readyz));
-        if !self.names_assigned {
-            return probes.fallback(names_unassigned).with_state(self);
-        }
-        probes
-            .route("/v1/memories", post(Self::submit).get(Self::list_memories))
-            .route("/v1/memories/recall", post(Self::recall))
-            .route("/v1/memories/{artifact_id}", get(Self::get_memory))
-            .route(
-                "/v1/memories/{artifact_id}/supersede",
-                post(Self::supersede),
-            )
-            .route("/v2/review/next", post(Self::review_next))
-            .route("/v2/review/verdicts", post(Self::review_verdicts))
-            .route("/v2/keys", post(Self::issue_key))
-            .route("/v2/keys/{key_id}", get(Self::get_key))
-            .route("/v2/keys/{key_id}/denials", post(Self::deny_key))
-            .route("/v2/crews", post(Self::create_crew).get(Self::list_crews))
-            .route("/v2/crews/{crew_id}", get(Self::get_crew))
-            .route("/v2/crews/{crew_id}/update", post(Self::update_crew))
-            .route("/v2/workareas", post(Self::create_workarea))
-            .route("/v2/workareas/{workarea_id}", get(Self::get_workarea))
-            .route("/v2/workareas/{workarea_id}/tree", get(Self::workarea_tree))
-            .route(
-                "/v2/workareas/{workarea_id}/crew",
-                post(Self::set_workarea_crew),
-            )
-            .route("/v2/events", get(Self::events_tail))
-            .route("/v2/bootstrap/claim", post(Self::bootstrap_claim))
-            .route("/mcp", post(Self::mcp).get(mcp::mcp_get))
-            .with_state(self)
     }
 
     /// Writes are refused while the fork check has not verified the stored

@@ -128,7 +128,7 @@ async fn run() -> Result<(), BootError> {
         "deployment signing key loaded (kms-file)"
     );
 
-    let start = start_lead(&store, signing_key).await?;
+    let start = start_lead(&store, signing_key, config.oauth_issuer.clone()).await?;
     match &start.fork_check {
         Ok(()) => tracing::info!(tenants = start.tenants.len(), "startup fork check passed"),
         // ADR-0002 d7: never sign on top of a fork. Writes are refused

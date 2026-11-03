@@ -776,7 +776,7 @@ async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_seco
     }
 
     for start in 1..=2 {
-        let started = start_lead(&store, signing.clone())
+        let started = start_lead(&store, signing.clone(), None)
             .await
             .expect("the start reads the store");
         assert_eq!(started.fork_check, Ok(()), "start {start}");
@@ -834,7 +834,7 @@ async fn a_start_whose_fork_check_fails_names_nothing_and_serves_no_request() {
         return;
     };
     let foreign = SigningKey::from_bytes(&OsIds.new_secret());
-    let started = start_lead(&store, foreign)
+    let started = start_lead(&store, foreign, None)
         .await
         .expect("the start reads the store");
     assert!(started.fork_check.is_err(), "a chain the key did not sign");

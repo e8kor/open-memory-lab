@@ -7,7 +7,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 
 use oml_app::domain::VerdictError;
-use oml_app::domain::oauth::{AuthorizationCodeInvalid, ClientInvalid, Refusal};
+use oml_app::domain::oauth::{AuthorizationCodeInvalid, ClientInvalid, Refusal, Validation};
 use oml_app::ports::StoreError;
 use oml_app::types::AppError;
 
@@ -530,6 +530,143 @@ fn oauth_refusal(refusal: Refusal) -> ApiError {
     }
 }
 
+/// A refusal at `POST /oauth/token` or `POST /oauth/register` in the RFC's
+/// shape, `{error, error_description}` (RFC 6749 §5.2, RFC 7591 §3.2.2):
+/// `error` is the RFC code a client branches on, and `error_description`
+/// begins with the OML code, a colon and its rule (errors.md, "`oauth` —
+/// connections"; ADR-0031 d13). No envelope and no `request_id` in the
+/// body; the response still carries `X-Request-Id`.
+#[derive(Debug)]
+pub struct OAuthError {
+    pub status: StatusCode,
+    /// The RFC `error`.
+    pub error: &'static str,
+    /// The OML code `description` begins with.
+    pub code: &'static str,
+    pub description: String,
+    /// The `WWW-Authenticate` value of a `401`.
+    pub challenge: Option<String>,
+    pub retryable: bool,
+}
+
+impl OAuthError {
+    /// A malformed parameter, `request.validation` carried as `error`:
+    /// `invalid_request` or the RFC's own name for the fault.
+    pub fn validation(error: &'static str, message: &str) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            error,
+            code: "request.validation",
+            description: format!("request.validation: {message}"),
+            challenge: None,
+            retryable: false,
+        }
+    }
+
+    /// A body in a media type other than the endpoint's, refused before it
+    /// is read (`request.unsupported_media` as `invalid_request`).
+    pub fn unsupported_media(supported: &str, got: &str) -> Self {
+        Self {
+            status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            error: "invalid_request",
+            code: "request.unsupported_media",
+            description: format!(
+                "request.unsupported_media: this endpoint takes {supported}, not {got:?}"
+            ),
+            challenge: None,
+            retryable: false,
+        }
+    }
+
+    /// The RFC body, `application/json`, with `WWW-Authenticate` on a
+    /// challenge and `Retry-After` on a retryable refusal.
+    #[must_use]
+    pub fn into_response(self) -> Response {
+        let body = json!({ "error": self.error, "error_description": self.description });
+        let mut response = Response::new(axum::body::Body::from(body.to_string()));
+        *response.status_mut() = self.status;
+        let headers = response.headers_mut();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json; charset=utf-8"),
+        );
+        if let Some(challenge) = self.challenge.and_then(|c| HeaderValue::from_str(&c).ok()) {
+            headers.insert(header::WWW_AUTHENTICATE, challenge);
+        }
+        if self.retryable {
+            headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+        }
+        response
+    }
+}
+
+/// Any other refusal keeps its errors.md status and code, carried as
+/// `invalid_request`: `limit.rate` and `system.unavailable` among them,
+/// with `Retry-After` where the code is retryable.
+impl From<ApiError> for OAuthError {
+    fn from(api: ApiError) -> Self {
+        Self {
+            status: api.status,
+            error: "invalid_request",
+            code: api.code,
+            description: format!("{}: {}", api.code, api.message),
+            challenge: None,
+            retryable: api.retryable,
+        }
+    }
+}
+
+/// The one place the token and registration endpoints' refusals become RFC
+/// bodies (errors.md, "`oauth` — connections"): the status and code of
+/// [`map_app_error`], the RFC `error` the table's third column names, and
+/// for client authentication sent in an `Authorization` header a `401`
+/// whose challenge names the scheme the request used (RFC 6749 §5.2).
+#[must_use]
+pub fn map_oauth_error(err: AppError) -> OAuthError {
+    match err {
+        AppError::OAuth(refusal) => rfc_refusal(refusal),
+        AppError::ClientAuthentication { scheme } => {
+            let mut refused =
+                rfc_refusal(Refusal::ClientInvalid(ClientInvalid::ClientAuthentication));
+            if let Some(scheme) = scheme {
+                refused.status = StatusCode::UNAUTHORIZED;
+                refused.challenge = Some(format!(r#"{scheme} realm="oml""#));
+            }
+            refused
+        }
+        other => map_app_error(other, ErrorContext::Write).into(),
+    }
+}
+
+/// A connection-flow refusal as its RFC body: `Display` begins with the
+/// code and names the rule, the form `error_description` takes.
+fn rfc_refusal(refusal: Refusal) -> OAuthError {
+    let error = match refusal {
+        Refusal::AuthorizationCodeInvalid(_) | Refusal::RefreshInvalid(_) => "invalid_grant",
+        Refusal::ResourceMismatch => "invalid_target",
+        Refusal::ClientInvalid(_) => "invalid_client",
+        Refusal::RedirectRefused(_) => "invalid_redirect_uri",
+        Refusal::RequestValidation(
+            Validation::NotJsonObject
+            | Validation::ClientNameMissing
+            | Validation::RedirectUrisMissing
+            | Validation::TokenEndpointAuthMethod
+            | Validation::GrantTypes
+            | Validation::ResponseTypes,
+        ) => "invalid_client_metadata",
+        Refusal::RequestValidation(Validation::ScopeUnsupported) => "invalid_scope",
+        _ => "invalid_request",
+    };
+    OAuthError {
+        status: oauth_refusal(refusal).status,
+        error,
+        code: refusal.code(),
+        description: refusal.to_string(),
+        challenge: None,
+        retryable: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use oml_app::domain::oauth::{ConnectRefused, OAUTH_CODES};
@@ -558,5 +695,31 @@ mod tests {
         assert_eq!(code.status, StatusCode::BAD_REQUEST);
         assert_eq!(code.code, "oauth.connect_code_invalid");
         assert_eq!(code.details, None, "a code's refusal names no reason");
+    }
+
+    #[test]
+    fn an_oauth_refusals_error_description_begins_with_its_oml_code() {
+        for refusal in [
+            Refusal::ClientInvalid(ClientInvalid::Unknown),
+            Refusal::ResourceMismatch,
+            Refusal::AuthorizationCodeInvalid(AuthorizationCodeInvalid::Reused),
+            Refusal::RequestValidation(Validation::ClientNameMissing),
+        ] {
+            let refused = map_oauth_error(AppError::OAuth(refusal));
+            assert_eq!(refused.code, refusal.code());
+            assert!(
+                refused
+                    .description
+                    .starts_with(&format!("{}: ", refusal.code())),
+                "{}",
+                refused.description
+            );
+        }
+        let rate = map_oauth_error(AppError::Store(StoreError::CapReached));
+        assert_eq!(
+            (rate.status, rate.error, rate.retryable),
+            (StatusCode::TOO_MANY_REQUESTS, "invalid_request", true)
+        );
+        assert!(rate.description.starts_with("limit.rate: "), "{rate:?}");
     }
 }

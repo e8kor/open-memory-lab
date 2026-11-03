@@ -619,6 +619,14 @@ where
         }
     }
 
+    /// The deployment's `oauth.issuer`, `None` where it is unset: the one
+    /// value the discovery documents and the OAuth endpoints are built from,
+    /// never a request's `Host` (ADR-0031 d1, d3).
+    #[must_use]
+    pub fn oauth_issuer(&self) -> Option<&Issuer> {
+        self.oauth_issuer.as_ref()
+    }
+
     /// Wrong connect-code entries on the authorization page since this
     /// process started, across every tenant: the count doctor shows, since
     /// the guessing bound is the code's entropy and not a throttle
@@ -3993,11 +4001,13 @@ where
             redirect_uris: metadata.redirect_uris,
             metadata_digest: Sha256Hash::digest(body),
         };
+        let issued_at = self.clock.now();
         self.journal
-            .insert_dcr(registration.clone(), &self.clock.now())
+            .insert_dcr(registration.clone(), &issued_at)
             .await?;
         Ok(RegisteredClient {
             client_id: registration.client_id,
+            issued_at,
             client_name: registration.client_name,
             redirect_uris: registration.redirect_uris,
             token_endpoint_auth_method: "none",
