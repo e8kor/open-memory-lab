@@ -21,7 +21,7 @@ use uuid::Uuid;
 use oml_cli::client::{CallOpts, CliError, Client, encode, segment};
 use oml_cli::creds::{self, Credentials};
 use oml_cli::hook;
-use oml_cli::issue::{KeyFile, sh_quote, with_reader_beside_writers};
+use oml_cli::issue::{KeyFile, connect_code_printed, sh_quote, with_reader_beside_writers};
 use oml_cli::verify::parse_verifying_key;
 
 #[derive(Parser)]
@@ -213,6 +213,10 @@ struct IssueAgentArgs {
     /// and print a line that reads it back instead of the value.
     #[arg(long)]
     out: Option<PathBuf>,
+    /// Issue a connector key for a claude.ai custom connector: no value, and
+    /// a single-use connect code printed in its place (ADR-0031 d7).
+    #[arg(long)]
+    connect_code: bool,
 }
 
 #[derive(Subcommand)]
@@ -1031,12 +1035,21 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 /// OML_API_KEY=…`, the second reading the value back from the `--out` file
 /// when one is named. Every other line goes to stderr, and no key value
 /// reaches either stream once `--out` is given (cli/reference.md `oml keys
-/// issue-agent`; ADR-0028 d1; ADR-0026 d12).
+/// issue-agent`; ADR-0028 d1; ADR-0026 d12). With `--connect-code` the body
+/// carries `connect_code: true` and the answer is printed as
+/// [`connect_code_printed`] declares (ADR-0031 d7).
 fn run_issue_agent(
     cli: &Cli,
     stored: &Credentials,
     args: &IssueAgentArgs,
 ) -> Result<ExitCode, CliError> {
+    if args.connect_code && args.out.is_some() {
+        return Err(CliError::local(
+            "refused: --out with --connect-code, because a connector key has no value to write \
+             and its code is for a person to read and type within minutes; nothing was sent \
+             (ADR-0031 d7)",
+        ));
+    }
     if cli.json && args.out.is_some() {
         return Err(CliError::local(
             "refused: --out with --json, because the 201 body --json prints carries the key \
@@ -1063,8 +1076,11 @@ fn run_issue_agent(
     if let Some(crew) = &args.crew {
         body["crew"] = json!(crew);
     }
-    let response = match client.post("/v2/keys", &body, &write_opts()) {
-        Ok((_, response)) => response,
+    if args.connect_code {
+        body["connect_code"] = json!(true);
+    }
+    let (response, replayed) = match client.post_replayable("/v2/keys", &body, &write_opts()) {
+        Ok(answer) => answer,
         Err(failure) => {
             // The empty file holds nothing either way, so it goes.
             if let Some(Err(e)) = key_file.map(KeyFile::discard) {
@@ -1074,6 +1090,14 @@ fn run_issue_agent(
                 // Sent, and no usable answer: a key may exist whose value
                 // nothing kept. Only a refusal, or a failure before sending,
                 // means no key exists (ADR-0028 d1).
+                CliError::Unanswered(why) if args.connect_code => CliError::Unanswered(format!(
+                    "{why}. A connector key named {name} for principal {principal} may have been \
+                     issued. If it was, its connect code is lost: `oml keys show {name}` answers \
+                     whether it exists, and `oml keys connect-code {name}` mints a new code \
+                     (ADR-0031 d7)",
+                    name = args.key_name,
+                    principal = args.principal,
+                )),
                 CliError::Unanswered(why) => CliError::Unanswered(format!(
                     "{why}. A key named {name} for principal {principal} may have been issued. If \
                      it was, its value is lost, since the server keeps only its hash and the CLI \
@@ -1088,6 +1112,16 @@ fn run_issue_agent(
             });
         }
     };
+    if args.connect_code {
+        let printed = connect_code_printed(&response, replayed, cli.json);
+        for line in &printed.stdout {
+            println!("{line}");
+        }
+        for line in &printed.stderr {
+            eprintln!("{line}");
+        }
+        return Ok(ExitCode::from(printed.exit));
+    }
     if cli.json {
         print_json(&response);
         return Ok(ExitCode::SUCCESS);
