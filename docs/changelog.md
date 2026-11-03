@@ -34,6 +34,22 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — `oml_read` chooses get, recall or listing from the fields present, and `oml_workarea` reads one node (ADR-0039 d2, d4, implementation)
+
+The facade serves `oml_read` and `oml_workarea` beside `oml_write` and the eight v0.3.0 tools,
+declared in `mcp-tools.json` with `readOnlyHint` and `idempotentHint` true and `openWorldHint`
+false. `artifact_id` is one `GET /v1/memories/{artifact_id}`; `query` is one
+`POST /v1/memories/recall` with `workarea`, `k`, `kinds`, `include_unreviewed` and
+`max_tokens`; neither is one `GET /v1/memories` with `own` (default `true`), `workarea`,
+`claim_key`, `state`, `kind`, `since`, `until`, `limit` and `cursor`, and `own: false`, the
+scoped listing, is new on MCP. An argument outside the mode, and `query` beside `artifact_id`,
+is `request.validation` naming it in `details.field`; the lineage mode's `lineage` and `depth`
+are designed and refused the same way. The output is `{mode, items}` for get, `{mode, steering,
+hits, budget?}` for recall and `{mode, items, next_cursor}` for the listing, `mode` being `get`,
+`recall` or `listing`, and every item is the claim item with its `text`, the listing's included,
+so `oml_read {state}` tells an agent whether its write was approved without the events tail.
+`oml_workarea` is one `GET /v2/workareas/{workarea}` answered as `oml_workarea_info` answers.
+
 ### 2026-11-04 — `oml_write` takes one flat argument set, and the fields present choose the endpoint (ADR-0039 d3, implementation)
 
 The facade serves `oml_write` beside the eight v0.3.0 tools, declared in `mcp-tools.json` with

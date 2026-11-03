@@ -1,6 +1,6 @@
 ---
 name: oml-memory
-description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_write, oml_remember, oml_learn, oml_recall, oml_get, oml_supersede, oml_my_work, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
+description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_write, oml_read, oml_workarea, oml_remember, oml_learn, oml_recall, oml_get, oml_supersede, oml_my_work, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
 ---
 
 # Working with Open Memory Lab memory
@@ -120,6 +120,17 @@ server derives one. Add `derives_from` for a conclusion, and `replaces` with the
 `artifact_id` for a new version, with `retirement: true` to retire it. With `replaces`, do not
 pass `claim_key`. Each argument outside the call's mode is refused naming it in
 `details.field`. The result's `mode` says which write ran.
+
+## One tool for every read
+
+`oml_read` does what `oml_get`, `oml_recall` and `oml_my_work` do, chosen by the arguments you
+pass. Pass `artifact_id` to read one version, or `query` to recall, with `workarea`, `k`,
+`kinds`, `include_unreviewed` and `max_tokens`. Pass neither to list what your key wrote,
+filtered by `workarea`, `claim_key`, `state`, `kind`, `since` and `until`, with `limit` and
+`cursor` to page; `own: false` lists the approved claims of a workarea instead. To learn whether
+a write was approved, list with `state: "promoted"` or `state: "rejected"`. An argument outside
+the call's mode is refused naming it in `details.field`. Every item carries its text, and the
+result's `mode` says which read ran. `oml_workarea` does what `oml_workarea_info` does.
 
 ## What the tools cannot do
 

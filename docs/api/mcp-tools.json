@@ -7,6 +7,8 @@
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
       "oml_write": "ADR-0039 d2, d3, d14: served beside the v0.3.0 tools ahead of the three-tool catalog, which mcp-plugin.md describes with it in the step that retires the v0.3.0 tools from tools/list.",
+      "oml_read": "ADR-0039 d2, d4, d9: served beside the v0.3.0 tools, as oml_write is. The lineage mode's lineage (ancestors | descendants) and depth are designed, absent from this entry, and refused with request.validation naming the field until the lineage read is routed; recall is full-text search alone, as on oml_recall.",
+      "oml_workarea": "ADR-0039 d2, d10: oml_workarea_info under its v0.4.0 name, the same ring read, served beside it until the step that retires the v0.3.0 tools from tools/list.",
       "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet."
     }
   },
@@ -60,6 +62,135 @@
           }
         },
         "required": ["text", "idempotency_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_read",
+      "description": "Find, fetch or list claims; the fields present choose the mode. artifact_id fetches one version (GET /v1/memories/{artifact_id}): the calling key's own rows in any state, others' promoted versions within read access, anything else access.not_found. query recalls (POST /v1/memories/recall): promoted claims in a workarea subtree, steering first and never ranked or cut by max_tokens, and with include_unreviewed the key's own held rows flagged state held. Neither lists (GET /v1/memories): own true, the default, is everything the key wrote, newest first, in any state, so state tells an agent whether its write was approved or rejected; own false is the promoted tips of a workarea. An argument outside the chosen mode, or artifact_id and query together, is refused with request.validation naming it in details.field. Every mode answers claim items with their text under mode: get, recall or listing.",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "description": "Get mode: the version to read; each version of a claim has its own artifact_id, and superseded versions stay readable as history. Refused beside query."
+          },
+          "query": {
+            "type": "string",
+            "description": "Recall mode: the search text, matched by full-text search, the only search mode served."
+          },
+          "workarea": {
+            "type": "string",
+            "description": "Recall and listing: the subtree read, by node id or name. Omitted, recall and the listing with own false read the key's default workarea (request.workarea_unresolved for a key with none), and the listing with own true every workarea the key wrote in. A node the key may not be told about answers access.not_found, indistinguishable from a nonexistent node."
+          },
+          "k": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Recall: how many hits to return, at most 100 as on the ring."
+          },
+          "kinds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "memory",
+                "derived_fact"
+              ]
+            },
+            "description": "Recall: the hit kinds served; an empty array is refused, so only an absent kinds means no filter. Steering is never a hit."
+          },
+          "include_unreviewed": {
+            "type": "boolean",
+            "default": false,
+            "description": "Recall, default false. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held; they count against k and max_tokens."
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "Recall: a budget in budget tokens (counter oml-tc/1, not a model's count), at most 2^53 - 1 as on the ring. Steering is never cut; the hits served are the longest rank prefix that fits, and budget reports the cut."
+          },
+          "own": {
+            "type": "boolean",
+            "default": true,
+            "description": "Listing, default true: the calling key's own submissions in every state. False: the promoted served tips of the workarea's subtree within the key's read access."
+          },
+          "claim_key": {
+            "type": "string",
+            "description": "Listing: the versions of one claim."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "held",
+              "promoted",
+              "demoted",
+              "rejected",
+              "erased"
+            ],
+            "description": "Listing: a state filter. Over the key's own work, promoted says a write was approved and rejected that it was not."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "memory",
+              "derived_fact",
+              "steering",
+              "term",
+              "term_mapping",
+              "vocab_release"
+            ],
+            "description": "Listing: a kind filter."
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Listing: versions written at or after this RFC 3339 date-time."
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Listing: versions written at or before this RFC 3339 date-time."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Listing: page size, at most 200 as on the ring."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Listing: the opaque next_cursor of the previous page; the client holds it (stateless)."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_workarea",
+      "description": "One workarea as the calling key is allowed to see it: identity, derived path, status, crew record, readable immediate children, and the verbs this key's effective access carries there, with the permission epoch. A node, not claim items. Rides GET /v2/workareas/{workarea}, one call.",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workarea": {
+            "type": "string",
+            "description": "Optional workarea, by node id or name. Omitted: the key's default workarea; a key with none is refused (request.workarea_unresolved)."
+          }
+        },
+        "required": [],
         "additionalProperties": false
       }
     },

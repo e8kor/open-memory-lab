@@ -43,8 +43,10 @@ const ACCEPTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 
 /// The catalog tools whose ring endpoint exists in this slice.
-pub const SERVED_TOOLS: [&str; 9] = [
+pub const SERVED_TOOLS: [&str; 11] = [
     "oml_write",
+    "oml_read",
+    "oml_workarea",
     "oml_remember",
     "oml_learn",
     "oml_recall",
@@ -139,6 +141,53 @@ struct WriteArgs {
 /// The successor kinds `oml_write` takes with `replaces`: no vocabulary
 /// kind, whose successors carry fields the tool does not (ADR-0039 d3).
 const SUPERSEDE_KINDS: [&str; 3] = ["memory", "derived_fact", "steering"];
+
+/// `oml_read`'s one flat argument set: `artifact_id` fetches, `query`
+/// recalls, and neither lists; `lineage` and `depth` are parsed only to be
+/// refused by name while the lineage read is designed (ADR-0039 d4, d9).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadArgs {
+    artifact_id: Option<String>,
+    lineage: Option<Value>,
+    depth: Option<Value>,
+    query: Option<String>,
+    workarea: Option<String>,
+    k: Option<u64>,
+    kinds: Option<Vec<String>>,
+    include_unreviewed: Option<bool>,
+    max_tokens: Option<u64>,
+    own: Option<bool>,
+    claim_key: Option<String>,
+    state: Option<String>,
+    kind: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    limit: Option<u64>,
+    cursor: Option<String>,
+}
+
+/// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
+const READ_GET: [&str; 1] = ["artifact_id"];
+const READ_RECALL: [&str; 6] = [
+    "query",
+    "workarea",
+    "k",
+    "kinds",
+    "include_unreviewed",
+    "max_tokens",
+];
+const READ_LISTING: [&str; 9] = [
+    "own",
+    "workarea",
+    "claim_key",
+    "state",
+    "kind",
+    "since",
+    "until",
+    "limit",
+    "cursor",
+];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -315,6 +364,8 @@ where
         let args = Value::Object(call.arguments);
         let outcome = match name {
             "oml_write" => Self::tool_write(st, token, args).await,
+            "oml_read" => Self::tool_read(st, token, args).await,
+            "oml_workarea" => Self::tool_workarea_info(st, token, args).await,
             "oml_remember" => Self::tool_submit(st, token, "remember", args).await,
             "oml_learn" => Self::tool_submit(st, token, "learn", args).await,
             "oml_recall" => Self::tool_recall(st, token, args).await,
@@ -442,6 +493,129 @@ where
         }))
     }
 
+    /// `oml_read`: one `GET /v1/memories/{artifact_id}` when `artifact_id`
+    /// is sent, one `POST /v1/memories/recall` when `query` is, and one
+    /// `GET /v1/memories` otherwise, `own` defaulting to `true`. An argument
+    /// outside the mode its fields choose, `query` beside `artifact_id`, and
+    /// the designed `lineage` and `depth` are each `request.validation`
+    /// naming the field; every mode answers claim items with text under
+    /// `mode` (ADR-0039 d4, ADR-0025 d12, d16).
+    async fn tool_read(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: ReadArgs = parse_args(args)?;
+        for (field, sent) in [
+            ("lineage", args.lineage.is_some()),
+            ("depth", args.depth.is_some()),
+        ] {
+            if sent {
+                return Err(field_refusal(
+                    &format!("/{field}"),
+                    &format!(
+                        "{field} is designed, not built: oml_read's lineage mode is served once the lineage read is routed"
+                    ),
+                ));
+            }
+        }
+        if args.artifact_id.is_some() && args.query.is_some() {
+            return Err(field_refusal(
+                "/query",
+                "query is refused with artifact_id: artifact_id fetches one version and query recalls, so send one",
+            ));
+        }
+        let (mode, allowed): (&str, &[&str]) = if args.artifact_id.is_some() {
+            ("get", &READ_GET)
+        } else if args.query.is_some() {
+            ("recall", &READ_RECALL)
+        } else {
+            ("listing", &READ_LISTING)
+        };
+        let sent = [
+            ("query", args.query.is_some()),
+            ("workarea", args.workarea.is_some()),
+            ("k", args.k.is_some()),
+            ("kinds", args.kinds.is_some()),
+            ("include_unreviewed", args.include_unreviewed.is_some()),
+            ("max_tokens", args.max_tokens.is_some()),
+            ("own", args.own.is_some()),
+            ("claim_key", args.claim_key.is_some()),
+            ("state", args.state.is_some()),
+            ("kind", args.kind.is_some()),
+            ("since", args.since.is_some()),
+            ("until", args.until.is_some()),
+            ("limit", args.limit.is_some()),
+            ("cursor", args.cursor.is_some()),
+        ];
+        if let Some((field, _)) = sent
+            .iter()
+            .find(|(field, sent)| *sent && !allowed.contains(field))
+        {
+            return Err(field_refusal(
+                &format!("/{field}"),
+                &format!(
+                    "{field} is not an argument of oml_read's {mode} mode: artifact_id fetches, query recalls, and neither lists"
+                ),
+            ));
+        }
+        let mut out = if let Some(artifact_id) = args.artifact_id {
+            let memory =
+                ring_outcome(Self::get_memory_inner(st, &artifact_id, &ring_headers(token)).await)
+                    .await?;
+            json!({ "items": [get_item(&memory)] })
+        } else if let Some(query) = args.query {
+            let mut body = Map::new();
+            body.insert("query".to_owned(), Value::String(query));
+            for (name, value) in [
+                ("workarea", args.workarea.map(Value::from)),
+                ("k", args.k.map(Value::from)),
+                ("kinds", args.kinds.map(Value::from)),
+                (
+                    "include_unreviewed",
+                    args.include_unreviewed.map(Value::from),
+                ),
+                ("max_tokens", args.max_tokens.map(Value::from)),
+            ] {
+                if let Some(value) = value {
+                    body.insert(name.to_owned(), value);
+                }
+            }
+            let result = ring_outcome(
+                Self::recall_inner(
+                    st,
+                    &ring_headers(token),
+                    &Bytes::from(Value::Object(body).to_string()),
+                )
+                .await,
+            )
+            .await?;
+            recall_output(&result)
+        } else {
+            let own = args.own.unwrap_or(true);
+            let mut params = vec![("own".to_owned(), own.to_string())];
+            for (name, value) in [
+                ("workarea", args.workarea),
+                ("claim_key", args.claim_key),
+                ("state", args.state),
+                ("kind", args.kind),
+                ("since", args.since),
+                ("until", args.until),
+                ("limit", args.limit.map(|l| l.to_string())),
+                ("cursor", args.cursor),
+            ] {
+                if let Some(value) = value {
+                    params.push((name.to_owned(), value));
+                }
+            }
+            let page = ring_outcome(
+                Self::list_memories_inner(st, &params, &ring_headers(token), true).await,
+            )
+            .await?;
+            listing_output(&page, true)
+        };
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("mode".to_owned(), Value::from(mode));
+        }
+        Ok(out)
+    }
+
     /// `oml_remember` / `oml_learn`: one `POST /v1/memories`.
     async fn tool_submit(st: &Self, token: &str, verb: &str, args: Value) -> Result<Value, Value> {
         let args: RememberArgs = parse_args(args)?;
@@ -508,27 +682,7 @@ where
             Self::recall_inner(st, &headers, &Bytes::from(Value::Object(body).to_string())).await,
         )
         .await?;
-        // Steering items and hits are one claim-item shape with text; only a
-        // hit carries a score (mcp-plugin.md, the claim item; ADR-0025 d12).
-        let steering: Vec<Value> = result["steering"]
-            .as_array()
-            .map(|items| items.iter().map(|m| recall_item(m, None)).collect())
-            .unwrap_or_default();
-        let hits: Vec<Value> = result["hits"]
-            .as_array()
-            .map(|hits| {
-                hits.iter()
-                    .map(|hit| recall_item(&hit["memory"], Some(&hit["score"])))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut out = json!({ "steering": steering, "hits": hits });
-        // The ring's budget object, present if and only if max_tokens was
-        // sent (retrieval.md token budgets; ADR-0025 d7).
-        if let (Some(budget), Some(obj)) = (result.get("budget"), out.as_object_mut()) {
-            obj.insert("budget".to_owned(), budget.clone());
-        }
-        Ok(out)
+        Ok(recall_output(&result))
     }
 
     /// `oml_get`: one `GET /v1/memories/{artifact_id}`. The item is the
@@ -540,15 +694,7 @@ where
         let memory =
             ring_outcome(Self::get_memory_inner(st, &args.artifact_id, &ring_headers(token)).await)
                 .await?;
-        let mut item = claim_item(&memory);
-        for (from, to) in [
-            ("text", "text"),
-            ("derives_from", "derives_from"),
-            ("attachments", "attachments"),
-        ] {
-            item.insert(to.to_owned(), memory[from].clone());
-        }
-        Ok(Value::Object(item))
+        Ok(get_item(&memory))
     }
 
     /// `oml_supersede`: one `POST /v1/memories/{artifact_id}/supersede`.
@@ -620,25 +766,14 @@ where
                 params.push((name.to_owned(), value));
             }
         }
-        let page = ring_outcome(Self::list_memories_inner(st, &params, &ring_headers(token)).await)
-            .await?;
-        let items: Vec<Value> = page["items"]
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .map(|m| {
-                        let mut item = claim_item(m);
-                        item.insert("held_expires_at".to_owned(), m["held_expires_at"].clone());
-                        Value::Object(item)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok(json!({ "items": items, "next_cursor": page["next_cursor"] }))
+        let page =
+            ring_outcome(Self::list_memories_inner(st, &params, &ring_headers(token), false).await)
+                .await?;
+        Ok(listing_output(&page, false))
     }
 
-    /// `oml_workarea_info`: one `GET /v2/workareas/{id}`, so the tool answers
+    /// `oml_workarea_info`, and `oml_workarea`, its v0.4.0 name (ADR-0039
+    /// d2, d10): one `GET /v2/workareas/{workarea}`, so the tool answers
     /// exactly what the ring answers; `workarea` is the node's id or name,
     /// which the ring classifies and the app resolves (ADR-0026 d4). An
     /// omitted workarea is the key's journalled default, which the app
@@ -742,6 +877,67 @@ fn claim_item(m: &Value) -> Map<String, Value> {
     .into_iter()
     .map(|(from, to)| (to.to_owned(), m[from].clone()))
     .collect()
+}
+
+/// A ring `Memory` as an `oml_get` item: the claim item with `text`,
+/// `derives_from` and `attachments`, whose `derives_from` and `replaces`
+/// the ring has already limited to what the key can read (mcp-plugin.md
+/// `oml_get`; ADR-0025 d3, d12).
+fn get_item(memory: &Value) -> Value {
+    let mut item = claim_item(memory);
+    for field in ["text", "derives_from", "attachments"] {
+        item.insert(field.to_owned(), memory[field].clone());
+    }
+    Value::Object(item)
+}
+
+/// A ring recall result as `{steering, hits, budget?}`: steering items and
+/// hits are one claim-item shape with text, and only a hit carries a score
+/// (mcp-plugin.md, the claim item; ADR-0025 d12). The ring's budget object
+/// is present if and only if `max_tokens` was sent (retrieval.md token
+/// budgets; ADR-0025 d7).
+fn recall_output(result: &Value) -> Value {
+    let steering: Vec<Value> = result["steering"]
+        .as_array()
+        .map(|items| items.iter().map(|m| recall_item(m, None)).collect())
+        .unwrap_or_default();
+    let hits: Vec<Value> = result["hits"]
+        .as_array()
+        .map(|hits| {
+            hits.iter()
+                .map(|hit| recall_item(&hit["memory"], Some(&hit["score"])))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = json!({ "steering": steering, "hits": hits });
+    if let (Some(budget), Some(obj)) = (result.get("budget"), out.as_object_mut()) {
+        obj.insert("budget".to_owned(), budget.clone());
+    }
+    out
+}
+
+/// A ring listing page as `{items, next_cursor}`, each item the claim item
+/// plus `held_expires_at`, and its `text` when `with_text`, as `oml_read`
+/// returns it (mcp-plugin.md `oml_my_work`; ADR-0025 d12, d13; ADR-0039
+/// d4).
+fn listing_output(page: &Value, with_text: bool) -> Value {
+    let items: Vec<Value> = page["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(|m| {
+                    let mut item = claim_item(m);
+                    item.insert("held_expires_at".to_owned(), m["held_expires_at"].clone());
+                    if with_text {
+                        item.insert("text".to_owned(), m["text"].clone());
+                    }
+                    Value::Object(item)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({ "items": items, "next_cursor": page["next_cursor"] })
 }
 
 /// A ring `Memory` as an `oml_recall` item: the claim item plus its

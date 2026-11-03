@@ -405,7 +405,7 @@ where
     ) -> Response {
         let rid = new_request_id();
         let result = match query {
-            Ok(Query(params)) => Self::list_memories_inner(&st, &params, &headers).await,
+            Ok(Query(params)) => Self::list_memories_inner(&st, &params, &headers, false).await,
             Err(e) => Err(ApiError::validation(format!(
                 "the query string is not this operation's shape: {e}"
             ))),
@@ -416,11 +416,16 @@ where
     /// `GET /v1/memories`: the own-work listing with `own=true`, else the
     /// scoped listing, as memory summaries without text, newest first
     /// (http-api.md search; ADR-0025 d13). The query's `workarea` is the
-    /// subtree either reads (ADR-0039 d4, d7).
+    /// subtree either reads (ADR-0039 d4, d7). `include_text` is the
+    /// agent plugin's alone: `oml_read`'s listing mode returns each item
+    /// with its text, as every `oml_read` mode does, from the same rows
+    /// and access the listing reads (ADR-0039 d4); the HTTP route serves
+    /// summaries.
     async fn list_memories_inner(
         st: &Self,
         params: &[(String, String)],
         headers: &HeaderMap,
+        include_text: bool,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
         refuse_workarea_header(headers, "workarea")?;
@@ -433,7 +438,7 @@ where
         Ok(json_response(
             StatusCode::OK,
             &json!({
-                "items": page.items.iter().map(|m| memory_json(m, false)).collect::<Vec<_>>(),
+                "items": page.items.iter().map(|m| memory_json(m, include_text)).collect::<Vec<_>>(),
                 "next_cursor": page.next_cursor,
             }),
         ))
