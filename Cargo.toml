@@ -6,6 +6,7 @@ members = [
     "crates/oml-domain",
     "crates/oml-app",
     "crates/adapters/oml-pg",
+    "crates/adapters/oml-fetch",
     "crates/transports/oml-transport-http",
     "crates/bins/oml-server-lead",
     "crates/bins/oml-cli",

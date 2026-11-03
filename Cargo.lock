@@ -1193,6 +1193,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oml-fetch"
+version = "0.3.0"
+dependencies = [
+ "oml-app",
+ "tokio",
+ "ureq",
+]
+
+[[package]]
 name = "oml-pg"
 version = "0.3.0"
 dependencies = [

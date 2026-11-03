@@ -6,6 +6,7 @@
 //! the traits are not dyn-compatible; compositions use generics.
 
 use core::future::Future;
+use std::net::IpAddr;
 
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde_json::Value;
@@ -950,6 +951,30 @@ pub trait ClientDocumentFetcher: Send + Sync {
     fn fetch(
         &self,
         url: &str,
+    ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
+}
+
+/// The outbound I/O under a document fetch, split at the one point the fetch
+/// caps need between its halves (ADR-0031 d5; http-api.md "Client
+/// identity"): resolve the host, then fetch from one address the use case
+/// checked. [`crate::oauth_fetch::CappedFetcher`] holds the caps and the
+/// address allow-list over it, so an adapter cannot widen either.
+pub trait DocumentFetcher: Send + Sync {
+    /// Every A and AAAA answer for `host`, unfiltered; a resolver failure
+    /// or timeout is [`DocumentFetchFailure::Failed`].
+    fn resolve(
+        &self,
+        host: &str,
+    ) -> impl Future<Output = Result<Vec<IpAddr>, DocumentFetchFailure>> + Send;
+
+    /// `GET url` over a connection to `address` with no second resolution,
+    /// no proxy and no redirect, `Accept-Encoding: identity`, cut at 5
+    /// seconds and at 16 KiB received; TLS verifies the URL's host, sent
+    /// as SNI. Any answer but `200` is [`DocumentFetchFailure::Failed`].
+    fn fetch(
+        &self,
+        url: &str,
+        address: IpAddr,
     ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
 }
 
