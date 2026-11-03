@@ -9,7 +9,7 @@ answers: what a deliverable is and what its words and files hold; how remember, 
 
 **Status:** proposed · 2026-10-31
 
-**Amends:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4), ADR-0022 (d6), ADR-0023 (d3, d8), ADR-0024 (d1), ADR-0025 (d4, d6, d8, d11, d12, d13, d14)
+**Amends:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4), ADR-0022 (d6), ADR-0023 (d3, d8), ADR-0024 (d1), ADR-0025 (d4, d6, d8, d11, d12, d13, d14), ADR-0029 (d2)
 
 ## Context
 
@@ -66,18 +66,22 @@ user confirms before acceptance. Proposed, not built.
     a digest, so any filesystem can hold the set. The server builds it from the request's items
     (d4) with one `oml-domain` function, checks before anything is written that it is canonical and
     names exactly the other bound digests, each once, under each upload's recorded media type, and
-    then writes it with the inline texts (d4) as a completed upload of the calling key, bound first,
-    so at most 63 files fit [`submission.max_attachments`](../api/http-api.md#limits). A failure is
+    binds it first, so at most 63 files fit [`submission.max_attachments`](../api/http-api.md#limits). A failure is
     `422` with `details.reason` ∈ `path`, `duplicate`, `entry`, `mismatch` (a builder defect) and
     `details.path` where one applies. The envelope shape is unchanged (ADR-0004 d2's additive rule),
     a version's identity commits to every path, and paths shred with the bytes
-    ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) d3).
+    ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) d3). Its ciphertext lies on the version's
+    `memories` row, in `memories.file_manifest_ciphertext`, under the body's DEK: admission's
+    Postgres [placement](../architecture/admission.md#quarantine-placement) for bodies, never an
+    object, so serving its descriptors reads no object and unwraps no second DEK (amends ADR-0004
+    d4 for this one attachment).
 
 - **d3 — Every attachment fetch names one version and answers as a download a browser may not run,
   and nothing renders on the API origin.** One digest may be stored once per version that binds it
   (d9), so `GET /v1/attachments/{digest}` gains a required `artifact_id` query parameter and `oml
-  attach get` takes `<artifact_id> <digest>`: admission, the stored object and its DEK, the
-  filename and the read-log row all come from that version, a `serve_id` admits only for the
+  attach get` takes `<artifact_id> <digest>`: admission, the stored object and its DEK (for the
+  file manifest, its row's ciphertext and the body's DEK), the filename and the read-log row all
+  come from that version, a `serve_id` admits only for the
   version it serves, and a version that does not bind the digest answers `access.not_found`. The
   fetch answers `Content-Disposition: attachment` with a filename sanitized from its path's last
   segment (`file-manifest.json` for the file manifest), `X-Content-Type-Options: nosniff` and
@@ -100,7 +104,7 @@ user confirms before acceptance. Proposed, not built.
     to d8 reshape tools whose shapes ADR-0022 d6 keeps (amends it).
     - **Inline text** has a `text/*` or `application/json` media type or a `+json` or `+xml` suffix
       (RFC 6839), SVG and Mermaid source included, else `request.validation`; its UTF-8 bytes stay
-      unnormalized, since a file's bytes are its identity. Inline texts and the file manifest are
+      unnormalized, since a file's bytes are its identity. Inline texts are
       encrypted and written, as completed uploads of the calling key, only after the request passes
       validation, grant admissibility (the [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order))
       and the scan, immediately before `BEGIN`: a request refused before `BEGIN` writes nothing,
@@ -123,16 +127,19 @@ user confirms before acceptance. Proposed, not built.
       among them, and `AttachmentDescriptor` gains `path`. On the ring both move from
       `MemorySummary` to `Memory`, so listings carry neither (amends ADR-0025 d13); on MCP the claim
       item carries them on recall and get, where ADR-0025 d12 gave get alone `attachments` (amends
-      it). The file manifest is decrypted on the serving path, never for a row the budget cuts.
+      it). The file manifest is hydrated set-wise with its hit's body (ADR-0024 d4) and decrypted on
+      the serving path under the DEK the body already needs (ADR-0024 d3), never for a row the
+      budget cuts, so recall and get read no object (ADR-0024 d2).
     - **The budget.** `tokens(row) = ⌈(body_bytes + file_manifest_bytes) ÷ 4⌉`, where
       `file_manifest_bytes` is the clear `size_bytes` of its file manifest's `submission.attach` (0
       without files), folded to `memories.file_manifest_bytes`, standing for the descriptors that
-      re-serialize it, a definition like the divisor. A changed function mints a counter (ADR-0025
-      d6, amended): `oml-tc/2`, equal to `oml-tc/1` on rows without files, under ADR-0025 d7's
+      re-serialize it, a definition like the divisor; the session hook counts the same way (amends
+      ADR-0029 d2's ⌈body bytes ÷ 4⌉). A changed function mints a counter (ADR-0025 d6, amended): `oml-tc/2`, equal to `oml-tc/1` on rows without files, under ADR-0025 d7's
       unchanged cut.
     - **Text on get.** `oml_get` gains `include_text` (default `false`; `GET
       /v1/memories/{artifact_id}?include_text=true`): in path order, each inline-type file carries
       `text` while the texts stay within `submission.max_body_size`, the rest `text: null`;
+      each text is one object read, as d3's fetch is;
       binaries come by d3's fetch or `oml attach get <artifact_id> <digest> --out <path>`, which
       checks the digest before writing.
 
@@ -180,8 +187,10 @@ user confirms before acceptance. Proposed, not built.
   each used hit's `artifact_id` and resolve the claim keys the session hook prints (ADR-0029 d6)
   through `oml_my_work`. Back: `GET /v2/memories/{artifact_id}/lineage` and `oml_graph {roots}`,
   unreadable nodes redacted (FR-31); forward, "what was built from X", the same read and
-  `oml_graph` with `direction=descendants`, bounded by `depth`, stopping at a node the caller
-  cannot read, which is absent rather than redacted, so no one learns that unreadable work exists.
+  `oml_graph` with `direction=descendants`, over `derives_from` alone, claim edges not followed,
+  bounded by `depth`: the ring's lineage read gains `direction` (`ancestors`, the default, or
+  `descendants`) and `depth` query parameters, and `oml_graph` gains `direction`. It stops at a
+  node the caller cannot read, which is absent rather than redacted, so no one learns that unreadable work exists.
 
 - **d9 — File bytes live behind the object-store port, in d10's store, under one DEK per stored
   object, wrapped by a tenant KEK through the KMS port**, built in pure Rust as the crates on paper
@@ -270,12 +279,15 @@ user confirms before acceptance. Proposed, not built.
       (0.14.2 `src/local.rs:308-323`), so until the pin reaches 0.14 the file store the
       composition hands both adapters wraps `LocalFileSystem` and syncs each file a put, copy or
       multipart completion writes, and its parent directory, before it returns; from 0.14 it is
-      `with_fsync(true)`. Every put but a part's is `PutMode::Create`, the put-if-absent each
-      scheme's self-test proves, so a stored object's name is written once; `PutMode::Update` is
-      refused by the filesystem backend (0.13.2 `src/local.rs:336-341`), so every compare-and-set
-      stays in Postgres. Two writes replace, each at a name only one session reaches: a retried
-      part, by d9's plain put, and the multipart completion, whose options carry no mode in 0.13.2
-      (`src/lib.rs:1813-1829`) and which renames onto the session's object (`src/local.rs:888`).
+      `with_fsync(true)`. Every put `oml-objectstore` makes but a part's is `PutMode::Create`, the put-if-absent
+      each scheme's self-test proves, so a stored object's name is written once; `PutMode::Update`
+      is refused by the filesystem backend (0.13.2 `src/local.rs:336-341`), so every
+      compare-and-set stays in Postgres. Its other writes replace, each at a name only one session
+      or version reaches: a retried part, by d9's plain put; the multipart completion, whose
+      options carry no mode in 0.13.2 (`src/lib.rs:1813-1829`) and which renames onto the
+      session's object (`src/local.rs:888`); and the promotion copy to `oml-bodies`, a plain
+      `copy`, which an interrupted move repeats with the same ciphertext. `oml-lake`'s writes keep
+      delta-rs's own modes, and `oml storage copy` writes its target by plain put.
     - **Scaling out is configuration, never code:** `s3://` (AWS S3, Cloudflare R2, MinIO, Garage),
       `az://` or `gs://`, which cluster-mode followers on other hosts need, since `file` serves one
       host. Startup refuses the crate's `memory` and `http` schemes, naming the setting: one forgets
@@ -309,9 +321,9 @@ user confirms before acceptance. Proposed, not built.
     |---|---|---|
     | S1 | d10's store: `storage.url`, `storage.options`, the default, the refused schemes, the self-test on every backend, the file store's syncs and `PutMode::Create` puts; the object-store and KMS ports; `oml-objectstore`; `oml-kms` (`kms-file`); `upload_sessions` and `artifact_keys` as d9 keys them; a `minio` service at ADR-0023 d7's pinned tag in `docker-compose.yml`, with `storage.url` set to it, and in the `test` job of `.github/workflows/ci.yml`, which runs the suite | `the_filesystem_and_minio_backends_pass_one_object_store_conformance_suite`, failing rather than skipping in CI when the MinIO endpoint is absent; `the_file_store_syncs_each_written_file_and_its_directory_before_it_returns`; `a_second_put_at_a_stored_objects_name_is_refused_while_a_retried_part_replaces_its_first`; `an_unset_storage_url_stores_under_the_data_directory`; `a_memory_or_http_storage_url_is_refused_at_startup`; `kms_file_wraps_and_unwraps_a_dek_and_never_stores_it_in_clear` |
     | S2 | upload sessions, the `bound` state, expiry and the lead's sweep, binding, `submission.attach`, the move at promotion, serves with every attachment, d3's fetch; d2's file manifest and d4's two forms on remember and supersede | `no_part_or_completed_upload_rests_as_plaintext_under_the_data_directory`, `a_frame_moved_to_another_position_fails_to_decrypt`, `an_unbound_session_past_its_expiry_has_no_wrapped_dek_and_no_object`, `a_session_the_sweep_expired_never_binds_and_a_bound_one_is_never_swept`, `the_keyless_gc_deletes_no_body_object_an_event_references_and_no_part_of_an_open_session`, `a_request_refused_before_begin_writes_no_object`, `a_promoted_versions_objects_move_from_quarantine_to_oml_bodies`, `one_key_uploading_the_same_bytes_twice_stores_two_objects_under_two_deks`, `a_completed_upload_binds_into_one_version_only`, `each_bound_file_has_its_own_wrapped_dek_row_under_its_version`, `a_verdict_counts_only_when_every_attachment_was_served_to_its_reviewer`, `a_fetch_serves_the_object_of_the_version_it_names`, `every_attachment_fetch_answers_as_a_download_with_scripts_disabled`, `a_file_manifest_that_does_not_name_exactly_the_other_bound_digests_is_refused`, `an_inline_text_and_an_uploaded_file_of_the_same_bytes_bind_the_same_digest_and_scan`, `inline_texts_past_the_body_bound_are_refused_as_payload_too_large`, `every_property_oml_remember_advertises_is_accepted_by_its_argument_struct` |
-    | S3 | d5 and d6: descriptors, `oml-tc/2` with `memories.file_manifest_bytes` and retrieval's [token budgets](../architecture/retrieval.md#token-budgets), `include_text`, `attachment_forms` and `attachment_limits` | `recall_counts_a_hits_file_descriptors_under_oml_tc_2`, `a_listing_item_carries_no_file_descriptors`, `the_workarea_read_states_the_calling_keys_forms_and_limits` |
+    | S3 | d5 and d6: descriptors, `oml-tc/2` with `memories.file_manifest_bytes` and retrieval's [token budgets](../architecture/retrieval.md#token-budgets), `include_text`, `attachment_forms` and `attachment_limits` | `recall_counts_a_hits_file_descriptors_under_oml_tc_2`, `recall_serves_file_descriptors_without_reading_an_object`, `a_listing_item_carries_no_file_descriptors`, `the_workarea_read_states_the_calling_keys_forms_and_limits` |
     | S4 | kind `deliverable`, its class, the `kind` and `kinds` filters | `a_new_deliverable_on_a_taken_claim_key_answers_claim_key_conflict`, `a_recall_without_kinds_serves_deliverable_tips`, `two_deliverables_in_one_workarea_keep_their_own_tips_when_one_is_superseded`, `the_scoped_listing_by_kind_lists_one_tip_per_deliverable` |
-    | S5 | the lineage read both ways; `oml_graph` served | `the_descendants_read_lists_a_deck_built_from_a_report`, `the_descendants_read_stops_at_a_node_the_caller_cannot_read` |
+    | S5 | the lineage read both ways; `oml_graph` served | `the_descendants_read_lists_a_deck_built_from_a_report`, `the_descendants_read_follows_derives_from_and_no_claim_edge`, `the_descendants_read_stops_at_a_node_the_caller_cannot_read` |
     | S6 | `oml attach put` and `get`; the `oml-memory` skill and `instructions` naming d6's preferred forms; the session below | `attach_put_prints_the_session_id_and_never_the_bytes` and `attach_get_writes_a_file_only_after_its_digest_matches` in `cli_e2e.rs`; `scripts/check_plugin.py` fails when the skill names a tool or form the catalog lacks; `deliverables.rs` runs the session below in `cargo test --workspace` |
 
 ## Consequences
@@ -336,7 +348,7 @@ and served again, and only comparing file manifests narrows the work ([FR-2](../
 so an agent submits finished work, not drafts, as the `oml-memory` skill says. Inline text costs
 the agent's output once per version, and whether claude.ai accepts a call near the 1 MiB cap is
 unverified (FR-42). Wrapped DEKs multiply by file count, promotion copies every file once, each
-served hit with files decrypts its file manifest, each write to the file store waits for a file
+served hit with files decrypts its file manifest from its row, each write to the file store waits for a file
 and a directory sync, and a cloud backend adds a network round trip to every object operation,
 all unmeasured against [FR-25](../product/roadmap.md); `oml-tc/2` changes every count with files,
 the session hook's too.
@@ -357,7 +369,7 @@ ADR-0022's and ADR-0025's already open; ADR-0005 d4's table and the
 [storage](../architecture/storage.md) states that the lake writes through the same port; storage,
 admission and deployment name d10's one root and prefixes, and admission's [quarantine
 placement](../architecture/admission.md#quarantine-placement), its keyless GC paragraph included,
-d9's object names and both sweep rules; the budget-token row (ADR-0025 d6) and concepts' budget
+d9's object names, d2's file manifest on its row, and both sweep rules; the budget-token row (ADR-0025 d6) and concepts' budget
 sentence name `oml-tc/2`'s file manifest bytes; the D2–D5, D12, D13 and D15 cells name this
 record; concepts gains a deliverables section and map row, and its vocabulary pointer names d11;
 the spec tag is cut.

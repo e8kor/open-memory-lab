@@ -48,14 +48,14 @@ confirmed d2's departure from the brief on 2026-10-31.
   stored object, the `bound` session state, the object's frame format, its lifecycle and expiry,
   and their copy classes (d9); one `object_store` port for files and the lake, pinned to the
   version deltalake requires, `storage.url` with the local filesystem by default, every write
-  synced and every put but a part's put-if-absent, the conformance suite against the filesystem
+  synced and every put `oml-objectstore` makes but a part's put-if-absent, the conformance suite against the filesystem
   and MinIO, and `oml storage copy` (d10); two vocabulary rows (d11); the build order after
   iteration 3 (d12).
 - **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-40 to FR-43
   and FR-46 on the roadmap, each marked proposed (FR-44 and FR-45 are used on another branch). No
   contract page changes, so `info.version` stays `0.3.0-design`.
 - **Amends, on acceptance:** ADR-0004 (d3, d4), ADR-0005 (d1, d4), ADR-0018 (d4), ADR-0022 (d6),
-  ADR-0023 (d3, d8), ADR-0024 (d1) and ADR-0025 (d4, d6, d8, d11, d12, d13, d14); their Status
+  ADR-0023 (d3, d8), ADR-0024 (d1), ADR-0025 (d4, d6, d8, d11, d12, d13, d14) and ADR-0029 (d2); their Status
   lines gain the back-pointer then.
 
 ### 2026-10-31 — Names as keys (implementation)
