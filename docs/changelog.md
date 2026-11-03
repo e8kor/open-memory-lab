@@ -43,19 +43,20 @@ record changes until then.
 
 - **Proposed, not built:** kind `guardrail`, which reuses steering's applicability and differs
   from it in content, delivery, frame, ratification, budget and tool calls (d1); severity
-  `never`, `must` or `should`, which says how binding a line is and which row wins a conflict,
+  `never`, `must` or `should`, which says how binding a line is and orders the set first,
   and decides no inheritance (d2); promoted guardrails only, held ones listed to their author
   alone (d3); applicability under the key's own reader access, ADR-0008 d4 unchanged, and its
   `guardrail_scope`, `workarea` or `ancestors` (default `ancestors`, the maintainer's reading to
   confirm), set by an admin with `--guardrail-scope` on `oml keys issue` and
   `oml keys issue-agent`, journalled in `key.issued` and changed only by rotation, the
-  maintainer's reading to confirm, with no client setting and no `off` value; severity-first order and shown conflicts, the strictest
-  winning (d4);
-  `GET /v1/guardrails`, never in recall (d5); `oml hook guardrails` on SessionStart, after a
+  maintainer's reading to confirm, with no client setting and no `off` value; severity-first order and shown conflicts
+  (d4);
+  `GET /v1/guardrails`, amending ADR-0022 d2's `/v1` verb list, never in recall, with
+  reviewer counts and no reviewer key names (d5); `oml hook guardrails` on SessionStart, after a
   compaction and on SubagentStart, in its own frame with provenance on every line (d6); a cap
   and no partial set (d7); the `oml-gr/1` rule, deny or ask only (d8); `oml hook pre-tool-use`,
   its 0600 per-session cache with a digest line, a cache that cannot be checked denying and no
-  cache at all allowing with a one-line warning (d9); `oml_remember` with kind `guardrail`, two
+  cache at all allowing with a one-line warning (d9); `POST /v1/memories` with kind `guardrail`, written and superseded on the HTTP API only, two
   scan classes, ratification under the workarea's review policy with R2, and never a
   self-signature, the maintainer's reading to confirm (d10); `oml guardrails export` and an MCP
   prompt for other harnesses (d11); a change freeze through proposed ADR-0036's valid time
@@ -74,7 +75,7 @@ record changes until then.
   brief, digest and corpus, with no new kind; FR-60 to FR-62 on the roadmap track them. No
   contract page changes, so `info.version` stays `0.3.0-design`.
 - **Amends, on acceptance:** ADR-0001 (d5), ADR-0012 (d5), ADR-0013 (d5), ADR-0014 (d2),
-  ADR-0018 (d4), ADR-0025 (d2, d11, d12), ADR-0026 (d9), ADR-0028 (d1) and ADR-0029 (d7); their
+  ADR-0018 (d4), ADR-0022 (d2), ADR-0025 (d2, d11, d12), ADR-0026 (d9), ADR-0028 (d1) and ADR-0029 (d7); their
   Status lines gain the back-pointer then, and proposed ADR-0036 (d2, d4) and ADR-0030 (d8) take
   d12 and d3 when each is accepted. ADR-0008 d4 and ADR-0012 d3 are no longer amended.
 
