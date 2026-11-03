@@ -36,6 +36,14 @@ DATABASE_URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev cargo test --wor
 bash scripts/poc-demo.sh                     # end-to-end walk through a throwaway database
 ```
 
+The Postgres suites and the demo mint an owner and a serving role for each throwaway database,
+since the server migrates as one and serves as the other
+([ADR-0034](docs/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8). Minting takes
+a superuser, which the compose database's `oml` role is. Under a role that cannot create roles,
+each such test prints `did not run: <role> cannot create roles` and returns, and the demo stops
+with that reason; CI sets `OML_TEST_REQUIRE_SPLIT=1`, which turns the same condition into a
+failure.
+
 ### SDKs and plugins
 
 - Python SDK: `cd sdks/python && uv run --locked pytest`

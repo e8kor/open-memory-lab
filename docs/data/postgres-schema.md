@@ -897,10 +897,10 @@ code path sets the GUC; the STRIDE model treats hostile co-tenants) are owned by
 
 ## Privileges
 
-**Status:** built in `migrations/0007_role_split.sql` · its checks run only where a superuser
-mints the suites' role pairs, CI's `cargo test (Postgres)`
-([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8); the lead's
-owner URL and startup refusals (d4, d5) are decided, not built.
+**Status:** built in `migrations/0007_role_split.sql`, and the lead's owner URL and startup
+refusals in `oml-server-lead` and `oml-pg` · their checks run only where a superuser mints the
+suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d4, d5, d8).
 
 Two roles reach a database: the **owner**, which owns the database and every object the
 migrations create and runs every migration, and the **serving role**, which owns nothing and
@@ -1005,7 +1005,11 @@ The rules:
   split that M0 spike 3 verifies ([critical path](../product/critical-path.md)) and
   [security](../architecture/security.md) requires: application roles cannot alter schema, and
   the owner role is used by nothing else. The upgrade ordering (migrate, then roll workloads) is
-  owned by the [upgrades](../operations/upgrades.md) page.
+  owned by the [upgrades](../operations/upgrades.md) page. The bootstrap workload is decided, not
+  built: until it is, the lead migrates on boot under `postgres.owner_url`, closes that pool and
+  serves under `postgres.url`, and opens an owner connection afterwards only for a new tenant's
+  partition ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d4,
+  d11).
 - **The sync rule.** This page is **normative in shape**; the migrations are **normative in
   bytes**. A schema change is one PR that lands both: the migration that makes it true and the
   edit here that keeps this page a faithful sketch of the result. Neither surface may drift

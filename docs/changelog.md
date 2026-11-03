@@ -29,6 +29,53 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — The lead serves as a role that owns nothing (implementation)
+
+An implementation milestone; no decision changes. The code now builds d10's steps 2 to 4 of the
+proposed [ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), the work
+v0.3.1 carries. The record stays proposed: no Status line moves, `info.version` stays
+`0.3.0-design`, no `spec-v0.3` tag is cut, and no package version moves until the release.
+
+- **The split** (d2, d3, d6). Migration `0007_role_split.sql` grants the serving role only the
+  DML each table's adapter statements use, named through `oml.serving_role`, and revokes every
+  privilege on `_sqlx_migrations` and `CREATE` on `public` from `PUBLIC`
+  ([postgres-schema](data/postgres-schema.md#privileges)).
+- **The boot** (d4, d5). `oml-server-lead` requires `postgres.owner_url`
+  (`OML_POSTGRES__OWNER_URL`), runs d5's checks, migrates on the owner pool, runs the checks
+  again and closes that pool before its keyring and listener. A refusal exits non-zero before any
+  listener binds, logged with `event` `role_split_refused`, `code` `postgres.role_split` and `reason`
+  one of d5's nine names; a catalog read that failed refuses the same way with its `error` in
+  place of a reason. The boot that serves logs `event` `role_split_booted` with `owner_role` and
+  `serving_role`. The lines are plain text, not yet the JSON of
+  [observability](operations/observability.md#structured-logging). No `oml doctor` field is added:
+  a refused lead binds no listener for doctor to read.
+- **Keys carrying `tenant_id`** (d12). Migration `0008_tenant_keys.sql` rewrites the five keys
+  into tenant tables as `(tenant_id, col)` and drops the keys of `journal.api_key_id` and
+  `api_keys.issued_by` ([postgres-schema](data/postgres-schema.md#keys-into-tenant-tables)).
+- **Per-tenant FTS partitions** (d11, d13). Migration `0009_memories_partitions.sql`
+  list-partitions `memories` by `tenant_id`, and the owner creates each new tenant's fenced
+  partition before its genesis commits; a DDL that loses a lock contest answers
+  `system.unavailable` with `details.reason` `partition_lock_timeout`, a reason
+  [errors](api/errors.md) names at the record's acceptance. Every adapter statement on `memories`
+  binds its tenant. No function is marked `LEAKPROOF`, so an FTS read scans its tenant's
+  partition, and its latency per tenant size is unmeasured (FR-25)
+  ([postgres-schema](data/postgres-schema.md#the-built-fts-index-per-tenant-partitions)).
+- **The payloads** (d2, d7, d8). `docker-compose.yml` and the chart's kind job create `oml_owner`
+  and `oml_server`, the chart's Secret carries both URLs, and `scripts/poc-demo.sh`, every Postgres
+  suite and both SDK harnesses mint a uniquely named pair, which takes a superuser. Under a role
+  that cannot create roles a suite prints `did not run: <role> cannot create roles`; CI sets
+  `OML_TEST_REQUIRE_SPLIT=1`, which fails on it. `rls-spike` migrates as the lead does and records
+  no failure, its two `estimate` checks passing over the partitions or failing the run (d9).
+- **Not built or not run:** the live host's split (d7), not run; the bootstrap workload, which
+  would take the migrations and the partition DDL from the lead (d4); the `oml doctor` role-split
+  check [observability](operations/observability.md#per-profile-checks) designs for the
+  standalone and docker profiles. CI's pinned PostgreSQL 17 has not run over the partitions.
+- **No surface change:** no HTTP operation, error code or event type.
+- **Pages touched:** [postgres-schema](data/postgres-schema.md), the
+  [spike 3 findings](engineering/spikes/spike-3-rls.md) and the [M0 spikes](engineering/spikes/index.md)
+  page, [SDKs](engineering/sdks.md), README, CONTRIBUTING, the SDK and chart READMEs,
+  `release.yml`'s install notes, the Dockerfile's comment and this page.
+
 ### 2026-11-03 — v0.3.1 ships per-tenant FTS partitions with no `LEAKPROOF` wrapper (ADR-0034, proposed)
 
 [ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), still proposed, joins the
