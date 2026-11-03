@@ -25,7 +25,7 @@ use oml_domain::name::{
 use oml_domain::{
     ChainHead, Envelope, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, WorkareaStatus, canonical_bytes, check_reviewer, event_types, next_envelope,
-    nfc, sha256_digest_string, transition,
+    nfc, propose_check, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ListingCursor, NameCursor, PathCursor};
@@ -40,8 +40,9 @@ use crate::types::{
     IssuedKey, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
     ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
     RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TransitionRecord,
+    TransitionState, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef,
+    WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -1842,6 +1843,97 @@ where
             crew_id: Some(crew_id),
             ..workarea
         })
+    }
+
+    /// Proposes a forward status transition of the node, by id or name, to
+    /// `to`: the proposal is a pending `workarea_transitions` row, and the
+    /// node keeps its status until a second identity ratifies it (ADR-0009
+    /// d3). The refusal order: (1) the key role, before any lookup, an admin
+    /// key passing on its role and any other key needing dreamer among its
+    /// admissible grant roles, so a reader, writer or operator key is
+    /// `access.verb_ceiling`; (2) the node resolves; (3) a dreamer key needs
+    /// dreamer effective access on it, `access.not_found` outside read access
+    /// and `access.grant_refused` within it; (4) the ladder, on the node and
+    /// its immediate children as read now: `workarea.transition_refused` with
+    /// its reason, nothing journalled (ADR-0009 d1, d3, d4); (5) one
+    /// `workarea.status_proposed` is sealed and committed with the row. A
+    /// `held_by: service` key may propose: roles-and-keys.md bars it from
+    /// ratification alone (ADR-0010). The ratifying transaction re-checks the
+    /// node, so a proposal admitted here may still be refused there
+    /// (workareas.md, ratification re-checks).
+    pub async fn propose_transition(
+        &self,
+        api_key: &str,
+        workarea: Reference,
+        to: WorkareaStatus,
+    ) -> Result<TransitionRecord, AppError> {
+        const VERB: &str = "propose_transition";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        if key.role != Role::Admin {
+            require_admissible(key, Role::Dreamer, VERB)?;
+        }
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        if key.role != Role::Admin {
+            self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+                .await?;
+        }
+        let node = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let children: Vec<WorkareaStatus> = self
+            .journal
+            .workarea_children(key.tenant_id, workarea_id)
+            .await?
+            .iter()
+            .map(|child| child.status)
+            .collect();
+        // "No simulation is fenced on the subtree" holds vacuously while
+        // simulations are unbuilt, and lands in the ladder's preconditions
+        // with them (workareas.md, readings the build takes).
+        propose_check(node.parent_id.is_none(), node.status, to, &children).map_err(|reason| {
+            AppError::TransitionRefused {
+                workarea_id,
+                from: node.status,
+                to,
+                reason,
+            }
+        })?;
+        let proposal = TransitionRecord {
+            transition_id: self.ids.new_id(),
+            tenant_id: key.tenant_id,
+            workarea_id,
+            from: node.status,
+            to,
+            state: TransitionState::Pending,
+            proposer_key_id: key.key_id,
+            proposer_principal: key.principal.clone(),
+            ratifier_key_id: None,
+        };
+        let prev = self.head_event(key.tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::WORKAREA_STATUS_PROPOSED,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "transition_id": proposal.transition_id.to_string(),
+                "proposed_by_key_id": key.key_id.to_string(),
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::TransitionProposed(proposal.clone()),
+            None,
+        )
+        .await?;
+        Ok(proposal)
     }
 
     /// The lead's start on the names schema, before it serves: each chain of

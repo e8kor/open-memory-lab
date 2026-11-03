@@ -435,6 +435,36 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "R2 extends to edges and transitions: proposal and ratification are two identities or they are nothing.",
             format!("the key or principal ratifying transition {transition_id} proposed it"),
         ),
+        // The ladder refused a proposal before anything was sealed
+        // (errors.md `workarea.transition_refused`; ADR-0009 d1, d3, d4).
+        AppError::TransitionRefused {
+            workarea_id,
+            from,
+            to,
+            reason,
+        } => transition_refused(
+            workarea_id,
+            from.as_str(),
+            to.as_str(),
+            reason.reason(),
+            format!(
+                "{} to {} is refused on workarea {workarea_id}: {reason}",
+                from.as_str(),
+                to.as_str()
+            ),
+        ),
+        AppError::WorkareaFrozen { workarea_id, op } => ApiError::new(
+            StatusCode::CONFLICT,
+            "workarea.frozen",
+            "`validated` is frozen: the only mutations it admits are demote, erasure, and crew-metadata update, each journalled.",
+            format!("workarea {workarea_id} is validated and refuses {op:?}"),
+        ),
+        AppError::RatifierIsProposer => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.ratifier_is_proposer",
+            "R2 extends to edges and transitions: proposal and ratification are two identities or they are nothing.",
+            "the key or principal ratifying this proposal proposed it",
+        ),
         AppError::Store(StoreError::IdempotencyRecorded) => {
             // Surfaces only when the record a concurrent attempt committed
             // was gone again when the use-case read it back to replay it.
@@ -487,7 +517,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-    use oml_app::domain::WorkareaStatus;
+    use oml_app::domain::{FrozenOp, LadderRefusal, WorkareaStatus};
     use uuid::Uuid;
 
     use super::*;
@@ -534,6 +564,50 @@ mod tests {
                     "reason": "children_not_validated",
                 }))
             )
+        );
+    }
+
+    #[test]
+    fn a_proposal_the_ladder_refuses_answers_transition_refused_with_its_reason_and_freeze_answers_frozen()
+     {
+        let workarea_id = Uuid::from_u128(2);
+        let refused = map_app_error(
+            AppError::TransitionRefused {
+                workarea_id,
+                from: WorkareaStatus::Development,
+                to: WorkareaStatus::Validated,
+                reason: LadderRefusal::Skipped,
+            },
+            ErrorContext::Write,
+        );
+        assert_eq!(
+            (refused.status, refused.code, refused.details),
+            (
+                StatusCode::CONFLICT,
+                "workarea.transition_refused",
+                Some(json!({
+                    "workarea_id": workarea_id.to_string(),
+                    "from": "development",
+                    "to": "validated",
+                    "reason": "skipped",
+                }))
+            )
+        );
+        let frozen = map_app_error(
+            AppError::WorkareaFrozen {
+                workarea_id,
+                op: FrozenOp::Write,
+            },
+            ErrorContext::Write,
+        );
+        assert_eq!(
+            (frozen.status, frozen.code),
+            (StatusCode::CONFLICT, "workarea.frozen")
+        );
+        let ratifier = map_app_error(AppError::RatifierIsProposer, ErrorContext::Review);
+        assert_eq!(
+            (ratifier.status, ratifier.code),
+            (StatusCode::FORBIDDEN, "review.ratifier_is_proposer")
         );
     }
 

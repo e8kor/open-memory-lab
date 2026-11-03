@@ -4,8 +4,8 @@ use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::{
-    ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
-    SignedEnvelope, TransitionError, VerdictError, VerifyError, WorkareaStatus,
+    ChainError, EventTime, FrozenOp, HeldBy, JcsError, LadderRefusal, LineageClosure, MemoryKind,
+    MemoryStatus, Role, SignedEnvelope, TransitionError, VerdictError, VerifyError, WorkareaStatus,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -942,6 +942,32 @@ pub enum AppError {
         tenant_id: Uuid,
         refusal: NamingRefusal,
     },
+    /// The status ladder refused a proposal of `from` → `to` on the node,
+    /// before anything was sealed: nothing is journalled (errors.md
+    /// `workarea.transition_refused`, details `{workarea_id, from, to,
+    /// reason}`; ADR-0009 d1, d3, d4).
+    #[error(
+        "workarea {workarea_id}: {} to {} is refused: {reason} (errors.md workarea.transition_refused)",
+        .from.as_str(),
+        .to.as_str()
+    )]
+    TransitionRefused {
+        workarea_id: Uuid,
+        from: WorkareaStatus,
+        to: WorkareaStatus,
+        reason: LadderRefusal,
+    },
+    /// A `validated` node was asked for an operation freeze forbids
+    /// (errors.md `workarea.frozen`; ADR-0009 d5).
+    #[error("workarea {workarea_id} is validated and refuses {op:?} (errors.md workarea.frozen)")]
+    WorkareaFrozen { workarea_id: Uuid, op: FrozenOp },
+    /// The ratifying key is the proposing key or holds the proposer's
+    /// principal (errors.md `review.ratifier_is_proposer`; ADR-0009 d3;
+    /// ADR-0010 R2).
+    #[error(
+        "the ratifier is the proposer: proposal and ratification are two identities (errors.md review.ratifier_is_proposer)"
+    )]
+    RatifierIsProposer,
     /// A listing cursor this server will not resume from (http-api.md
     /// pagination, request.validation).
     #[error(transparent)]

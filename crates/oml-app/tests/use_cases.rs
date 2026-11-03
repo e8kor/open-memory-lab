@@ -10,9 +10,9 @@ use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::{
-    EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, WorkareaStatus, event_types, next_envelope, sha256_digest_string, sign,
-    verify_chain,
+    EventDraft, EventTime, HeldBy, KeySet, LadderRefusal, MemoryKind, MemoryStatus, Role,
+    Sha256Hash, SignedEnvelope, WorkareaStatus, event_types, next_envelope, sha256_digest_string,
+    sign, verify_chain,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ed25519_dalek::SigningKey;
@@ -5715,4 +5715,395 @@ async fn a_global_denial_on_an_admin_key_is_refused_naming_key_id() {
     app.deny_key(admin, writer.key_id.into(), by_name("crew"))
         .await
         .expect("a denial on a writer key");
+}
+
+// -- the status ladder: proposing a forward transition (ADR-0009 d3, d4;
+// ADR-0010) ----------------------------------------------------------------
+
+/// Ratifies `proposal` by `ratifier` straight through the store, sealing the
+/// `workarea.status_transition` on the journal's head with the test key: the
+/// ratify use case is a later step, and these tests need a node moved up the
+/// ladder to propose on.
+async fn ratify_in_store(
+    store: &MemStore,
+    proposal: &oml_app::types::TransitionRecord,
+    ratifier: Uuid,
+) {
+    let head = journal(store, proposal.tenant_id)
+        .await
+        .pop()
+        .expect("a chain to ratify on");
+    let draft = EventDraft {
+        tenant_id: proposal.tenant_id,
+        event_id: Uuid::from_u128(0xF000_0000 + u128::from(head.envelope.seq)),
+        event_type: event_types::WORKAREA_STATUS_TRANSITION.to_owned(),
+        principal: "fixture-ratifier".to_owned(),
+        api_key_id: Some(ratifier),
+        at: head.envelope.at.clone(),
+        payload: json!({
+            "workarea_id": proposal.workarea_id.to_string(),
+            "to": proposal.to.as_str(),
+            "transition_id": proposal.transition_id.to_string(),
+            "ratified_by_key_id": ratifier.to_string(),
+        }),
+    };
+    let envelope = next_envelope(Some(&head), draft).expect("a lawful draft");
+    let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+    store
+        .commit(oml_app::ports::CommitRequest {
+            outbox: oml_app::ports::OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
+            fold: oml_app::ports::MetadataFold::TransitionRatified {
+                transition_id: proposal.transition_id,
+                workarea_id: proposal.workarea_id,
+                to: proposal.to,
+                ratifier_key_id: ratifier,
+            },
+            idempotency: None,
+        })
+        .await
+        .expect("the ratification commits");
+}
+
+/// Moves `node` of `tenant` from its status to `to` one rung at a time: the
+/// admin proposes, a second identity ratifies.
+async fn climb(
+    app: &TestApp,
+    store: &MemStore,
+    (tenant, admin, ratifier): (Uuid, &str, Uuid),
+    node: Uuid,
+    to: WorkareaStatus,
+) {
+    let current = store
+        .workarea(tenant, node)
+        .await
+        .expect("read")
+        .expect("the node")
+        .status;
+    for rung in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+        if rung <= current || rung > to {
+            continue;
+        }
+        let proposal = app
+            .propose_transition(admin, node.into(), rung)
+            .await
+            .expect("a forward proposal");
+        ratify_in_store(store, &proposal, ratifier).await;
+    }
+}
+
+/// An admin proposes on its key role: the proposal is a pending row naming
+/// the admin as proposer, the node keeps its status until a second identity
+/// ratifies, and exactly one `workarea.status_proposed` is journalled with
+/// the event catalog's payload (ADR-0009 d3; event-catalog.md).
+#[tokio::test]
+async fn an_admin_proposes_development_to_committed_and_it_stays_pending_with_one_status_proposed_event()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let t = boot.tenant_id;
+    let before = journal(&store, t).await.len();
+
+    let proposal = app
+        .propose_transition(
+            &boot.admin_key.value,
+            by_name("crew"),
+            WorkareaStatus::Committed,
+        )
+        .await
+        .expect("an admin proposes");
+    assert_eq!(
+        (
+            proposal.workarea_id,
+            proposal.from,
+            proposal.to,
+            proposal.state,
+            proposal.proposer_key_id,
+            proposal.proposer_principal.as_str(),
+            proposal.ratifier_key_id,
+        ),
+        (
+            crew,
+            WorkareaStatus::Development,
+            WorkareaStatus::Committed,
+            oml_app::types::TransitionState::Pending,
+            boot.admin_key.key_id,
+            "alice-admin",
+            None,
+        )
+    );
+    let node = store.workarea(t, crew).await.expect("read").expect("node");
+    assert_eq!(node.status, WorkareaStatus::Development, "it stays pending");
+    assert_eq!(
+        store.pending_transitions(t, crew).await.expect("read"),
+        vec![proposal.clone()]
+    );
+
+    let events = journal(&store, t).await;
+    assert_eq!(events.len(), before + 1);
+    let event = events.last().expect("the proposal event");
+    assert_eq!(
+        event.envelope.event_type,
+        event_types::WORKAREA_STATUS_PROPOSED
+    );
+    assert_eq!(event.envelope.api_key_id, Some(boot.admin_key.key_id));
+    assert_eq!(
+        event.envelope.payload,
+        json!({
+            "workarea_id": crew.to_string(),
+            "from": "development",
+            "to": "committed",
+            "transition_id": proposal.transition_id.to_string(),
+            "proposed_by_key_id": boot.admin_key.key_id.to_string(),
+        })
+    );
+}
+
+/// A dreamer key passes the verb ceiling and proposes where its effective
+/// access holds dreamer, here inherited from a grant on the parent
+/// (ADR-0009 d3; ADR-0010; roles-and-keys.md refusal order).
+#[tokio::test]
+async fn a_dreamer_with_dreamer_access_on_the_node_proposes_a_transition() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+
+    let proposal = app
+        .propose_transition(&dreamer.value, quarter.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a dreamer proposes");
+    assert_eq!(proposal.proposer_key_id, dreamer.key_id);
+    assert_eq!(proposal.proposer_principal, "dora");
+    assert_eq!(proposal.workarea_id, quarter);
+    assert_eq!(
+        store
+            .pending_transitions(boot.tenant_id, quarter)
+            .await
+            .expect("read"),
+        vec![proposal]
+    );
+}
+
+/// Step 1 of the refusal order reads no node: a writer or reader key is
+/// refused `access.verb_ceiling` whether the node exists or not, before any
+/// name resolves, and nothing is journalled (roles-and-keys.md refusal
+/// order; ADR-0010).
+#[tokio::test]
+async fn a_writer_or_reader_key_proposing_a_transition_is_refused_by_the_verb_ceiling_before_any_lookup()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let lookups = store.name_lookups();
+
+    for (key, role) in [(&writer, Role::Writer), (&reader, Role::Reader)] {
+        for node in [by_name("crew"), by_name("no-such-node")] {
+            let err = app
+                .propose_transition(&key.value, node, WorkareaStatus::Committed)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, AppError::VerbCeiling { role: r, .. } if r == role),
+                "{err:?}"
+            );
+        }
+    }
+    assert_eq!(store.name_lookups(), lookups, "no name resolved");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A dreamer key that reads the node but holds no dreamer role on it is
+/// refused `access.grant_refused` naming the node and `dreamer`
+/// (roles-and-keys.md refusal order, step 3).
+#[tokio::test]
+async fn a_dreamer_reading_but_not_dreaming_on_the_node_is_refused_with_needed_role_dreamer() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dreamer = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dora",
+        vec![grant(crew, Role::Reader)],
+    )
+    .await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .propose_transition(&dreamer.value, by_name("crew"), WorkareaStatus::Committed)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::GrantRefused { workarea_id, needed_role: Role::Dreamer } if workarea_id == crew
+        ),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// Outside its read access a dreamer cannot tell the node from absence: a
+/// sibling it holds no grant on, and a name no row holds, both answer
+/// `access.not_found` (roles-and-keys.md refusal order, step 2).
+#[tokio::test]
+async fn a_dreamer_outside_read_access_gets_not_found() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for node in [other.into(), by_name("other"), by_name("no-such-node")] {
+        let err = app
+            .propose_transition(&dreamer.value, node, WorkareaStatus::Committed)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// The ladder refuses before anything is sealed: the same rung, a skipped
+/// rung, and any status on the universe root each answer
+/// `workarea.transition_refused` with its reason, and the journal is
+/// unchanged (ADR-0009 d1, d3; errors.md).
+#[tokio::test]
+async fn proposing_committed_on_a_committed_node_validated_from_development_or_anything_on_universe_is_transition_refused_and_journals_nothing()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let ratifier = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let fresh = workarea(&app, admin, "fresh", boot.root_workarea_id).await;
+    climb(
+        &app,
+        &store,
+        (boot.tenant_id, admin, ratifier.key_id),
+        crew,
+        WorkareaStatus::Committed,
+    )
+    .await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let root = boot.root_workarea_id;
+    let cases = [
+        (
+            crew,
+            WorkareaStatus::Committed,
+            WorkareaStatus::Committed,
+            LadderRefusal::Same,
+        ),
+        (
+            fresh,
+            WorkareaStatus::Development,
+            WorkareaStatus::Validated,
+            LadderRefusal::Skipped,
+        ),
+        (
+            root,
+            WorkareaStatus::Committed,
+            WorkareaStatus::Development,
+            LadderRefusal::Universe,
+        ),
+        (
+            root,
+            WorkareaStatus::Committed,
+            WorkareaStatus::Committed,
+            LadderRefusal::Universe,
+        ),
+        (
+            root,
+            WorkareaStatus::Committed,
+            WorkareaStatus::Validated,
+            LadderRefusal::Universe,
+        ),
+    ];
+    for (node, from, to, reason) in cases {
+        let err = app
+            .propose_transition(admin, node.into(), to)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::TransitionRefused { workarea_id, from: f, to: t, reason: r }
+                    if workarea_id == node && f == from && t == to && r == reason
+            ),
+            "{node} {to:?}: {err:?}"
+        );
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A step to `validated` needs every child `validated`: with a child
+/// `committed` the proposal is refused `children_not_validated` and
+/// journals nothing (ADR-0009 d4).
+#[tokio::test]
+async fn validated_is_refused_while_a_child_is_committed() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let ratifier = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    for node in [crew, quarter] {
+        climb(
+            &app,
+            &store,
+            (boot.tenant_id, admin, ratifier.key_id),
+            node,
+            WorkareaStatus::Committed,
+        )
+        .await;
+    }
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::TransitionRefused {
+                workarea_id,
+                from: WorkareaStatus::Committed,
+                to: WorkareaStatus::Validated,
+                reason: LadderRefusal::ChildrenNotValidated,
+            } if workarea_id == crew
+        ),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+
+    // With the child validated, the same proposal is admitted.
+    climb(
+        &app,
+        &store,
+        (boot.tenant_id, admin, ratifier.key_id),
+        quarter,
+        WorkareaStatus::Validated,
+    )
+    .await;
+    app.propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .await
+        .expect("every child validated");
 }
