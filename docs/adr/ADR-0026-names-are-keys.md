@@ -9,6 +9,8 @@ answers: which records carry a unique name, what a name may spell, how a name is
 
 **Status:** accepted design · 2026-10-31
 
+**Release:** partly in v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 **Amends:** ADR-0008 (d3, d7), ADR-0010 (d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14), ADR-0028 (d1, d3)
 
 ## Context

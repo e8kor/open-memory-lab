@@ -9,6 +9,8 @@ answers: how the oml agent plugin starts every Claude Code session from what OML
 
 **Status:** accepted design · 2026-10-31
 
+**Release:** introduced in v0.2.2 ([releases](../product/releases.md#decisions))
+
 ## Context
 
 **A session starts knowing nothing.** The `oml` plugin gives an agent its tools

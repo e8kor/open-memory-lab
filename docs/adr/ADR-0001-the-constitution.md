@@ -9,6 +9,8 @@ answers: what the four constitutional rules R1–R4 commit, and what the one bou
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
 
+**Release:** partly in v0.1.0; the rest planned for v0.6.0 ([releases](../product/releases.md#decisions))
+
 ## Context
 
 Open Memory Lab's governing rules are the product: four rules that every surface, schema and

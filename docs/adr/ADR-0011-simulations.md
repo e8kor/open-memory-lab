@@ -9,6 +9,8 @@ answers: why simulations are a fenced provenance channel with indelible marks, a
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** not scheduled ([releases](../product/releases.md#decisions))
+
 ## Context
 
 An admin needs a place to exercise the system with synthetic or hypothetical memories — load

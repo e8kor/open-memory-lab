@@ -9,6 +9,8 @@ answers: why standalone, docker and Kubernetes are three first-class install pro
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** partly in v0.1.0 and v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists. It makes two connected moves: the
 Kubernetes-only deployment story of [ADR-0016](ADR-0016-kubernetes-workloads.md) becomes one of
 three first-class install profiles, and `oml-server` gains a cluster mode — one lead, N

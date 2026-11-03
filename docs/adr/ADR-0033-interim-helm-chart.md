@@ -9,6 +9,8 @@ answers: what the Helm chart holds while the build has one server binary; why on
 
 **Status:** proposed · 2026-10-31
 
+**Release:** introduced in v0.3.0 ([releases](../product/releases.md#decisions))
+
 **Amends:** ADR-0016 (d4), ADR-0023 (d16) — for the interim chart only; the designed chart returns to both
 
 ## Context

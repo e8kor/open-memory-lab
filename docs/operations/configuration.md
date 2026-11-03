@@ -9,6 +9,8 @@ answers: what the configuration surface is; how file and env compose; which sett
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the boot file and environment since v0.1.0; journalled settings not scheduled ([releases](../product/releases.md)).
+
 This page is the single declaration site for the configuration surface that
 [deployment](deployment.md) commits to: one file plus environment variables,
 read identically by every binary in every profile. It declares the file

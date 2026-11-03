@@ -9,6 +9,8 @@ answers: which MCP tools the agent plugin exposes over streamable HTTP and how e
 
 **Status:** design draft for review · decided, not built
 
+**Release:** eight tools available, four since v0.1.0 and four since v0.2.0; the three task-shaped tools that replace them are planned for v0.4.0 ([releases](../product/releases.md)).
+
 This page declares the surface an AI agent wires into its tool loop: an MCP
 server speaking the streamable HTTP transport, mounted on `oml-server` as a
 facade over the two-ring [JSON HTTP API](http-api.md). Every tool below
@@ -37,6 +39,8 @@ stated here ahead of the file and listed under `_meta.pending_design` in
 [mcp-tools.json](mcp-tools.json).
 
 ## Transport: streamable HTTP, stateless
+
+*Available since v0.1.0 · [releases](../product/releases.md)*
 
 The plugin runs the MCP streamable HTTP transport in stateless mode, declared
 up front:
@@ -76,6 +80,8 @@ behavior verified against it, are recorded with a fetch date at implementation
 time — the same sourcing discipline the auth question below already follows.
 
 ## Authentication: bearer keys
+
+*Available since v0.1.0; one key per agent since v0.2.0; OAuth by connect code planned for v0.4.0 · [releases](../product/releases.md)*
 
 Every HTTP request carrying an MCP message presents the agent's API key:
 
@@ -252,6 +258,8 @@ items carry `text` and `tokens` like every other item, never a score.
 
 ## `oml_remember`
 
+*Available since v0.1.0 · [releases](../product/releases.md)*
+
 Submit a memory. The text, any attachments (by upload-session reference) and
 the declared lineage enter the admission pipeline as one claim, **held on
 arrival** — scanned, then reviewed by an identity that did not write it,
@@ -356,6 +364,8 @@ an idempotency-key reuse with a different request; a banned author or source
 ```
 
 ## `oml_recall`
+
+*Available since v0.1.0; own held rows, budgets and steering first since v0.2.0 · [releases](../product/releases.md)*
 
 Search promoted memories within a workarea subtree — and, on request, the
 caller's own held rows — under an optional budget. FTS and vector search are
@@ -496,6 +506,8 @@ Example:
 
 ## `oml_learn`
 
+*Available since v0.1.0 · [releases](../product/releases.md)*
+
 Submit a **derived fact**: a conclusion distilled from memories the agent has
 already read, carrying the lineage that produced it. Mechanically it is one
 `POST /v1/memories` (the provider ring) with `verb: "learn"` and
@@ -570,6 +582,8 @@ pass-through fields as on [`oml_remember`](#oml_remember). Example:
 
 ## `oml_get`
 
+*Available since v0.2.0 · [releases](../product/releases.md)*
+
 Read one claim version by id: the caller's own rows in any state, anyone
 else's promoted versions within read access. It is how an agent reads back
 what it wrote before review, and how it follows a `replaces` or
@@ -625,6 +639,8 @@ erasure, and `access.not_found` for any other erased version
 ([errors](errors.md)).
 
 ## `oml_supersede`
+
+*Available since v0.2.0 · [releases](../product/releases.md)*
 
 Propose a new version of a claim, or with `retirement: true` propose retiring
 it. The new version is a submission like any other — **held on arrival**,
@@ -725,6 +741,8 @@ of the supersede rule. Example:
 
 ## `oml_attach`
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Manage a **resumable upload session** for a file, image or PDF (D3). The
 session is the unit a memory references: open it with the expected plaintext
 SHA-256 and size, move the bytes, then hand the session id to
@@ -799,6 +817,8 @@ incomplete or mismatched session from `oml_remember`. Example:
 
 ## `oml_relate_propose`
 
+*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
+
 Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
 journalled and **pending**; it confers nothing and changes no access until a
 *different* dreamer ratifies it (R2 extends to edges). Ratification is not on
@@ -863,6 +883,8 @@ the closed set for workarea edges. Example:
 ```
 
 ## `oml_my_work`
+
+*Available since v0.2.0 · [releases](../product/releases.md)*
 
 The caller's own submissions and where each stands: held, promoted, demoted,
 rejected, erased. It is the one view of its held rows a key has without a
@@ -959,6 +981,8 @@ the decision trail belongs to the evidence export, an admin surface.
 
 ## `oml_workarea_info`
 
+*Available since v0.2.0 · [releases](../product/releases.md)*
+
 One workarea as the calling key is allowed to see it: identity, derived path,
 status, crew record, immediate structure, and — the part an agent actually
 needs before writing — the verbs this key's effective access carries there.
@@ -1033,6 +1057,8 @@ marked.
 
 ## `oml_graph`
 
+*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
+
 A scoped read of claims and their edges: the declared lineage
 (`derives_from`), claim↔claim connection edges with their pending/ratified
 state, and supersession chains within a subtree. The contract is
@@ -1088,6 +1114,8 @@ a `depth`/`limit` above the served ceiling returns the typed limit error from
 [errors.md](errors.md) rather than a truncated answer pretending to be whole.
 
 ## `oml_events_tail`
+
+*Available since v0.1.0; filtered per key since v0.2.0 · [releases](../product/releases.md)*
 
 Poll the journalled event stream for the key's scope, from the last journal
 sequence the client processed. This is the stateless substitute for push: an
@@ -1184,6 +1212,8 @@ refusal, never a silent restart from zero.
 
 ## `oml_vocab`
 
+*Parked · [releases](../product/releases.md)*
+
 Read the tenant's vocabularies: term lookup, deterministic typeahead,
 hierarchy over the per-release closure, and SSSOM-shaped mappings. One tool,
 four actions — each translates to one `GET /v2/vocab/*` call (the lab ring;
@@ -1256,6 +1286,8 @@ from one that does not exist. Example:
 ---
 
 ## Wiring it into your agent
+
+*Available since v0.1.0; setup through Claude Code's plugin settings planned for v0.4.0 · [releases](../product/releases.md)*
 
 A generic MCP client configuration — the shape most harnesses accept, adjust
 the key names to yours:

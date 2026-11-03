@@ -9,6 +9,8 @@ answers: why the code is a hexagon with compile-time plugin modularity, and why 
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists. The Cargo workspace that implements
 this shape is decided in [ADR-0006](ADR-0006-pure-rust.md); the module view it produces is drawn
 in [architecture/overview.md](../architecture/overview.md).

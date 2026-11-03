@@ -10,6 +10,8 @@ answers: which metrics and structured-log fields each workload commits to emit, 
 **Status:** design draft for review · decided, not built — every metric name
 below is a design commitment; no binary emits anything yet.
 
+**Release:** `oml doctor` since v0.1.0; the metrics and SLOs not scheduled ([releases](../product/releases.md)).
+
 This page declares what each workload measures, what `oml doctor` reads and
 returns, the structured-logging rules (including the one that is a correctness
 rule, not a style rule), and the starting points for alerting. The workloads

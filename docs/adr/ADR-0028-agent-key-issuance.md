@@ -9,6 +9,8 @@ answers: how the CLI issues the one key the agent plugin needs in one call and p
 
 **Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md)
 
+**Release:** introduced in v0.2.1 ([releases](../product/releases.md#decisions))
+
 **Amends:** ADR-0015 (d1)
 
 ## Context

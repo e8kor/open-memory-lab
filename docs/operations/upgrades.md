@@ -12,6 +12,8 @@ run, because no version has ever shipped; this spec is `0.3.0-design`
 ([openapi.yaml](../api/openapi.yaml)) and the page commits the shape of every
 future N → N+1.
 
+**Release:** forward-only migrations since v0.1.0; the role split since v0.3.1 ([releases](../product/releases.md)).
+
 This page owns the upgrade discipline: who runs migrations, in what order the
 binaries move, how much version skew a rolling update may hold, and what
 rollback does and does not mean. The workloads being upgraded are placed in
@@ -110,6 +112,8 @@ step, then `oml standalone up`". The write-refusal window is the whole
 restart, stated plainly: a one-host profile upgrades with a one-host outage.
 
 ## Splitting a single-role install (the upgrade to v0.3.1)
+
+*Available since v0.3.1 · [releases](../product/releases.md)*
 
 A build before v0.3.1 migrated and served under one Postgres role, which
 owned every table. v0.3.1 refuses that role on both URLs, so an install made

@@ -9,6 +9,8 @@ answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab rou
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the routed operations arrived in v0.1.0, v0.2.0 and v0.3.0; the rewrite is planned for v0.4.0 ([releases](../product/releases.md)).
+
 This page owns decision **D13** as contract: the two-ring JSON surface — the provider ring
 (`/v1`) and the lab ring (`/v2`) — authentication, idempotency
 records, the pagination convention, and the verb ceiling each endpoint enforces. The
@@ -31,6 +33,8 @@ wrappers and the rule that regenerates them on every change to this contract are
 [client SDKs](../engineering/sdks.md).
 
 ## Two rings
+
+*Available since v0.1.0 · [releases](../product/releases.md)*
 
 One keyed listener carries two **stability rings**
 ([ADR-0022](../adr/ADR-0022-two-ring-api.md)); this page remains the one contract document for
@@ -109,6 +113,8 @@ additive — is in force.
 
 ## Authentication and authorization
 
+*Available since v0.1.0; grants of several roles per key since v0.2.0 · [releases](../product/releases.md)*
+
 Every request on either ring carries `Authorization: Bearer <api-key>`. Only `/healthz` and
 `/readyz` are unauthenticated.
 
@@ -146,6 +152,8 @@ Bearer keys are the shipped mechanism; whether and when the MCP facade adopts OA
 [roles-and-keys.md](../architecture/roles-and-keys.md).
 
 ## Names and ids
+
+*Available since v0.3.0 · [releases](../product/releases.md)*
 
 This section is the single declaration site for names
 ([ADR-0026](../adr/ADR-0026-names-are-keys.md)): which records carry one, what a name may spell,
@@ -333,6 +341,8 @@ revokes the old one; the derived name stays on the old key, and still addresses 
 
 ## Idempotency
 
+*Available since v0.1.0; the in-progress answer is not built · [releases](../product/releases.md)*
+
 Every state-creating `POST` requires an `Idempotency-Key` header (missing →
 `request.idempotency_key_required`). Read-shaped `POST`s — `recall`, `settings/validate` — do not
 take one, and attachment part `PUT`s need none: a part is addressed by `(session, part_number)`
@@ -484,6 +494,8 @@ exist (R1, R4).
 
 ### Submit — `POST /v1/memories`
 
+*Available since v0.1.0 · [releases](../product/releases.md)*
+
 One endpoint for the two submission verbs; `verb` selects the journal event
 (`submission.remember` / `submission.learn`, [event catalog](../data/event-catalog.md)). The
 request names no workarea — the target resolves from the token
@@ -559,6 +571,8 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 
 ### Recall — `POST /v1/memories/recall`
 
+*Available since v0.1.0; budgets, own held rows and steering since v0.2.0 · [releases](../product/releases.md)*
+
 Ranked retrieval over **promoted** rows in scope: FTS + vector, served from Postgres, never from
 the lake (D12; [retrieval.md](../architecture/retrieval.md)). The request names no workarea: the
 default scope is the **token workarea's subtree** — the key's `default_workarea`, or the
@@ -612,6 +626,8 @@ unmeasured — [FR-4](../product/roadmap.md).
 
 ### Search — `GET /v1/memories`
 
+*Available since v0.2.0, as the own-work listing · [releases](../product/releases.md)*
+
 Structured listing, paginated. Filters: `workarea_id` (a subtree filter), `claim_key`, `state`,
 `kind`, `since`, `until`, `own`. Returns memory summaries (no bodies), each carrying `tokens`,
 `retirement`, `replaces` and `held_expires_at`. With `own=true` the listing is the **own-work
@@ -646,6 +662,8 @@ re-applies the filters ([Pagination](#pagination)). On every listing, as on get 
 
 ### Get — `GET /v1/memories/{artifact_id}`
 
+*Available since v0.1.0 · [releases](../product/releases.md)*
+
 One memory with its body (decrypted on the serving path only), its `tokens` and attachment
 descriptors. The calling key may fetch its own rows in any state, with no grant needed (global
 denials still mask, [own](../architecture/roles-and-keys.md#own)); anyone else needs reader
@@ -676,6 +694,8 @@ content — a stated residual, [FR-31](../product/roadmap.md).
 
 ### Lineage — `GET /v2/memories/{artifact_id}/lineage`
 
+*Not scheduled · [releases](../product/releases.md)*
+
 The derivation closure over `derives_from` and claim edges, **pending and ratified both**,
 serialized as stored — the server serializes the graph, it does not compute analytics over it
 (D13: serialize, don't compute). Nodes outside the key's read scope are elided to bare ids with
@@ -685,6 +705,8 @@ ancestor of a promoted version included — which is the residual
 [FR-31](../product/roadmap.md) tracks.
 
 ### Supersede — `POST /v1/memories/{artifact_id}/supersede`
+
+*Available since v0.1.0; the tip moves at ratification since v0.2.0 · [releases](../product/releases.md)*
 
 Proposes a replacement for the version `{artifact_id}` names: a new attributed submission of the
 same `claim_key`, held like any write, whose `derives_from` includes the target and whose response
@@ -718,6 +740,8 @@ any body, and it is what the reviewer judges. Its refusals are [errors](errors.m
 [audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
 
 ## Attachments
+
+*Not scheduled · [releases](../product/releases.md)*
 
 Resumable upload sessions, then content-addressed fetch (D3;
 [storage.md](../architecture/storage.md)).
@@ -753,6 +777,8 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
+*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); status and edges planned for v0.5.0 · [releases](../product/releases.md)*
+
 Reads require reader effective access on the node, and nodes outside scope are absent
 (`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
 tenant without grants and never claim content
@@ -776,6 +802,8 @@ tenant without grants and never claim content
 
 ## Crews
 
+*Available since v0.3.0 · [releases](../product/releases.md)*
+
 A crew is a named record of an externally operated AI crew — `{crew_id, name, charter_uri,
 external_manager}` — recorded, not operated; a workarea names at most one, and a key may name one
 at issuance. The record and its relations are declared on
@@ -792,6 +820,8 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 
 ## Claim edges
 
+*Planned for v0.5.0 · [releases](../product/releases.md)*
+
 Claim↔claim connection proposals follow the same propose-then-ratify shape inside the admission
 pipeline ([admission.md](../architecture/admission.md)).
 
@@ -806,6 +836,8 @@ pipeline ([admission.md](../architecture/admission.md)).
   (`review.author_in_lineage`).
 
 ## Vocabularies
+
+*Parked · [releases](../product/releases.md)*
 
 The thin read surface over AI+Human vocabularies — terms, hierarchy, mappings and releases are
 claims in vocabulary workareas, ridden through the ordinary pipeline; the model is owned by
@@ -831,6 +863,8 @@ these kinds. The typed refusals this surface adds — `vocab.cycle_refused`,
 successors for one-hop self-healing) — are declared in [errors.md](errors.md).
 
 ## Events tail
+
+*Available since v0.1.0; filtered per key since v0.2.0 · [releases](../product/releases.md)*
 
 `GET /v2/events?after_seq=<n>&limit=<m>&workarea_id=<node>` — the per-tenant journal, served as
 the [event catalog](../data/event-catalog.md)'s envelopes with **digest-only payloads** (D1: no
@@ -903,6 +937,8 @@ the chain live ([cli/reference.md](../cli/reference.md)).
 
 ## Review
 
+*Available since v0.1.0 · [releases](../product/releases.md)*
+
 The review ceremony over HTTP — external crews holding dreamer keys are the designed review
 capacity; the CLI is the human exception path (D11, D14). Review throughput is unmeasured —
 [FR-2](../product/roadmap.md).
@@ -920,6 +956,8 @@ promotion time, plus the per-workarea independence axis — are owned by
 [admission.md](../architecture/admission.md); this surface only reports their refusals.
 
 ## Keys, grants, denials
+
+*Available since v0.1.0 (issuance), v0.2.0 (grants, denials) and v0.3.0 (key read); revocation, rotation and grant changes not scheduled · [releases](../product/releases.md)*
 
 Admin key role throughout; a grant's role must be admissible under the key's role, and an issued
 key's role never exceeds the issuer's (`access.issuer_ceiling`; the
@@ -959,6 +997,8 @@ nothing. The `oml bootstrap claim` ceremony fronts exactly this call
 
 ## Bans
 
+*Not scheduled · [releases](../product/releases.md)*
+
 - `POST /v2/bans` — `{subject_kind: "principal" | "source", subject, reason?, dry_run}`. With
   `dry_run: true` (the CLI's default) the response is the reach preview — keys affected, held
   submissions that would be refused, workareas touched — and nothing is journalled. Otherwise
@@ -967,6 +1007,8 @@ nothing. The `oml bootstrap claim` ceremony fronts exactly this call
 - `GET /v2/bans` — active and lifted, with who imposed and who lifted each.
 
 ## Simulations
+
+*Not scheduled · [releases](../product/releases.md)*
 
 The fenced provenance channel (D10; [simulations.md](../architecture/simulations.md)). Admin key
 role for the channel objects; the writes inside a simulation are ordinary submissions carrying
@@ -1000,6 +1042,8 @@ tip answers `simulation.tip_refused` — taint shadows the tip only for the audi
 
 ## Claim administration
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Admin verbs over claims — the CLI's `oml claims` and `oml erase` ride these
 ([cli/reference.md](../cli/reference.md)):
 
@@ -1011,6 +1055,8 @@ Admin verbs over claims — the CLI's `oml claims` and `oml erase` ride these
 | `POST /v2/claims/tip-override` | `{workarea_id, claim_key, to_version, reason}` — designate an earlier promoted version as the served tip without demoting the later one: explicit and journalled (`lifecycle.tip_override`), never a silent re-rank. |
 
 ## Evidence export
+
+*Not scheduled · [releases](../product/releases.md)*
 
 An export is an **async job** — bundles are large and chain verification is linear in journal
 length.
@@ -1030,6 +1076,8 @@ compliance claim (D17; [audit-and-lineage.md](../architecture/audit-and-lineage.
 
 ## Settings
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Configured-versus-effective, over the API so `oml settings` can show the divergence (D14):
 
 - `GET /v2/settings` — the configured document as last applied; `?effective=true` adds what the
@@ -1046,6 +1094,8 @@ The settings schema itself is not fixed by this design; the contract fixed here 
 show/validate/apply shape and the retired-key refusal.
 
 ## Health
+
+*Available since v0.1.0; the build object since v0.2.0 · [releases](../product/releases.md)*
 
 - `GET /healthz` — liveness: `200 {"status": "ok"}` while the process runs.
 - `GET /readyz` — readiness: `200` only when the replica can serve — Postgres reachable and the
