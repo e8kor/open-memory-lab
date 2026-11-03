@@ -43,7 +43,12 @@ up front:
 
 - **No server session id.** The server issues no `Mcp-Session-Id`; a client
   that sends one is ignored, not refused. `initialize` is answered honestly
-  (protocol version, capabilities, server name) and nothing is stored.
+  (protocol version, capabilities, server name) and nothing is stored. Its
+  `instructions`, under the 4,096 characters Claude Code keeps, tell the agent
+  when to call [`oml_recall`](#oml_recall) and with which words; the text is
+  declared once, as `SERVER_INSTRUCTIONS` in
+  `crates/transports/oml-transport-http/src/mcp.rs`
+  ([ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) d1).
 - **Every tool call is independent.** Each HTTP POST carries one complete
   JSON-RPC request and receives one complete JSON response
   (`Content-Type: application/json`). The server opens no SSE stream in
@@ -1314,6 +1319,12 @@ Operational notes:
   declared, with its variables and how it fails open, on the
   [CLI reference](../cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin)
   ([ADR-0029](../adr/ADR-0029-session-start-hook.md)).
+- **Recall after a failed command, when opted in.** With
+  `OML_FAILURE_RECALL=1`, the plugin's PostToolUseFailure hook runs
+  `oml hook tool-failure` on a failed Bash command and injects at most three
+  memories matching the error's distinctive words, declared on the
+  [CLI reference](../cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command)
+  ([ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)).
 - Liveness for your own infrastructure: `oml-server` exposes `/healthz` and
   `/readyz` ([deployment](../operations/deployment.md)); the MCP endpoint
   itself has no separate probe.

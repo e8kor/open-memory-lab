@@ -71,6 +71,18 @@ prints nothing when the server does not answer. Set `OML_SESSION_CONTEXT=off` to
 `OML_SESSION_CONTEXT_MAX_TOKENS` to change the budget. Without the CLI the hook does nothing. See
 the [CLI reference](../../docs/cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
 
+## Recall after a failed command (opt-in)
+
+Set `OML_FAILURE_RECALL=1` and, when a Bash command fails, the plugin's PostToolUseFailure hook
+runs `oml hook tool-failure`: it searches with up to three distinctive words of the error, such
+as an error code or an identifier, with keys and tokens removed first, and adds at most three
+matching memories, marked as possibly irrelevant. It skips `grep`, `test`, `[` and `diff`, an
+error it already searched for in the session, and every search after one that failed; a miss adds
+nothing. The cost is that the error's words go to your server. A per-session file under
+`~/.cache/oml/sessions` remembers which memories the session already has, never their text, and
+the SessionEnd hook deletes it. See the
+[CLI reference](../../docs/cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command).
+
 A plugin cannot allow its own tools for you, so Claude Code asks you before each call to one
 of them until you allow it. To stop the question on reads and keep it on every write, add the
 read tools to `permissions.allow` in your settings:

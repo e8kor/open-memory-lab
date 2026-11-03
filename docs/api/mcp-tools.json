@@ -73,7 +73,7 @@
     },
     {
       "name": "oml_recall",
-      "description": "Search promoted memories within a workarea subtree and, with include_own_held, the calling key's own held rows, flagged state held; steering rows precede hits, are never ranked and are never cut by a max_tokens budget. Every item carries its text and its budget tokens; budget reports the cut when max_tokens was sent. Rides POST /v1/memories/recall.",
+      "description": "Search the team's reviewed memory for facts, decisions and known pitfalls: before non-trivial work, on a project term you do not know, and after a failed command. Pass 2-4 exact keywords, such as an identifier, an error code, a module or a file name; every word must match, without stemming, so try other words before concluding nothing is stored. Searches promoted memories within a workarea subtree and, with include_own_held, the calling key's own held rows, flagged state held; steering rows precede hits, are never ranked and are never cut by a max_tokens budget. Every item carries its text and its budget tokens; budget reports the cut when max_tokens was sent. Rides POST /v1/memories/recall.",
       "inputSchema": {
         "type": "object",
         "properties": {

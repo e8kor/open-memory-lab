@@ -1688,8 +1688,10 @@ async fn a_reference_spelled_empty_dot_or_dot_dot_is_refused_before_anything_is_
 /// Every variable the hook or the CLI could read: each is removed before a
 /// run sets its own, so the live environment, a live `OML_API_KEY` among it,
 /// never reaches a test.
-const HOOK_VARIABLES: [&str; 9] = [
+const HOOK_VARIABLES: [&str; 11] = [
     "OML_URL",
+    "OML_FAILURE_RECALL",
+    "XDG_CACHE_HOME",
     "OML_API_KEY",
     "OML_SESSION_CONTEXT",
     "OML_SESSION_CONTEXT_MAX_TOKENS",
@@ -1707,6 +1709,9 @@ const SUBMISSIONS: &str =
 const REMEMBER: &str = "To record a durable fact or decision, call oml_remember with one \
                         checkable claim, its source and date, a stable claim_key and an \
                         idempotency_key such as <task>/<date>/<claim_key>; never a secret.";
+const RECALL: &str = "Before non-trivial work, on a project term you do not know and after a \
+                      failed command, call oml_recall with 2-4 exact keywords; try other words \
+                      before concluding OML holds nothing.";
 const COMPACTED: &str = "The conversation was just compacted. Before continuing, record with \
                          oml_remember the durable facts and decisions from the summary that are \
                          not in OML yet.";
@@ -1999,7 +2004,7 @@ async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_w
     assert_eq!(
         context,
         format!(
-            "OML memory for this session, from {}, workarea {}.\n{REMEMBER}\n{FRAMING}\n\n\
+            "OML memory for this session, from {}, workarea {}.\n{REMEMBER}\n{RECALL}\n{FRAMING}\n\n\
              Steering in force:\n\
              - metals-crew-sourcing: Quote every supplier price with its source and its date.\n\n\
              {SUBMISSIONS}\n\
@@ -2024,7 +2029,7 @@ async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_
         context_of(&stdout),
         format!(
             "OML memory for this session, from {}, in this key's default workarea \
-             (oml_workarea_info names it).\n{REMEMBER}\n{COMPACTED}\n{FRAMING}\n\n\
+             (oml_workarea_info names it).\n{REMEMBER}\n{RECALL}\n{COMPACTED}\n{FRAMING}\n\n\
              Steering in force:\n- none\n\n\
              {SUBMISSIONS}\n- none\n\n\
              Memories matching \"metals\":\n- none",
@@ -2038,7 +2043,8 @@ async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_
         let context = context_of(&stdout);
         assert!(
             context.lines().nth(1) == Some(REMEMBER)
-                && context.lines().nth(2) == Some(FRAMING)
+                && context.lines().nth(2) == Some(RECALL)
+                && context.lines().nth(3) == Some(FRAMING)
                 && !context.contains("compacted"),
             "{source}: only a compaction asks for the summary's facts: {context}"
         );
@@ -2836,7 +2842,7 @@ async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() 
     assert!(crew.path.chars().count() > 120, "{}", crew.path);
     let lines: Vec<&str> = context.lines().collect();
     assert_eq!(
-        lines[..4],
+        lines[..5],
         [
             format!(
                 "OML memory for this session, from {}, workarea {}.",
@@ -2845,15 +2851,17 @@ async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() 
             )
             .as_str(),
             REMEMBER,
+            RECALL,
             COMPACTED,
             FRAMING,
         ],
-        "the header, the record line and the compaction line come first, then the framing line"
+        "the header, the record and recall lines and the compaction line come first, then the \
+         framing line"
     );
     let framing_ends = context.find(FRAMING).expect("the framing line") + FRAMING.len();
     assert!(
         context[..framing_ends].chars().count() <= 2000,
-        "with the longest path, all four fit in Claude Code's 2,000-character preview"
+        "with the longest path, all five fit in Claude Code's 2,000-character preview"
     );
     assert_eq!(
         section(&context, SUBMISSIONS),
@@ -2979,5 +2987,628 @@ async fn the_hook_query_is_the_words_of_the_working_directory_name() {
             );
         }
     }
+    crew.lab.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// The tool-failure and session-end hooks (ADR-0038; cli/reference.md
+// `oml hook tool-failure`)
+// ---------------------------------------------------------------------------
+
+const FAILURE_LINE: &str =
+    "Recalled from OML because a tool failed; it may be irrelevant — ignore it if so.";
+/// A Rust compile error that names an error code, a quoted identifier and a
+/// path, after Claude Code's `Exit code N` line.
+const SQLX_ERROR: &str = "Exit code 101\nerror[E0599]: no method named `connect_timeout` found \
+                          for struct `sqlx_core::pool::PoolOptions` in the current scope\n  \
+                          --> src/db.rs:42:10\n   |\n42 |     .connect_timeout(5)";
+const SQLX_QUERY: &str = "E0599 connect_timeout sqlx_core::pool::PoolOptions";
+const SQLX_PITFALL: &str = "Pitfall in the sqlx pool: E0599 connect_timeout on \
+                            sqlx_core::pool::PoolOptions means the 0.8 upgrade renamed it to \
+                            acquire_timeout; recorded 2026-11-02 from the CI log.";
+
+/// `oml hook <verb>` fed `stdin`, with exactly the variables `vars` names
+/// and a `HOME` that holds nothing; returns (exit code, stdout, stderr).
+fn hook_verb(verb: &str, vars: &[(&str, &str)], stdin: &str) -> (i32, String, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml"));
+    cmd.args(["hook", verb]);
+    for name in HOOK_VARIABLES {
+        cmd.env_remove(name);
+    }
+    cmd.env("HOME", std::env::temp_dir().join("oml-hook-e2e-no-home"));
+    for (name, value) in vars {
+        cmd.env(name, value);
+    }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("the oml binary runs");
+    if let Some(mut input) = child.stdin.take() {
+        let _ = input.write_all(stdin.as_bytes());
+    }
+    let out = child.wait_with_output().expect("the hook finishes");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// The PostToolUseFailure stdin Claude Code sends for a failed Bash call.
+fn failure(session_id: &str, command: &str, error: &str) -> String {
+    json!({
+        "session_id": session_id,
+        "transcript_path": format!("/home/op/.claude/projects/metals/{session_id}.jsonl"),
+        "cwd": "/home/op/src/metals",
+        "permission_mode": "default",
+        "hook_event_name": "PostToolUseFailure",
+        "tool_name": "Bash",
+        "tool_input": { "command": command, "description": "Build the workspace" },
+        "tool_use_id": "toolu_01ABC123",
+        "error": error,
+        "is_interrupt": false,
+        "duration_ms": 4187,
+    })
+    .to_string()
+}
+
+/// The SessionStart stdin of the session `session_id`.
+fn session_with_id(session_id: &str, cwd: &str) -> String {
+    json!({
+        "session_id": session_id,
+        "transcript_path": format!("/home/op/.claude/projects/metals/{session_id}.jsonl"),
+        "cwd": cwd,
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+    })
+    .to_string()
+}
+
+/// The `additionalContext` of a PostToolUseFailure hook document.
+fn failure_context(stdout: &str) -> String {
+    let line = stdout
+        .strip_suffix('\n')
+        .expect("the document ends with one newline");
+    assert!(!line.contains('\n'), "one line: {stdout}");
+    let doc: Value = serde_json::from_str(line).expect("stdout is one JSON document");
+    assert_eq!(
+        doc["hookSpecificOutput"]["hookEventName"],
+        "PostToolUseFailure"
+    );
+    doc["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .expect("additionalContext is a string")
+        .to_owned()
+}
+
+/// The session's cache file under `cache`.
+fn cache_file(cache: &Path, session_id: &str) -> PathBuf {
+    cache
+        .join("oml")
+        .join("sessions")
+        .join(format!("{session_id}.json"))
+}
+
+impl Crew {
+    /// The crew with the sqlx pitfall promoted, written by another writer.
+    async fn with_pitfall() -> Self {
+        let crew = Self::start().await;
+        let lead = crew.writer("crew/lead-1");
+        crew.submit(&lead, "memory", "sqlx-pool-acquire-timeout", SQLX_PITFALL);
+        crew.approve_next("sqlx-pool-acquire-timeout");
+        crew.lab.take_requests();
+        crew
+    }
+
+    /// This lab's own cache directory, so no two tests share a session.
+    fn cache(&self) -> PathBuf {
+        self.lab.dir.join("cache")
+    }
+
+    /// `oml hook <verb>` as the plugin runs it, opted in to failure recall,
+    /// with this lab's cache directory and `extra` on top.
+    fn hook_verb_as(
+        &self,
+        verb: &str,
+        extra: &[(&str, &str)],
+        stdin: &str,
+    ) -> (i32, String, String) {
+        let cache = self.cache();
+        let mut vars = vec![
+            ("OML_URL", self.lab.server.as_str()),
+            ("OML_API_KEY", self.agent.as_str()),
+            ("OML_FAILURE_RECALL", "1"),
+            ("XDG_CACHE_HOME", cache.to_str().expect("a UTF-8 path")),
+        ];
+        // A later entry for the same name wins.
+        vars.extend_from_slice(extra);
+        let mut last: Vec<(&str, &str)> = Vec::new();
+        for (name, value) in vars {
+            last.retain(|(n, _)| *n != name);
+            last.push((name, value));
+        }
+        hook_verb(verb, &last, stdin)
+    }
+
+    fn failure_hook(&self, extra: &[(&str, &str)], stdin: &str) -> (i32, String, String) {
+        self.hook_verb_as("tool-failure", extra, stdin)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_tool_failure_hook_does_nothing_unless_failure_recall_is_opted_in() {
+    let crew = Crew::with_pitfall().await;
+    let stdin = failure("s-opt-in", "cargo build", SQLX_ERROR);
+
+    for value in ["", "0"] {
+        let (code, stdout, stderr) = crew.failure_hook(&[("OML_FAILURE_RECALL", value)], &stdin);
+        assert_eq!(
+            (code, stdout.as_str(), stderr.as_str()),
+            (0, "", ""),
+            "{value:?}"
+        );
+    }
+    let unset = hook_verb(
+        "tool-failure",
+        &[
+            ("OML_URL", crew.lab.server.as_str()),
+            ("OML_API_KEY", crew.agent.as_str()),
+        ],
+        &stdin,
+    );
+    assert_eq!(unset, (0, String::new(), String::new()), "unset is off");
+    let (code, stdout, stderr) = crew.failure_hook(&[("OML_FAILURE_RECALL", "yes")], &stdin);
+    assert_eq!((code, stdout.as_str()), (0, ""));
+    assert!(
+        stderr.lines().count() == 1 && stderr.contains("OML_FAILURE_RECALL"),
+        "a value other than 1 or 0 is named, not read as on: {stderr}"
+    );
+    assert!(
+        crew.lab.take_requests().is_empty(),
+        "nothing is sent unless opted in"
+    );
+    assert!(!crew.cache().exists(), "nothing is written unless opted in");
+
+    let (code, stdout, stderr) = crew.failure_hook(&[], &stdin);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(failure_context(&stdout).contains(SQLX_PITFALL), "{stdout}");
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_tool_failure_query_keeps_the_errors_distinctive_words_and_drops_exit_codes_numbers_and_stop_words()
+ {
+    let crew = Crew::with_pitfall().await;
+
+    let (code, stdout, stderr) =
+        crew.failure_hook(&[], &failure("s-query", "cargo build", SQLX_ERROR));
+    assert_eq!(code, 0, "{stderr}");
+    let seen = crew.lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v1/memories/recall"]);
+    assert_eq!(
+        seen[0].body,
+        json!({
+            "query": SQLX_QUERY,
+            "k": 3,
+            "include_bodies": true,
+            "max_tokens": 200,
+        }),
+        "three distinctive words, no exit code, number or stop word"
+    );
+    assert_eq!(
+        seen[0].authorization.as_deref(),
+        Some(format!("Bearer {}", crew.agent).as_str())
+    );
+    assert!(failure_context(&stdout).contains("sqlx-pool-acquire-timeout"));
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_tool_failure_query_never_carries_the_oml_key_or_a_bearer_token() {
+    let crew = Crew::with_pitfall().await;
+    let home = "/home/op-secret-name";
+    let error = format!(
+        "Exit code 22\ncurl: (22) 401 for Authorization: Bearer {key} at {home}/src/deploy_hook.sh\n\
+         sent sk-live_4f9aXk2_secret AKIAIOSFODNN7EXAMPLE oml_{other} {key}\n\
+         sqlx_core::pool::PoolOptions E0599",
+        key = crew.agent,
+        other = "A".repeat(43),
+    );
+    let (code, stdout, stderr) = crew.failure_hook(
+        &[("HOME", home)],
+        &failure("s-secret", "curl -f https://oml.example.com", &error),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let seen = crew.lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v1/memories/recall"]);
+    let query = seen[0].body["query"].as_str().expect("a query").to_owned();
+    for secret in [
+        crew.agent.as_str(),
+        "Bearer",
+        "sk-live",
+        "AKIA",
+        "oml_AAAA",
+        "op-secret-name",
+    ] {
+        assert!(!query.contains(secret), "{secret} in {query:?}");
+    }
+    assert_eq!(query, "deploy_hook.sh sqlx_core::pool::PoolOptions E0599");
+    assert!(!stdout.contains(&crew.agent) && !stderr.contains(&crew.agent));
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_error_with_no_distinctive_word_sends_no_request() {
+    let crew = Crew::with_pitfall().await;
+    for (n, error) in [
+        "Exit code 1\nError: something went wrong after 42 retries",
+        "Exit code 2\nNo such file or directory",
+        // One word, shorter than eight characters.
+        "Exit code 1\ncannot open db.rs",
+        // One long word without a separator.
+        "Exit code 1\nSegmentationFaultHandler",
+        "",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (code, stdout, stderr) =
+            crew.failure_hook(&[], &failure(&format!("s-plain-{n}"), "make", error));
+        assert_eq!(
+            (code, stdout.as_str(), stderr.as_str()),
+            (0, "", ""),
+            "{error:?}"
+        );
+    }
+    assert!(crew.lab.take_requests().is_empty());
+    // The control: an error that names distinctive words is recalled.
+    crew.failure_hook(&[], &failure("s-plain-control", "make", SQLX_ERROR));
+    assert_eq!(
+        routes(&crew.lab.take_requests()),
+        ["POST /v1/memories/recall"]
+    );
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_grep_or_test_command_sends_no_request() {
+    let crew = Crew::with_pitfall().await;
+    for (n, command) in [
+        "grep -rn connect_timeout src",
+        "test -f sqlx_core::pool::PoolOptions",
+        "[ -d target ]",
+        "/usr/bin/diff expected.txt actual.txt",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (code, stdout, stderr) =
+            crew.failure_hook(&[], &failure(&format!("s-grep-{n}"), command, SQLX_ERROR));
+        assert_eq!(
+            (code, stdout.as_str(), stderr.as_str()),
+            (0, "", ""),
+            "{command}"
+        );
+    }
+    assert!(crew.lab.take_requests().is_empty());
+    // The control: the same error from a build is recalled.
+    crew.failure_hook(&[], &failure("s-grep-control", "cargo build", SQLX_ERROR));
+    assert_eq!(
+        routes(&crew.lab.take_requests()),
+        ["POST /v1/memories/recall"]
+    );
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_same_error_twice_in_one_session_is_recalled_once() {
+    let crew = Crew::with_pitfall().await;
+    let stdin = failure("s-twice", "cargo build", SQLX_ERROR);
+
+    let (code, stdout, stderr) = crew.failure_hook(&[], &stdin);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(failure_context(&stdout).contains(SQLX_PITFALL));
+    let (code, stdout, stderr) = crew.failure_hook(&[], &stdin);
+    assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
+    assert_eq!(
+        crew.lab.take_requests().len(),
+        1,
+        "one request for one error"
+    );
+
+    // Another session recalls it again.
+    let (code, stdout, stderr) =
+        crew.failure_hook(&[], &failure("s-twice-other", "cargo build", SQLX_ERROR));
+    assert_eq!(code, 0, "{stderr}");
+    assert!(failure_context(&stdout).contains(SQLX_PITFALL));
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_memory_the_session_start_hook_served_is_not_injected_again_after_a_failure() {
+    let crew = Crew::with_pitfall().await;
+
+    let (code, stdout, stderr) = crew.hook_verb_as(
+        "session-start",
+        &[],
+        &session_with_id("s-served", "/home/op/src/sqlx-pool"),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert!(context_of(&stdout).contains(SQLX_PITFALL), "{stdout}");
+    crew.lab.take_requests();
+
+    let (code, stdout, stderr) =
+        crew.failure_hook(&[], &failure("s-served", "cargo build", SQLX_ERROR));
+    assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
+    assert_eq!(
+        routes(&crew.lab.take_requests()),
+        ["POST /v1/memories/recall"],
+        "the failure recalled, and the hit the session already holds was dropped"
+    );
+    // A session the start hook did not serve gets the same hit.
+    let (code, stdout, stderr) =
+        crew.failure_hook(&[], &failure("s-served-not", "cargo build", SQLX_ERROR));
+    assert_eq!(code, 0, "{stderr}");
+    assert!(failure_context(&stdout).contains(SQLX_PITFALL), "{stdout}");
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_miss_injects_nothing() {
+    let crew = Crew::with_pitfall().await;
+    let (code, stdout, stderr) = crew.failure_hook(
+        &[],
+        &failure(
+            "s-miss",
+            "npm test",
+            "Exit code 1\nError: Cannot find module 'left_pad_legacy' from src/index.ts",
+        ),
+    );
+    assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
+    assert_eq!(
+        routes(&crew.lab.take_requests()),
+        ["POST /v1/memories/recall"]
+    );
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_injected_text_stays_within_its_byte_budget_and_opens_with_the_data_frame() {
+    let crew = Crew::start_in(&["metals", &"stocks".repeat(10)]).await;
+    let lead = crew.writer("crew/lead-1");
+    // Three hits that fit the 200-token budget together, each with a long
+    // claim key and a body in multi-byte characters.
+    for n in 0..3 {
+        let claim_key = format!("pitfall-{n}-{}", "k".repeat(90));
+        let body = format!(
+            "Pitfall {n}: E0599 connect_timeout sqlx_core::pool::PoolOptions — {}",
+            "ü".repeat(80)
+        );
+        crew.submit(&lead, "memory", &claim_key, &body);
+        crew.approve_next(&claim_key);
+    }
+    crew.lab.take_requests();
+
+    let (code, stdout, stderr) =
+        crew.failure_hook(&[], &failure("s-budget", "cargo build", SQLX_ERROR));
+    assert_eq!(code, 0, "{stderr}");
+    let context = failure_context(&stdout);
+    assert!(
+        context.len() <= 1600,
+        "at most 1,600 bytes: {}",
+        context.len()
+    );
+    let lines: Vec<&str> = context.lines().collect();
+    assert_eq!(lines[..2], [FRAMING, FAILURE_LINE], "{context}");
+    assert_eq!(lines.len(), 5, "three hits: {context}");
+    for line in &lines[2..] {
+        assert!(line.starts_with("- ") && line.len() <= 400, "{line}");
+        assert!(
+            line.contains("(workarea ") && line.contains(", recorded "),
+            "{line}"
+        );
+    }
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn after_one_server_failure_the_hook_makes_no_further_request_in_that_session() {
+    let calls = Arc::new(AtomicU64::new(0));
+    let counted = calls.clone();
+    let failing = axum::Router::new().route(
+        "/v1/memories/recall",
+        axum::routing::post(move || {
+            let counted = counted.clone();
+            async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+                (axum::http::StatusCode::BAD_GATEWAY, "upstream down")
+            }
+        }),
+    );
+    let (url, task) = serve_stub(failing).await;
+    let cache = std::env::temp_dir().join(format!("oml-hook-breaker-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let vars = [
+        ("OML_URL", url.as_str()),
+        (
+            "OML_API_KEY",
+            "oml_breakerhook0123456789abcdefghijklmnopqrs",
+        ),
+        ("OML_FAILURE_RECALL", "1"),
+        ("XDG_CACHE_HOME", cache.to_str().expect("a UTF-8 path")),
+    ];
+
+    let (code, stdout, stderr) = hook_verb(
+        "tool-failure",
+        &vars,
+        &failure("s-breaker", "cargo build", SQLX_ERROR),
+    );
+    assert_eq!((code, stdout.as_str()), (0, ""));
+    assert!(
+        stderr.lines().count() == 1 && stderr.contains("502"),
+        "{stderr}"
+    );
+    let other = "Exit code 1\nthread 'main' panicked at src/lake_writer.rs:88:5";
+    let (code, stdout, stderr) = hook_verb(
+        "tool-failure",
+        &vars,
+        &failure("s-breaker", "cargo run", other),
+    );
+    assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the breaker stops the second"
+    );
+
+    // Another session is not broken.
+    let (code, _, _) = hook_verb(
+        "tool-failure",
+        &vars,
+        &failure("s-breaker-other", "cargo run", other),
+    );
+    assert_eq!(code, 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    task.abort();
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hook_returns_within_its_deadline_when_the_server_does_not_answer() {
+    let cache = std::env::temp_dir().join(format!("oml-hook-deadline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    // A server that accepts and never answers.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!("http://{}", silent.local_addr().expect("addr"));
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    // Accepts for at most 5 seconds, so a hook that never connects cannot
+    // hang the test.
+    silent.set_nonblocking(true).expect("non-blocking");
+    let stub = std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let mut connection = None;
+        while connection.is_none() && started.elapsed() < std::time::Duration::from_secs(5) {
+            match silent.accept() {
+                Ok(accepted) => connection = Some(accepted),
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
+        let _ = held.recv_timeout(std::time::Duration::from_secs(30));
+        connection.is_some()
+    });
+    let vars = [
+        ("OML_URL", url.as_str()),
+        (
+            "OML_API_KEY",
+            "oml_silenthook0123456789abcdefghijklmnopqrst",
+        ),
+        ("OML_FAILURE_RECALL", "1"),
+        ("XDG_CACHE_HOME", cache.to_str().expect("a UTF-8 path")),
+    ];
+    let started = std::time::Instant::now();
+    let (code, stdout, stderr) = hook_verb(
+        "tool-failure",
+        &vars,
+        &failure("s-silent", "cargo build", SQLX_ERROR),
+    );
+    let elapsed = started.elapsed();
+    let _ = release.send(());
+    let connected = stub.join().expect("the stub ends");
+    assert!(connected, "the hook sent its request");
+    assert_eq!((code, stdout.as_str()), (0, ""), "{stderr}");
+    assert!(
+        elapsed < std::time::Duration::from_millis(1900),
+        "the 1-second request timeout bounds the wait: {elapsed:?}"
+    );
+
+    // Stdin that never closes blocks before any request: the 2-second
+    // deadline ends the hook.
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml"));
+    cmd.args(["hook", "tool-failure"]);
+    for name in HOOK_VARIABLES {
+        cmd.env_remove(name);
+    }
+    cmd.env("HOME", std::env::temp_dir().join("oml-hook-e2e-no-home"));
+    for (name, value) in vars {
+        cmd.env(name, value);
+    }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let started = std::time::Instant::now();
+    let mut child = cmd.spawn().expect("the oml binary runs");
+    let held_open = child.stdin.take();
+    let mut exited = None;
+    while started.elapsed() < std::time::Duration::from_secs(10) {
+        if let Some(status) = child.try_wait().expect("the child is polled") {
+            exited = Some(status);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let elapsed = started.elapsed();
+    if exited.is_none() {
+        let _ = child.kill();
+    }
+    let out = child.wait_with_output().expect("the hook is reaped");
+    drop(held_open);
+    let status = exited.expect("the hook ends on its own deadline");
+    assert_eq!(status.code(), Some(0));
+    assert!(out.stdout.is_empty());
+    assert!(
+        elapsed >= std::time::Duration::from_millis(1800)
+            && elapsed < std::time::Duration::from_millis(2900),
+        "it waits for its 2-second deadline and no longer: {elapsed:?}"
+    );
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_cache_never_holds_a_memory_body_and_is_deleted_at_session_end() {
+    let crew = Crew::with_pitfall().await;
+    let (code, stdout, stderr) =
+        crew.failure_hook(&[], &failure("s-cache", "cargo build", SQLX_ERROR));
+    assert_eq!(code, 0, "{stderr}");
+    let context = failure_context(&stdout);
+    let file = cache_file(&crew.cache(), "s-cache");
+    let stored = std::fs::read_to_string(&file).expect("the session cache exists");
+    let cached: Value = serde_json::from_str(&stored).expect("the cache is JSON");
+    let artifact = context
+        .lines()
+        .nth(2)
+        .and_then(|l| l.strip_prefix("- "))
+        .and_then(|l| l.split(' ').next())
+        .expect("the hit line names its id");
+    assert_eq!(cached["served"], json!([artifact]));
+    assert_eq!(cached["errors"].as_array().map(Vec::len), Some(1));
+    for text in [
+        SQLX_PITFALL,
+        "acquire_timeout",
+        "connect_timeout",
+        "E0599",
+        "sqlx",
+    ] {
+        assert!(!stored.contains(text), "{text} in the cache: {stored}");
+    }
+    #[cfg(unix)]
+    {
+        assert_eq!(mode_of(&file), 0o600);
+        assert_eq!(mode_of(file.parent().expect("dir")), 0o700);
+    }
+
+    let (code, stdout, stderr) = crew.hook_verb_as(
+        "session-end",
+        &[],
+        &json!({
+            "session_id": "s-cache",
+            "transcript_path": "/home/op/.claude/projects/metals/s-cache.jsonl",
+            "cwd": "/home/op/src/metals",
+            "hook_event_name": "SessionEnd",
+            "reason": "clear",
+        })
+        .to_string(),
+    );
+    assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
+    assert!(!file.exists(), "session end deletes the cache");
     crew.lab.stop().await;
 }
