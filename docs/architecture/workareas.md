@@ -296,6 +296,14 @@ refusal below covers acquiring new children in any form). Lake rows keep
 
 ## The status ladder (D8)
 
+**Status:** built in `oml-domain`, `oml-app` and `oml-pg` with
+`migrations/0010_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
+second identity, the status read) and the freeze checks on submit, supersede, approval and child
+create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · no HTTP route or MCP tool
+serves the transitions yet · its Postgres checks run only where a superuser mints the suites' role
+pairs, CI's `cargo test (Postgres)` · reassignment, re-parent, demote, erasure and the simulation
+fence are decided, not built.
+
 Statuses: `development` → `committed` → `validated` (frozen). Transitions are
 **forward only**; backward transitions do not exist in the design — there is no
 "unfreeze" verb, journalled or otherwise. A space that must evolve after

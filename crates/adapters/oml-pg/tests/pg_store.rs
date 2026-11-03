@@ -21,7 +21,11 @@
 //! The serving role's privilege laws sit beside the journal guard law, which
 //! runs as the owner (ADR-0034 d3, d6), and the role split's boot checks
 //! refuse each of their reasons by name and accept a minted, migrated pair
-//! (ADR-0034 d5).
+//! (ADR-0034 d5). The status ladder runs end to end through the use cases
+//! over the serving login: a proposal and its ratification move the stored
+//! status and journal both events under row security, and a child create
+//! racing a ratification to `validated` never leaves a validated node over
+//! an unvalidated child (ADR-0009 d3, d4).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -30,8 +34,9 @@ use oml_app::App;
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::{
-    Envelope, EventDraft, EventTime, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, WorkareaStatus, event_types, next_envelope, sign, verify_chain,
+    Envelope, EventDraft, EventTime, FrozenOp, KeySet, LadderRefusal, MemoryKind, MemoryStatus,
+    Role, Sha256Hash, SignedEnvelope, WorkareaStatus, event_types, next_envelope, sign,
+    verify_chain,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{
@@ -4165,5 +4170,395 @@ async fn the_serving_role_reads_no_other_tenants_transitions() {
         tx.rollback().await.expect("rollback");
         assert_eq!(n, seen, "under {tenant:?} the table shows {seen}");
     }
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// The status ladder end to end over the serving role (ADR-0009 d3, d4)
+// ---------------------------------------------------------------------------
+
+type PgApp = App<PgStore, MemSigner, FixedClock, SeqIdGen, MarkerScanner>;
+
+/// The use cases over `store`, signing with the committed test key.
+fn app_over_pg(store: &PgStore) -> PgApp {
+    App::new(
+        store.clone(),
+        MemSigner::new(oml_port_contracts::TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+}
+
+/// A tenant bootstrapped through the use cases under `tenant_name`, its
+/// first admin key named `root-admin` and held by `alice-admin`.
+async fn bootstrap_pg(app: &PgApp, tenant_name: &str) -> oml_app::types::BootstrapResult {
+    app.bootstrap_tenant(&BootstrapRequest {
+        tenant_name: name(tenant_name),
+        admin_key_name: name("root-admin"),
+        admin_principal: "alice-admin".to_owned(),
+    })
+    .await
+    .expect("bootstrap")
+}
+
+/// A workarea `child` under `parent`, created by `admin`; its id.
+async fn workarea_pg(app: &PgApp, admin: &str, child: &str, parent: Uuid) -> Uuid {
+    app.create_workarea(admin, &name(child), Some(parent.into()), None)
+        .await
+        .expect("create workarea")
+        .workarea
+        .workarea_id
+}
+
+/// A dreamer key held by `principal` with one dreamer grant on `node`.
+async fn dreamer_pg(
+    app: &PgApp,
+    admin: &str,
+    key_name: &str,
+    principal: &str,
+    node: Uuid,
+) -> oml_app::types::IssuedKey {
+    app.issue_key(
+        admin,
+        &oml_app::types::IssueKeyRequest {
+            role: Role::Dreamer,
+            name: name(key_name),
+            principal: principal.to_owned(),
+            held_by: None,
+            default_workarea: None,
+            crew: None,
+            grants: vec![oml_app::types::GrantRequest {
+                node: node.into(),
+                role: Role::Dreamer,
+                deny: Vec::new(),
+            }],
+        },
+    )
+    .await
+    .expect("issue a dreamer key")
+}
+
+/// The stored state of transition `id` as the serving role reads it under
+/// `tenant`'s row security: (state, ratifier, proposed seq, ratified seq).
+async fn transition_row(
+    store: &PgStore,
+    tenant: Uuid,
+    id: Uuid,
+) -> Option<(String, Option<Uuid>, i64, Option<i64>)> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let row = sqlx::query_as(
+        "SELECT state, ratifier_key_id, proposed_seq, ratified_seq \
+           FROM workarea_transitions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .expect("the transition row");
+    tx.rollback().await.expect("rollback");
+    row
+}
+
+/// Propose then ratify through the use cases over the serving login: the
+/// node's stored status moves to the proposal's `to`, the journal holds one
+/// `workarea.status_proposed` signed by the proposer and one
+/// `workarea.status_transition` signed by the ratifier, the row is ratified
+/// at the second event's seq, the stored chain verifies, and another tenant
+/// reads none of it under row security (ADR-0009 d3; ADR-0010 R2; ADR-0034
+/// d3).
+#[tokio::test]
+async fn propose_then_ratify_through_the_serving_role_moves_status_and_journals_both_events_under_rls()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let app = app_over_pg(&store);
+    let boot = bootstrap_pg(&app, "acme").await;
+    let (t, admin) = (boot.tenant_id, boot.admin_key.value.clone());
+    let crew = workarea_pg(&app, &admin, "crew", boot.root_workarea_id).await;
+    let dora = dreamer_pg(&app, &admin, "dora-key", "dora", crew).await;
+    let other = bootstrap_pg(&app, "globex").await;
+
+    let proposal = app
+        .propose_transition(&admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("the admin proposes");
+    let pending = app
+        .workarea_status(&admin, crew.into())
+        .await
+        .expect("the status read");
+    assert_eq!(pending.status, WorkareaStatus::Development);
+    assert_eq!(
+        pending
+            .pending
+            .iter()
+            .map(|p| p.transition_id)
+            .collect::<Vec<_>>(),
+        vec![proposal.transition_id],
+        "the proposal waits, the node unmoved"
+    );
+    let record = app
+        .ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+        .await
+        .expect("a second identity ratifies");
+    assert_eq!(record.status, WorkareaStatus::Committed);
+    assert_eq!(
+        store
+            .workarea(t, crew)
+            .await
+            .expect("read")
+            .expect("the node")
+            .status,
+        WorkareaStatus::Committed,
+        "the stored status moved"
+    );
+    assert!(
+        store
+            .pending_transitions(t, crew)
+            .await
+            .expect("read")
+            .is_empty(),
+        "nothing pending"
+    );
+
+    let events = store.events_range(t, 1, 1000).await.expect("the journal");
+    let ladder: Vec<&SignedEnvelope> = events
+        .iter()
+        .filter(|e| e.envelope.event_type.starts_with("workarea.status_"))
+        .collect();
+    assert_eq!(ladder.len(), 2, "both events journalled");
+    let (proposed, ratified) = (ladder[0], ladder[1]);
+    assert_eq!(
+        (
+            proposed.envelope.event_type.as_str(),
+            proposed.envelope.principal.as_str(),
+            proposed.envelope.api_key_id,
+        ),
+        (
+            event_types::WORKAREA_STATUS_PROPOSED,
+            "alice-admin",
+            Some(boot.admin_key.key_id),
+        )
+    );
+    assert_eq!(
+        (
+            ratified.envelope.event_type.as_str(),
+            ratified.envelope.principal.as_str(),
+            ratified.envelope.api_key_id,
+        ),
+        (
+            event_types::WORKAREA_STATUS_TRANSITION,
+            "dora",
+            Some(dora.key_id),
+        )
+    );
+    assert_eq!(
+        ratified.envelope.payload,
+        json!({
+            "workarea_id": crew.to_string(),
+            "from": "development",
+            "to": "committed",
+            "transition_id": proposal.transition_id.to_string(),
+            "proposed_by_key_id": boot.admin_key.key_id.to_string(),
+            "ratified_by_key_id": dora.key_id.to_string(),
+            "policy_snapshot": { "k": 1, "required_roles": ["dreamer"] },
+        })
+    );
+    assert_eq!(
+        transition_row(&store, t, proposal.transition_id).await,
+        Some((
+            "ratified".to_owned(),
+            Some(dora.key_id),
+            i64::try_from(proposed.envelope.seq).expect("a seq"),
+            Some(i64::try_from(ratified.envelope.seq).expect("a seq")),
+        )),
+        "the row is ratified at the transition's seq"
+    );
+    let keys = KeySet::new(vec![test_signing_key().verifying_key()]);
+    let head = store
+        .verify_stored_chain(t, &keys)
+        .await
+        .expect("the chain verifies");
+    assert_eq!(head.seq, ratified.envelope.seq);
+
+    // Another tenant reads none of it under row security.
+    let theirs = other.tenant_id;
+    assert_eq!(store.workarea(theirs, crew).await.expect("read"), None);
+    assert_eq!(
+        store.transition(theirs, proposal.transition_id).await,
+        Ok(None)
+    );
+    assert_eq!(
+        transition_row(&store, theirs, proposal.transition_id).await,
+        None
+    );
+    assert!(
+        store
+            .events_range(theirs, 1, 1000)
+            .await
+            .expect("their journal")
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("workarea.status_")),
+        "their journal holds no ladder event"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Every workarea of `tenant` stored `validated` with a child that is not,
+/// as `parent/child` names; the tree invariant holds when it is empty
+/// (ADR-0009 d4).
+async fn validated_over_unvalidated(store: &PgStore, tenant: Uuid) -> Vec<String> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let found = sqlx::query_scalar(
+        "SELECT p.name::text || '/' || c.name::text FROM workareas p \
+           JOIN workareas c ON c.tenant_id = p.tenant_id AND c.parent_id = p.id \
+          WHERE p.tenant_id = $1 AND p.status = 'validated' AND c.status <> 'validated' \
+          ORDER BY 1",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("the invariant query");
+    tx.rollback().await.expect("rollback");
+    found
+}
+
+/// Whether `result` lost a race on the chain head, by seq or by
+/// `prev_hash`, and may be retried as the HTTP transport answers it.
+fn lost_the_head<T>(result: &Result<T, AppError>) -> bool {
+    matches!(
+        result,
+        Err(AppError::Store(
+            StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. }
+        ))
+    )
+}
+
+/// A child create under a committed node and the ratification of that
+/// node's proposal to `validated` run as two tasks on the serving login,
+/// each retrying a lost chain head: exactly one of them lands, the other is
+/// refused by name (`workarea.frozen` for the create, `children_not_validated`
+/// for the ratification), and after both no validated node has a child that
+/// is not validated (ADR-0009 d4, d5; workareas.md, ratification
+/// re-checks).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_concurrent_child_create_and_a_validated_ratification_never_leave_a_validated_node_with_an_unvalidated_child()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let app = Arc::new(app_over_pg(&store));
+    let boot = bootstrap_pg(&app, "acme").await;
+    let (t, admin) = (boot.tenant_id, boot.admin_key.value.clone());
+    let dora = dreamer_pg(&app, &admin, "dora-key", "dora", boot.root_workarea_id).await;
+
+    let (mut created_won, mut ratified_won) = (0, 0);
+    for round in 0..8 {
+        let node = workarea_pg(
+            &app,
+            &admin,
+            &format!("area-{round}"),
+            boot.root_workarea_id,
+        )
+        .await;
+        let to_committed = app
+            .propose_transition(&admin, node.into(), WorkareaStatus::Committed)
+            .await
+            .expect("propose committed");
+        app.ratify_transition(&dora.value, node.into(), to_committed.transition_id)
+            .await
+            .expect("ratify committed");
+        let to_validated = app
+            .propose_transition(&admin, node.into(), WorkareaStatus::Validated)
+            .await
+            .expect("propose validated with no child");
+
+        let create = {
+            let (app, admin) = (Arc::clone(&app), admin.clone());
+            let child = name(&format!("child-{round}"));
+            tokio::spawn(async move {
+                loop {
+                    let result = app
+                        .create_workarea(&admin, &child, Some(node.into()), None)
+                        .await;
+                    if !lost_the_head(&result) {
+                        return result.map(|c| c.workarea.workarea_id);
+                    }
+                }
+            })
+        };
+        let ratify = {
+            let (app, dreamer) = (Arc::clone(&app), dora.value.clone());
+            let id = to_validated.transition_id;
+            tokio::spawn(async move {
+                loop {
+                    let result = app.ratify_transition(&dreamer, node.into(), id).await;
+                    if !lost_the_head(&result) {
+                        return result.map(|w| w.status);
+                    }
+                }
+            })
+        };
+        let (create, ratify) = (
+            create.await.expect("the create task"),
+            ratify.await.expect("the ratify task"),
+        );
+
+        match (&create, &ratify) {
+            (Ok(_), Err(err)) => {
+                assert!(
+                    matches!(
+                        err,
+                        AppError::TransitionRefused {
+                            reason: LadderRefusal::ChildrenNotValidated,
+                            ..
+                        } | AppError::Store(StoreError::ChildrenNotValidated { .. })
+                    ),
+                    "round {round}: the ratification after the child: {err:?}"
+                );
+                created_won += 1;
+            }
+            (Err(err), Ok(status)) => {
+                assert_eq!(*status, WorkareaStatus::Validated);
+                assert!(
+                    matches!(
+                        err,
+                        AppError::WorkareaFrozen {
+                            op: FrozenOp::CreateChild,
+                            ..
+                        }
+                    ),
+                    "round {round}: the create after the ratification: {err:?}"
+                );
+                ratified_won += 1;
+            }
+            other => panic!("round {round}: exactly one lands, got {other:?}"),
+        }
+        assert_eq!(
+            validated_over_unvalidated(&store, t).await,
+            Vec::<String>::new(),
+            "round {round}: no validated node over an unvalidated child"
+        );
+    }
+    println!("the create landed {created_won} times, the ratification {ratified_won}");
+    let keys = KeySet::new(vec![test_signing_key().verifying_key()]);
+    store
+        .verify_stored_chain(t, &keys)
+        .await
+        .expect("the chain verifies after the races");
     drop_dbs(&created).await;
 }
