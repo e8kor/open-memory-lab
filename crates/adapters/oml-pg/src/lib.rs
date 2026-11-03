@@ -27,8 +27,8 @@ use oml_app::types::{
     UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
-use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Postgres, QueryBuilder, Row, Transaction};
+use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
+use sqlx::{Connection, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
 /// The committed migrations, embedded at build time. The migrations are
@@ -358,26 +358,150 @@ pub async fn role_split_postflight(
     .await
 }
 
+/// The owner's URL, held for d11's partition DDL alone; its `Debug` never
+/// prints it, since it carries the owner's password (ADR-0034 d4).
+#[derive(Clone)]
+struct OwnerUrl(std::sync::Arc<str>);
+
+impl std::fmt::Debug for OwnerUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OwnerUrl(<redacted>)")
+    }
+}
+
+/// The lock timeout of a tenant's partition DDL: a `55P03` past it answers
+/// `system.unavailable`, `partition_lock_timeout` (ADR-0034 d11).
+const PARTITION_LOCK_TIMEOUT: &str = "5s";
+
+/// The partition `memories` holds `tenant_id`'s rows in: the tenant's id in
+/// 32 hex digits, never its name, which would put every tenant's name in
+/// `pg_class` for every role (postgres-schema.md, the per-tenant
+/// partitions; ADR-0034 d11). 0009 names each existing tenant's so.
+fn memories_partition(tenant_id: Uuid) -> String {
+    format!("memories_t_{}", tenant_id.simple())
+}
+
+/// A partition DDL failure as the port answers it: a lock contest the DDL
+/// lost, a wait past the timeout (`55P03`) or a deadlock the detector broke
+/// by aborting it (`40P01`), is [`StoreError::PartitionLockTimeout`],
+/// retryable; anything else [`StoreError::Partition`] (ADR-0034 d11).
+fn partition_error(e: &sqlx::Error) -> StoreError {
+    match e.as_database_error().and_then(|db| db.code()) {
+        Some(code) if code == "55P03" || code == "40P01" => StoreError::PartitionLockTimeout,
+        _ => StoreError::Partition(e.to_string()),
+    }
+}
+
+/// `tenant_id`'s partition DDL, in one owner transaction under `SET LOCAL
+/// lock_timeout`: the table `LIKE memories INCLUDING ALL`, its `ENABLE` and
+/// `FORCE ROW LEVEL SECURITY` and its parent's `tenant_isolation` policy,
+/// then `ATTACH PARTITION`, which takes `ShareUpdateExclusiveLock` on the
+/// parent where `CREATE TABLE … PARTITION OF` would take
+/// `AccessExclusiveLock` and stop every tenant's reads and writes. The
+/// attach clones `memories`' foreign keys, so it also takes
+/// `ShareRowExclusiveLock` on `journal`, `tenants` and `review_queue`:
+/// every tenant's commits, each of which inserts into `journal`, wait for
+/// it, bounded by the timeout, and a commit that inserts into `tenants`
+/// then `journal`, as a genesis does, can deadlock with it
+/// ([`partition_error`]; postgres-schema.md, the per-tenant partitions;
+/// ADR-0034 d11). The identifiers and the bound derive from the id alone,
+/// which is why they are spelled into the DDL, which takes no parameters.
+async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Result<(), sqlx::Error> {
+    let partition = memories_partition(tenant_id);
+    let mut tx = owner.begin().await?;
+    for statement in [
+        format!("SET LOCAL lock_timeout = '{PARTITION_LOCK_TIMEOUT}'"),
+        format!("CREATE TABLE {partition} (LIKE memories INCLUDING ALL)"),
+        format!("ALTER TABLE {partition} ENABLE ROW LEVEL SECURITY"),
+        format!("ALTER TABLE {partition} FORCE ROW LEVEL SECURITY"),
+        format!(
+            "CREATE POLICY tenant_isolation ON {partition} \
+             USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) \
+             WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)"
+        ),
+        format!("ALTER TABLE memories ATTACH PARTITION {partition} FOR VALUES IN ('{tenant_id}')"),
+    ] {
+        sqlx::query(&statement)
+            .persistent(false)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
+}
+
+/// The full-text recall statement `recall_fts` runs, binding `$1` the
+/// tenant, `$2` the readable nodes, `$3` the query, `$4` the kinds and `$5`
+/// `k`. Its `m.tenant_id = $1` is the tenant `oml.tenant_id` names, so the
+/// plan keeps that tenant's partition alone, or drops the rest as it
+/// starts; row security stays the fence (ADR-0034 d11). Exported so the
+/// suite plans the statement the adapter runs.
+pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
+            ts_rank(to_tsvector('simple', m.claim), \
+                    plainto_tsquery('simple', $3), 0) AS score \
+     FROM memories m \
+     WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+       AND NOT m.retirement AND m.kind = ANY($4::text[]) \
+       AND m.workarea_id = ANY($2::uuid[]) \
+       AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
+     ORDER BY score DESC, m.id ASC \
+     LIMIT $5";
+
+/// The own held recall statement `recall_own_held` runs, binding `$1` the
+/// tenant, `$2` the author keys, `$3` the readable nodes, `$4` the query,
+/// `$5` the kinds and `$6` `k`; pruned to the tenant's partition as
+/// [`RECALL_FTS`] is (ADR-0034 d11).
+pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
+            ts_rank(to_tsvector('simple', m.claim), \
+                    plainto_tsquery('simple', $4), 0) AS score \
+     FROM memories m \
+     WHERE m.tenant_id = $1 AND m.status = 'held' \
+       AND m.author_key_id = ANY($2::uuid[]) \
+       AND NOT m.retirement AND m.kind = ANY($5::text[]) \
+       AND m.workarea_id = ANY($3::uuid[]) \
+       AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
+     ORDER BY score DESC, m.id ASC \
+     LIMIT $6";
+
 /// The Postgres `JournalStore`.
 #[derive(Debug, Clone)]
 pub struct PgStore {
     pool: PgPool,
+    owner_url: Option<OwnerUrl>,
 }
 
 impl PgStore {
     /// Connects a pool to `database_url` (no migration side effect; call
-    /// [`Self::migrate`] where bootstrap wants it).
+    /// [`Self::migrate`] where bootstrap wants it). The store creates no
+    /// tenant's partitions until [`Self::with_owner_url`] gives it the
+    /// owner's URL.
     pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(4)
             .connect(database_url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            owner_url: None,
+        })
     }
 
     #[must_use]
     pub fn from_pool(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            owner_url: None,
+        }
+    }
+
+    /// The owner's URL, which the store opens a connection to for each
+    /// tenant's partition DDL alone and closes after it (ADR-0034 d4, d11);
+    /// without it, [`JournalStore::create_tenant_partitions`] refuses.
+    #[must_use]
+    pub fn with_owner_url(self, owner_url: &str) -> Self {
+        Self {
+            owner_url: Some(OwnerUrl(owner_url.into())),
+            ..self
+        }
     }
 
     #[must_use]
@@ -1604,6 +1728,22 @@ impl JournalStore for PgStore {
         Ok(receipt)
     }
 
+    async fn create_tenant_partitions(&self, tenant_id: Uuid) -> Result<(), StoreError> {
+        let Some(OwnerUrl(owner_url)) = &self.owner_url else {
+            return Err(StoreError::Partition(
+                "this store holds no owner URL for the partition DDL (ADR-0034 d4)".to_owned(),
+            ));
+        };
+        // An owner connection opened for this call alone and closed after
+        // it, so none outlives the DDL (ADR-0034 d4, d8).
+        let mut owner = PgConnection::connect(owner_url)
+            .await
+            .map_err(|e| partition_error(&e))?;
+        let created = create_partition_on(&mut owner, tenant_id).await;
+        let _ = owner.close().await;
+        created.map_err(|e| partition_error(&e))
+    }
+
     async fn chain_head(&self, tenant_id: Uuid) -> Result<Option<ChainHead>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
@@ -1788,20 +1928,11 @@ impl JournalStore for PgStore {
         // replaced version nor a retired claim is a hit (retrieval.md R3 at
         // the store; ADR-0025 d8), within the readable set alone — an empty
         // array matches nothing (ADR-0025 d1); the 'simple' configuration
-        // matches 0001's GIN expression index. The score is ts_rank with
+        // matches the GIN expression index each tenant's partition holds
+        // (0009). The score is ts_rank with
         // normalization 0 as float4, ties broken by id. A candidate carries
         // no body: the served rows hydrate after the cuts (ADR-0025 d7).
-        let sql = "SELECT m.id, m.body_bytes, \
-                    ts_rank(to_tsvector('simple', m.claim), \
-                            plainto_tsquery('simple', $3), 0) AS score \
-             FROM memories m \
-             WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
-               AND NOT m.retirement AND m.kind = ANY($4::text[]) \
-               AND m.workarea_id = ANY($2::uuid[]) \
-               AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
-             ORDER BY score DESC, m.id ASC \
-             LIMIT $5";
-        let rows = sqlx::query(sql)
+        let rows = sqlx::query(RECALL_FTS)
             .bind(tenant_id)
             .bind(readable)
             .bind(query)
@@ -1837,18 +1968,7 @@ impl JournalStore for PgStore {
         // row or a retirement version, never off the readable nodes, and the
         // score is the same ts_rank as recall_fts, so the two lists merge
         // under one order (ADR-0025 d4).
-        let sql = "SELECT m.id, m.body_bytes, \
-                    ts_rank(to_tsvector('simple', m.claim), \
-                            plainto_tsquery('simple', $4), 0) AS score \
-             FROM memories m \
-             WHERE m.tenant_id = $1 AND m.status = 'held' \
-               AND m.author_key_id = ANY($2::uuid[]) \
-               AND NOT m.retirement AND m.kind = ANY($5::text[]) \
-               AND m.workarea_id = ANY($3::uuid[]) \
-               AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
-             ORDER BY score DESC, m.id ASC \
-             LIMIT $6";
-        let rows = sqlx::query(sql)
+        let rows = sqlx::query(RECALL_OWN_HELD)
             .bind(tenant_id)
             .bind(author_key_ids)
             .bind(readable)
@@ -2057,10 +2177,12 @@ impl JournalStore for PgStore {
         // authored (admission.md review; roles-and-keys.md rival
         // successors, ADR-0025 d10; R2 proper re-runs at verdict time). A
         // re-claim by the same key matches its own held_by_key row again.
+        // Every reference to memories names the tenant, so the plan keeps
+        // its partition alone (ADR-0034 d11).
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM review_queue q \
-             JOIN memories m ON m.id = q.memory_id \
-             WHERE q.tenant_id = $1 \
+             JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
+             WHERE q.tenant_id = $1 AND m.tenant_id = $1 \
                AND m.workarea_id = ANY($4::uuid[]) \
                AND (q.held_by_key IS NULL OR q.held_by_key = $2) \
                AND NOT (m.lineage_principals @> ARRAY[$3]::text[]) \

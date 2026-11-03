@@ -100,7 +100,10 @@ async fn mint_database(db: &str) -> bool {
 /// A store over `db`'s serving login, migrated through its owner login with
 /// `oml.serving_role` set (ADR-0034 d4, d8).
 async fn serving_store(db: &str) -> PgStore {
-    let store = PgStore::connect(&serving_url(db)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(db));
     store
         .migrate(&owner_url(db))
         .await

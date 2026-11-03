@@ -4764,6 +4764,77 @@ async fn creating_a_workarea_named_universe_answers_name_taken() {
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 }
 
+/// The ceremony's request, under the tenant name `acme`.
+fn acme() -> BootstrapRequest {
+    BootstrapRequest {
+        tenant_name: name("acme"),
+        admin_key_name: name("root-admin"),
+        admin_principal: "alice-admin".to_owned(),
+    }
+}
+
+/// Tenant creation asks the store for the tenant's partitions before it
+/// seals `tenant.genesis`; a creation that fails fails the act before any
+/// commit: no tenant row, no event, and the name stays free, so a retry,
+/// which mints a fresh id, takes it (postgres-schema.md, the per-tenant
+/// partitions; ADR-0034 d11, d10 step 4).
+#[tokio::test]
+async fn a_failed_partition_creation_commits_no_tenant_and_journals_nothing() {
+    for refusal in [
+        StoreError::PartitionLockTimeout,
+        StoreError::Partition("the double refused this partition on request".to_owned()),
+    ] {
+        let store = MemStore::new();
+        store.refuse_next_partition(refusal.clone());
+        let app = app_over(store.clone());
+        let err = app
+            .bootstrap_tenant(&acme())
+            .await
+            .expect_err("the partition was refused");
+        assert!(
+            matches!(&err, AppError::Store(e) if *e == refusal),
+            "{err:?}"
+        );
+        assert_eq!(store.partitions(), Vec::<Uuid>::new(), "no partition kept");
+        assert_eq!(
+            store.tenant_count(),
+            0,
+            "no tenant row, so no event under any tenant"
+        );
+
+        let boot = app
+            .bootstrap_tenant(&acme())
+            .await
+            .expect("the retry takes the name the refused act never committed");
+        assert_eq!(store.partitions(), vec![boot.tenant_id]);
+        assert_eq!(journal(&store, boot.tenant_id).await.len(), 3);
+    }
+}
+
+/// A partition whose DDL committed is kept when the genesis commit then
+/// fails: the act fails, journals nothing, and the retry mints a fresh id
+/// with a partition of its own (ADR-0034 d11).
+#[tokio::test]
+async fn a_partition_left_by_a_failed_genesis_commit_is_kept_and_the_retry_mints_a_fresh_id() {
+    let store = MemStore::new().refusing_next_commit_of(event_types::TENANT_GENESIS);
+    let app = app_over(store.clone());
+    app.bootstrap_tenant(&acme())
+        .await
+        .expect_err("the genesis commit was refused");
+    let orphan = store.partitions();
+    assert_eq!(orphan.len(), 1, "the committed partition is kept");
+    assert_eq!(store.tenant_count(), 0, "no tenant row committed");
+    assert_eq!(
+        store.chain_head(orphan[0]).await.expect("head"),
+        None,
+        "nothing journalled under the orphan's id"
+    );
+
+    let boot = app.bootstrap_tenant(&acme()).await.expect("the retry");
+    assert_ne!(boot.tenant_id, orphan[0], "the retry mints a fresh id");
+    assert_eq!(store.partitions(), vec![orphan[0], boot.tenant_id]);
+}
+
 /// Tenant creation creates the root named `universe` and journals the name
 /// in the root's `workarea.create`; `tenant.genesis` records the tenant's
 /// name (ADR-0026 d1, d6; event-catalog.md).

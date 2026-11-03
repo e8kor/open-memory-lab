@@ -173,7 +173,8 @@ Decided, not built.
        spends no enrollment token; a partition left by a failed genesis commit is empty, fenced and
        accepted by d5; the
        adapter's FTS read scans its tenant's partition alone; the serving role sees no partition's
-       `pg_stats`; d5 holds over partitions; `rls-spike` as in step 2.
+       `pg_stats`; d5 holds over partitions; `rls-spike` records no check, its two `estimate`
+       checks passing over the partitions (d11 *Stays open*), so it fails if either fails.
     5. v0.3.1, which carries steps 2–4 with no `LEAKPROOF` wrapper (d13), then the live host's
        split. Check: its output, recorded in d7.
 
@@ -198,16 +199,31 @@ Decided, not built.
       `CREATE TABLE … PARTITION OF`: on the host's 18.6 (probed 2026-11-03, in rolled-back
       transactions on temp tables) it took `AccessExclusiveLock` on the parent, stopping every
       tenant's reads and writes, where `ATTACH PARTITION` took `ShareUpdateExclusiveLock`; both
-      took `ShareRowExclusiveLock` on `review_queue`, which d12's key into `memories` gives, so
-      `review_queue`'s writes wait for the attach, bounded by the timeout. A DDL that fails fails the
-      act before any commit, journals nothing and spends no enrollment token: a lock timeout
-      (`55P03`) answers `system.unavailable`, retryable, `details.reason` `partition_lock_timeout`,
-      and any other failure `system.internal`. A partition whose DDL committed when the genesis
+      took `ShareRowExclusiveLock` on `review_queue`, which d12's key into `memories` gives. The
+      attach clones `memories`' own foreign keys onto the partition, so it also takes
+      `ShareRowExclusiveLock` on `journal` and `tenants`, the tables they reference (probed on
+      18.6 on 2026-11-03, `pg_locks` inside the DDL's transaction): every tenant's commits, each
+      of which inserts into `journal`, wait for the attach, bounded by the timeout, and a commit
+      that inserts into `tenants` then `journal`, as a genesis does, deadlocks with an attach that
+      holds `journal` and waits on `tenants` (`40P01`, reproduced the same day). A DDL that fails
+      fails the act before any commit, journals nothing and spends no enrollment token: a lock
+      contest it lost, a lock timeout (`55P03`) or a deadlock the detector broke by aborting it
+      (`40P01`), answers `system.unavailable`, retryable, `details.reason`
+      `partition_lock_timeout`, and any other failure `system.internal`. A serving commit the
+      detector aborts instead answers `system.unavailable` as any backend failure does, and is
+      retryable too. A partition whose DDL committed when the genesis
       commit then failed is kept: it is empty, owned by the owner and fenced, so d5 accepts it, and
       the retry mints a fresh id; dropping it waits with `DROP`'s other uses (Consequences).
       `memory_embeddings`' partitions (ADR-0013 d4) take the same path once that table is built.
-    - *Stays open:* EXPLAIN's estimate (d1) and each partition's `reltuples` and bound, which give
-      every role one tenant's row count and id, are FR-45's; by this record's reading of the planner
+    - *Stays open:* over the partitions EXPLAIN's estimate (d1) no longer follows another
+      tenant's words: tenant B's partition's statistics hold tenant B's `tenant_id` alone, so under
+      tenant A's policy the planner gives it the one-row floor whatever the word.
+      `S3.4/owner/estimate` passed so on 18.6 on 2026-11-03; `S3.4/service/estimate` runs under
+      the same policy, is read to pass, and is measured by CI's pinned pg17 run, so `rls-spike`
+      records neither (d9) and a failure of either fails the run and is recorded then. What stays
+      is FR-45's: each other tenant's partition still adds its floor row to the estimate, and each
+      partition's `reltuples` and bound give every role one tenant's row count and id; by this
+      record's reading of the planner
       (`REL_17_STABLE` at `f1ba2b8`, fetched 2026-10-31), a partition's GIN index serves no
       RLS-bound query, `@@` not being leakproof (S3.4), so FTS reads scan (FR-4, FR-7).
 
