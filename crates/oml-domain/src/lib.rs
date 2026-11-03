@@ -18,7 +18,8 @@
 //! retirement and the recall terms match (ADR-0021 d5; ADR-0027 d6–d11);
 //! `vocab_scan` holds the vocabulary policy and the vocab scanner: its
 //! citation checks, its `vocab.*` finding classes and the simulation veto
-//! (ADR-0021 d3, d5, d7, d8, d11).
+//! (ADR-0021 d3, d5, d7, d8, d11); `vocab_suggest` holds the deterministic
+//! term suggest over one vocabulary release (ADR-0021 d9, d10).
 
 #![forbid(unsafe_code)]
 
@@ -34,6 +35,7 @@ pub mod vocab;
 pub mod vocab_edges;
 pub mod vocab_release;
 pub mod vocab_scan;
+pub mod vocab_suggest;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,
