@@ -337,6 +337,35 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::ClaimEdgeLabel { field, reason } => {
             ApiError::validation(reason.to_string()).with_details(json!({ "field": field.as_str() }))
         }
+        // R2 at a claim-edge ratification (errors.md; ADR-0012).
+        AppError::RatifierIsProposer => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.ratifier_is_proposer",
+            "R2 extends to edges and transitions: proposal and ratification are two identities or they are nothing (D7, D8).",
+            "the proposer never ratifies its own claim edge",
+        ),
+        AppError::AuthorInLineage => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.author_in_lineage",
+            "R2: the reviewer is never the author — enforced against the full lineage closure.",
+            "the ratifying key or principal is in an endpoint's lineage closure",
+        ),
+        // A decided edge answers as a verdict on a decided row does: errors.md
+        // declares no edge-specific code (ADR-0021 d5).
+        AppError::EdgeConsumed { edge_id } => ApiError::serve_invalid("consumed")
+            .with_details(json!({ "reason": "consumed", "edge_id": edge_id.to_string() })),
+        AppError::CycleRefused(refused) => ApiError::new(
+            StatusCode::CONFLICT,
+            "vocab.cycle_refused",
+            "Term hierarchy and supersession chains are acyclic by domain invariant — a deterministic transaction-time check at ratification (ADR-0021).",
+            refused.to_string(),
+        )
+        .with_details(json!({ "label": refused.label.as_str() })),
+        // A stored term edge whose endpoint has no CURIE is a defect; the
+        // ratification journalled nothing (ADR-0021 d2, d5).
+        AppError::TermEndpoint { claim_key } => {
+            ApiError::internal(format!("term edge endpoint {claim_key:?} is not a term's CURIE"))
+        }
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
             "submission.claim_key_conflict",
@@ -386,9 +415,9 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::Store(StoreError::TipMoved { .. }) => {
             tip_conflict("the supersede target stopped being the served tip before ratification")
         }
-        // No route ratifies a claim edge in this build, so a lost edge
-        // compare-and-set reaching a transport is a defect; the ratify
-        // use case answers it before any route serves one (ADR-0021 d5).
+        // The ratify use case answers a lost edge compare-and-set as
+        // `AppError::EdgeConsumed`, so one reaching a transport is a defect
+        // (ADR-0021 d5).
         AppError::Store(StoreError::EdgeNotPending { edge_id }) => {
             ApiError::internal(format!("claim edge {edge_id} is not pending"))
         }
