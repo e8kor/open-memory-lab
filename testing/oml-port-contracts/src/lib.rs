@@ -54,6 +54,8 @@ pub struct ChainRig {
     key: SigningKey,
     head: Option<SignedEnvelope>,
     n: u64,
+    /// Whether the store created this rig's tenant partitions.
+    partitioned: bool,
 }
 
 impl ChainRig {
@@ -65,6 +67,7 @@ impl ChainRig {
             key: test_signing_key(),
             head: None,
             n: 0,
+            partitioned: false,
         }
     }
 
@@ -95,7 +98,11 @@ impl ChainRig {
         sign(envelope, &self.key).expect("rig signing")
     }
 
-    /// Seal and commit one event with its fold; advance the rig head.
+    /// Seal and commit one event with its fold; advance the rig head. The
+    /// rig's first `tenant.genesis` asks the store for the tenant's
+    /// partitions first, as tenant creation does; partitions a refused
+    /// genesis leaves are kept, so a retry does not ask again (ADR-0034
+    /// d11).
     pub async fn commit<S: JournalStore>(
         &mut self,
         store: &S,
@@ -104,6 +111,10 @@ impl ChainRig {
         fold: MetadataFold,
         idempotency: Option<IdempotencyPut>,
     ) -> Result<CommitReceipt, StoreError> {
+        if !self.partitioned && event_type == event_types::TENANT_GENESIS {
+            store.create_tenant_partitions(self.tenant_id).await?;
+            self.partitioned = true;
+        }
         let event = self.next_event(event_type, payload);
         let receipt = store
             .commit(CommitRequest {

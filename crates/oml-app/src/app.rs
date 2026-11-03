@@ -1018,11 +1018,19 @@ where
     /// universe per tenant). The root's name is the first segment of every
     /// served `workarea_path` (ADR-0025 d14). Unauthenticated by design — the
     /// composition decides who may run it.
+    ///
+    /// The tenant's partitions come first, created by the store before
+    /// `tenant.genesis` is sealed, with no commit of this act in flight: a
+    /// creation that fails fails the act, journals nothing and creates no
+    /// tenant row; partitions a failed genesis commit leaves are kept, and a
+    /// retry mints a fresh id (postgres-schema.md, the per-tenant
+    /// partitions; ADR-0034 d11).
     pub async fn bootstrap_tenant(
         &self,
         req: &BootstrapRequest,
     ) -> Result<BootstrapResult, AppError> {
         let tenant_id = self.ids.new_id();
+        self.journal.create_tenant_partitions(tenant_id).await?;
         let genesis = self.seal(
             None,
             tenant_id,

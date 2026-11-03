@@ -387,6 +387,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::unavailable("idempotency record contention")
         }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
+        // A tenant's partition DDL lost a lock contest, a timeout or a
+        // deadlock, and committed nothing; retryable. Any other DDL failure is a defect
+        // (errors.md `system.unavailable`; ADR-0034 d11).
+        AppError::Store(StoreError::PartitionLockTimeout) => {
+            ApiError::unavailable("partition_lock_timeout")
+        }
+        AppError::Store(StoreError::Partition(e)) => ApiError::internal(e),
         // The unique index refused a creation's name; nothing was
         // journalled (errors.md `name.taken`; ADR-0026 d5). The application
         // answers a store's refusal as `AppError::NameTaken`.
