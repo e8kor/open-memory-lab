@@ -2888,3 +2888,397 @@ async fn the_naming_fills_the_names_crews_and_paths_of_a_migrated_poc_database_o
     drop(conn);
     drop_dbs(&created).await;
 }
+
+// ---------------------------------------------------------------------------
+// Keys into tenant tables carry tenant_id (migrations/0008_tenant_keys.sql)
+// ---------------------------------------------------------------------------
+
+/// Runs `statement`, which sets one column of a tenant's row to `$1` where
+/// its key is `$2`, over the serving login under `tenant`, in a transaction
+/// that rolls back; the refusal's SQLSTATE and constraint, or the rows it
+/// changed.
+async fn reference_under(
+    store: &PgStore,
+    tenant: Uuid,
+    statement: &str,
+    target: Uuid,
+    row: Uuid,
+) -> Result<u64, (String, Option<String>)> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let result = sqlx::query(statement)
+        .bind(target)
+        .bind(row)
+        .execute(&mut *tx)
+        .await;
+    tx.rollback().await.expect("rollback");
+    match result {
+        Ok(done) => Ok(done.rows_affected()),
+        Err(e) => {
+            let db = e
+                .as_database_error()
+                .unwrap_or_else(|| panic!("not a database error: {e}"));
+            Err((
+                db.code().map(|c| c.into_owned()).unwrap_or_default(),
+                db.constraint().map(str::to_owned),
+            ))
+        }
+    }
+}
+
+/// The id of the journal event that created `memory` under `tenant`.
+async fn created_event(store: &PgStore, tenant: Uuid, memory: Uuid) -> Uuid {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let event: Uuid = sqlx::query_scalar("SELECT created_event_id FROM memories WHERE id = $1")
+        .bind(memory)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the memory's event");
+    tx.rollback().await.expect("rollback");
+    event
+}
+
+/// Commits a held memory with its review_queue row under `rig`'s tenant.
+async fn hold(store: &PgStore, rig: &mut ChainRig, workarea: Uuid, memory: Uuid, author: Uuid) {
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": memory.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: held_memory(rig.tenant_id, workarea, memory, "wanda", author, "held"),
+            enqueue: true,
+        },
+        None,
+    )
+    .await
+    .expect("commit held");
+}
+
+/// Under tenant A, each reference 0008 rewrites refuses tenant B's row as it
+/// refuses an id no row holds: `23503`, from the one constraint, so the
+/// reference neither stores a cross-tenant id nor answers whether another
+/// tenant holds one; tenant A's own row is accepted. PostgreSQL runs a
+/// foreign-key check without row-level security, so the key carries
+/// `tenant_id` (postgres-schema.md "Keys into tenant tables"; ADR-0034 d12,
+/// d10 step 3).
+#[tokio::test]
+async fn under_tenant_a_a_reference_to_tenant_bs_row_fails_as_one_to_a_random_id_does() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut a = ChainRig::new(180);
+    a.seed_chain(&store, 0).await;
+    let mut b = ChainRig::new(181);
+    b.seed_chain(&store, 0).await;
+    let (a_root, a_child, b_root) = (
+        Uuid::from_u128(0xB180),
+        Uuid::from_u128(0xB181),
+        Uuid::from_u128(0xB190),
+    );
+    a.create_workarea(
+        &store,
+        workarea_record(a.tenant_id, a_root, None, "universe"),
+    )
+    .await;
+    a.create_workarea(
+        &store,
+        workarea_record(a.tenant_id, a_child, Some(a_root), "child"),
+    )
+    .await;
+    b.create_workarea(
+        &store,
+        workarea_record(b.tenant_id, b_root, None, "universe"),
+    )
+    .await;
+    let (a_key, b_key) = (Uuid::from_u128(0xD180), Uuid::from_u128(0xD190));
+    a.issue_key(&store, key_record(a.tenant_id, a_key, Role::Writer, None))
+        .await;
+    b.issue_key(&store, key_record(b.tenant_id, b_key, Role::Writer, None))
+        .await;
+    let (a_memory, b_memory) = (Uuid::from_u128(0xC180), Uuid::from_u128(0xC190));
+    hold(&store, &mut a, a_child, a_memory, a_key).await;
+    hold(&store, &mut b, b_root, b_memory, b_key).await;
+    let a_event = created_event(&store, a.tenant_id, a_memory).await;
+    let b_event = created_event(&store, b.tenant_id, b_memory).await;
+
+    // Through the adapter: the 23503 is the backend's refusal, word for word
+    // the one an id no row holds gets.
+    let mut refusals = Vec::new();
+    for (stray, parent) in [(0xB182, b_root), (0xB183, Uuid::from_u128(0x0BAD_B183))] {
+        let stray = Uuid::from_u128(stray);
+        refusals.push(
+            a.commit(
+                &store,
+                event_types::WORKAREA_CREATE,
+                json!({ "workarea_id": stray.to_string(), "name": "stray" }),
+                MetadataFold::WorkareaCreated(workarea_record(
+                    a.tenant_id,
+                    stray,
+                    Some(parent),
+                    "stray",
+                )),
+                None,
+            )
+            .await,
+        );
+    }
+    assert!(
+        matches!(&refusals[0], Err(StoreError::Backend(m)) if m.contains("workareas_parent_id_fkey")),
+        "a workarea under tenant B's node is the backend's refusal, got {:?}",
+        refusals[0]
+    );
+    assert_eq!(refusals[0], refusals[1]);
+
+    // (constraint, the statement over tenant A's row, that row, tenant A's
+    // own target, tenant B's)
+    let keys = [
+        (
+            "workareas_parent_id_fkey",
+            "UPDATE workareas SET parent_id = $1 WHERE id = $2",
+            a_child,
+            a_root,
+            b_root,
+        ),
+        (
+            "memories_created_event_id_fkey",
+            "UPDATE memories SET created_event_id = $1 WHERE id = $2",
+            a_memory,
+            a_event,
+            b_event,
+        ),
+        (
+            "review_queue_memory_id_fkey",
+            "UPDATE review_queue SET memory_id = $1 WHERE memory_id = $2",
+            a_memory,
+            a_memory,
+            b_memory,
+        ),
+        (
+            "api_keys_default_workarea_id_fkey",
+            "UPDATE api_keys SET default_workarea_id = $1 WHERE id = $2",
+            a_key,
+            a_root,
+            b_root,
+        ),
+        (
+            "api_keys_rotated_from_fkey",
+            "UPDATE api_keys SET rotated_from = $1 WHERE id = $2",
+            a_key,
+            a_key,
+            b_key,
+        ),
+    ];
+    for (constraint, statement, row, own, other) in keys {
+        assert_eq!(
+            reference_under(&store, a.tenant_id, statement, own, row).await,
+            Ok(1),
+            "{constraint}: tenant A's own row is accepted"
+        );
+        let random = reference_under(
+            &store,
+            a.tenant_id,
+            statement,
+            Uuid::from_u128(0x0BAD_0008),
+            row,
+        )
+        .await;
+        let foreign = reference_under(&store, a.tenant_id, statement, other, row).await;
+        assert_eq!(
+            random,
+            Err(("23503".to_owned(), Some(constraint.to_owned()))),
+            "{constraint}: an id no row holds is refused by the one constraint"
+        );
+        assert_eq!(
+            foreign, random,
+            "{constraint}: tenant B's row is refused as an id no row holds is"
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+/// Every foreign key into a table that has a `tenant_id` column pairs the
+/// referencing row's `tenant_id` with the referenced row's, read off
+/// `pg_constraint`; the provider-level references `journal.api_key_id` and
+/// `api_keys.issued_by` hold no foreign key at all (ADR-0034 d12, d10 step
+/// 3).
+#[tokio::test]
+async fn pg_constraint_shows_every_foreign_key_into_a_table_with_tenant_id_carrying_tenant_id() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT c.conrelid::regclass::text, c.conname::text, \
+                EXISTS (SELECT 1 FROM unnest(c.conkey, c.confkey) AS k (l, r) \
+                          JOIN pg_attribute la ON la.attrelid = c.conrelid AND la.attnum = k.l \
+                          JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = k.r \
+                         WHERE la.attname = 'tenant_id' AND ra.attname = 'tenant_id') \
+           FROM pg_constraint c \
+          WHERE c.contype = 'f' \
+            AND c.connamespace = 'public'::regnamespace \
+            AND EXISTS (SELECT 1 FROM pg_attribute a \
+                         WHERE a.attrelid = c.confrelid AND a.attname = 'tenant_id' \
+                           AND NOT a.attisdropped) \
+          ORDER BY 1, 2",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("the foreign keys into tenant tables");
+    let lacking: Vec<String> = rows
+        .iter()
+        .filter(|(_, _, carries)| !carries)
+        .map(|(table, name, _)| format!("{table}.{name}"))
+        .collect();
+    assert_eq!(lacking, Vec::<String>::new(), "keys without tenant_id");
+    let carrying: Vec<&str> = rows.iter().map(|(_, name, _)| name.as_str()).collect();
+    for rewritten in [
+        "workareas_parent_id_fkey",
+        "memories_created_event_id_fkey",
+        "review_queue_memory_id_fkey",
+        "api_keys_default_workarea_id_fkey",
+        "api_keys_rotated_from_fkey",
+    ] {
+        assert!(
+            carrying.contains(&rewritten),
+            "{rewritten} is among the keys read, got {carrying:?}"
+        );
+    }
+    let provider_level: Vec<String> = sqlx::query_scalar(
+        "SELECT c.conname::text FROM pg_constraint c \
+          WHERE c.contype = 'f' \
+            AND ((c.conrelid = 'journal'::regclass \
+                  AND c.conkey @> ARRAY[(SELECT attnum FROM pg_attribute \
+                                          WHERE attrelid = 'journal'::regclass \
+                                            AND attname = 'api_key_id')]) \
+              OR (c.conrelid = 'api_keys'::regclass \
+                  AND c.conkey @> ARRAY[(SELECT attnum FROM pg_attribute \
+                                          WHERE attrelid = 'api_keys'::regclass \
+                                            AND attname = 'issued_by')]))",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("the provider-level references' keys");
+    assert_eq!(provider_level, Vec::<String>::new());
+    drop_dbs(&created).await;
+}
+
+/// An operator key, whose `tenant_id` is NULL, issues a tenant's first admin
+/// key: the `key.issued` event names it as `api_key_id` and the key's row as
+/// `issued_by`, neither of which a key carrying `tenant_id` could match, so
+/// 0008 drops both foreign keys, and a provider-level row's own references
+/// are not required to match (MATCH SIMPLE) (http-api.md; ADR-0034 d12).
+#[tokio::test]
+async fn an_operator_key_with_tenant_id_null_still_issues_a_tenants_first_admin_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let operator = Uuid::from_u128(0xD1A0);
+    // Provider-level rows are the operator path's, which is not built; the
+    // owner writes this one with FORCE lifted and restored inside its one
+    // transaction (postgres-schema.md row-level security).
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("ALTER TABLE api_keys NO FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .expect("the owner lifts FORCE");
+    sqlx::query(
+        "INSERT INTO api_keys (id, tenant_id, hash, role, principal, issued_seq, rotated_from) \
+         VALUES ($1, NULL, $2, 'operator', 'provider/operator', 1, $3)",
+    )
+    .bind(operator)
+    .bind(vec![0xA0_u8; 32])
+    .bind(Uuid::from_u128(0x0BAD_D1A0))
+    .execute(&mut *tx)
+    .await
+    .expect("an operator key whose rotated_from no row holds: MATCH SIMPLE skips a NULL tenant");
+    sqlx::query("ALTER TABLE api_keys FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .expect("the owner restores FORCE");
+    tx.commit().await.expect("commit the operator key");
+    drop(owner);
+
+    let tenant = Uuid::from_u128(0xA000_01A0);
+    let admin = Uuid::from_u128(0xD1A1);
+    let key = test_signing_key();
+    let mut head: Option<SignedEnvelope> = None;
+    let mut stamps = 0_u32;
+    for (event_type, payload, fold) in [
+        (
+            event_types::TENANT_GENESIS,
+            json!({ "tenant_name": "first-admin" }),
+            MetadataFold::TenantGenesis {
+                name: name("first-admin"),
+            },
+        ),
+        (
+            event_types::KEY_ISSUED,
+            json!({ "key_id": admin.to_string(), "value_disclosed": false }),
+            MetadataFold::KeyIssued(key_record(tenant, admin, Role::Admin, Some(operator))),
+        ),
+    ] {
+        stamps += 1;
+        let draft = EventDraft {
+            tenant_id: tenant,
+            event_id: Uuid::from_u128(0xE1A0 + u128::from(stamps)),
+            event_type: event_type.to_owned(),
+            principal: "provider/operator".to_owned(),
+            api_key_id: Some(operator),
+            at: EventTime::parse(&format!("2026-11-03T12:00:0{stamps}.000000Z")).expect("time"),
+            payload,
+        };
+        let envelope = next_envelope(head.as_ref(), draft).expect("a lawful draft");
+        let event = sign(envelope, &key).expect("sign");
+        store
+            .commit(CommitRequest {
+                event: event.clone(),
+                fold,
+                outbox: OutboxRow {
+                    event_id: event.envelope.event_id,
+                    topic: event.envelope.event_type.clone(),
+                    payload: json!({ "seq": event.envelope.seq }),
+                },
+                idempotency: None,
+            })
+            .await
+            .expect("the operator's commit");
+        head = Some(event);
+    }
+
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let issued_by: Option<Uuid> =
+        sqlx::query_scalar("SELECT issued_by FROM api_keys WHERE id = $1")
+            .bind(admin)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("the admin key");
+    let authors: Vec<Option<Uuid>> =
+        sqlx::query_scalar("SELECT api_key_id FROM journal ORDER BY seq")
+            .fetch_all(&mut *tx)
+            .await
+            .expect("the tenant's events");
+    tx.rollback().await.expect("rollback");
+    assert_eq!(issued_by, Some(operator));
+    assert_eq!(authors, vec![Some(operator), Some(operator)]);
+    drop_dbs(&created).await;
+}

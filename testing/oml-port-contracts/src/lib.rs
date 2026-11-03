@@ -2110,11 +2110,17 @@ pub async fn workarea_ancestry_walks_parent_ids_to_the_root<S: JournalStore>(sto
     );
 }
 
-/// An ancestry that leaves the tenant before reaching a root — a node whose
-/// parent id names another tenant's node — is refused, never served short:
-/// a truncated walk would drop the ancestors' grants and denials
-/// (workareas.md effective access).
-pub async fn an_ancestry_that_leaves_the_tenant_is_refused<S: JournalStore>(store: &S) {
+/// A workarea whose parent is another tenant's node is refused at its
+/// commit as one whose parent is no node at all: no event, no row, so no
+/// ancestry can leave its tenant. PostgreSQL runs a foreign-key check
+/// without row-level security, so the parent reference carries the
+/// tenant, `(tenant_id, parent_id)` (postgres-schema.md `workareas`;
+/// ADR-0034 d12).
+pub async fn a_workarea_under_another_tenants_node_is_refused_as_one_under_no_node<
+    S: JournalStore,
+>(
+    store: &S,
+) {
     let mut home = ChainRig::new(18);
     home.seed_chain(store, 0).await;
     let foreign_root = Uuid::from_u128(0xB89);
@@ -2125,17 +2131,47 @@ pub async fn an_ancestry_that_leaves_the_tenant_is_refused<S: JournalStore>(stor
     .await;
     let mut rig = ChainRig::new(19);
     rig.seed_chain(store, 0).await;
-    let stray = Uuid::from_u128(0xB81);
+    let root = Uuid::from_u128(0xB80);
     rig.create_workarea(
         store,
-        workarea_record(rig.tenant_id, stray, Some(foreign_root), "stray"),
+        workarea_record(rig.tenant_id, root, None, "universe"),
     )
     .await;
+    let head = store.chain_head(rig.tenant_id).await.expect("head");
 
-    let walk = store.workarea_ancestry(rig.tenant_id, stray).await;
-    assert!(
-        matches!(walk, Err(StoreError::Backend(_))),
-        "a walk out of the tenant is refused, got {walk:?}"
+    for (case, stray, parent) in [
+        ("another tenant's node", 0xB81, foreign_root),
+        ("no node", 0xB82, Uuid::from_u128(0xBFF)),
+    ] {
+        let stray = Uuid::from_u128(stray);
+        let refused = rig
+            .commit(
+                store,
+                event_types::WORKAREA_CREATE,
+                json!({ "workarea_id": stray.to_string(), "name": "stray" }),
+                MetadataFold::WorkareaCreated(workarea_record(
+                    rig.tenant_id,
+                    stray,
+                    Some(parent),
+                    "stray",
+                )),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "a workarea under {case} is refused, got {refused:?}"
+        );
+        assert_eq!(
+            store.workarea(rig.tenant_id, stray).await.expect("read"),
+            None,
+            "a workarea under {case} writes no row"
+        );
+    }
+    assert_eq!(
+        store.chain_head(rig.tenant_id).await.expect("head"),
+        head,
+        "a refused fold journals nothing"
     );
 }
 
@@ -3916,7 +3952,7 @@ where
     a_grant_or_denial_the_schema_refuses_commits_nothing(&new_store().await).await;
     a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epoch(&new_store().await).await;
     workarea_ancestry_walks_parent_ids_to_the_root(&new_store().await).await;
-    an_ancestry_that_leaves_the_tenant_is_refused(&new_store().await).await;
+    a_workarea_under_another_tenants_node_is_refused_as_one_under_no_node(&new_store().await).await;
     workarea_subtree_lists_every_descendant_once(&new_store().await).await;
     workarea_children_are_immediate_and_ordered_by_name_bytes(&new_store().await).await;
     crew_round_trips_through_workarea_created(&new_store().await).await;

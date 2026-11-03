@@ -473,7 +473,10 @@ finding records the result then. No role split closes this channel.
   `memories.created_event_id` → `journal(event_id)` and `review_queue.memory_id` → `memories(id)`.
   The adapter's ancestry walk already refuses a parent outside the tenant. 0004 gave `grants` and
   `key_denials` foreign keys that name the tenant, and these three references could take the same
-  form, which is a migration item.
+  form, which is a migration item. Since 0008 they do, with `api_keys.default_workarea_id` and
+  `rotated_from` (ADR-0034 d12), and S3.4 checks each as `S3.4/<role>/<table>.<column>`: under
+  tenant A, a reference to tenant B's row must be refused as one to no row is, and tenant A's own
+  target accepted. The checks are not on `RECORDED_FAILURES`; the pinned pg17 has not run them.
 - **A global unique index is an oracle.** A tenant A key row carrying tenant B's key hash is
   refused with `23505` on `api_keys_hash_key`. Using the oracle needs the hash, which is the
   SHA-256 of a secret key value.

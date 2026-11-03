@@ -1319,22 +1319,40 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         def oracle(statement, params) -> str:
             return under(a.id, statement, params)[1] or "accepted"
 
-        fk_b = oracle("INSERT INTO workareas (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
-                      "'development')", [a.id, b.universe])
-        fk_none = oracle("INSERT INTO workareas (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
-                         "'development')", [a.id, uuid.uuid4()])
-        obs.append(f"foreign-key existence oracle: a tenant A workarea naming tenant B's universe as parent is "
-                   f"{fk_b}; naming a random id gives {fk_none}. The FK check runs without RLS, so tenant A can "
-                   "test whether an id exists in another tenant and can store a cross-tenant parent_id (the "
-                   "adapter's ancestry walk refuses such a chain at read time)")
-        ev_b = oracle("INSERT INTO memories (tenant_id, workarea_id, claim, claim_digest, status, created_event_id, "
-                      "claim_key, author_principal, author_key_id, version, kind, body_bytes) VALUES (%s, %s, 'probe', "
-                      "'\\x00', 'held', %s, 'probe', 'probe', %s, 1, 'memory', 5)", [a.id, a.child, b.events[4], a.writer])
-        obs.append(f"a tenant A memory whose created_event_id names a tenant B journal event is {ev_b} "
-                   "(memories.created_event_id references journal(event_id) alone)")
-        rq_b = oracle("INSERT INTO review_queue (memory_id, tenant_id) VALUES (%s, %s)", [b.m1, a.id])
-        obs.append(f"a tenant A review_queue row naming tenant B's memory is {rq_b} "
-                   "(review_queue.memory_id references memories(id) alone)")
+        # Keys into tenant tables carry tenant_id (ADR-0034 d12, d10 step 3): under tenant A, a
+        # reference to tenant B's row is refused as one to an id no row holds, 23503 from the one
+        # constraint, so it neither stores a cross-tenant id nor answers whether one exists. Tenant
+        # A's own target is the control that the probe statement is otherwise accepted.
+        nowhere = uuid.uuid5(NS, "no-row")
+        probe_key = ("INSERT INTO api_keys (tenant_id, hash, role, principal, issued_seq, {col}) "
+                     "VALUES (%s, %s, 'reader', 'probe', 1, %s)")
+        fk_cases = [
+            ("workareas.parent_id",
+             "INSERT INTO workareas (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
+             "'development')", lambda x: [a.id, x], a.universe, b.universe),
+            ("memories.created_event_id",
+             "INSERT INTO memories (tenant_id, workarea_id, claim, claim_digest, status, created_event_id, "
+             "claim_key, author_principal, author_key_id, version, kind, body_bytes) VALUES (%s, %s, 'probe', "
+             "'\\x00', 'held', %s, 'probe', 'probe', %s, 1, 'memory', 5)",
+             lambda x: [a.id, a.child, x, a.writer], a.events[4], b.events[4]),
+            ("review_queue.memory_id", "INSERT INTO review_queue (memory_id, tenant_id) VALUES (%s, %s)",
+             lambda x: [x, a.id], a.m1, b.m1),
+            ("api_keys.default_workarea_id", probe_key.format(col="default_workarea_id"),
+             lambda x: [a.id, b"probe-default", x], a.universe, b.universe),
+            ("api_keys.rotated_from", probe_key.format(col="rotated_from"),
+             lambda x: [a.id, b"probe-rotated", x], a.writer, b.writer),
+        ]
+        for column, statement, params, own, foreign in fk_cases:
+            accepted = oracle(statement, params(own))
+            to_b = oracle(statement, params(foreign))
+            to_none = oracle(statement, params(nowhere))
+            ok = accepted == "accepted" and to_none.startswith("23503 ") and to_b == to_none
+            s.check(ok,
+                    key=f"S3.4/{role.split()[0]}/{column}",
+                    text=f"[{role}] under tenant A, {column} naming tenant B's row is refused as one naming "
+                    f"no row is (tenant B's: {to_b}; no row's: {to_none}; tenant A's own: {accepted})"
+                    + ("" if ok else "; the key does not carry tenant_id, so tenant A can store another "
+                       "tenant's id and test whether one exists"))
         uq = oracle("INSERT INTO api_keys (tenant_id, hash, role, principal, issued_seq) VALUES (%s, %s, 'reader', "
                     "'probe', 1)", [a.id, key_hash("B", "writer")])
         obs.append(f"unique-index existence oracle: a tenant A key row carrying tenant B's key hash gives {uq}; "

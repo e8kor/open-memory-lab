@@ -455,6 +455,18 @@ fn require_crew(state: &TenantState, crew_id: Option<Uuid>) -> Result<(), StoreE
     }
 }
 
+/// A workarea's parent must be its own tenant's node, as the tenant-scoped
+/// foreign key `(tenant_id, parent_id)` requires: another tenant's node is
+/// refused as no node is (postgres-schema.md `workareas`; ADR-0034 d12).
+fn require_parent(state: &TenantState, parent_id: Option<Uuid>) -> Result<(), StoreError> {
+    match parent_id {
+        Some(parent_id) if !state.workareas.contains_key(&parent_id) => Err(StoreError::Backend(
+            format!("parent workarea {parent_id} is not held by this tenant"),
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Names the tenant at its genesis, as the `tenants` row does: a tenant
 /// that has its row keeps it, name included, and a name another tenant
 /// holds is refused (postgres-schema.md names and tenants; ADR-0026 d1).
@@ -529,6 +541,7 @@ fn apply_fold(
                 &workarea.name,
             )?;
             require_crew(state, workarea.crew_id)?;
+            require_parent(state, workarea.parent_id)?;
             state.workareas.insert(workarea.workarea_id, workarea);
         }
         MetadataFold::CrewCreated(crew) => {
