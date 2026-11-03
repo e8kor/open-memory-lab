@@ -165,18 +165,48 @@ impl MappingPredicate {
     }
 }
 
-/// One cited CURIE as the scan's reference resolves it — the policy's
-/// pinned release, or under `annotate` without one the trunk fold at
-/// submission seq — within the writer's effective read scope. A CURIE the
-/// caller cannot resolve there is absent from the lookup, and an absent one
+/// One cited CURIE as the caller resolves it from two reads, both within
+/// the writer's effective read scope ([`CitedTerm::resolve`]):
+///
+/// - whether it is **active or deprecated** is its tip in the scan's
+///   reference — the policy's pinned release, or without one (`annotate`
+///   only) the trunk fold at submission seq;
+/// - whether it **exists but is held** is read from the trunk fold at
+///   submission seq, whatever the release, since a release pins promoted
+///   tips only and never holds one.
+///
+/// A CURIE with neither read is absent from the lookup, and an absent one
 /// is unknown: out of scope and nonexistent are indistinguishable
-/// (ADR-0021 d8; errors.md `vocab.unknown_curie`).
+/// (ADR-0021 d8; ontologies.md, "Validation: the policy and the scanner";
+/// errors.md `vocab.unknown_curie`).
+// reading: ontologies.md defines `vocab.term_pending` as "the CURIE exists
+// but is held" and checks existence and activity "against the pinned
+// release"; a release holds no held term, so read against it alone the
+// finding could never fire under a pinned `annotate` policy, and the agent
+// loop's step 2 says it does. The held read is therefore the trunk's, and
+// the tip read the reference's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CitedTerm {
     /// The CURIE exists but is still held: no version of it has promoted.
     Held,
     /// The term's served tip in the reference.
     Tip(TipState),
+}
+
+impl CitedTerm {
+    /// One citation's entry in the lookup [`scan`] reads: `reference_tip`
+    /// is the term's tip in the reference (the pinned release, or the
+    /// trunk fold without one), `held_at_seq` whether the trunk fold at
+    /// submission seq holds the CURIE with no promoted version. A tip in
+    /// the reference wins; `None` is an unknown CURIE (ADR-0021 d8).
+    #[must_use]
+    pub fn resolve(reference_tip: Option<TipState>, held_at_seq: bool) -> Option<Self> {
+        match reference_tip {
+            Some(tip) => Some(CitedTerm::Tip(tip)),
+            None if held_at_seq => Some(CitedTerm::Held),
+            None => None,
+        }
+    }
 }
 
 /// What the scanner reads of one submission (http-api.md, submit;
@@ -297,7 +327,9 @@ pub enum ScanRefusal {
 // lookup; they scope `enforcement` to "a failing citation", so `off` checks
 // no citation and the routing classes fire under any selected policy.
 // reading: under `require` a held term answers `vocab.unknown_curie`: the
-// check is against the pinned release, which pins promoted tips only.
+// release pins no version of it, though the caller still reports it as
+// [`CitedTerm::Held`] from the trunk read, and `require` treats held and
+// absent alike.
 // reading: under `annotate`, an unknown or deprecated citation records
 // nothing: errors.md says the deprecated one "records a finding", but the
 // closed registry has no class for it, and this function invents none.

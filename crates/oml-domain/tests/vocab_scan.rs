@@ -314,6 +314,60 @@ fn under_annotate_a_citation_of_a_held_term_records_vocab_term_pending_and_never
 }
 
 #[test]
+fn under_a_pinned_annotate_policy_a_curie_the_trunk_holds_and_the_release_does_not_pin_records_vocab_term_pending()
+ {
+    // The pinned release pins promoted tips only: CHURN, held at
+    // submission seq, has no tip there; ATTRITION is active in it.
+    let release: BTreeMap<Curie, TipState> = [(curie(ATTRITION), TipState::Active)].into();
+    let held_at_seq: BTreeSet<Curie> = [curie(CHURN)].into();
+    let terms = [curie(CHURN), curie(ATTRITION), curie(LAPSE)];
+    let states: BTreeMap<Curie, CitedTerm> = terms
+        .iter()
+        .filter_map(|cited| {
+            CitedTerm::resolve(release.get(cited).cloned(), held_at_seq.contains(cited))
+                .map(|state| (cited.clone(), state))
+        })
+        .collect();
+    assert_eq!(
+        states,
+        cited(&[(CHURN, CitedTerm::Held), (ATTRITION, active())])
+    );
+    assert_eq!(
+        run(
+            &citing(&terms),
+            Some(&policy(Enforcement::Annotate)),
+            &states,
+            &BTreeMap::new()
+        ),
+        Ok(findings(&[Finding::TermPending {
+            curie: curie(CHURN)
+        }]))
+    );
+
+    // The same resolution under require: the release pins no version of
+    // the held term, so it answers vocab.unknown_curie.
+    assert_eq!(
+        run(
+            &citing(&terms),
+            Some(&policy(Enforcement::Require)),
+            &states,
+            &BTreeMap::new()
+        ),
+        Err(ScanRefusal::UnknownCurie(UnknownCurie {
+            curie: curie(CHURN)
+        }))
+    );
+
+    // A tip in the reference wins over the held read, and a CURIE with
+    // neither read is absent: unknown.
+    assert_eq!(
+        CitedTerm::resolve(Some(TipState::Active), true),
+        Some(active())
+    );
+    assert_eq!(CitedTerm::resolve(None, false), None);
+}
+
+#[test]
 fn under_annotate_an_unknown_or_deprecated_citation_never_blocks() {
     let annotate = policy(Enforcement::Annotate);
     let states = cited(&[
