@@ -9,8 +9,6 @@ use std::fs::File;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use uuid::Uuid;
-
 /// The grants an issuing verb sends: each requested grant in order, and
 /// beside every writer grant a reader grant on the same workarea, unless
 /// `write_only` or the request already names that reader grant (ADR-0028
@@ -18,17 +16,23 @@ use uuid::Uuid;
 /// would accept. No issuing verb takes a per-grant deny mask yet, so neither
 /// grant carries one; a verb that takes one copies the writer grant's masks
 /// onto its reader grant (ADR-0028 d2; cli/reference.md `oml keys`).
+///
+/// Each workarea is the id or the name the operator typed, and the added
+/// reader grant spells it the same way. The CLI resolves no name (ADR-0026
+/// d4), so "already names that reader grant" compares spellings: a reader
+/// grant given by a workarea's id does not count for a writer grant given
+/// by its name.
 #[must_use]
 pub fn with_reader_beside_writers(
-    grants: &[(Uuid, String)],
+    grants: &[(String, String)],
     write_only: bool,
-) -> Vec<(Uuid, String)> {
-    let mut sent: Vec<(Uuid, String)> = Vec::with_capacity(grants.len() * 2);
+) -> Vec<(String, String)> {
+    let mut sent: Vec<(String, String)> = Vec::with_capacity(grants.len() * 2);
     for (node, role) in grants {
-        sent.push((*node, role.clone()));
-        let reads = |(n, r): &(Uuid, String)| n == node && r == "reader";
+        sent.push((node.clone(), role.clone()));
+        let reads = |(n, r): &(String, String)| n == node && r == "reader";
         if role == "writer" && !write_only && !grants.iter().chain(&sent).any(reads) {
-            sent.push((*node, "reader".to_owned()));
+            sent.push((node.clone(), "reader".to_owned()));
         }
     }
     sent

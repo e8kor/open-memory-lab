@@ -71,7 +71,8 @@ def sync_detailed(
     body: GrantRequest,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | Grant]:
-    """Bind the key to a workarea node id (never a path) with optional per-grant deny masks; epoch bump.
+    """Bind the key to a workarea node, by id or name (never a path), with optional per-grant deny masks;
+    epoch bump.
 
      Requires: admin key role. A grant's role must be admissible under the key's role (the admissibility
     table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible}
@@ -79,7 +80,8 @@ def sync_detailed(
     (access.role_exclusive — the two-key rule). The grant's epoch is its grant.issued journal seq.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (GrantRequest):
 
@@ -111,7 +113,8 @@ def sync(
     body: GrantRequest,
     idempotency_key: str,
 ) -> ErrorEnvelope | Grant | None:
-    """Bind the key to a workarea node id (never a path) with optional per-grant deny masks; epoch bump.
+    """Bind the key to a workarea node, by id or name (never a path), with optional per-grant deny masks;
+    epoch bump.
 
      Requires: admin key role. A grant's role must be admissible under the key's role (the admissibility
     table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible}
@@ -119,7 +122,8 @@ def sync(
     (access.role_exclusive — the two-key rule). The grant's epoch is its grant.issued journal seq.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (GrantRequest):
 
@@ -146,7 +150,8 @@ async def asyncio_detailed(
     body: GrantRequest,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | Grant]:
-    """Bind the key to a workarea node id (never a path) with optional per-grant deny masks; epoch bump.
+    """Bind the key to a workarea node, by id or name (never a path), with optional per-grant deny masks;
+    epoch bump.
 
      Requires: admin key role. A grant's role must be admissible under the key's role (the admissibility
     table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible}
@@ -154,7 +159,8 @@ async def asyncio_detailed(
     (access.role_exclusive — the two-key rule). The grant's epoch is its grant.issued journal seq.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (GrantRequest):
 
@@ -184,7 +190,8 @@ async def asyncio(
     body: GrantRequest,
     idempotency_key: str,
 ) -> ErrorEnvelope | Grant | None:
-    """Bind the key to a workarea node id (never a path) with optional per-grant deny masks; epoch bump.
+    """Bind the key to a workarea node, by id or name (never a path), with optional per-grant deny masks;
+    epoch bump.
 
      Requires: admin key role. A grant's role must be admissible under the key's role (the admissibility
     table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible}
@@ -192,7 +199,8 @@ async def asyncio(
     (access.role_exclusive — the two-key rule). The grant's epoch is its grant.issued journal seq.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
         idempotency_key (str):
         body (GrantRequest):
 

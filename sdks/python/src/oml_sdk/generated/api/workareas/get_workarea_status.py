@@ -55,10 +55,14 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | WorkareaStatus]:
     """Status, the review policy object in force, pending transitions.
 
-     Requires: reader effective access.
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -86,10 +90,14 @@ def sync(
 ) -> ErrorEnvelope | WorkareaStatus | None:
     """Status, the review policy object in force, pending transitions.
 
-     Requires: reader effective access.
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,10 +120,14 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | WorkareaStatus]:
     """Status, the review policy object in force, pending transitions.
 
-     Requires: reader effective access.
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,10 +153,14 @@ async def asyncio(
 ) -> ErrorEnvelope | WorkareaStatus | None:
     """Status, the review policy object in force, pending transitions.
 
-     Requires: reader effective access.
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

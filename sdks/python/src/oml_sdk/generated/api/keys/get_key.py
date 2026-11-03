@@ -63,7 +63,8 @@ def sync_detailed(
      Requires: admin key role.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -94,7 +95,8 @@ def sync(
      Requires: admin key role.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,7 +122,8 @@ async def asyncio_detailed(
      Requires: admin key role.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,7 +152,8 @@ async def asyncio(
      Requires: admin key role.
 
     Args:
-        key_id (str):
+        key_id (str): A key, by its id or its name, resolved server-side like every reference; a
+            revoked or expired key's name still resolves (ADR-0026 d4, d10).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

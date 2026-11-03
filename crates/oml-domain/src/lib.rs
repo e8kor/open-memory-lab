@@ -8,7 +8,9 @@
 //! (ADR-0001 d2). `access` holds grant admissibility, effective access, the
 //! refusal order, effective verbs and content-tail visibility (ADR-0025 d1,
 //! d2, d14, d15); `budget` holds the budget token, the budget cut and the
-//! recall order (ADR-0025 d6, d7, d8).
+//! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
+//! classification of a reference as an id or a name, and the naming of rows
+//! that predate names (ADR-0026 d2, d3, d11).
 
 #![forbid(unsafe_code)]
 
@@ -19,6 +21,7 @@ pub mod envelope;
 pub mod jcs;
 pub mod keys;
 pub mod model;
+pub mod name;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,
@@ -34,6 +37,6 @@ pub use keys::{
     verify_rotation_cross_sig,
 };
 pub use model::{
-    HeldBy, LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError,
-    check_reviewer, nfc, transition,
+    HeldBy, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError,
+    check_reviewer, nfc, satisfies_crew_inequality, satisfies_manager_inequality, transition,
 };

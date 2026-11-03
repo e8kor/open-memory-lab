@@ -1,13 +1,13 @@
 ---
-name: Design review finding
-about: A flaw, contradiction, or honesty-rule violation found in the design spec
+name: Documentation finding
+about: A contradiction, gap or error in the documentation
 title: "[finding] "
 labels: design-review
 ---
 
-<!-- This repository is a design spec: no code exists. A finding here is about the design
-     or the pages that carry it, and the fastest route to a fix is naming exactly where
-     the decision lives. See docs/review-guide.md for the decisions in review order. -->
+<!-- A finding here is about the documentation. The fastest route to a fix is naming the
+     page, and the decision it rests on if you know it. For a bug in the software, use the
+     bug report form instead. -->
 
 ## Affected page / ADR
 

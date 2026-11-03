@@ -1,8 +1,11 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
-  - name: Open-ended questions and alternatives
+  - name: Questions and ideas
     url: https://github.com/e8kor/open-memory-lab/discussions
-    about: Not yet a specific finding? Discussions is the place for questions, alternatives worth weighing, and anything exploratory.
-  - name: Report a security vulnerability (once code exists)
+    about: Ask how to use Open Memory Lab, share what you've built, or discuss an idea before it becomes a request.
+  - name: Report a security vulnerability
     url: https://github.com/e8kor/open-memory-lab/security/advisories/new
-    about: Private vulnerability reporting. During the design phase, security-relevant design flaws are welcome as public design-review findings — see SECURITY.md.
+    about: Please report vulnerabilities privately, never in a public issue.
+  - name: Documentation
+    url: https://e8kor.github.io/open-memory-lab/
+    about: Guides, concepts, the API reference and operations.

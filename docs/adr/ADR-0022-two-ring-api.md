@@ -7,7 +7,7 @@ answers: why the one API surface gains two stability rings — /v1 memory provid
 
 # ADR-0022 — The two-ring API: v1 memory provider, v2 memory lab
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
 
 Everything this record decides is design — no code exists. It refines
 [ADR-0014](ADR-0014-http-api-and-mcp-facade.md) (one transport, one keyed listener, one OpenAPI

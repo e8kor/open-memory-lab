@@ -21,6 +21,11 @@ it. Issue that key with the writer role, a writer grant and a reader grant on th
 workarea, and that workarea as its default. A key without the reader grant still writes,
 but `oml_recall` refuses it with `access.not_found`.
 
+Every tool argument that takes a workarea, `workarea` or `scope`, takes its name, such as
+`metals-crew`, or its id. A workarea's name is unique in the tenant and never changes. A name
+the key cannot see is refused exactly as its id would be, with `access.not_found`, and a path
+such as `universe.procurement.metals-crew` is not a name and is refused.
+
 ## The loop
 
 On that one key the agent:
@@ -45,12 +50,13 @@ their own work, both depend on it. Keep the key in the environment, not in a fil
 commit. To issue keys and run a server, see "Quickstart" in the
 [repository README](../../README.md#quickstart).
 
-`oml keys issue-agent --principal <principal> --workarea <workarea-id>` issues an agent's key in
-one call: a writer key with a writer and a reader grant on the workarea, which is also its
-default. It prints the `export OML_URL=…` and `export OML_API_KEY=…` lines to run before you start
-Claude Code. With `--out <path>` the value goes to a new owner-only file and the second line reads
-it from there; the `oml-admin` plugin in this marketplace runs it that way from inside Claude Code,
-so the value never enters the conversation. See the
+`oml keys issue-agent <key-name> --principal <principal> --workarea <workarea>` issues an
+agent's key in one call: a writer key named `<key-name>`, with a writer and a reader grant on the
+workarea, given by its name or id, which is also its default. It prints the `export OML_URL=…`
+and `export OML_API_KEY=…` lines to run before you start Claude Code. With `--out <path>` the
+value goes to a new owner-only file and the second line reads it from there; the `oml-admin`
+plugin in this marketplace runs it that way from inside Claude Code, so the value never enters
+the conversation. See the
 [CLI reference](../../docs/cli/reference.md#oml-keys-issuance-revocation-rotation).
 
 ## Every session starts from memory

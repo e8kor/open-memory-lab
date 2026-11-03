@@ -77,7 +77,9 @@ def sync_detailed(
     authority rule, D7).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (WorkareaEdgeProposal):
 
@@ -115,7 +117,9 @@ def sync(
     authority rule, D7).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (WorkareaEdgeProposal):
 
@@ -148,7 +152,9 @@ async def asyncio_detailed(
     authority rule, D7).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (WorkareaEdgeProposal):
 
@@ -184,7 +190,9 @@ async def asyncio(
     authority rule, D7).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (WorkareaEdgeProposal):
 

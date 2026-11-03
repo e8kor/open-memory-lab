@@ -82,7 +82,9 @@ def sync_detailed(
     (workarea.transition_refused).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (TransitionProposal):
 
@@ -120,7 +122,9 @@ def sync(
     (workarea.transition_refused).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (TransitionProposal):
 
@@ -153,7 +157,9 @@ async def asyncio_detailed(
     (workarea.transition_refused).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (TransitionProposal):
 
@@ -189,7 +195,9 @@ async def asyncio(
     (workarea.transition_refused).
 
     Args:
-        workarea_id (str):
+        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A
+            derived path is neither, and is refused (request.validation).
         idempotency_key (str):
         body (TransitionProposal):
 

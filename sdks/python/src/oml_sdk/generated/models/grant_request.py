@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -19,7 +19,9 @@ T = TypeVar("T", bound="GrantRequest")
 class GrantRequest:
     """
     Attributes:
-        workarea_node_id (str): Node id, never a path.
+        workarea_node_id (str): A workarea, by its node id or its name. Resolved server-side before any check that reads
+            state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+            (request.validation).
         role (GrantRequestRole): A grant role, admissible under the key's role (the admissibility table in
             docs/architecture/roles-and-keys.md); never admin or operator.
         deny (list[GrantRequestDenyItem] | Unset): Per-grant masks; each masks a subtree within this grant only and must
@@ -31,6 +33,7 @@ class GrantRequest:
     deny: list[GrantRequestDenyItem] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        workarea_node_id: str
         workarea_node_id = self.workarea_node_id
 
         role = self.role.value
@@ -60,7 +63,11 @@ class GrantRequest:
         from ..models.grant_request_deny_item import GrantRequestDenyItem
 
         d = dict(src_dict)
-        workarea_node_id = d.pop("workarea_node_id")
+
+        def _parse_workarea_node_id(data: object) -> str:
+            return cast(str, data)
+
+        workarea_node_id = _parse_workarea_node_id(d.pop("workarea_node_id"))
 
         role = GrantRequestRole(d.pop("role"))
 
