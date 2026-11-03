@@ -15,7 +15,10 @@
 //! prefix registry, `term_status` and the `oml:` register (ADR-0021 d1, d2;
 //! ADR-0027 d7); `vocab_edges` holds claim-edge states, classification
 //! validation, cycle refusal, the lineage closure without `oml:about`,
-//! retirement and the recall terms match (ADR-0021 d5; ADR-0027 d6–d11).
+//! retirement and the recall terms match (ADR-0021 d5; ADR-0027 d6–d11);
+//! `vocab_scan` holds the vocabulary policy and the vocab scanner: its
+//! citation checks, its `vocab.*` finding classes and the simulation veto
+//! (ADR-0021 d3, d5, d7, d8, d11).
 
 #![forbid(unsafe_code)]
 
@@ -30,6 +33,7 @@ pub mod name;
 pub mod vocab;
 pub mod vocab_edges;
 pub mod vocab_release;
+pub mod vocab_scan;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,
