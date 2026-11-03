@@ -795,12 +795,17 @@ ALTER TABLE memories ATTACH PARTITION memories_t_<…> FOR VALUES IN ('<tenant i
   while tenant creation holds no serving transaction open; 0009 creates each existing tenant's
   and fills it under that tenant's context. `ATTACH PARTITION` takes `ShareUpdateExclusiveLock`
   on `memories`, where `CREATE TABLE … PARTITION OF` would take `AccessExclusiveLock` and stop
-  every tenant's reads and writes; both take `ShareRowExclusiveLock` on `review_queue`, so its
-  writes wait for the attach, bounded by the timeout.
+  every tenant's reads and writes. The attach clones `memories`' foreign keys, so it also takes
+  `ShareRowExclusiveLock` on `journal`, `tenants` and `review_queue` (probed on 18.6,
+  2026-11-03): every tenant's commits, each of which inserts into `journal`, wait for it, bounded
+  by the timeout, and a commit that inserts into `tenants` then `journal`, as a genesis does, can
+  deadlock with it.
 - **Failure.** A DDL that fails fails tenant creation before any commit: nothing is journalled
-  and the bootstrap claim spends no enrollment token. A lock timeout (`55P03`) answers
+  and the bootstrap claim spends no enrollment token. A lock contest the DDL lost, a lock timeout
+  (`55P03`) or a deadlock the detector broke by aborting it (`40P01`), answers
   `system.unavailable`, retryable, `details.reason` `partition_lock_timeout`; any other failure
-  answers `system.internal`. A partition whose DDL committed is kept when the genesis commit then
+  answers `system.internal`. A serving commit the detector aborts instead answers
+  `system.unavailable` as any backend failure does, retryable. A partition whose DDL committed is kept when the genesis commit then
   fails: it is empty, the owner's and fenced, so the checks after migrating accept it, and the
   retry mints a fresh id.
 - **Reads.** Every adapter statement on `memories` binds `tenant_id = $n` to the tenant it sets

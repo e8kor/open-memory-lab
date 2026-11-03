@@ -44,11 +44,12 @@ pub enum StoreError {
     /// tenants; errors.md `name.taken`; ADR-0026 d5, d10).
     #[error("the {} name {} is already taken in its namespace", .kind.as_str(), .name.as_str())]
     NameTaken { kind: NamedKind, name: Name },
-    /// A tenant's partition DDL waited past its lock timeout (`55P03`) and
+    /// A tenant's partition DDL lost a lock contest, waiting past its lock
+    /// timeout (`55P03`) or aborted by the deadlock detector (`40P01`), and
     /// committed nothing: retryable, answered `system.unavailable` with
     /// `details.reason` `partition_lock_timeout` (postgres-schema.md, the
     /// per-tenant partitions; ADR-0034 d11).
-    #[error("the tenant's partition DDL waited past its lock timeout")]
+    #[error("the tenant's partition DDL lost a lock contest")]
     PartitionLockTimeout,
     /// A tenant's partition DDL failed otherwise and committed nothing: a
     /// defect, answered `system.internal` (ADR-0034 d11).
@@ -321,8 +322,8 @@ pub trait JournalStore: Send + Sync {
     /// Postgres store runs the DDL as the owner, on a connection opened for
     /// this call alone (postgres-schema.md, the per-tenant partitions;
     /// ADR-0034 d4, d11). A refusal commits nothing:
-    /// [`StoreError::PartitionLockTimeout`] when a lock waited past its
-    /// timeout, [`StoreError::Partition`] otherwise. Partitions that
+    /// [`StoreError::PartitionLockTimeout`] when it lost a lock contest, a
+    /// timeout or a deadlock, [`StoreError::Partition`] otherwise. Partitions that
     /// committed are kept when the genesis commit then fails; the retry
     /// mints a fresh id.
     fn create_tenant_partitions(
