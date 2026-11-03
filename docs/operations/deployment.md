@@ -224,7 +224,9 @@ claim consumes it, and whoever presents it first receives the first admin key an
 While the Service is cluster-internal, presenting it takes access to the cluster network or the
 `pods/portforward` right; an Ingress opens it to anyone on the Ingress's network who has seen the
 token. So the claim comes before any Ingress, through a port-forward, with the `oml` CLI on the
-operator's machine (the release tarball's `oml`, or a `cargo build` of the checkout):
+operator's machine (the release's `oml-cli` archive, verified and installed as the
+[CLI reference](../cli/reference.md#installing-oml-and-what-differs-on-windows) shows, or a
+`cargo build` of the checkout):
 
 ```console
 $ TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
@@ -270,6 +272,30 @@ loses the deployment's identity, and the lead then refuses readiness (the fork-c
 | `CrashLoopBackOff`; the log ends `fatal: keyring: keyring file permissions are not 0600 (ADR-0023 d4 kms-file shape)` | Something changed the keyring file's mode: the pod's `fsGroupChangePolicy` set back to `Always`, or a volume that applies an fsGroup itself or maps modes (ADR-0033 d4) | Restore `OnRootMismatch`, or move the claim to a volume that keeps file modes; set the file back to 0600 from a pod that mounts the claim as uid 999. Never replace the file: it holds the signing key |
 | `/readyz` answers 503 with `fork_check: failed`; the log says `STARTUP FORK CHECK FAILED`; no token is printed | The lead loaded a different signing key than the one that signed the chain — the keyring claim was replaced or emptied while the database was kept | Reattach the claim that holds the deployment's key ([Fork check failing](runbooks.md#fork-check-failing)); never delete the chain head |
 | No `enr_` line in the pod log | A tenant exists — the deployment was claimed — or the fork check failed (row above) | A claimed deployment prints no token; issue further keys with the admin key |
+
+## The server archive
+
+Built, not yet released: no tag has run the jobs that produce it. A release attaches
+`oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
+`aarch64-unknown-linux-gnu`, holding `oml-server-lead` with the README and licence; the `oml` CLI
+is a separate archive ([CI and toolchain](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+An upgrade of a host that runs the binary downloads and verifies the new archive before it stops
+anything:
+
+```sh
+v=X.Y.Z t=x86_64-unknown-linux-gnu           # the release, and aarch64-unknown-linux-gnu on arm64
+base=https://github.com/e8kor/open-memory-lab/releases/download/v$v
+curl -fsSLO "$base/oml-server-lead-$v-$t.tar.gz" -O "$base/oml-server-lead-$v-$t.tar.gz.sigstore.json"
+cosign verify-blob \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' \
+  --bundle "oml-server-lead-$v-$t.tar.gz.sigstore.json" "oml-server-lead-$v-$t.tar.gz" \
+  && tar -xzf "oml-server-lead-$v-$t.tar.gz"
+```
+
+Only then is the running lead stopped, `oml-server-lead-$v-$t/oml-server-lead` put in place of the
+old binary, and the lead started; [upgrades](upgrades.md) fixes the order when more than the lead
+runs. An archive that does not verify is not installed.
 
 ## The standalone profile
 

@@ -158,6 +158,63 @@ jobs:
           echo "$PLATFORM: $got"
           [ "$got" = "$want" ] || { echo "expected '$want'" >&2; exit 1; }
 
+  # Every CLI target of release.yml (job cli), on the same native runner, so
+  # a platform that stops building or testing fails here, before a tag.
+  # Unit tests alone: the end-to-end suite needs Postgres, which only the
+  # Linux runners serve (job test runs it).
+  cli-matrix:
+    name: oml CLI (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.target }}
+      # ring's C, for each musl target, with the wrapper Ubuntu's musl-tools
+      # ships for the runner's own architecture. On the arm64 runner cc counts
+      # aarch64-unknown-linux-musl as a cross compile and would otherwise call
+      # aarch64-linux-musl-gcc, which musl-tools does not ship
+      # (packages.ubuntu.com/noble/arm64/musl-tools/filelist, fetched
+      # 2026-11-03). The archiver falls back to the host's ar, and Rust links
+      # its self-contained musl with the host's cc, both native here.
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+      - name: musl C toolchain
+        if: endsWith(matrix.target, '-linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --locked --bin oml --target "$TARGET"
+      - name: oml --version prints the workspace version
+        run: |
+          exe=""
+          [ "${TARGET%-windows-msvc}" != "$TARGET" ] && exe=".exe"
+          # Read through cargo, which every leg has set up; the pkgid ends in
+          # the version after a '#' or an '@'.
+          want="oml $(cargo pkgid -p oml-cli | sed 's/.*[#@]//')"
+          got="$("target/$TARGET/debug/oml$exe" --version | tr -d '\r')"
+          echo "$TARGET: $got"
+          [ "$got" = "$want" ] || { echo "expected '$want'" >&2; exit 1; }
+      - name: The CLI's unit tests
+        run: cargo test --locked -p oml-cli --lib --bins --target "$TARGET"
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
