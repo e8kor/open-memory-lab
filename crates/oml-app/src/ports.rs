@@ -35,6 +35,36 @@ pub enum StoreError {
     /// commit wrote nothing (ADR-0025 d10).
     #[error("version {replaced} is no longer the served tip its successor replaces")]
     TipMoved { replaced: Uuid },
+    /// A ratification's in-transaction re-check found its proposal no
+    /// longer live: the row is already ratified, or its `from` is no longer
+    /// the node's status. The commit wrote nothing, its event included;
+    /// answered `workarea.transition_refused`, `details.reason` `stale`
+    /// (errors.md; workareas.md, ratification re-checks; ADR-0009 d3).
+    #[error("transition {transition_id} on workarea {workarea_id} is stale")]
+    TransitionStale {
+        transition_id: Uuid,
+        workarea_id: Uuid,
+        /// The proposal's `from` and `to`, as the row holds them.
+        from: WorkareaStatus,
+        to: WorkareaStatus,
+    },
+    /// A ratification of a step to `validated` found, inside its
+    /// transaction and after the chain lock, a direct child of the node
+    /// that is not `validated`: a child created, or a subtree reparented
+    /// in, since the proposal. The commit wrote nothing; answered
+    /// `workarea.transition_refused`, `details.reason`
+    /// `children_not_validated` (errors.md; ADR-0009 d4).
+    #[error("transition {transition_id}: workarea {workarea_id} has a child not validated")]
+    ChildrenNotValidated {
+        transition_id: Uuid,
+        workarea_id: Uuid,
+    },
+    /// A ratification's ratifying key is the proposing key, or holds the
+    /// proposer's principal, read from the key row inside the transaction.
+    /// The commit wrote nothing; answered `review.ratifier_is_proposer`
+    /// (errors.md; ADR-0010 R2).
+    #[error("transition {transition_id}'s ratifier is its proposer")]
+    RatifierIsProposer { transition_id: Uuid },
     /// A commit's idempotency record found its scope already recorded: a
     /// concurrent attempt under the same Idempotency-Key committed first,
     /// and this commit wrote nothing (http-api.md idempotency).
@@ -178,22 +208,29 @@ pub enum MetadataFold {
     },
     /// `workarea.status_proposed`: the proposal's row, `pending` with no
     /// ratifier, its `proposed_seq` this commit's seq. The store refuses a
-    /// node or proposing key its tenant does not hold, a step other than
+    /// node or proposing key its tenant does not hold, a proposer principal
+    /// other than the one the proposing key's row holds, a step other than
     /// one rung forward, and a record that is not pending (postgres-schema.md
-    /// `workarea_transitions`; ADR-0009 d3). Whether the step may be
-    /// proposed is the ladder's, decided before the commit: no ladder rule
-    /// lives in the store.
+    /// `workarea_transitions`; ADR-0009 d3; ADR-0010 R2). Whether the step
+    /// may be proposed is the ladder's, decided before the commit.
     TransitionProposed(TransitionRecord),
     /// `workarea.status_transition`: the pending row `transition_id` on
     /// `workarea_id` becomes `ratified` by `ratifier_key_id`, its
     /// `ratified_seq` this commit's seq, and the node's status becomes `to`
-    /// in the same transaction. Both writes are guarded: the row must be
-    /// pending with this node and this `to`, and the node's status must
-    /// still be the row's `from`; a guard that matches no row refuses the
-    /// commit, which writes nothing, its event included, never a silent
-    /// no-op. The schema's checks refuse a ratifier that is the proposing
-    /// key, a key the tenant does not hold, and a universe root moved off
-    /// `committed` (ADR-0009 d1, d3; workareas.md, ratification re-checks).
+    /// in the same transaction. The store re-checks the proposal inside
+    /// that transaction, under the chain lock with the node and the row
+    /// locked, so a child created or a subtree reparented in since the
+    /// proposal is seen: a row already ratified or whose `from` is no
+    /// longer the node's status is [`StoreError::TransitionStale`]; a
+    /// ratifier that is the proposing key or holds the proposer's
+    /// principal, read from its key row, is
+    /// [`StoreError::RatifierIsProposer`]; a step to `validated` with a
+    /// direct child not `validated` is [`StoreError::ChildrenNotValidated`].
+    /// A row that is not a proposal on this node with this `to`, a ratifier
+    /// key the tenant does not hold, and a universe root moved off
+    /// `committed` are defects. Every refusal refuses the commit, which
+    /// writes nothing, its event included (ADR-0009 d1, d3, d4; ADR-0010
+    /// R2; workareas.md, ratification re-checks).
     TransitionRatified {
         transition_id: Uuid,
         workarea_id: Uuid,

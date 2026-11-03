@@ -189,8 +189,9 @@ pub struct TransitionRecord {
     pub to: WorkareaStatus,
     pub state: TransitionState,
     pub proposer_key_id: Uuid,
-    /// Kept so ratification can refuse the proposer's principal under any
-    /// of its keys, not only the proposing key (ADR-0010 R2).
+    /// The principal the proposing key's row holds, which the proposal's
+    /// fold checks; the ratifying transaction refuses this principal under
+    /// any of its keys, not only the proposing key (ADR-0010 R2).
     pub proposer_principal: String,
     /// `None` while pending; the ratifying key once ratified.
     pub ratifier_key_id: Option<Uuid>,

@@ -11,8 +11,10 @@
 -- and a ratified transition is the only other write. This file adds the
 -- proposals: one row per workarea.status_proposed, 'pending' until a second
 -- identity ratifies it. Several pending rows may share a workarea; the
--- ratifying transaction re-checks from_status against workareas.status under
--- the chain lock, so a stale row is refused and stays 'pending'.
+-- ratifying transaction, under the chain lock with the node and the row
+-- locked, re-checks from_status against workareas.status (a stale row is
+-- refused and stays 'pending') and, on a step to 'validated', that no direct
+-- child stands on another rung.
 --
 -- The universe root is permanently 'committed' (ADR-0009 d1). Now that the
 -- lead writes the status the record carries rather than one derived from
@@ -25,8 +27,10 @@
 -- foreign-key check without row-level security (0004_grants.sql): a
 -- reference on id alone would accept another tenant's node or key. The
 -- key-inequality CHECK is the cheap spelling of R2 (ADR-0010); the
--- principal half is checked in the ratifying transaction, since a principal
--- can hold several keys.
+-- principal half is checked by the store in the ratifying transaction, which
+-- reads the ratifier's api_keys.principal and refuses proposer_principal,
+-- since a principal can hold several keys. The proposal's fold writes
+-- proposer_principal only when it is the proposing key's api_keys.principal.
 --
 -- Run by the owner role. The serving role's DML is granted below through
 -- oml.serving_role, as 0007 grants every table's (postgres-schema.md
