@@ -26,6 +26,9 @@ This script extracts each surface and fails with a diff on any disagreement:
   * a key with a null value in either OpenAPI document outside an example,
     default or const: an unquoted ", " in a flow mapping splits a description
     into a truncated one and a garbage key, which the 3.1 validator accepts
+  * a `memory.<field>` read in README.md, an SDK README or a script under
+    scripts/ that names a field the served Memory schema does not declare:
+    whatever names a field moves in the step that renames it (ADR-0039 d14)
 
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
@@ -73,6 +76,9 @@ HTTP_API_MD = ROOT / "docs" / "api" / "http-api.md"
 OPENAPI_YAML = ROOT / "docs" / "api" / "openapi.yaml"
 DESIGNED_YAML = ROOT / "docs" / "api" / "openapi-designed.yaml"
 DESIGNED_FIELDS = "x-oml-designed-fields"
+MEMORY_READERS = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md")),
+                  *sorted((ROOT / "scripts").glob("*.sh"))]
+MEMORY_READ_RE = re.compile(r"\bmemory\??\.([a-z_]+)\b")
 CONTRACT_MARKS = {"served", "designed"}
 
 CODE_RE = re.compile(r"`([a-z_]+\.[a-z_]+)`")
@@ -322,6 +328,21 @@ def designed_field_problems(spec: dict, designed: dict) -> list[str]:
     return problems
 
 
+def memory_read_problems(spec: dict) -> list[str]:
+    """Each memory.<field> read on a reader surface that the served Memory schema lacks."""
+    docs = {"openapi.yaml": spec}
+    fields = schema_fields({"$ref": "#/components/schemas/Memory"}, docs, "openapi.yaml")
+    if not fields:
+        return ["openapi.yaml: the Memory schema declares no fields"]
+    problems: list[str] = []
+    for path in MEMORY_READERS:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for field in MEMORY_READ_RE.findall(line):
+                if field not in fields:
+                    problems.append(f"{path.relative_to(ROOT)}:{number}: memory.{field}")
+    return problems
+
+
 NULL_EXEMPT = {"example", "examples", "default", "const"}
 
 
@@ -441,6 +462,11 @@ def main() -> int:
     field_problems = designed_field_problems(spec, designed)
     if field_problems:
         failures.append((f"{DESIGNED_FIELDS} disagrees with the served operations", field_problems))
+
+    read_problems = memory_read_problems(spec)
+    if read_problems:
+        failures.append(("a memory field read that the served Memory schema does not declare",
+                         read_problems))
 
     mark_lines = []
     for op, op_marks in sorted(marks.items(), key=lambda t: (t[0][1], t[0][0])):

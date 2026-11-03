@@ -227,8 +227,8 @@ SUCCESSOR="$(jqf .artifact_id)"
 
 step "recall before ratification still serves the old tip (the tip moves only at ratification)" 0 \
     "$OML" --key "$READER" --json recall --query "Accra Metals"
-jq -r '.hits[].memory.body' "$OUT" | grep -q "412 USD/t" || fail "the old tip left recall before ratification"
-jq -r '.hits[].memory.body' "$OUT" | grep -q "399 USD/t" && fail "the held successor reached recall unreviewed"
+jq -r '.hits[].memory.text' "$OUT" | grep -q "412 USD/t" || fail "the old tip left recall before ratification"
+jq -r '.hits[].memory.text' "$OUT" | grep -q "399 USD/t" && fail "the held successor reached recall unreviewed"
 
 step "the successor rides the same review gate: dreamer approves it" 0 \
     "$OML" --key "$DREAMER" --json review verdict --memory "$SUCCESSOR" --approve
@@ -236,8 +236,8 @@ step "the successor rides the same review gate: dreamer approves it" 0 \
 
 step "recall now serves the ratified successor (the replaced version is history)" 0 \
     "$OML" --key "$READER" --json recall --query "Accra Metals"
-jq -r '.hits[].memory.body' "$OUT" | grep -q "399 USD/t" || fail "successor body missing from recall"
-jq -r '.hits[].memory.body' "$OUT" | grep -q "412 USD/t" && fail "the replaced version is still a recall hit"
+jq -r '.hits[].memory.text' "$OUT" | grep -q "399 USD/t" || fail "successor text missing from recall"
+jq -r '.hits[].memory.text' "$OUT" | grep -q "412 USD/t" && fail "the replaced version is still a recall hit"
 
 # --- evidence: the chain export is the one verification surface -------------
 # The events tail is a filtered feed (ADR-0025 d15), so live verification

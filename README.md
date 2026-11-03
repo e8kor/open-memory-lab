@@ -158,7 +158,7 @@ with OmlClient() as oml:
     oml.remember("deploy-runbook", "The canary stage must drain before the next one starts.")
 
     for hit in oml.recall("canary stage").hits:
-        print(hit.memory.body)
+        print(hit.memory.text)
 ```
 </details>
 
@@ -181,7 +181,7 @@ await oml.remember({
 });
 
 const { hits } = await oml.recall({ query: "canary stage" });
-for (const hit of hits) console.log(hit.memory.body);
+for (const hit of hits) console.log(hit.memory.text);
 ```
 </details>
 
