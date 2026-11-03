@@ -176,7 +176,7 @@ take. Proposed, not built.
   gain `include_unreviewed` (boolean, default `true`). With `true`, the candidates also include
   every held version of any author, the key's own included, of kind `memory` or `derived_fact`,
   never a retirement version, on the served nodes where d5 admits the key; `include_own_held`
-  still adds own held rows elsewhere in the served set, and nothing is served twice. With `false`
+  still adds own held rows across the served set, and nothing is served twice. With `false`
   none is added. Where d5 admits nothing, `true` adds nothing, and the field never answers an
   error. The added hits join ADR-0025 d8's total order, score descending then `artifact_id`
   ascending, with `state: "held"`, `tip: false` and `reviewed: false`, counting against `k` and
@@ -232,9 +232,9 @@ take. Proposed, not built.
   version arrives between test and commit: one `EXISTS` over the subtree's nodes through the
   declared index `memories_workarea (tenant_id, workarea_id, state)`
   ([Postgres schema](../data/postgres-schema.md)), one probe per node, unmeasured
-  ([FR-25](../product/roadmap.md)). d1's subtree test runs the same way. This amends
-  [ADR-0024](ADR-0024-performance-foundation.md) d1, whose lock admits no scan; ADR-0008 d6's
-  re-parent already holds a lock proportional to its subtree.
+  ([FR-25](../product/roadmap.md)). d1's subtree test and every d2 test run the same way. This
+  amends [ADR-0024](ADR-0024-performance-foundation.md) d1, whose lock admits no scan; ADR-0008
+  d6's re-parent already holds a lock proportional to its subtree.
 
     The commit journals the existing `workarea.status_transition` unchanged. From it no node of
     the former subtree has a root, so its promoted claims reach every scope and its nodes are
