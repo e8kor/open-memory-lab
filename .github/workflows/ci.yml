@@ -56,7 +56,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # POSTGRES_USER is the container's superuser, so every Postgres suite
+      # mints its owner/serving role pair; a suite that cannot fails here
+      # rather than printing its did-not-run line (ADR-0034 d8).
       - run: cargo test --workspace --locked
+        env:
+          OML_TEST_REQUIRE_SPLIT: "1"
 
   e2e:
     name: demo and quickstart (release binaries)
@@ -76,16 +81,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo build --release --locked --bin oml-server-lead --bin oml
+      # POSTGRES_USER is the container's superuser, so the demo mints and
+      # drops its own uniquely named role pair (ADR-0034 d8).
       - name: PoC demo
         run: bash scripts/poc-demo.sh
+      # The service container is this job's own cluster, so the pair takes
+      # the fixed names (ADR-0034 d2): the lead migrates as oml_owner and
+      # serves as oml_server.
       - name: Quickstart, then the agent plugin over /mcp
         env:
           PGPASSWORD: oml_dev_only
         run: |
           state="$RUNNER_TEMP/quickstart"
           mkdir -p "$state"
-          psql -h 127.0.0.1 -U oml -d oml_dev -c "CREATE DATABASE oml_quickstart"
-          OML_POSTGRES__URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_quickstart \
+          psql -h 127.0.0.1 -U oml -d oml_dev -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE oml_owner LOGIN PASSWORD 'oml_dev_only'" \
+            -c "CREATE ROLE oml_server LOGIN PASSWORD 'oml_dev_only'" \
+            -c "CREATE DATABASE oml_quickstart OWNER oml_owner"
+          OML_POSTGRES__URL=postgres://oml_server:oml_dev_only@127.0.0.1:5432/oml_quickstart \
+          OML_POSTGRES__OWNER_URL=postgres://oml_owner:oml_dev_only@127.0.0.1:5432/oml_quickstart \
           OML_SERVER__LISTEN=127.0.0.1:8080 \
           OML_KMS__KEYRING_PATH="$state/keyring" \
             ./target/release/oml-server-lead >"$state/stdout" 2>"$state/stderr" &
@@ -153,6 +167,63 @@ jobs:
           echo "$PLATFORM: $got"
           [ "$got" = "$want" ] || { echo "expected '$want'" >&2; exit 1; }
 
+  # Every CLI target of release.yml (job cli), on the same native runner, so
+  # a platform that stops building or testing fails here, before a tag.
+  # Unit tests alone: the end-to-end suite needs Postgres, which only the
+  # Linux runners serve (job test runs it).
+  cli-matrix:
+    name: oml CLI (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.target }}
+      # ring's C, for each musl target, with the wrapper Ubuntu's musl-tools
+      # ships for the runner's own architecture. On the arm64 runner cc counts
+      # aarch64-unknown-linux-musl as a cross compile and would otherwise call
+      # aarch64-linux-musl-gcc, which musl-tools does not ship
+      # (packages.ubuntu.com/noble/arm64/musl-tools/filelist, fetched
+      # 2026-11-03). The archiver falls back to the host's ar, and Rust links
+      # its self-contained musl with the host's cc, both native here.
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+      - name: musl C toolchain
+        if: endsWith(matrix.target, '-linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --locked --bin oml --target "$TARGET"
+      - name: oml --version prints the workspace version
+        run: |
+          exe=""
+          [ "${TARGET%-windows-msvc}" != "$TARGET" ] && exe=".exe"
+          # Read through cargo, which every leg has set up; the pkgid ends in
+          # the version after a '#' or an '@'.
+          want="oml $(cargo pkgid -p oml-cli | sed 's/.*[#@]//')"
+          got="$("target/$TARGET/debug/oml$exe" --version | tr -d '\r')"
+          echo "$TARGET: $got"
+          [ "$got" = "$want" ] || { echo "expected '$want'" >&2; exit 1; }
+      - name: The CLI's unit tests
+        run: cargo test --locked -p oml-cli --lib --bins --target "$TARGET"
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
@@ -171,6 +242,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/check_plugin.py
+      - run: python scripts/check_agent_kit.py
 
   chart:
     # The Helm chart (deploy/helm/oml; docs/adr/ADR-0033-interim-helm-chart.md
@@ -208,10 +280,24 @@ jobs:
           cluster_name: oml
       - name: Load the image into kind
         run: kind load docker-image "$IMAGE:$VERSION" --name oml
+      # The pod's init script creates the role pair, LOGIN alone, and gives
+      # the database to oml_owner; the Secret carries both URLs (ADR-0034 d2,
+      # d10 step 2). The probe goes over TCP, which the entrypoint's
+      # init-time server does not listen on, so ready means initialised.
       - name: Postgres in the cluster (the deployment pin)
         run: |
           kubectl create namespace oml
           kubectl --namespace oml apply -f - <<'EOF'
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: postgres-init
+          data:
+            oml-role-pair.sql: |
+              CREATE ROLE oml_owner LOGIN PASSWORD 'oml_dev_only';
+              CREATE ROLE oml_server LOGIN PASSWORD 'oml_dev_only';
+              ALTER DATABASE oml OWNER TO oml_owner;
+          ---
           apiVersion: apps/v1
           kind: Deployment
           metadata:
@@ -233,10 +319,17 @@ jobs:
                       - {name: POSTGRES_DB, value: oml}
                     ports:
                       - containerPort: 5432
+                    volumeMounts:
+                      - name: init
+                        mountPath: /docker-entrypoint-initdb.d
                     readinessProbe:
                       exec:
-                        command: [pg_isready, -U, oml, -d, oml]
+                        command: [pg_isready, -h, 127.0.0.1, -U, oml, -d, oml]
                       periodSeconds: 2
+                volumes:
+                  - name: init
+                    configMap:
+                      name: postgres-init
           ---
           apiVersion: v1
           kind: Service
@@ -249,7 +342,8 @@ jobs:
           EOF
           kubectl --namespace oml rollout status deployment/postgres --timeout=300s
           kubectl --namespace oml create secret generic oml-postgres \
-            --from-literal=OML_POSTGRES__URL=postgres://oml:oml_dev_only@postgres:5432/oml
+            --from-literal=OML_POSTGRES__URL=postgres://oml_server:oml_dev_only@postgres:5432/oml \
+            --from-literal=OML_POSTGRES__OWNER_URL=postgres://oml_owner:oml_dev_only@postgres:5432/oml
       - name: helm install, then wait for readiness
         run: |
           helm install oml deploy/helm/oml --namespace oml \
@@ -334,8 +428,11 @@ jobs:
           cat "$RUNNER_TEMP"/port-forward*.log || true
 
   # The client SDKs of docs/engineering/sdks.md: each suite runs against the
-  # server built from this checkout, on a throwaway database it creates and
-  # drops itself, and the generated layers must be current with openapi.yaml.
+  # server built from this checkout, on a throwaway database and role pair it
+  # mints and drops itself, and the generated layers must be current with
+  # openapi.yaml. POSTGRES_USER is the container's superuser, so a harness
+  # that cannot mint fails here rather than printing its did-not-run line
+  # (ADR-0034 d8).
   sdk-python:
     name: Python SDK against the release server
     runs-on: ubuntu-latest
@@ -366,6 +463,7 @@ jobs:
           OML_SERVER_BIN: ${{ github.workspace }}/target/release/oml-server-lead
           OML_CLI_BIN: ${{ github.workspace }}/target/release/oml
           OML_SDK_TEST_DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+          OML_TEST_REQUIRE_SPLIT: "1"
         run: uv run --locked --python 3.11 pytest -v
 
   sdk-typescript:
@@ -401,6 +499,7 @@ jobs:
           OML_SERVER_BIN: ${{ github.workspace }}/target/release/oml-server-lead
           OML_CLI_BIN: ${{ github.workspace }}/target/release/oml
           OML_SDK_TEST_DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+          OML_TEST_REQUIRE_SPLIT: "1"
         run: npm test
 
   sdk-generated:

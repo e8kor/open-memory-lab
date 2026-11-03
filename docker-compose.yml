@@ -7,8 +7,9 @@
 #   - minio            — the PoC has no attachments, so no object store yet; when it
 #                        joins it uses the SAME pinned tag the Helm chart pins
 #                        (the If-None-Match conditional-put pin, declared once).
-#   - oml-bootstrap    — the one-shot migration/keyring/enrollment ceremony; the PoC
-#                        server migrates on boot instead (see Dockerfile).
+#   - oml-bootstrap    — the one-shot migration/keyring/enrollment ceremony; the
+#                        server migrates on boot instead, under the owner role
+#                        (see Dockerfile).
 #   - oml-server-follower, oml-lakewriter, oml-reconciler, oml-indexer — join at
 #                        their milestones per docs/product/critical-path.md.
 #
@@ -22,15 +23,24 @@ services:
     # for volume mounts.
     image: pgvector/pgvector:pg17
     environment:
+      # The cluster's superuser stays the administrator; the server logs in as
+      # neither it nor each other (ADR-0034 d2, d7). Dev-only credentials; a
+      # real install overrides them.
       POSTGRES_USER: oml
-      # Dev-only credential; a real install overrides this (and deployment.md's
-      # C6 owner/service role split arrives with the bootstrap service).
       POSTGRES_PASSWORD: oml_dev_only
       POSTGRES_DB: oml
+    configs:
+      # The role pair, created by the image's entrypoint on an empty volume
+      # only: a volume an earlier release initialised holds neither role and
+      # takes ADR-0034 d7's split once, by hand, before this release starts.
+      - source: oml-role-pair
+        target: /docker-entrypoint-initdb.d/oml-role-pair.sql
     volumes:
       - oml-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U oml -d oml"]
+      # Over TCP: the entrypoint runs the init scripts on a server that
+      # listens on its socket alone, so the check passes only once they ran.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U oml -d oml"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -48,7 +58,10 @@ services:
     environment:
       # One configuration surface, file + env (docs/operations/configuration.md);
       # OML_ + the dotted key in SCREAMING_SNAKE, `__` for each dot.
-      OML_POSTGRES__URL: postgres://oml:oml_dev_only@postgres:5432/oml
+      # The serving role, which owns nothing, and the owner role the lead
+      # migrates under before it serves (ADR-0034 d2, d4).
+      OML_POSTGRES__URL: postgres://oml_server:oml_dev_only@postgres:5432/oml
+      OML_POSTGRES__OWNER_URL: postgres://oml_owner:oml_dev_only@postgres:5432/oml
       OML_SERVER__LISTEN: 0.0.0.0:8080
       OML_KMS__KEYRING_PATH: /var/lib/oml/keyring/signing.key
     volumes:
@@ -57,6 +70,16 @@ services:
       - oml-keyring:/var/lib/oml/keyring
     ports:
       - "127.0.0.1:8080:8080"
+
+# Two roles holding LOGIN alone (ADR-0034 d2): oml_owner owns the database
+# and everything the migrations create, and oml_server owns nothing and takes
+# its privileges from the migrations' grants.
+configs:
+  oml-role-pair:
+    content: |
+      CREATE ROLE oml_owner LOGIN PASSWORD 'oml_dev_only';
+      CREATE ROLE oml_server LOGIN PASSWORD 'oml_dev_only';
+      ALTER DATABASE oml OWNER TO oml_owner;
 
 volumes:
   oml-pgdata:

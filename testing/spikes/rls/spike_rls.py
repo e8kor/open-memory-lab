@@ -21,8 +21,11 @@ What it does, in order:
    database. Otherwise the connecting role owns the database and S3.2's mechanism finding is
    not run. S3.2's claim about OML's own roles is reported open on every host: the harness's
    roles are its own, and OML specifies no deployment's roles to test.
-2. Applies migrations/*.sql in filename order under the owner role. Two tenants are seeded
-   after 0003, so the backfills of 0004 and 0005 run over both tenants' rows while FORCE ROW
+2. Applies migrations/*.sql in filename order under the owner role, as the lead's migrator
+   does (ADR-0034 d9): it creates _sqlx_migrations with sqlx's own DDL and records each file
+   in it, and sets oml.serving_role on the owner's connection to the service role (the
+   connecting role on an owner-only run), so the service role holds the grants the migrations
+   make it and no other. Two tenants are seeded after 0003, so the backfills of 0004 and 0005 run over both tenants' rows while FORCE ROW
    LEVEL SECURITY binds the role running them. A table that a later migration adds and no
    seeder writes is checked for ENABLE, FORCE and a policy, and reported as unprobed for row
    visibility; it does not fail the run.
@@ -90,18 +93,36 @@ WORKAREA_COLUMNS = "id, tenant_id, parent_id, name, crew"
 # Failed checks recorded as findings on docs/engineering/spikes/spike-3-rls.md. A listed
 # check that fails is reported as recorded and does not fail the run. A listed check that
 # passes, or does not run, fails the run, so a finding is re-recorded instead of going stale.
-RECORDED_FAILURES = {
-    "S3.1/owner/pg_stats": "spike-3-rls.md#s31",
-    "S3.4/owner/pg_stats": "spike-3-rls.md#s34",
-    "S3.4/owner/estimate": "spike-3-rls.md#s34",
-    "S3.4/service/estimate": "spike-3-rls.md#s34",
-}
+#
+# The owner's pg_stats view is no longer a check: under the role split the owner serves
+# nothing, and its view of tenant B's lexemes is the control of the service role's pg_stats
+# check (ADR-0034 d8, d9, d10 step 2). The two estimate checks were recorded until 0009 made
+# memories one partition per tenant (ADR-0034 d11): each partition's statistics hold one
+# tenant_id, so the policy's tenant A, which the planner evaluates for its estimate, gives
+# another tenant's partition one row whatever the word: the owner's check passed on 18.6 on
+# 2026-11-03 and the service role's is read to (spike-3-rls.md#s34; ADR-0034 d10 step 4, d11).
+# A listed check that passes fails the run, so they are no longer listed; the per-partition
+# catalog channels stay observations (FR-45).
+RECORDED_FAILURES: dict[str, str] = {}
 
 # The tables the seeders below wrote rows into, filled by seed_insert as they run. A table a
 # later migration adds and no seeder writes is probed structurally (ENABLE, FORCE, a policy,
 # zero rows with no tenant) and reported as unprobed for row visibility: no row of either
 # tenant exists in it, so no read of it could show a leak (docs/engineering/spikes/index.md).
 SEEDED_TABLES: set[str] = set()
+
+# sqlx's record of which migrations ran: the one table without row-level security, fenced by
+# privilege alone (ADR-0034 d6). The DDL is sqlx-postgres 0.8.6's (src/migrate.rs,
+# ensure_migrations_table), the version Cargo.lock pins.
+SQLX_MIGRATIONS = "_sqlx_migrations"
+SQLX_MIGRATIONS_DDL = """CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+    version BIGINT PRIMARY KEY,
+    description TEXT NOT NULL,
+    installed_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+    success BOOLEAN NOT NULL,
+    checksum BYTEA NOT NULL,
+    execution_time BIGINT NOT NULL
+)"""
 
 
 # ---------------------------------------------------------------------------
@@ -245,8 +266,19 @@ def seed_insert(conn: psycopg.Connection, statement: str, params: list) -> None:
     conn.execute(statement, params)
 
 
+# A tenant's partition of memories, as 0009 and the lead name it: memories_t_<tenant id, 32
+# hex> (ADR-0034 d11). Its rows are seeded through its parent, one tenant's to each.
+PARTITION = re.compile(r"(memories)_t_[0-9a-f]{32}")
+
+
+def seeded(table: str) -> bool:
+    """Whether a seeder wrote rows into table, or into the parent a partition of it holds."""
+    partition = PARTITION.fullmatch(table)
+    return table in SEEDED_TABLES or (partition is not None and partition.group(1) in SEEDED_TABLES)
+
+
 def unseeded(tables: dict[str, str]) -> list[str]:
-    return sorted(set(tables) - SEEDED_TABLES)
+    return sorted(t for t in tables if not seeded(t))
 
 
 def journal_row(conn, t: Tenant, seq: int, event_type: str, payload: dict, key: uuid.UUID | None):
@@ -356,14 +388,27 @@ def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
 
 
 def tenant_tables(conn: psycopg.Connection) -> dict[str, str]:
-    """Every table in the public schema, with the column that names its tenant."""
+    """Every tenant table in the public schema the connected role may SELECT, with the column
+    that names its tenant. _sqlx_migrations holds no tenant data (ADR-0034 d6), and a table
+    whose migration grants the role no SELECT refuses every read by privilege before the
+    policy is reached (unreadable_tables)."""
     rows = conn.execute(
         "SELECT c.relname, "
         "       CASE WHEN c.relname = 'tenants' THEN 'id' ELSE 'tenant_id' END "
         "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-        " WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY c.relname"
-    ).fetchall()
+        " WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname <> %s "
+        "   AND has_table_privilege(current_user, c.oid, 'SELECT') ORDER BY c.relname",
+        [SQLX_MIGRATIONS]).fetchall()
     return dict(rows)
+
+
+def unreadable_tables(conn: psycopg.Connection) -> list[str]:
+    """The tenant tables of the public schema the connected role may not SELECT."""
+    return [r[0] for r in conn.execute(
+        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        " WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname <> %s "
+        "   AND NOT has_table_privilege(current_user, c.oid, 'SELECT') ORDER BY 1",
+        [SQLX_MIGRATIONS]).fetchall()]
 
 
 def tainted(value: Any, needles: set[str]) -> bool:
@@ -451,8 +496,9 @@ def connect(conninfo: str, notices: list[str] | None = None) -> psycopg.Connecti
 FTS_INDEX_CLAUSES = ("ADR-0007 d4 (tenant isolation extends through every storage layer) and security.md's STRIDE "
                      "information-disclosure mitigation (FTS physically partitioned per tenant, no cross-tenant "
                      "index to leak through), for the statistics of the cross-tenant index memories_claim_fts")
-FTS_INDEX_FIX = ("an implementation fix that makes the FTS index per tenant, which this run does not test; the "
-                 "designed memories_fts and held_fts are not partitioned per tenant either (postgres-schema.md)")
+FTS_INDEX_FIX = ("an implementation fix that makes the FTS index per tenant, which 0009's per-tenant partitions of "
+                 "memories build and this run tests (ADR-0034 d11); the designed memories_fts and held_fts are "
+                 "not built (postgres-schema.md)")
 
 
 def s3_1(owner_ci: str, a: Tenant, b: Tenant, owner_name: str) -> Scenario:
@@ -466,8 +512,8 @@ def s3_1(owner_ci: str, a: Tenant, b: Tenant, owner_name: str) -> Scenario:
             "       (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid), "
             "       pg_get_userbyid(c.relowner) "
             "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-            " WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY 1"
-        ).fetchall()
+            " WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname <> %s ORDER BY 1",
+            [SQLX_MIGRATIONS]).fetchall()
         lacking = [r[0] for r in rls if not (r[1] and r[2] and r[3] > 0)]
         s.check(not lacking and len(rls) == len(tables),
                 f"every one of the {len(rls)} tables has ENABLE and FORCE ROW LEVEL SECURITY and a policy"
@@ -479,6 +525,8 @@ def s3_1(owner_ci: str, a: Tenant, b: Tenant, owner_name: str) -> Scenario:
         for viewer, other in ((a, b), (b, a)):
             c = counts(conn, tables, viewer.id, other.id)
             foreign = {t: v[1] for t, v in c.items() if v[1]}
+            # A partition is not in SEEDED_TABLES: it holds one tenant's rows, so the other
+            # tenant's shows the viewer none.
             empty = [t for t, v in c.items() if v[0] == 0 and t in SEEDED_TABLES]
             s.check(not foreign and not empty,
                     f"as owner with tenant {viewer.letter} set, every seeded table shows its own rows only "
@@ -498,13 +546,15 @@ def s3_1(owner_ci: str, a: Tenant, b: Tenant, owner_name: str) -> Scenario:
             state = f"{e.sqlstate} {e.diag.message_primary}"
         s.check(state is not None and state.startswith("42501"),
                 f"as owner, SET row_security = off does not unfilter a FORCE table; the read raises {state}")
+        # The owner serves nothing under the role split, so its view of the statistics is the
+        # control of the service role's pg_stats check in S3.4 (ADR-0034 d8).
         stats = statistics_rows(conn, a.id)
         leaking = [r for r in stats if tainted(r[2], b.identifiers())]
-        s.check(not leaking,
-                key="S3.1/owner/pg_stats",
-                text=f"as owner with tenant A set, pg_stats ({len(stats)} rows for the schema) carries no value of "
-                "tenant B" + (f"; it does, in {[f'{r[0]}.{r[1]}' for r in leaking]}: "
-                              f"{[excerpt(r[2], MARKER['B']) for r in leaking]}" if leaking else ""))
+        s.control(bool(leaking),
+                  f"control: as owner with tenant A set, pg_stats ({len(stats)} rows for the schema) carries "
+                  "values of tenant B, so a pg_stats read can show what the service role's check hunts"
+                  + (f": {[f'{r[0]}.{r[1]}' for r in leaking]}, {[excerpt(r[2], MARKER['B']) for r in leaking]}"
+                     if leaking else "; it shows none"))
 
         # Control: lift FORCE on memories inside a transaction that rolls back.
         leaked = 0
@@ -537,9 +587,10 @@ class _Rollback(Exception):
 # Two findings (docs/engineering/spikes/index.md). The mechanism: PostgreSQL keeps a non-owner
 # role with DML grants and no BYPASSRLS inside the policy, and migrations succeed under the
 # owner while FORCE binds it. OML's roles: the roles a deployment uses are split from the
-# owner and none holds BYPASSRLS. The harness mints its own roles and writes their grants, so
-# asserting their attributes would show only that it ran its own CREATE ROLE statements; the
-# second finding stays open until a deployment's bootstrap specifies roles and grants.
+# owner and none holds BYPASSRLS. The harness mints its own roles and takes their grants from
+# the migrations, so asserting their attributes would show only that it ran its own CREATE ROLE
+# statements; the second finding stays open until a deployment's bootstrap specifies roles and
+# grants.
 # ---------------------------------------------------------------------------
 
 S3_2_MECHANISM = ("S3.2 (mechanism)", "a non-owner role with DML grants and no BYPASSRLS cannot read across "
@@ -568,9 +619,8 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
     s = Scenario(*S3_2_MECHANISM, S3_2_MECHANISM_CLAUSE)
     s.settings.append(
         f"roles minted by the harness: owner {owner} and service {service}, both LOGIN NOSUPERUSER NOCREATEDB "
-        "NOCREATEROLE NOBYPASSRLS; the database is owned by the owner role; after migrating, the owner grants the "
-        "service role SELECT, INSERT, UPDATE, DELETE on every table but journal (SELECT, INSERT) and USAGE, SELECT "
-        "on every sequence")
+        "NOCREATEROLE NOBYPASSRLS; the database is owned by the owner role; the service role holds only the "
+        "grants the migrations make it through oml.serving_role (0007, postgres-schema.md \"Privileges\")")
     s.check(all(ok for _, ok, _ in migration_log),
             "migrations succeed under the owner role: "
             + ", ".join(f"{name} {'ok' if ok else 'FAILED: ' + err}" for name, ok, err in migration_log))
@@ -629,8 +679,19 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
             s.check(got == "42501", f"as the service role, {statement} is refused with {got} (expected 42501)")
         for statement in ("UPDATE journal SET principal = principal", "DELETE FROM journal", "TRUNCATE journal"):
             got = sqlstate_rolled_back(conn, statement, a.id)
-            s.check(got == "42501", f"as the service role set to tenant A, with the journal grants the harness wrote, "
+            s.check(got == "42501", f"as the service role set to tenant A, with the journal grants the migrations make, "
                                     f"{statement} is refused with {got} (expected 42501)")
+        refused = unreadable_tables(conn) + [SQLX_MIGRATIONS]
+        reads = {t: sqlstate_rolled_back(conn, sql.SQL("SELECT 1 FROM {} LIMIT 1").format(sql.Identifier(t)), a.id)
+                 for t in refused}
+        s.check(all(v == "42501" for v in reads.values()),
+                f"as the service role, a SELECT on each table its migrations grant it no SELECT on is refused "
+                f"with 42501: {reads}")
+        held = conn.execute(
+            "SELECT array_agg(p) FILTER (WHERE has_table_privilege(current_user, %s, p)) FROM unnest(ARRAY["
+            "'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p",
+            [SQLX_MIGRATIONS]).fetchone()[0]
+        s.check(not held, f"the service role holds no privilege on {SQLX_MIGRATIONS} (held: {held or 'none'})")
         got = sqlstate_rolled_back(conn, sql.SQL("SET ROLE {}").format(sql.Identifier(owner)))
         s.check(got == "42501", f"as the service role, SET ROLE to the owner is refused with {got}")
         state = None
@@ -970,7 +1031,7 @@ def generic_shapes(tables: dict[str, str]) -> list[tuple[str, str, list]]:
     for table, col in tables.items():
         shapes.append((f"full scan {table}", f'SELECT * FROM "{table}"', []))
         shapes.append((f"group by tenant {table}", f'SELECT "{col}", count(*) FROM "{table}" GROUP BY 1', []))
-    shapes += [
+    joins = [
         ("join memories-workareas", "SELECT m.id, w.name, m.claim FROM memories m JOIN workareas w ON w.id = m.workarea_id", []),
         ("join grants-api_keys", "SELECT g.id, k.principal FROM grants g JOIN api_keys k ON k.id = g.key_id", []),
         ("join journal-outbox", "SELECT j.event_id, o.payload FROM journal j JOIN outbox o ON o.tenant_id = j.tenant_id "
@@ -986,6 +1047,8 @@ def generic_shapes(tables: dict[str, str]) -> list[tuple[str, str, list]]:
         ("terms overlap", "SELECT id FROM memories WHERE terms && ARRAY['oml:runbook']", []),
         ("leakproof-free predicate", "SELECT id FROM memories WHERE claim ~ 'SECRET'", []),
     ]
+    # A join over a table the role may not SELECT is refused by privilege (unreadable_tables).
+    shapes += [j for j in joins if set(re.findall(r"(?:FROM|JOIN) (\w+)", j[1])) <= set(tables)]
     return shapes
 
 
@@ -1155,9 +1218,17 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
                            + (f"; {s.unprobed} hold no seeded row, so their scans could show none"
                               if s.unprobed else ""))
 
-        schema_indexes = {r[0] for r in conn.execute(
-            "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'").fetchall()}
-        probes = index_shapes(b)
+        index_table = dict(conn.execute(
+            "SELECT indexname, tablename FROM pg_indexes WHERE schemaname = 'public' AND tablename <> %s",
+            [SQLX_MIGRATIONS]).fetchall())
+        # A partition's index is probed through the partitioned index it is attached to, whose
+        # name the probe carries; a plan names the partition's (ADR-0034 d11).
+        index_parent = dict(conn.execute(
+            "SELECT i.inhrelid::regclass::text, i.inhparent::regclass::text FROM pg_inherits i "
+            "JOIN pg_class c ON c.oid = i.inhrelid WHERE c.relkind = 'i'").fetchall())
+        schema_indexes = {i for i, t in index_table.items() if t in tables and i not in index_parent}
+        privileged = sorted(set(index_table) - schema_indexes - set(index_parent))
+        probes = [p for p in index_shapes(b) if p[0] in schema_indexes or p[0] not in index_table]
         missed, idx_bad = [], []
         for index, statement, params, settings in probes:
             with conn.transaction():
@@ -1166,7 +1237,7 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
                     conn.execute(f"SET LOCAL {setting_line}")
                 plan = conn.execute(f"EXPLAIN (FORMAT JSON) {statement}", params).fetchone()[0]
                 rows = conn.execute(statement, params).fetchall()
-            used = plan_indexes(plan)
+            used = {index_parent.get(u, u) for u in plan_indexes(plan)}
             if index not in used:
                 missed.append(f"{index} (plan used {sorted(used) or 'no index'})")
             if rows_tainted(rows, needles):
@@ -1175,7 +1246,9 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         s.check(not idx_bad, f"[{role}] {len(probes)} probes, one per index of the schema's {len(schema_indexes)}, "
                              "with seq scans (and, for btree probes, bitmap scans) disabled, return no row of tenant B; "
                              f"{len(probes) - len(missed)} of the plans used the index the probe names"
-                             + (f"; {idx_bad}" if idx_bad else "") + (f"; not probed: {unprobed}" if unprobed else ""))
+                             + (f"; {idx_bad}" if idx_bad else "") + (f"; not probed: {unprobed}" if unprobed else "")
+                             + (f"; not probed, their table refuses this role SELECT: {privileged}"
+                                if privileged else ""))
         if missed:
             s.observations.append(f"[{role}] index probes whose plan used another index: {missed}")
         s.observations.append(f"[{role}] " + gin_under_rls(conn, a.id, owner=role.startswith("owner")))
@@ -1201,7 +1274,7 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         # The function is handed the whole row as text, so a migration that renames or moves a
         # column cannot leave it handed NULLs.
         probes = [f"SELECT 1 FROM {t} x WHERE pg_temp.spike_leak(x::text)"
-                  for t in ("memories", "workareas", "api_keys", "journal", "tenants", "outbox")]
+                  for t in ("memories", "workareas", "api_keys", "journal", "tenants", "outbox") if t in tables]
         seen: dict[str, list[str]] = {}
         for tenant, label in ((a.id, "A"), (b.id, "B")):
             notices.clear()
@@ -1210,21 +1283,27 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
             seen[label] = [n for n in notices if "spike-saw:" in n]
         seen_a, seen_b = seen["A"], seen["B"]
         s.check(seen_a and not any(tainted(n, needles) for n in seen_a),
-                f"[{role}] a non-leakproof plpgsql function of cost 0.0001 in the WHERE clause of 6 tables, "
+                f"[{role}] a non-leakproof plpgsql function of cost 0.0001 in the WHERE clause of {len(probes)} tables, "
                 f"under tenant A, was handed {len(seen_a)} values and none of tenant B")
         s.control(any(MARKER["B"] in n for n in seen_b),
                   f"control [{role}]: the same function under tenant B is handed B's values "
                   f"({sum(MARKER['B'] in n for n in seen_b)} of {len(seen_b)})")
 
         # Planner statistics.
+        # The service role's view is the check (ADR-0034 d8); the owner serves nothing under the
+        # split, and its view is the control that shows the statistics hold tenant B's lexemes.
         stats = statistics_rows(conn, a.id)
         leaking = [r for r in stats if tainted(r[2], needles)]
-        s.check(not leaking,
-                key=f"S3.4/{role.split()[0]}/pg_stats",
-                text=f"[{role}] pg_stats shows {len(stats)} rows for the public schema to a session set to tenant A, "
-                "none carrying a value of tenant B"
-                + (f"; {[f'{r[0]}.{r[1]}' for r in leaking]} does: {[excerpt(r[2], MARKER['B']) for r in leaking]}"
-                   if leaking else ""))
+        where = f"{[f'{r[0]}.{r[1]}' for r in leaking]}: {[excerpt(r[2], MARKER['B']) for r in leaking]}"
+        if role.startswith("owner"):
+            s.control(bool(leaking),
+                      f"control [{role}]: pg_stats shows {len(stats)} rows for the public schema to a session set "
+                      "to tenant A, carrying values of tenant B" + (f" in {where}" if leaking else "; it shows none"))
+        else:
+            s.check(not leaking,
+                    key=f"S3.4/{role.split()[0]}/pg_stats",
+                    text=f"[{role}] pg_stats shows {len(stats)} rows for the public schema to a session set to "
+                    "tenant A, none carrying a value of tenant B" + (f"; {where} does" if leaking else ""))
 
         # The planner's estimate: the same statistics, read through EXPLAIN, which any role that can
         # query the table can run. Not owner-specific: under the policy the owner and the service
@@ -1263,22 +1342,40 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         def oracle(statement, params) -> str:
             return under(a.id, statement, params)[1] or "accepted"
 
-        fk_b = oracle("INSERT INTO workareas (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
-                      "'development')", [a.id, b.universe])
-        fk_none = oracle("INSERT INTO workareas (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
-                         "'development')", [a.id, uuid.uuid4()])
-        obs.append(f"foreign-key existence oracle: a tenant A workarea naming tenant B's universe as parent is "
-                   f"{fk_b}; naming a random id gives {fk_none}. The FK check runs without RLS, so tenant A can "
-                   "test whether an id exists in another tenant and can store a cross-tenant parent_id (the "
-                   "adapter's ancestry walk refuses such a chain at read time)")
-        ev_b = oracle("INSERT INTO memories (tenant_id, workarea_id, claim, claim_digest, status, created_event_id, "
-                      "claim_key, author_principal, author_key_id, version, kind, body_bytes) VALUES (%s, %s, 'probe', "
-                      "'\\x00', 'held', %s, 'probe', 'probe', %s, 1, 'memory', 5)", [a.id, a.child, b.events[4], a.writer])
-        obs.append(f"a tenant A memory whose created_event_id names a tenant B journal event is {ev_b} "
-                   "(memories.created_event_id references journal(event_id) alone)")
-        rq_b = oracle("INSERT INTO review_queue (memory_id, tenant_id) VALUES (%s, %s)", [b.m1, a.id])
-        obs.append(f"a tenant A review_queue row naming tenant B's memory is {rq_b} "
-                   "(review_queue.memory_id references memories(id) alone)")
+        # Keys into tenant tables carry tenant_id (ADR-0034 d12, d10 step 3): under tenant A, a
+        # reference to tenant B's row is refused as one to an id no row holds, 23503 from the one
+        # constraint, so it neither stores a cross-tenant id nor answers whether one exists. Tenant
+        # A's own target is the control that the probe statement is otherwise accepted.
+        nowhere = uuid.uuid5(NS, "no-row")
+        probe_key = ("INSERT INTO api_keys (tenant_id, hash, role, principal, issued_seq, {col}) "
+                     "VALUES (%s, %s, 'reader', 'probe', 1, %s)")
+        fk_cases = [
+            ("workareas.parent_id",
+             "INSERT INTO workareas (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
+             "'development')", lambda x: [a.id, x], a.universe, b.universe),
+            ("memories.created_event_id",
+             "INSERT INTO memories (tenant_id, workarea_id, claim, claim_digest, status, created_event_id, "
+             "claim_key, author_principal, author_key_id, version, kind, body_bytes) VALUES (%s, %s, 'probe', "
+             "'\\x00', 'held', %s, 'probe', 'probe', %s, 1, 'memory', 5)",
+             lambda x: [a.id, a.child, x, a.writer], a.events[4], b.events[4]),
+            ("review_queue.memory_id", "INSERT INTO review_queue (memory_id, tenant_id) VALUES (%s, %s)",
+             lambda x: [x, a.id], a.m1, b.m1),
+            ("api_keys.default_workarea_id", probe_key.format(col="default_workarea_id"),
+             lambda x: [a.id, b"probe-default", x], a.universe, b.universe),
+            ("api_keys.rotated_from", probe_key.format(col="rotated_from"),
+             lambda x: [a.id, b"probe-rotated", x], a.writer, b.writer),
+        ]
+        for column, statement, params, own, foreign in fk_cases:
+            accepted = oracle(statement, params(own))
+            to_b = oracle(statement, params(foreign))
+            to_none = oracle(statement, params(nowhere))
+            ok = accepted == "accepted" and to_none.startswith("23503 ") and to_b == to_none
+            s.check(ok,
+                    key=f"S3.4/{role.split()[0]}/{column}",
+                    text=f"[{role}] under tenant A, {column} naming tenant B's row is refused as one naming "
+                    f"no row is (tenant B's: {to_b}; no row's: {to_none}; tenant A's own: {accepted})"
+                    + ("" if ok else "; the key does not carry tenant_id, so tenant A can store another "
+                       "tenant's id and test whether one exists"))
         uq = oracle("INSERT INTO api_keys (tenant_id, hash, role, principal, issued_seq) VALUES (%s, %s, 'reader', "
                     "'probe', 1)", [a.id, key_hash("B", "writer")])
         obs.append(f"unique-index existence oracle: a tenant A key row carrying tenant B's key hash gives {uq}; "
@@ -1372,18 +1469,29 @@ def print_finding(s: Scenario, versions: str, settings: str, environment: str) -
         print(f"  observed  {text}")
 
 
-def apply_migrations(owner_ci: str, migrations: Path, a: Tenant, b: Tenant) -> tuple[list[tuple[str, bool, str]], list[tuple[bool, str]]]:
+def apply_migrations(owner_ci: str, serving_role: str, migrations: Path, a: Tenant,
+                     b: Tenant) -> tuple[list[tuple[str, bool, str]], list[tuple[bool, str]]]:
+    """Apply the files as PgStore::migrate does (ADR-0034 d2, d9): oml.serving_role set on the
+    owner's connection, _sqlx_migrations created with sqlx's DDL, each file in one transaction
+    with its row recorded the way sqlx's migrator records it (version, description, SHA-384)."""
     log: list[tuple[str, bool, str]] = []
     backfill: list[tuple[bool, str]] = []
     files = sorted(migrations.glob("*.sql"))
     with connect(owner_ci) as conn:
+        conn.execute("SELECT set_config('oml.serving_role', %s, false)", [serving_role])
+        conn.execute(SQLX_MIGRATIONS_DDL)
         for path in files:
             if path.name.startswith(SEED_BEFORE):
                 for t in (a, b):
                     seed_before_0004(conn, t)
+            version, _, description = path.stem.partition("_")
+            body = path.read_bytes()
             try:
                 with conn.transaction():
-                    conn.execute(path.read_text(encoding="utf-8"))
+                    conn.execute(body.decode("utf-8"))
+                    conn.execute("INSERT INTO _sqlx_migrations (version, description, success, checksum, "
+                                 "execution_time) VALUES (%s, %s, TRUE, %s, -1)",
+                                 [int(version), description.replace("_", " "), hashlib.sha384(body).digest()])
                 log.append((path.stem, True, ""))
             except psycopg.Error as e:
                 log.append((path.stem, False, f"{e.sqlstate} {e.diag.message_primary}"))
@@ -1458,16 +1566,12 @@ def main() -> int:
             owner_name = me
         admin_db_ci = make_conninfo(args.dsn, dbname=dbname)
 
-        migration_log, backfill = apply_migrations(owner_ci, args.migrations, a, b)
+        # The service role takes its grants from the migrations alone (ADR-0034 d9); on an
+        # owner-only run the connecting role serves, as the lead over one URL would.
+        migration_log, backfill = apply_migrations(owner_ci, service if split else me, args.migrations, a, b)
         if not all(ok for _, ok, _ in migration_log):
             print(f"spike_rls: migrations failed: {migration_log}", file=sys.stderr)
             return 1
-        if split:
-            with connect(owner_ci) as conn:
-                s_id = sql.Identifier(service)
-                conn.execute(sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}").format(s_id))
-                conn.execute(sql.SQL("REVOKE UPDATE, DELETE ON journal FROM {}").format(s_id))
-                conn.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(s_id))
 
         roles = {f"owner {owner_name}": owner_ci}
         if split:

@@ -1,13 +1,13 @@
 <!--
 id: engineering/spikes/spike-3-rls
 tier: engineering
-status: recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (decided 2026-10-31: the role split, the migration ledger as d2's one exemption and a per-tenant FTS index, proposed as ADR-0034), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run
+status: recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (decided 2026-10-31: the role split, the migration ledger as d2's one exemption and a per-tenant FTS index, proposed as ADR-0034), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run; 2026-11-03, over migration 0009's per-tenant partitions, the owner's estimate check passes on 18.6 and the pinned pg17 has not run over them
 answers: what M0 spike 3 found for S3.1–S3.4 (FORCE and the owner, the owner/service split as a PostgreSQL mechanism and as a claim about OML's roles, SET LOCAL across pooled transactions, the hostile cross-tenant probe), on which versions, what failed and why, which channel the role split closes and which it does not, and what each finding asks of the design
 -->
 
 # Findings: spike 3, RLS hardening
 
-**Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (decided 2026-10-31: the role split, the migration ledger as d2's one exemption and a per-tenant FTS index, proposed as ADR-0034), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run
+**Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (decided 2026-10-31: the role split, the migration ledger as d2's one exemption and a per-tenant FTS index, proposed as ADR-0034), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run; 2026-11-03, over migration 0009's per-tenant partitions, the owner's estimate check passes on 18.6 and the pinned pg17 has not run over them
 
 These are the findings for the four scenarios of the critical path's
 [spike 3](../../product/critical-path.md#spike-3-rls-hardening), one per scenario, in its
@@ -46,10 +46,18 @@ to tenant A along two channels:
   whose query the policy binds, the service role included. CI's `S3.4/service/estimate` will
   measure that, and has not run. The role split does not close this channel.
 
-The three owner checks behind the two failures (`S3.1/owner/pg_stats`, `S3.4/owner/pg_stats`,
-`S3.4/owner/estimate`) are entries in the harness's `RECORDED_FAILURES`. CI stays green while they
-reproduce, and fails when they stop. The two service-role checks are not on the list, so CI fails
-if either leaks. Recording a failure does not settle it: each finding says ADR amendment needed
+The harness's `RECORDED_FAILURES` held the two `estimate` checks alone, `S3.4/owner/estimate` and
+`S3.4/service/estimate` ([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
+d9 and d10 step 2), and CI stayed green while they reproduced. Over migration 0009's per-tenant
+partitions (ADR-0034 d11) `S3.4/owner/estimate` passed in the owner-only run on 18.6 on
+2026-11-03, and the service role's is read to pass under the same policy, so the list is now empty,
+as ADR-0034 d10 step 4 and d11 state ([S3.4](#s34), "Over per-tenant partitions"); CI's pinned
+pg17 run, which measures the service role too, has not run over them. Since d9 the
+harness migrates as the lead does, `_sqlx_migrations` created as sqlx creates it and the service
+role holding only the grants the migrations make it through `oml.serving_role`. The owner serves
+nothing under the split, so `S3.1/owner/pg_stats` and `S3.4/owner/pg_stats`, which failed in the
+runs recorded below, are now controls: the owner's view must show tenant B's lexemes, or the
+service role's `S3.4/service/pg_stats` check, which is not on the list, could not have caught them. Recording a failure does not settle it: each finding says ADR amendment needed
 until the maintainer decides, and the harness prints the same action. The run seeded every table
 of migrations 0001–0005, so no table was left unprobed.
 
@@ -442,6 +450,20 @@ the source, not a measurement. CI's `S3.4/service/estimate` will measure it, and
 is not on the recorded list, so if the reading holds, CI fails on its first run, and this
 finding records the result then. No role split closes this channel.
 
+**Over per-tenant partitions (2026-11-03).** Migration 0009 rebuilds `memories` as one partition
+per tenant, each with its own statistics and GIN index (ADR-0034 d11). The owner-only run on the
+host's 18.6 on 2026-11-03 passed `S3.4/owner/estimate`: under tenant A, EXPLAIN estimated 2 rows
+for `secret` and 2 for `zzzunusedword`, and both queries returned 0. The planner evaluates the
+policy's `current_setting('oml.tenant_id', true)` for its estimate, and the statistics of tenant
+B's partition hold tenant B's `tenant_id` alone, so the policy's tenant A selects none of its
+rows and the estimate takes the one-row floor, whatever the word; tenant A's own partition
+estimates from tenant A's lexemes. That is a measurement on 18.6 for the owner and a reading of
+the planner for the service role, which runs under the same policy. CI's `S3.4/service/estimate`
+on the pinned pg17 has not run over the partitions. What the partitions leave stays as d11
+states (FR-45): each other tenant's partition still adds its floor row to the estimate, and its
+`reltuples`, its bound and its name, which carries the tenant's id, are in the catalog for every
+role.
+
 **Observed: none of these reads a tenant B row, and the security pass should weigh each.**
 
 - **RLS keeps the GIN index out of every FTS plan.** `@@` (`ts_match_vq`) is not leakproof, and
@@ -469,7 +491,10 @@ finding records the result then. No role split closes this channel.
   `memories.created_event_id` → `journal(event_id)` and `review_queue.memory_id` → `memories(id)`.
   The adapter's ancestry walk already refuses a parent outside the tenant. 0004 gave `grants` and
   `key_denials` foreign keys that name the tenant, and these three references could take the same
-  form, which is a migration item.
+  form, which is a migration item. Since 0008 they do, with `api_keys.default_workarea_id` and
+  `rotated_from` (ADR-0034 d12), and S3.4 checks each as `S3.4/<role>/<table>.<column>`: under
+  tenant A, a reference to tenant B's row must be refused as one to no row is, and tenant A's own
+  target accepted. The checks are not on `RECORDED_FAILURES`; the pinned pg17 has not run them.
 - **A global unique index is an oracle.** A tenant A key row carrying tenant B's key hash is
   refused with `23505` on `api_keys_hash_key`. Using the oracle needs the hash, which is the
   SHA-256 of a secret key value.

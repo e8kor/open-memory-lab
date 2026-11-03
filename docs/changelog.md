@@ -29,6 +29,136 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — Releases ship the Claude Code plugins and an agent kit (implementation)
+
+An implementation milestone with no decision or surface change: each tag also ships the oml and
+oml-admin plugins as an offline marketplace archive and as a marketplace pinned to the tag, and an
+agent kit of MCP configurations for other agent tools, signed and summed with the binaries
+([release artifacts](engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+
+### 2026-11-03 — The lead serves as a role that owns nothing (implementation)
+
+An implementation milestone; no decision changes. The code now builds d10's steps 2 to 4 of the
+proposed [ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), the work
+v0.3.1 carries. The record stays proposed: no Status line moves, `info.version` stays
+`0.3.0-design`, no `spec-v0.3` tag is cut, and no package version moves until the release.
+
+- **The split** (d2, d3, d6). Migration `0007_role_split.sql` grants the serving role only the
+  DML each table's adapter statements use, named through `oml.serving_role`, and revokes every
+  privilege on `_sqlx_migrations` and `CREATE` on `public` from `PUBLIC`
+  ([postgres-schema](data/postgres-schema.md#privileges)).
+- **The boot** (d4, d5). `oml-server-lead` requires `postgres.owner_url`
+  (`OML_POSTGRES__OWNER_URL`), runs d5's checks, migrates on the owner pool, runs the checks
+  again and closes that pool before its keyring and listener. A refusal exits non-zero before any
+  listener binds, logged with `event` `role_split_refused`, `code` `postgres.role_split` and `reason`
+  one of d5's nine names; a catalog read that failed refuses the same way with its `error` in
+  place of a reason. The boot that serves logs `event` `role_split_booted` with `owner_role` and
+  `serving_role`. The lines are plain text, not yet the JSON of
+  [observability](operations/observability.md#structured-logging). No `oml doctor` field is added:
+  a refused lead binds no listener for doctor to read.
+- **Keys carrying `tenant_id`** (d12). Migration `0008_tenant_keys.sql` rewrites the five keys
+  into tenant tables as `(tenant_id, col)` and drops the keys of `journal.api_key_id` and
+  `api_keys.issued_by` ([postgres-schema](data/postgres-schema.md#keys-into-tenant-tables)).
+- **Per-tenant FTS partitions** (d11, d13). Migration `0009_memories_partitions.sql`
+  list-partitions `memories` by `tenant_id`, and the owner creates each new tenant's fenced
+  partition before its genesis commits; a DDL that loses a lock contest answers
+  `system.unavailable` with `details.reason` `partition_lock_timeout`, a reason
+  [errors](api/errors.md) names at the record's acceptance. Every adapter statement on `memories`
+  binds its tenant. No function is marked `LEAKPROOF`, so an FTS read scans its tenant's
+  partition, and its latency per tenant size is unmeasured (FR-25)
+  ([postgres-schema](data/postgres-schema.md#the-built-fts-index-per-tenant-partitions)).
+- **The payloads** (d2, d7, d8). `docker-compose.yml` and the chart's kind job create `oml_owner`
+  and `oml_server`, the chart's Secret carries both URLs, and `scripts/poc-demo.sh`, every Postgres
+  suite and both SDK harnesses mint a uniquely named pair, which takes a superuser. Under a role
+  that cannot create roles a suite prints `did not run: <role> cannot create roles`; CI sets
+  `OML_TEST_REQUIRE_SPLIT=1`, which fails on it. `rls-spike` migrates as the lead does and records
+  no failure, its two `estimate` checks passing over the partitions or failing the run (d9).
+- **Not built or not run:** the live host's split (d7), not run; the bootstrap workload, which
+  would take the migrations and the partition DDL from the lead (d4); the `oml doctor` role-split
+  check [observability](operations/observability.md#per-profile-checks) designs for the
+  standalone and docker profiles. CI's pinned PostgreSQL 17 has not run over the partitions.
+- **No surface change:** no HTTP operation, error code or event type.
+- **Pages touched:** [postgres-schema](data/postgres-schema.md), the
+  [spike 3 findings](engineering/spikes/spike-3-rls.md) and the [M0 spikes](engineering/spikes/index.md)
+  page, [SDKs](engineering/sdks.md), README, CONTRIBUTING, the SDK and chart READMEs,
+  `release.yml`'s install notes, the Dockerfile's comment and this page.
+
+### 2026-11-03 — v0.3.1 ships per-tenant FTS partitions with no `LEAKPROOF` wrapper (ADR-0034, proposed)
+
+[ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), still proposed, joins the
+v0.3.1 work and records as d13 what the maintainer decided on 2026-11-03: v0.3.1 ships d11's
+per-tenant partitions with no superuser `LEAKPROOF` wrapper; search latency per tenant size is
+measured first (FR-25), and the `LEAKPROOF` step is decided later on those numbers. The wrapper,
+until now a rejected alternative, is deferred with that reason. d10's step 1 is recorded as done
+by #8 and #9, released as v0.3.0, and its step 5 names v0.3.1 as the release that carries steps 2
+to 4. The record's Context links the spike 3 findings, now in this tree, and d9 names the harness
+by its path.
+
+A confirming review narrowed the record: d11 states the DDL that creates a partition (`LIKE`, then
+`ATTACH PARTITION` under a lock timeout, named by tenant id), that it runs with no serving
+transaction open, the codes a failed DDL answers and the partition a failed genesis leaves; d2's owner
+owns what the migrations create, extension members excepted, and d7's superuser path moves
+`oml_name` and leaves `ltree` with the superuser; d8 names the local not-run and CI's
+`OML_TEST_REQUIRE_SPLIT`; d10's step 2 adds the SDK harnesses, their jobs and the release notes, and
+the demo mints its role pair instead of using d2's fixed names.
+
+- **Roadmap:** no row opens or closes. At the record's acceptance FR-25's exit criterion names
+  search latency at stated tenant sizes.
+- **No surface change:** `info.version` stays `0.3.0-design`.
+- **Pages touched:** the record, its [register](adr/index.md) row and this page.
+- **Not built.**
+
+### 2026-11-03 — The CLI ships apart from the server (implementation)
+
+An implementation milestone; no decision changes, and no tag has run the new jobs. The maintainer
+decided on 2026-10-31 that the `oml` CLI ships as release artifacts of its own.
+
+- **Archives.** `.github/workflows/release.yml` replaces `oml-X.Y.Z-x86_64-linux.tar.gz` with
+  `oml-cli-X.Y.Z-<target>` archives for two static musl Linux targets, two macOS targets and
+  Windows, each built on a native runner, and `oml-server-lead-X.Y.Z-<target>.tar.gz` for x86_64
+  and aarch64 Linux; one job writes a CycloneDX SBOM per archive and one `SHA256SUMS`, and signs
+  every archive, SBOM and the sums with cosign under the existing identity
+  ([CI and toolchain](engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+  The image and chart jobs are unchanged.
+- **Before a tag.** `ci.yml` job `cli-matrix` builds `oml`, runs `--version` and runs the CLI's
+  unit tests on every CLI target's runner; `scripts/check_release.py` holds both workflows to the
+  target list.
+- **Windows.** The credentials file and the `--out` key file get a protected one-entry DACL for
+  the current user on Windows, set on a handle opened with no sharing, and mode `0600` on Unix; any
+  other platform refuses. The credentials default to `%USERPROFILE%` when `HOME` is unset. The
+  plugin's POSIX-shell hook runs on Windows only under Git Bash; a portable command would change
+  [ADR-0029](adr/ADR-0029-session-start-hook.md) d7 and is not made
+  ([CLI reference](cli/reference.md#installing-oml-and-what-differs-on-windows)).
+
+### 2026-10-31 — The lead serves as a role that owns nothing (ADR-0034, proposed)
+
+[ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), proposed on 2026-10-31 and accepted
+by the maintainer on 2026-11-03 with release v0.3.1, records what the maintainer decided that day on M0 spike 3's findings: `FORCE ROW LEVEL SECURITY`
+fences table reads only, an owner/serving role split keeps the `pg_stats` view and DDL from every
+workload, and `_sqlx_migrations` is ADR-0007 d2's one named exemption, reachable by the owner
+alone. After the spike's first pinned PostgreSQL 17.11 run, the maintainer added that the FTS
+index becomes per tenant and that foreign keys into tenant tables carry `tenant_id`, as
+implementation fixes of what ADR-0007 d4 already decides. It decides the two roles and their
+privileges, the lead's boot under `postgres.owner_url` and `postgres.url`, the startup refusal
+`postgres.role_split` when one URL serves both, the one-time split of a single-role install with
+the live host's entry marked not run, `memories` list-partitioned by `tenant_id` with a GIN index
+per partition that the owner creates at tenant creation (d11), the composite keys (d12), the
+checks, the `rls-spike` change and the build order after iteration 3. What the per-tenant index
+leaves open, EXPLAIN's estimate and per-tenant catalog counts and ids, is FR-45. Numbers 0027 and
+0030 to 0032 are taken by records on other branches. It amends ADR-0007 (d2), whose Status line gains the
+back-pointer at acceptance; it binds nothing before then.
+
+- **Opened:** FR-44 and FR-45 on the [roadmap](product/roadmap.md), marked proposed; FR-34 to
+  FR-36 and FR-40 to FR-43 are used on other branches.
+- **No surface change:** no HTTP operation, error code or event type; `info.version` stays
+  `0.3.0-design`.
+- **Pages touched:** the record, its [register](adr/index.md) row, `mkdocs.yml`, `llms.txt`,
+  the roadmap and this page.
+  security.md, configuration.md, deployment.md, upgrades.md, postgres-schema.md, retrieval.md,
+  the critical path and ADR-0007 change at the record's acceptance, and did on 2026-11-03 with
+  the register's D6 cell, FR-25's exit criterion and errors.md's `system.unavailable` row.
+- **Not built.**
+
 ### 2026-10-31 — Names as keys (implementation)
 
 An implementation milestone; no decision changes. The code now serves what the proposed

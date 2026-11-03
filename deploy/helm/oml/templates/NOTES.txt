@@ -9,11 +9,15 @@ token in the pod log can claim that key first. Claim it now (step 3), or run
 helm upgrade with --set ingress.enabled=false until you have.
 {{- end }}
 
-1. The lead reads its Postgres URL from Secret {{ .Values.postgres.secretName }}, key {{ .Values.postgres.secretKey }}.
-   Without it the pod waits in CreateContainerConfigError. To create it:
+1. The lead reads two Postgres URLs from Secret {{ .Values.postgres.secretName }}: the serving
+   role's, key {{ .Values.postgres.secretKey }}, and the owner role's, which owns the database and
+   runs the migrations, key {{ .Values.postgres.ownerSecretKey }}. Two roles, each with LOGIN
+   alone; the lead refuses to start when both URLs log in as one role. Without the
+   Secret the pod waits in CreateContainerConfigError. To create it:
 
      kubectl --namespace {{ $ns }} create secret generic {{ .Values.postgres.secretName }} \
-       --from-literal={{ .Values.postgres.secretKey }}='postgres://USER:PASSWORD@HOST:5432/DATABASE'
+       --from-literal={{ .Values.postgres.secretKey }}='postgres://SERVING_ROLE:PASSWORD@HOST:5432/DATABASE' \
+       --from-literal={{ .Values.postgres.ownerSecretKey }}='postgres://OWNER_ROLE:PASSWORD@HOST:5432/DATABASE'
 
 2. Wait for the lead to be ready:
 

@@ -57,7 +57,17 @@ workarea, and by no other key
 Two indexes over promoted rows, both in Postgres, both under tenant RLS:
 
 - **Full-text search**: `memories_fts`, a `tsvector` index over promoted claim
-  text.
+  text, per tenant: its table is list-partitioned by `tenant_id`, each
+  partition with its own index, which the owner role creates before the
+  tenant's first commit, so no index spans tenants. Every statement binds its
+  tenant, so a read reaches its tenant's partition alone, and row-level
+  security stays the fence. No function is marked `LEAKPROOF`, so an FTS read
+  scans its tenant's partition rather than using its index; its latency per
+  tenant size is unmeasured ([FR-25](../product/roadmap.md)). The built form
+  today is the PoC's `memories_claim_fts` over `memories`
+  ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
+  d11, d13;
+  [postgres-schema](../data/postgres-schema.md#the-built-fts-index-per-tenant-partitions)).
 - **Vector search**: `memory_embeddings`, embeddings over promoted claim text.
 
 Of the rows they admit, the indexes hold every promoted version, superseded

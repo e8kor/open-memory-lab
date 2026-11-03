@@ -16,6 +16,39 @@ claude plugin marketplace add e8kor/open-memory-lab
 claude plugin install oml@open-memory-lab
 ```
 
+### One release, or offline
+
+From the first release that carries them, each release attaches the plugins in two more forms,
+each signed with cosign and listed in `SHA256SUMS`. To install exactly one release, pin the
+marketplace to its tag:
+
+```sh
+claude plugin marketplace add e8kor/open-memory-lab#vX.Y.Z
+```
+
+or verify `oml-marketplace-X.Y.Z.json`, whose sources are this repository at that tag and its
+commit, and add it from a directory:
+
+```sh
+v=X.Y.Z
+base=https://github.com/e8kor/open-memory-lab/releases/download/v$v
+curl -fsSLO "$base/oml-marketplace-$v.json" -O "$base/oml-marketplace-$v.json.sigstore.json"
+cosign verify-blob \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' \
+  --bundle "oml-marketplace-$v.json.sigstore.json" "oml-marketplace-$v.json" \
+  && mkdir -p oml-marketplace/.claude-plugin \
+  && cp "oml-marketplace-$v.json" oml-marketplace/.claude-plugin/marketplace.json \
+  && claude plugin marketplace add ./oml-marketplace
+```
+
+With no network, take `oml-claude-plugins-X.Y.Z.tar.gz` (or `.zip`) instead: verify it the same
+way, extract it, and run `claude plugin marketplace add ./oml-claude-plugins-X.Y.Z`. Claude Code
+reads the plugins from that directory in place, so keep it where you extracted it. Every form
+names the marketplace `open-memory-lab`, so `claude plugin install oml@open-memory-lab` installs
+from whichever you added, and you hold one of them at a time. See
+[release artifacts](../../docs/engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance).
+
 The plugin registers one MCP connection, `oml`, and every tool runs on the one key behind
 it. Issue that key with the writer role, a writer grant and a reader grant on the agent's
 workarea, and that workarea as its default. A key without the reader grant still writes,
@@ -58,6 +91,51 @@ value goes to a new owner-only file and the second line reads it from there; the
 plugin in this marketplace runs it that way from inside Claude Code, so the value never enters
 the conversation. See the
 [CLI reference](../../docs/cli/reference.md#oml-keys-issuance-revocation-rotation).
+
+## The `oml` CLI
+
+The session-start hook below and key issuance need the `oml` CLI on your `PATH`. From the first
+release that carries them, each release attaches it as `oml-cli-X.Y.Z-<target>.tar.gz`, or `.zip`
+on Windows, with a signature bundle beside each archive. Verify the archive, then extract it:
+
+Linux, on x86_64 (on arm64, `t=aarch64-unknown-linux-musl`); the binary is static, so it runs on
+any distribution:
+
+```sh
+v=X.Y.Z t=x86_64-unknown-linux-musl          # the release and your target
+base=https://github.com/e8kor/open-memory-lab/releases/download/v$v
+curl -fsSLO "$base/oml-cli-$v-$t.tar.gz" -O "$base/oml-cli-$v-$t.tar.gz.sigstore.json"
+cosign verify-blob \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' \
+  --bundle "oml-cli-$v-$t.tar.gz.sigstore.json" "oml-cli-$v-$t.tar.gz" \
+  && tar -xzf "oml-cli-$v-$t.tar.gz" \
+  && install -D -m 0755 "oml-cli-$v-$t/oml" ~/.local/bin/oml
+```
+
+macOS: the same lines with `t=aarch64-apple-darwin` (Apple silicon) or `t=x86_64-apple-darwin`
+(Intel), with the last line `install -m 0755 "oml-cli-$v-$t/oml" /usr/local/bin/oml`, or any
+directory on your `PATH`.
+
+Windows, in PowerShell:
+
+```powershell
+$v = "X.Y.Z"; $t = "x86_64-pc-windows-msvc"; $n = "oml-cli-$v-$t"
+$base = "https://github.com/e8kor/open-memory-lab/releases/download/v$v"
+Invoke-WebRequest "$base/$n.zip" -OutFile "$n.zip"
+Invoke-WebRequest "$base/$n.zip.sigstore.json" -OutFile "$n.zip.sigstore.json"
+cosign verify-blob `
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com `
+  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' `
+  --bundle "$n.zip.sigstore.json" "$n.zip"
+if ($LASTEXITCODE -eq 0) { Expand-Archive "$n.zip" -DestinationPath . }
+```
+
+Then put `$n\oml.exe` in a directory on your `PATH`. Extract only after `cosign verify-blob`
+exits 0: an archive that does not verify is not a release.
+
+On Windows the hook runs only when Git for Windows, which provides Git Bash, is installed. See
+the [CLI reference](../../docs/cli/reference.md#installing-oml-and-what-differs-on-windows).
 
 ## Every session starts from memory
 
@@ -112,6 +190,13 @@ works:
   }
 }
 ```
+
+Each release, from the first that carries it, also attaches `oml-agent-kit-X.Y.Z.tar.gz` (and
+`.zip`), signed like the archives above: the configuration in each tool's own form for OpenAI
+Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop, an `AGENTS.md` block with this
+plugin's skill, and a Gemini CLI session-start hook running the same `oml hook session-start`.
+Its README, [kit/README.md](../../kit/README.md), cites each tool's documentation and marks what
+that documentation does not settle as unverified.
 
 ## What is served today
 

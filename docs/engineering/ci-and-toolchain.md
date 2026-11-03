@@ -53,6 +53,7 @@ ratchet that only ever loosens, so it starts tight:
 | Docs | `cargo doc` with `RUSTDOCFLAGS="-D warnings"` | every public item documented; broken intra-doc links fail |
 | Site | `mkdocs build --strict` | this documentation set keeps building; a broken link is a failure, not a warning |
 | Chart | `scripts/check_chart.py`, then job `chart`: a kind cluster, `pgvector/pgvector:pg17` in it, the image built from the checkout, `helm install`, the claim through `kubectl port-forward`, `scripts/quickstart.sh`, a restart, and an uninstall and reinstall | the Helm chart renders the one lead [ADR-0033](../adr/ADR-0033-interim-helm-chart.md) decides, at the workspace version and as the image's own user, and that lead serves the quickstart after a real install and keeps its signing key across a restart and a reinstall |
+| CLI platforms | job `cli-matrix`: `cargo build --bin oml`, `oml --version` and `cargo test -p oml-cli --lib --bins`, each on the native runner of one CLI release target | every platform the CLI ships for still builds and passes its unit tests, before a tag ([release artifacts](#release-artifacts-sbom-signing-provenance)) |
 | Schema sync | sqlx offline check: compile-time-checked queries against committed query metadata, regenerated whenever `migrations/` changes | queries and migrations cannot drift apart silently; the companion shape-vs-bytes rule is declared in the [schema page](../data/postgres-schema.md#migrations) |
 | M0 spikes | `uv run --locked --script scripts/check_chain_vectors.py`; `uv run --locked --script testing/spikes/rls/spike_rls.py --require-all` against `pgvector/pgvector:pg17` | the chain-format vectors keep reproducing outside Rust and the Rust tests' copies of them keep equalling the page, and spike 3's findings keep standing, recorded failures included ([M0 spikes](spikes/index.md)) |
 
@@ -109,8 +110,7 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   not native to its platform, emulates `linux/arm64`. A merge job (`merge`) assembles the index
   with `docker buildx imagetools create`, asserts that both platforms are in it, and only then
   signs the **index digest** with `cosign sign --recursive`, which also signs each platform
-  image in it, so the verification command above covers both architectures. The binary
-  tarballs stay `x86_64-linux` only, and the release notes say so. In CI, the `image` job of
+  image in it, so the verification command above covers both architectures. In CI, the `image` job of
   `.github/workflows/ci.yml` builds both platforms on every pull request and runs the image's
   `oml --version` on each, and `scripts/check_release.py` fails the pull request if
   `release.yml` stops building both platforms, assembling the index or signing its digest. No
@@ -119,6 +119,38 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   `docker buildx imagetools inspect` lists both platforms and `cosign verify` passes on its
   index digest. A tag's release notes name both platforms because that run's merge job asserted
   them before signing.
+- **The CLI and server archives (built, not yet released).** The CLI ships apart from the server,
+  a decision the maintainer made on 2026-10-31. A tag ships `oml-cli-X.Y.Z-<target>.tar.gz`, the
+  `oml` binary with the README and licence, for `x86_64-unknown-linux-musl` and
+  `aarch64-unknown-linux-musl` (static, so they run on any distribution), `aarch64-apple-darwin`
+  and `x86_64-apple-darwin`, and `oml-cli-X.Y.Z-x86_64-pc-windows-msvc.zip`; and
+  `oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
+  `aarch64-unknown-linux-gnu`. `release.yml` job `cli` builds each CLI target on a runner of its
+  own OS and architecture — `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `macos-15-intel` and
+  `windows-2025`, labels GitHub lists for public repositories
+  ([GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
+  fetched 2026-11-03) — and packages it only after the binary prints the tag's version; a musl
+  binary must also carry no program interpreter. Both musl legs compile ring's C with `musl-gcc`, the
+  wrapper Ubuntu's `musl-tools` ships for the runner's own architecture, named in
+  `CC_x86_64_unknown_linux_musl` and `CC_aarch64_unknown_linux_musl` of the job's env, and link
+  Rust's self-contained musl with the runner's own `cc`, so no cross toolchain is pinned. The
+  name is needed on the arm64 runner: the `cc` crate (1.10.0 in `Cargo.lock`) counts
+  `aarch64-unknown-linux-musl` as a cross compile there and would otherwise call
+  `aarch64-linux-musl-gcc`, which `musl-tools` does not ship
+  ([noble arm64 file list](https://packages.ubuntu.com/noble/arm64/musl-tools/filelist),
+  fetched 2026-11-03); `scripts/check_release.py` requires both variables in job `cli` and in
+  `ci.yml` job `cli-matrix`. Job `server` builds the server on `ubuntu-22.04` and
+  `ubuntu-22.04-arm`, whose glibc is the oldest the listed Linux runners carry. Job `binaries`, once
+  every archive exists, writes one SBOM per archive with `cargo cyclonedx --target <target>`
+  (`<archive stem>.cdx.json`), one `SHA256SUMS` over every archive and SBOM, and then signs every
+  archive, every SBOM and `SHA256SUMS` with `cosign sign-blob`, under the identity above. In CI,
+  job `cli-matrix` of `.github/workflows/ci.yml` builds `oml` on the same target and runner pairs
+  on every pull request, runs its `--version` and runs the CLI's unit tests, the Windows
+  owner-only file tests among them ([CLI reference](../cli/reference.md#installing-oml-and-what-differs-on-windows));
+  the end-to-end suite stays on Linux, where Postgres runs. `scripts/check_release.py` fails the
+  pull request if `release.yml` stops building, packaging, summing or signing any target, or if
+  `cli-matrix` stops covering one. No tag has run these jobs yet, and until a pull request runs
+  `cli-matrix`, no macOS or Windows build of `oml` has run anywhere.
 - **The Helm chart (built, not yet released).** A tag also ships `oml-X.Y.Z.tgz`, the chart at
   `deploy/helm/oml` ([ADR-0033](../adr/ADR-0033-interim-helm-chart.md) d10), and its
   `.sigstore.json` bundle. `release.yml` job `chart` checks that the chart's `version` and
@@ -127,6 +159,47 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   `cosign verify-blob` lines to the release notes. `scripts/check_release.py` fails the pull
   request if `release.yml` stops doing any of that. No chart repository is published, and no tag
   has run these jobs yet.
+- **The agent artifacts (built, not yet released).** A tag also ships five files, which the
+  maintainer asked for on 2026-11-03, all written by `scripts/package_agent_artifacts.py` from the
+  repository's tracked files:
+    - `oml-claude-plugins-X.Y.Z.tar.gz` and `.zip`: `.claude-plugin/marketplace.json`,
+      `plugins/oml`, `plugins/oml-admin` and the licence in one directory. The marketplace's
+      sources are relative paths, which resolve from the marketplace root, the directory holding
+      `.claude-plugin/`, so `/plugin marketplace add <extracted directory>` installs both plugins
+      with no network; Claude Code reads a relative-path plugin from that directory in place, so
+      the directory stays where it was extracted
+      ([Create a marketplace](https://code.claude.com/docs/en/plugin-marketplaces) and the
+      [marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference),
+      both fetched 2026-11-03).
+    - `oml-marketplace-X.Y.Z.json`: the same marketplace with each source a `git-subdir` of this
+      repository, its `ref` the tag and its `sha` the tag's commit; when both are set, Claude Code
+      checks out the `sha` (marketplace reference, fetched 2026-11-03). A marketplace added by URL
+      is downloaded as that one file, so no source in it may be relative; the release notes add
+      this one from a directory instead, a `directory` marketplace source. A GitHub marketplace is
+      pinned with `#<ref>` too, as in `claude plugin marketplace add e8kor/open-memory-lab#vX.Y.Z`
+      ([Host and maintain a marketplace](https://code.claude.com/docs/en/plugins/host-marketplace),
+      fetched 2026-11-03). Every form names the marketplace `open-memory-lab`, and Claude Code
+      registers one marketplace per name, so a user holds one of them at a time.
+    - `oml-agent-kit-X.Y.Z.tar.gz` and `.zip`: MCP configurations for OpenAI Codex CLI, Cursor,
+      Gemini CLI, VS Code and Claude Desktop, each naming `/mcp` with the key from `OML_API_KEY`;
+      an `AGENTS.md` block whose sections are the oml plugin's skill, verbatim; a Gemini CLI
+      `SessionStart` hook running the plugin's guarded `oml hook session-start` command; and
+      `kit/README.md`, which cites each tool's documentation with its fetch date and marks what
+      that documentation does not settle as unverified. Cursor's `sessionStart` hook reads and
+      writes other fields than the verb does, so the kit wires none there.
+
+    `release.yml` job `agents` runs `scripts/check_agent_kit.py`, then packages the five files
+    with the tag's version, the repository and the tag's commit. Job `binaries` needs it, requires
+    each of the five among the files it downloads, lists them in `SHA256SUMS` and signs each with
+    `cosign sign-blob` under the identity above. The archives are deterministic: sorted entries,
+    fixed timestamps and modes. In CI, job `plugin` of `ci.yml` runs `scripts/check_agent_kit.py`,
+    which builds the five files, reads both archives back and fails if a `.tar.gz` and its `.zip`
+    differ, if a plugin source does not resolve inside the archive, if the pinned marketplace names
+    another ref, if a kit configuration does not reach `/mcp` with `OML_API_KEY` in its tool's
+    environment form or holds a literal key, if the `AGENTS.md` block differs from the skill, or if
+    the Gemini CLI hook is not the plugin's command. `scripts/check_release.py` fails the pull
+    request if `release.yml` stops packaging, requiring, summing or signing them. No tag has run
+    job `agents` yet.
 - **SLSA provenance is a target, not a claim.** The intended level is SLSA Build L2-equivalent —
   provenance generated by the hosted build, signed, covering source revision and build
   parameters. Until a release actually ships with verifiable provenance, no page calls OML

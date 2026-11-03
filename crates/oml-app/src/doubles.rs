@@ -137,6 +137,13 @@ pub struct MemStore {
     miss_next_lookup: Arc<AtomicBool>,
     /// How many names `resolve_name` has looked up, across every handle.
     name_lookups: Arc<AtomicU64>,
+    /// The tenants whose partitions `create_tenant_partitions` created, in
+    /// creation order: a held memory's row needs its tenant's partition, as
+    /// the list-partitioned `memories` refuses a row no partition holds
+    /// (postgres-schema.md, the per-tenant partitions; ADR-0034 d11).
+    partitions: Arc<Mutex<Vec<Uuid>>>,
+    /// The next partition creation's refusal, then forgotten.
+    refuse_partition: Arc<Mutex<Option<StoreError>>>,
 }
 
 impl MemStore {
@@ -165,6 +172,31 @@ impl MemStore {
     /// compare-and-set, armed on any handle mid-test.
     pub fn refuse_next_commit_of(&self, event_type: &'static str, error: StoreError) {
         *self.refuse_next.lock().expect("refusal lock") = Some((event_type, error));
+    }
+
+    /// Refuses the next `create_tenant_partitions` with `error`, creating
+    /// nothing, then creates normally again: a lock timeout or a failed DDL,
+    /// which the use-case cannot provoke through an honest store (ADR-0034
+    /// d11).
+    pub fn refuse_next_partition(&self, error: StoreError) {
+        *self
+            .refuse_partition
+            .lock()
+            .expect("partition refusal lock") = Some(error);
+    }
+
+    /// Test visibility: the tenants whose partitions were created, in
+    /// creation order, a partition a failed genesis commit left included.
+    #[must_use]
+    pub fn partitions(&self) -> Vec<Uuid> {
+        self.partitions.lock().expect("partitions lock").clone()
+    }
+
+    /// Test visibility: how many tenant rows the store holds, the rows a
+    /// `tenant.genesis` or a naming gave a name.
+    #[must_use]
+    pub fn tenant_count(&self) -> usize {
+        self.tenant_names.lock().expect("tenant names lock").len()
     }
 
     /// Answers the next idempotency lookup with no record, whatever is
@@ -235,6 +267,12 @@ impl MemStore {
             staged.events.push(event);
         }
         *state = staged;
+        // Migration 0009 gives every tenant it finds its partition
+        // (ADR-0034 d11).
+        self.partitions
+            .lock()
+            .expect("partitions lock")
+            .push(tenant_id);
         Ok(())
     }
 }
@@ -455,6 +493,18 @@ fn require_crew(state: &TenantState, crew_id: Option<Uuid>) -> Result<(), StoreE
     }
 }
 
+/// A workarea's parent must be its own tenant's node, as the tenant-scoped
+/// foreign key `(tenant_id, parent_id)` requires: another tenant's node is
+/// refused as no node is (postgres-schema.md `workareas`; ADR-0034 d12).
+fn require_parent(state: &TenantState, parent_id: Option<Uuid>) -> Result<(), StoreError> {
+    match parent_id {
+        Some(parent_id) if !state.workareas.contains_key(&parent_id) => Err(StoreError::Backend(
+            format!("parent workarea {parent_id} is not held by this tenant"),
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Names the tenant at its genesis, as the `tenants` row does: a tenant
 /// that has its row keeps it, name included, and a name another tenant
 /// holds is refused (postgres-schema.md names and tenants; ADR-0026 d1).
@@ -529,6 +579,7 @@ fn apply_fold(
                 &workarea.name,
             )?;
             require_crew(state, workarea.crew_id)?;
+            require_parent(state, workarea.parent_id)?;
             state.workareas.insert(workarea.workarea_id, workarea);
         }
         MetadataFold::CrewCreated(crew) => {
@@ -871,6 +922,20 @@ impl JournalStore for MemStore {
                 return Err(error);
             }
         }
+        // A held memory's row needs its tenant's partition (ADR-0034 d11).
+        if let Some(req) = reqs.iter().find(|r| {
+            matches!(r.fold, MetadataFold::MemoryHeld { .. })
+                && !self
+                    .partitions
+                    .lock()
+                    .expect("partitions lock")
+                    .contains(&r.event.envelope.tenant_id)
+        }) {
+            return Err(StoreError::Backend(format!(
+                "no partition of memories holds tenant {}",
+                req.event.envelope.tenant_id
+            )));
+        }
         // The deployment's tenant names, which a genesis and a naming give.
         let tenant_names: Vec<(bool, Name)> = reqs
             .iter()
@@ -921,6 +986,26 @@ impl JournalStore for MemStore {
         }
         *state = staged;
         Ok(receipt)
+    }
+
+    async fn create_tenant_partitions(&self, tenant_id: Uuid) -> Result<(), StoreError> {
+        if let Some(error) = self
+            .refuse_partition
+            .lock()
+            .expect("partition refusal lock")
+            .take()
+        {
+            return Err(error);
+        }
+        let mut partitions = self.partitions.lock().expect("partitions lock");
+        if partitions.contains(&tenant_id) {
+            // The relation exists already, as CREATE TABLE refuses it.
+            return Err(StoreError::Partition(format!(
+                "tenant {tenant_id} already has its partition"
+            )));
+        }
+        partitions.push(tenant_id);
+        Ok(())
     }
 
     async fn chain_head(&self, tenant_id: Uuid) -> Result<Option<ChainHead>, StoreError> {

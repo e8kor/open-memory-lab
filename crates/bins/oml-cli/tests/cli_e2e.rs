@@ -36,12 +36,92 @@ fn base_url() -> String {
         .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
 }
 
-fn db_url(name: &str) -> String {
+/// The password of every minted test role; the roles live only as long as
+/// their throwaway database.
+const PAIR_PASSWORD: &str = "oml_test_pair";
+
+/// `db` at `DATABASE_URL`'s host, logged in as `role`.
+fn role_url(db: &str, role: &str) -> String {
     let base = base_url();
-    let (prefix, _) = base
-        .rsplit_once('/')
+    let (scheme, rest) = base
+        .split_once("://")
+        .expect("DATABASE_URL is a postgres:// URL");
+    let (_, host_path) = rest.rsplit_once('@').expect("DATABASE_URL names its user");
+    let (host, _) = host_path
+        .split_once('/')
         .expect("DATABASE_URL names a database path");
-    format!("{prefix}/{name}")
+    format!("{scheme}://{role}:{PAIR_PASSWORD}@{host}/{db}")
+}
+
+/// `db` through the owner login of its role pair (ADR-0034 d2, d8).
+fn owner_url(db: &str) -> String {
+    role_url(db, &format!("{db}_owner"))
+}
+
+/// `db` through the serving login of its role pair (ADR-0034 d2, d8).
+fn serving_url(db: &str) -> String {
+    role_url(db, &format!("{db}_serving"))
+}
+
+/// Eight hex digits of the clock, so a name a crashed earlier run left
+/// behind on the cluster under the same pid and counter is not reused.
+fn run_tag() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .subsec_nanos();
+    format!("{nanos:08x}")
+}
+
+/// Mints `db`'s owner/serving role pair, `LOGIN` and no other attribute,
+/// and creates `db` owned by the owner (ADR-0034 d2, d8); `false`, with
+/// `did not run: <role> cannot create roles` printed, when `DATABASE_URL`'s
+/// role is not the superuser minting takes, as the maintainer's local `oml`
+/// (CREATEDB alone) is not. Under `OML_TEST_REQUIRE_SPLIT=1`, which CI sets,
+/// the same condition fails the test, so no run passes vacuously.
+async fn mint_database(db: &str) -> bool {
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
+    let (role, mints): (String, bool) = sqlx::query_as(
+        "SELECT current_user::text, rolsuper FROM pg_roles WHERE rolname = current_user",
+    )
+    .fetch_one(&mut admin)
+    .await
+    .expect("role attributes");
+    if !mints {
+        assert!(
+            std::env::var("OML_TEST_REQUIRE_SPLIT").as_deref() != Ok("1"),
+            "{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
+        );
+        println!("did not run: {role} cannot create roles");
+        return false;
+    }
+    for role in ["owner", "serving"] {
+        admin
+            .execute(format!("CREATE ROLE {db}_{role} LOGIN PASSWORD '{PAIR_PASSWORD}'").as_str())
+            .await
+            .expect("mint the role pair");
+    }
+    admin
+        .execute(format!("CREATE DATABASE {db} OWNER {db}_owner").as_str())
+        .await
+        .expect("create throwaway database");
+    true
+}
+
+/// A store over `db`'s serving login, migrated through its owner login with
+/// `oml.serving_role` set (ADR-0034 d4, d8).
+async fn serving_store(db: &str) -> PgStore {
+    let store = PgStore::connect(&serving_url(db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(db));
+    store
+        .migrate(&owner_url(db))
+        .await
+        .expect("embedded migrations apply");
+    store
 }
 
 static DB_N: AtomicU64 = AtomicU64::new(0);
@@ -51,6 +131,11 @@ async fn drop_db(name: &str) {
         let _ = admin
             .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
             .await;
+        for role in ["serving", "owner"] {
+            let _ = admin
+                .execute(format!("DROP ROLE IF EXISTS {name}_{role}").as_str())
+                .await;
+        }
     }
 }
 
@@ -90,19 +175,15 @@ fn oml(server: &str, creds: &Path, key: Option<&str>, args: &[&str]) -> (i32, Va
 async fn full_ceremony_through_the_cli() {
     // -- the real server over TCP -------------------------------------------
     let db_name = format!(
-        "oml_test_cli_{}_{}",
+        "oml_test_cli_{}_{}_{}",
         std::process::id(),
-        DB_N.fetch_add(1, Ordering::SeqCst)
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
     );
-    let mut admin_conn = PgConnection::connect(&base_url())
-        .await
-        .expect("admin connect");
-    admin_conn
-        .execute(format!("CREATE DATABASE {db_name}").as_str())
-        .await
-        .expect("create throwaway database");
-    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
-    store.migrate().await.expect("embedded migrations apply");
+    if !mint_database(&db_name).await {
+        return;
+    }
+    let store = serving_store(&db_name).await;
 
     let mut seed = [0_u8; 32];
     getrandom::getrandom(&mut seed).expect("OS randomness");
@@ -381,18 +462,15 @@ struct Lab {
 }
 
 impl Lab {
-    async fn start() -> Self {
+    /// The lab over the serving login of a fresh database, or `None` when
+    /// this run cannot mint the role pair (ADR-0034 d8).
+    async fn start() -> Option<Self> {
         let n = DB_N.fetch_add(1, Ordering::SeqCst);
-        let db_name = format!("oml_test_cli_{}_{n}", std::process::id());
-        let mut admin_conn = PgConnection::connect(&base_url())
-            .await
-            .expect("admin connect");
-        admin_conn
-            .execute(format!("CREATE DATABASE {db_name}").as_str())
-            .await
-            .expect("create throwaway database");
-        let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
-        store.migrate().await.expect("embedded migrations apply");
+        let db_name = format!("oml_test_cli_{}_{n}_{}", std::process::id(), run_tag());
+        if !mint_database(&db_name).await {
+            return None;
+        }
+        let store = serving_store(&db_name).await;
 
         let mut seed = [0_u8; 32];
         getrandom::getrandom(&mut seed).expect("OS randomness");
@@ -439,7 +517,7 @@ impl Lab {
             .as_str()
             .expect("root workarea")
             .to_owned();
-        Self {
+        Some(Self {
             server,
             dir,
             creds,
@@ -450,7 +528,7 @@ impl Lab {
             store,
             signing,
             claim,
-        }
+        })
     }
 
     /// Commits, signed by the lead's key and folded by its store, the
@@ -606,7 +684,9 @@ fn mode_of(path: &Path) -> u32 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_workarea() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     lab.take_requests();
 
@@ -645,7 +725,9 @@ async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_worka
 /// d12).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_claim_and_keys_issue_send_their_positional_key_name_as_the_bodys_name() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let claim = lab.take_requests();
     assert_eq!(routes(&claim), ["POST /v2/bootstrap/claim"]);
     assert_eq!(claim[0].body["name"], "root-admin");
@@ -672,7 +754,9 @@ async fn the_claim_and_keys_issue_send_their_positional_key_name_as_the_bodys_na
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keys_issue_with_write_only_sends_only_the_writer_grant() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     lab.take_requests();
 
@@ -698,7 +782,9 @@ async fn keys_issue_with_write_only_sends_only_the_writer_grant() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     lab.take_requests();
 
@@ -731,7 +817,9 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
 
     let (code, stdout, stderr) = lab.text(&[
@@ -780,7 +868,9 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     let path = lab.dir.join("keys").join("crew-agent-7");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("key directory");
@@ -830,7 +920,9 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_agent_out_refuses_an_existing_file_and_sends_nothing() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     let path = lab.dir.join("unrelated");
     std::fs::write(&path, "an unrelated file\n").expect("an existing file");
@@ -864,7 +956,9 @@ async fn issue_agent_out_refuses_an_existing_file_and_sends_nothing() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_agent_out_with_json_is_refused() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     let path = lab.dir.join("crew-agent-7");
     lab.take_requests();
@@ -892,7 +986,9 @@ async fn issue_agent_out_with_json_is_refused() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_agent_out_refuses_a_path_with_a_quote_or_a_newline_and_sends_nothing() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     lab.take_requests();
 
@@ -1029,7 +1125,9 @@ async fn issue_agent_says_a_key_may_have_been_issued_when_the_connection_closes_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its_workarea() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     let writer = lab.issue(
         "crew-agent-1",
@@ -1103,7 +1201,9 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_its_own_held_row() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     let writer = lab.issue(
         "crew-agent-1",
@@ -1181,7 +1281,9 @@ fn exported_value(stdout: &str) -> String {
 /// d9, d12).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
     assert_eq!(code, 0, "crews create: {log}");
@@ -1252,7 +1354,9 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
 /// (cli/reference.md `oml keys show`; http-api.md keys; ADR-0026 d10).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     let issued = lab.issue(
         "agent-7-laptop",
@@ -1302,7 +1406,9 @@ async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
 /// workareas; ADR-0026 d4, d8).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
     assert_eq!(code, 0, "crews create: {log}");
@@ -1348,7 +1454,9 @@ async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
 /// (cli/reference.md `oml keys issue`; ADR-0026 d4).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let wa = lab.workarea("metals");
     lab.take_requests();
 
@@ -1404,7 +1512,9 @@ async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
 /// (cli/reference.md `oml crews`; ADR-0026 d4, d8).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crews_create_and_show_by_name() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     lab.take_requests();
 
     let (code, created, log) = lab.json(
@@ -1493,7 +1603,9 @@ async fn crews_create_and_show_by_name() {
 /// ADR-0026 d4, d8, d15).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
     assert_eq!(code, 0, "crews create: {log}");
     let create = |args: &[&str]| {
@@ -1618,7 +1730,9 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reference_that_is_neither_an_id_nor_a_name_is_refused_by_the_server_as_request_validation()
  {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     for bad in [
         "Metals",
         "universe.procurement",
@@ -1646,7 +1760,9 @@ async fn a_reference_that_is_neither_an_id_nor_a_name_is_refused_by_the_server_a
 /// ADR-0026 d2, d3, d4).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reference_spelled_empty_dot_or_dot_dot_is_refused_before_anything_is_sent() {
-    let lab = Lab::start().await;
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
     lab.take_requests();
     for bad in ["", ".", ".."] {
         for args in [
@@ -1797,14 +1913,14 @@ struct Crew {
 }
 
 impl Crew {
-    async fn start() -> Self {
+    async fn start() -> Option<Self> {
         Self::start_in(&["metals"]).await
     }
 
     /// The crew in the last of `names`, each workarea a child of the one
     /// before it and the first a child of the root.
-    async fn start_in(names: &[&str]) -> Self {
-        let lab = Lab::start().await;
+    async fn start_in(names: &[&str]) -> Option<Self> {
+        let lab = Lab::start().await?;
         let mut created = Value::Null;
         let mut parent = lab.root.clone();
         for name in names {
@@ -1845,13 +1961,13 @@ impl Crew {
             .as_str()
             .expect("dreamer value")
             .to_owned();
-        Self {
+        Some(Self {
             lab,
             wa,
             path,
             agent,
             dreamer,
-        }
+        })
     }
 
     /// A writer key on the crew workarea for another principal, with its
@@ -1919,7 +2035,9 @@ impl Crew {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_work_as_data() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     let lead = crew.writer("crew/lead-1");
     crew.submit(
         &lead,
@@ -2016,7 +2134,9 @@ async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_w
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_facts() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
 
     let (code, stdout, stderr) = crew.hook(&[], &session("compact", "/home/op/src/metals"));
     assert_eq!(code, 0, "{stderr}");
@@ -2057,7 +2177,9 @@ async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_prints_nothing_and_exits_0_when_session_context_is_off() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     crew.lab.take_requests();
     let stdin = session("startup", "/home/op/src/metals");
 
@@ -2094,7 +2216,9 @@ async fn the_hook_prints_nothing_and_exits_0_when_session_context_is_off() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_prints_nothing_and_exits_0_without_a_url_or_key() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     crew.lab.take_requests();
     let stdin = session("startup", "/home/op/src/metals");
     let server = crew.lab.server.as_str();
@@ -2124,7 +2248,9 @@ async fn the_hook_prints_nothing_and_exits_0_without_a_url_or_key() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_prints_nothing_and_exits_0_on_malformed_stdin() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     crew.lab.take_requests();
 
     for stdin in [
@@ -2381,7 +2507,9 @@ async fn the_hook_prints_nothing_and_exits_0_when_an_answer_is_not_its_shape() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_prints_nothing_and_exits_0_when_the_server_refuses() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     let stdin = session("startup", "/home/op/src/metals");
     crew.lab.take_requests();
 
@@ -2430,7 +2558,9 @@ async fn the_hook_prints_nothing_and_exits_0_when_the_server_refuses() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_never_uses_the_stored_admin_credentials() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     let stored: oml_cli::creds::Credentials =
         toml::from_str(&std::fs::read_to_string(&crew.lab.creds).expect("credentials"))
             .expect("the stored credentials parse");
@@ -2486,7 +2616,9 @@ async fn the_hook_never_uses_the_stored_admin_credentials() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_output_never_contains_the_key_value() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     // A stored body that holds the key value, and matches the query.
     crew.submit(
         &crew.agent,
@@ -2571,7 +2703,9 @@ async fn serve_stub(router: axum::Router) -> (String, tokio::task::JoinHandle<()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_refuses_a_key_that_is_not_printable_ascii_and_sends_nothing() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     // A stored body that ends in the key value, which a key with a trailing
     // space would still authenticate as (the server trims it) and would no
     // longer match when the hook redacts.
@@ -2607,7 +2741,9 @@ async fn the_hook_refuses_a_key_that_is_not_printable_ascii_and_sends_nothing() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_recall_honours_the_token_budget() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     // Two own held matches of 40 bytes each: 10 budget tokens apiece.
     for (claim_key, body) in [
         ("metals-lot-a", "Metals lot A: 40 tonnes, Tema, Tuesday.."),
@@ -2670,7 +2806,9 @@ async fn the_hook_recall_honours_the_token_budget() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_shows_another_keys_held_memory_never() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     let other = crew.writer("crew/agent-8");
     crew.submit(
         &other,
@@ -2713,7 +2851,9 @@ async fn the_hook_shows_another_keys_held_memory_never() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_path() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     let windows = |text: &str| {
         let key: Vec<char> = crew.agent.chars().collect();
         key.windows(20)
@@ -2820,7 +2960,9 @@ async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() 
     // cut where it is printed, and the record line comes before them all.
     // A name is at most 63 characters and unique in the tenant (ADR-0026 d1,
     // d2), so the path passes 120 through a child of a child.
-    let crew = Crew::start_in(&[&"metals".repeat(10), &"stocks".repeat(10)]).await;
+    let Some(crew) = Crew::start_in(&[&"metals".repeat(10), &"stocks".repeat(10)]).await else {
+        return;
+    };
     let claim_key = format!("metals-{}", "k".repeat(300));
     crew.submit(
         &crew.agent,
@@ -2871,7 +3013,9 @@ async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_names_the_server_by_scheme_host_and_port_alone() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     let with_userinfo = crew
         .lab
         .server
@@ -2917,7 +3061,9 @@ async fn the_hook_redacts_the_key_from_the_working_directory_before_it_takes_the
     // A directory named after the key value: split at its `_` first, the
     // words would carry the key's secret part past the redaction, into the
     // recall query and onto the matching line.
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     crew.lab.take_requests();
     let (code, stdout, stderr) = crew.hook(
         &[],
@@ -2949,7 +3095,9 @@ async fn the_hook_redacts_the_key_from_the_working_directory_before_it_takes_the
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_hook_query_is_the_words_of_the_working_directory_name() {
-    let crew = Crew::start().await;
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
     crew.lab.take_requests();
 
     for (stdin, query) in [

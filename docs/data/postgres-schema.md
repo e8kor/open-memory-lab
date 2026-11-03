@@ -23,6 +23,9 @@ Conventions used throughout:
 - Every table carries `tenant_id` and an RLS policy (sketched [below](#row-level-security)). The
   journal's chain head gives each tenant an independent sequence; nothing orders events across
   tenants.
+- A foreign key into a tenant table carries `tenant_id`, `(tenant_id, col)` → `(tenant_id, id)`,
+  because a foreign-key check bypasses row security ([keys into tenant
+  tables](#keys-into-tenant-tables)).
 - Digest columns are `bytea` holding SHA-256 values. Journal and outbox payloads reference content
   only as digests or ciphertext references — never body plaintext (D1, declared in
   [storage](../architecture/storage.md)).
@@ -46,10 +49,11 @@ CREATE TABLE journal (
     signed_bytes bytea       NOT NULL,   -- the envelope; covers digests, never bodies
     payload      jsonb       NOT NULL,   -- digest / ciphertext references only
     principal    text        NOT NULL,
-    api_key_id   uuid,
+    api_key_id   uuid,                   -- no foreign key: may name a provider-level key
     at           timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, seq),
-    UNIQUE (event_id)
+    UNIQUE (event_id),
+    UNIQUE (tenant_id, event_id)         -- target of the tenant-scoped event references
 );
 
 CREATE TABLE journal_chain_heads (
@@ -312,7 +316,7 @@ CREATE TABLE crews (                -- named records, recorded not operated (ADR
 CREATE TABLE workareas (
     id         uuid        PRIMARY KEY,
     tenant_id  uuid        NOT NULL,
-    parent_id  uuid        REFERENCES workareas (id),   -- NULL only for universe
+    parent_id  uuid,                   -- NULL only for universe
     name       oml_name    NOT NULL,   -- unique in the tenant; never changed
     prior_name text,                   -- the PoC's creation-time name, kept as history;
                                        -- no reference reads it; NULL on a row created with a name
@@ -323,6 +327,7 @@ CREATE TABLE workareas (
     created_at timestamptz NOT NULL,
     UNIQUE (tenant_id, name),          -- one flat namespace across the whole tree
     UNIQUE (tenant_id, id),            -- target of the tenant-scoped grant and denial references
+    FOREIGN KEY (tenant_id, parent_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
     CHECK ((parent_id IS NULL) = (name = 'universe'))   -- the root, and only the root, is universe
 );
@@ -380,8 +385,9 @@ CREATE TABLE api_keys (
     role       text        NOT NULL
         CHECK (role IN ('reader', 'writer', 'dreamer', 'admin', 'operator')),
     principal  text        NOT NULL,
-    issued_by  uuid        REFERENCES api_keys (id),  -- issuer ceiling checked at issuance
-    rotated_from uuid      REFERENCES api_keys (id),  -- successor link; predecessor revoked at grace end
+    issued_by  uuid,                    -- issuer ceiling checked at issuance; no foreign key:
+                                        -- an operator key issues a tenant's first admin key
+    rotated_from uuid,                  -- successor link; predecessor revoked at grace end
     name       oml_name    NOT NULL,      -- the key's name; never changed, never released
     crew_id    uuid,                      -- the crew record named at issuance; fixed for life
     held_by    text        NOT NULL DEFAULT 'agent'
@@ -390,7 +396,7 @@ CREATE TABLE api_keys (
                                           -- (ADR-0021): verified as an attestation, never as fact;
                                           -- human_required_classes consumes it — only 'human'
                                           -- satisfies it; 'service' never counts as review capacity
-    default_workarea_id uuid REFERENCES workareas (id),
+    default_workarea_id uuid,
                                           -- provider-ring target (ADR-0022 d4): a /v1 request
                                           -- names no workarea — this, or X-OML-Workarea, resolves it
     issued_seq bigint      NOT NULL,      -- journal seq of this key's key.issued, or of the
@@ -402,6 +408,8 @@ CREATE TABLE api_keys (
                                           -- unique per tenant; operator keys (tenant_id NULL)
                                           -- share the provider's one namespace
     UNIQUE (tenant_id, id),               -- target of the tenant-scoped grant and denial references
+    FOREIGN KEY (tenant_id, rotated_from) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, default_workarea_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id)
 );
 
@@ -465,6 +473,50 @@ references, always bypass row security"
 A provider-level key (`tenant_id` NULL) matches no such reference, and carries no grant
 ([grant admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before it is imposed.
+
+## Keys into tenant tables
+
+**Status:** built in `migrations/0008_tenant_keys.sql` · its checks run only where a superuser
+mints the suites' role pairs, CI's `cargo test (Postgres)`, and in CI's `rls-spike`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8, d9).
+
+A foreign key into a table that has a `tenant_id` column pairs the referencing row's `tenant_id`
+with the referenced row's, the form the grant, denial and crew references above take. A foreign-key
+check bypasses row security (the quotation above), so a key on `id` alone accepts another tenant's
+row while it refuses an id no row holds, and the difference tells a tenant whether an id exists
+anywhere. Under the
+pair, a reference to another tenant's row is refused as one to no row is: `23503`, from the one
+constraint (ADR-0034 d12). The keys built this way:
+
+| Reference | Key | Target |
+|---|---|---|
+| `workareas.parent_id` | `(tenant_id, parent_id)` | `workareas (tenant_id, id)` |
+| `api_keys.default_workarea_id` | `(tenant_id, default_workarea_id)` | `workareas (tenant_id, id)` |
+| `api_keys.rotated_from` | `(tenant_id, rotated_from)` | `api_keys (tenant_id, id)` |
+| `memories.created_event_id` | `(tenant_id, created_event_id)` | `journal (tenant_id, event_id)` |
+| `review_queue.memory_id` | `(tenant_id, memory_id)` | `memories (tenant_id, id)` |
+
+- **The targets.** 0008 adds `UNIQUE (tenant_id, event_id)` on `journal` and `UNIQUE (tenant_id,
+  id)` on `memories`; `workareas` and `api_keys` have theirs from 0004. Each key keeps its 0001
+  constraint name. 0009 makes `(tenant_id, id)` `memories`' primary key, which its partitions
+  require, drops 0008's constraint on the same columns with the old table, and points
+  `review_queue_memory_id_fkey` at the primary key ([per-tenant
+  partitions](#the-built-fts-index-per-tenant-partitions)).
+- **Provider-level keys.** On an `api_keys` row whose `tenant_id` is NULL, an operator key's, "the
+  row is not required to have a match"
+  ([CREATE TABLE](https://www.postgresql.org/docs/17/sql-createtable.html), fetched 2026-10-31):
+  the keys are `MATCH SIMPLE`.
+- **No foreign key.** `journal.api_key_id` and `api_keys.issued_by` name a provider-level key by
+  design, as when an operator key issues a tenant's first admin key
+  ([HTTP API](../api/http-api.md)), so no key carrying `tenant_id` could match them. 0008 drops
+  both, as 0002 dropped `review_queue.held_by_key`'s; each holds the id of the key its request
+  authenticated with, which the use case has read and no client names.
+- **Existing rows.** Adding a key validates every row, without row security, so a database that
+  already holds a cross-tenant reference fails 0008 with `23503`, naming the constraint and the
+  key, and commits nothing.
+- **Designed references.** A sketch on this page that still shows `REFERENCES t (id)` into a
+  tenant table is a column built with no key, or not built; it takes the pair when its migration
+  lands.
 
 ## vocabularies (ADR-0021)
 
@@ -704,6 +756,69 @@ embedding model (and therefore the `vector` dimension and distance operator) is 
 indexed per simulation, which keeps the read-path predicate out of the hot index at the cost of
 duplicate index machinery per open simulation.
 
+### The built FTS index: per-tenant partitions
+
+**Status:** built in `migrations/0009_memories_partitions.sql` and `oml-pg`'s
+`create_tenant_partitions` · its checks run only where a superuser mints the suites' role pairs,
+CI's `cargo test (Postgres)`, and in CI's `rls-spike`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8, d9, d11, d13).
+The tables above are designed, not built; the PoC's FTS index is `memories_claim_fts`, an
+expression index over `memories.claim`.
+
+`memories` is list-partitioned by `tenant_id`, one partition per tenant, so every index on it is
+a partitioned index and each tenant's partition holds its own: no FTS index, and no index's
+statistics, span tenants (ADR-0007 d4).
+
+```sql
+CREATE TABLE memories (
+    …,                                    -- the columns, defaults and checks of 0001–0005
+    PRIMARY KEY (tenant_id, id),          -- a unique key must include the partition key
+    FOREIGN KEY (tenant_id) REFERENCES tenants (id),
+    FOREIGN KEY (tenant_id, created_event_id) REFERENCES journal (tenant_id, event_id)
+) PARTITION BY LIST (tenant_id);          -- no DEFAULT partition
+CREATE INDEX memories_claim_fts ON memories USING gin (to_tsvector('simple', claim));
+-- memories_workarea, memories_claim_version, memories_served_tip, memories_author as before;
+-- RLS, FORCE and tenant_isolation as on every table.
+
+-- per tenant, before the commit whose fold creates its row, one owner transaction:
+SET LOCAL lock_timeout = '5s';
+CREATE TABLE memories_t_<tenant id, 32 hex> (LIKE memories INCLUDING ALL);
+ALTER TABLE memories_t_<…> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memories_t_<…> FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON memories_t_<…> USING (…) WITH CHECK (…);  -- the parent's
+ALTER TABLE memories ATTACH PARTITION memories_t_<…> FOR VALUES IN ('<tenant id>');
+```
+
+- **The name** is the tenant's id, never its name, which would put every tenant's name in
+  `pg_class` for every role.
+- **Who creates it.** The owner, on a connection opened for that call alone and closed after it,
+  while tenant creation holds no serving transaction open; 0009 creates each existing tenant's
+  and fills it under that tenant's context. `ATTACH PARTITION` takes `ShareUpdateExclusiveLock`
+  on `memories`, where `CREATE TABLE … PARTITION OF` would take `AccessExclusiveLock` and stop
+  every tenant's reads and writes. The attach clones `memories`' foreign keys, so it also takes
+  `ShareRowExclusiveLock` on `journal`, `tenants` and `review_queue` (probed on 18.6,
+  2026-11-03): every tenant's commits, each of which inserts into `journal`, wait for it, bounded
+  by the timeout, and a commit that inserts into `tenants` then `journal`, as a genesis does, can
+  deadlock with it.
+- **Failure.** A DDL that fails fails tenant creation before any commit: nothing is journalled
+  and the bootstrap claim spends no enrollment token. A lock contest the DDL lost, a lock timeout
+  (`55P03`) or a deadlock the detector broke by aborting it (`40P01`), answers
+  `system.unavailable`, retryable, `details.reason` `partition_lock_timeout`; any other failure
+  answers `system.internal`. A serving commit the detector aborts instead answers
+  `system.unavailable` as any backend failure does, retryable. A partition whose DDL committed is kept when the genesis commit then
+  fails: it is empty, the owner's and fenced, so the checks after migrating accept it, and the
+  retry mints a fresh id.
+- **Reads.** Every adapter statement on `memories` binds `tenant_id = $n` to the tenant it sets
+  in `oml.tenant_id`, so the plan keeps that tenant's partition alone, at planning or as it
+  starts; row security stays the fence. No function is marked `LEAKPROOF`, so `@@` cannot become
+  an index condition under the policy and an FTS read scans its tenant's partition (ADR-0034
+  d13; FR-25 measures its latency per tenant size).
+- **Privileges.** A partition is reached only through `memories`, whose grants are 0007's
+  ([Privileges](#privileges)); a partition grants the serving role nothing, so it sees no
+  partition's `pg_stats`.
+- **Stays open** (FR-45): each partition's `reltuples`, bound and name give every role one
+  tenant's row count and id.
+
 ## upload_sessions
 
 Resumable attachment uploads (D3, declared in [storage](../architecture/storage.md)).
@@ -780,6 +895,51 @@ sets the wrong tenant GUC becomes a cross-tenant read. That risk and its mitigat
 code path sets the GUC; the STRIDE model treats hostile co-tenants) are owned by
 [security](../architecture/security.md).
 
+## Privileges
+
+**Status:** built in `migrations/0007_role_split.sql`, and the lead's owner URL and startup
+refusals in `oml-server-lead` and `oml-pg` · their checks run only where a superuser mints the
+suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d4, d5, d8).
+
+Two roles reach a database: the **owner**, which owns the database and every object the
+migrations create and runs every migration, and the **serving role**, which owns nothing and
+holds only the DML the adapter's statements use (ADR-0034 d2, d3). Each table's migration grants
+the serving role its row below, naming the grantee through the setting `oml.serving_role`, which
+the lead sets on every owner connection to its serving URL's `current_user`; a granting migration
+run without it fails at `current_setting` (`42704`). A table a later migration adds refuses the
+serving role until that migration grants its row here, under the sync rule.
+
+| Table | `SELECT` | `INSERT` | `UPDATE` | `DELETE` | Sequence |
+|---|---|---|---|---|---|
+| `tenants` | ✓ | ✓ | ✓ | | |
+| `workareas` | ✓ | ✓ | ✓ | | |
+| `api_keys` | ✓ | ✓ | ✓ | | |
+| `journal` | ✓ | ✓ | | | |
+| `journal_chain_head` | ✓ | ✓ | ✓ | | |
+| `outbox` | | ✓ | | | `USAGE` on `outbox_seq_seq` |
+| `memories` | ✓ | ✓ | ✓ | | |
+| `review_queue` | ✓ | ✓ | ✓ | ✓ | |
+| `idempotency` | ✓ | ✓ | | | |
+| `grants` | ✓ | ✓ | | | |
+| `key_denials` | ✓ | ✓ | ✓ | | |
+| `crews` | ✓ | ✓ | ✓ | | |
+| `_sqlx_migrations` | | | | | |
+
+- **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
+  privilege (`42501`) before the guard trigger runs (ADR-0002 d4).
+- **`review_queue`** is the one table a statement deletes from, at a verdict.
+- **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the
+  `bigserial` sequence.
+- **No table** grants `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`, whole-table operations
+  row security does not bind.
+- **`_sqlx_migrations`** is the one table without row-level security: sqlx's record of which
+  migrations ran holds no tenant data and no `tenant_id` to key a policy on. Its fence is
+  privilege: 0007 revokes every privilege on it from `PUBLIC` and the serving role holds none
+  (ADR-0034 d6).
+- **`public`**: 0007 revokes `CREATE` from `PUBLIC`, so only the owner creates there; the serving
+  role keeps `PUBLIC`'s `CONNECT` and `USAGE`.
+
 ## Folds of the journal vs operational tables
 
 Two kinds of table live in this schema, and the distinction decides what reconciliation
@@ -845,7 +1005,11 @@ The rules:
   split that M0 spike 3 verifies ([critical path](../product/critical-path.md)) and
   [security](../architecture/security.md) requires: application roles cannot alter schema, and
   the owner role is used by nothing else. The upgrade ordering (migrate, then roll workloads) is
-  owned by the [upgrades](../operations/upgrades.md) page.
+  owned by the [upgrades](../operations/upgrades.md) page. The bootstrap workload is decided, not
+  built: until it is, the lead migrates on boot under `postgres.owner_url`, closes that pool and
+  serves under `postgres.url`, and opens an owner connection afterwards only for a new tenant's
+  partition ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d4,
+  d11).
 - **The sync rule.** This page is **normative in shape**; the migrations are **normative in
   bytes**. A schema change is one PR that lands both: the migration that makes it true and the
   edit here that keeps this page a faithful sketch of the result. Neither surface may drift

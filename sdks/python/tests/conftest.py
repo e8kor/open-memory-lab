@@ -1,16 +1,24 @@
 """A real oml-server-lead on a throwaway database, for the SDK's tests.
 
-docs/engineering/sdks.md, "Tests": create a uniquely named database, boot the
-server on it with a keyring in a scratch directory, read the enrollment token
-from its stdout, claim the bootstrap and issue the keys with the `oml` CLI,
-and drop the database afterwards.
+docs/engineering/sdks.md, "Tests": mint a uniquely named owner/serving role
+pair and a database the owner owns, boot the server on it, migrating under the
+owner and serving under the serving role (ADR-0034 d2, d4, d8), with a keyring
+in a scratch directory, read the enrollment token from its stdout, claim the
+bootstrap and issue the keys with the `oml` CLI, and drop the database and the
+pair afterwards.
+
+Minting takes a superuser. When the admin role is not one, as a role holding
+CREATEDB alone is not, the suite's server tests skip with
+`did not run: <role> cannot create roles`; under OML_TEST_REQUIRE_SPLIT=1,
+which CI sets, the same condition fails them, so no run passes vacuously.
 
 Environment (all optional):
   OML_SERVER_BIN              the lead binary (default: oml-server-lead on PATH)
   OML_CLI_BIN                 the CLI binary (default: oml on PATH)
-  OML_SDK_TEST_DATABASE_URL   a role with CREATEDB
+  OML_SDK_TEST_DATABASE_URL   a superuser that can mint roles
                               (default: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev)
   OML_SDK_TEST_PORT           the port to listen on (default: one the OS hands out)
+  OML_TEST_REQUIRE_SPLIT      1: fail, never skip, when the admin role cannot mint
 
 The server and the CLI get an environment built from an allow-list, so a key
 in the caller's environment never reaches either.
@@ -61,21 +69,46 @@ def _clean_env(**extra: str) -> dict[str, str]:
     return env
 
 
-def _psql(sql: str) -> None:
+def _psql(sql: str) -> str:
     done = subprocess.run(
-        ["psql", ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-c", sql],
+        ["psql", ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-t", "-A", "-c", sql],
         env=_clean_env(),
         capture_output=True,
         text=True,
         check=False,
     )
-    if done.returncode != 0:
-        pytest.fail(f"psql could not run {sql!r} (is PostgreSQL up?):\n{done.stderr}")
+    if done.returncode != 0:  # stderr only: the statement may carry a password
+        pytest.fail(f"psql could not run a statement (is PostgreSQL up?):\n{done.stderr}")
+    return done.stdout.strip()
 
 
-def _database_url(name: str) -> str:
+# Two columns, so psql -tA prints the boolean in its display form, `t` or `f`,
+# joined to the name by `|`; concatenated to text it would read `true`/`false`.
+ADMIN_ROLE_QUERY = "SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user"
+
+
+def _admin_role(query: str = ADMIN_ROLE_QUERY) -> tuple[str, bool]:
+    """The admin role's name, and whether it is a superuser that can mint (ADR-0034 d8)."""
+    role, superuser = _psql(query).rsplit("|", 1)
+    return role, superuser == "t"
+
+
+def _require_minting() -> None:
+    """Skip, or under OML_TEST_REQUIRE_SPLIT=1 fail, when the admin role cannot mint (ADR-0034 d8)."""
+    role, superuser = _admin_role()
+    if superuser:
+        return
+    if os.environ.get("OML_TEST_REQUIRE_SPLIT") == "1":
+        pytest.fail(
+            f"{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
+        )
+    pytest.skip(f"did not run: {role} cannot create roles")
+
+
+def _database_url(name: str, role: str, password: str) -> str:
     parts = urllib.parse.urlsplit(ADMIN_URL)
-    return urllib.parse.urlunsplit(parts._replace(path=f"/{name}"))
+    netloc = f"{role}:{password}@{parts.hostname}" + (f":{parts.port}" if parts.port else "")
+    return urllib.parse.urlunsplit(parts._replace(netloc=netloc, path=f"/{name}"))
 
 
 def _port() -> int:
@@ -95,22 +128,31 @@ def _tail(path: Path) -> str:
 
 @pytest.fixture(scope="session")
 def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
+    _require_minting()
     scratch = tmp_path_factory.mktemp("oml-server")
     database = f"oml_sdk_py_{secrets.token_hex(6)}"
+    owner, serving = f"{database}_owner", f"{database}_serving"
+    password = secrets.token_hex(12)
     port = _port()
     url = f"http://127.0.0.1:{port}"
     stdout_path, stderr_path = scratch / "server.stdout", scratch / "server.stderr"
 
-    _psql(f"CREATE DATABASE {database}")
+    # One statement string is one transaction: both roles exist, or neither.
+    _psql(
+        f"CREATE ROLE {owner} LOGIN PASSWORD '{password}'; "
+        f"CREATE ROLE {serving} LOGIN PASSWORD '{password}'"
+    )
     server = None
     try:
+        _psql(f"CREATE DATABASE {database} OWNER {owner}")
         with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
             server = subprocess.Popen(
                 [SERVER_BIN],
                 stdout=out,
                 stderr=err,
                 env=_clean_env(
-                    OML_POSTGRES__URL=_database_url(database),
+                    OML_POSTGRES__URL=_database_url(database, serving, password),
+                    OML_POSTGRES__OWNER_URL=_database_url(database, owner, password),
                     OML_SERVER__LISTEN=f"127.0.0.1:{port}",
                     OML_KMS__KEYRING_PATH=str(scratch / "keyring"),
                 ),
@@ -175,6 +217,8 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
                 server.kill()
                 server.wait()
         _psql(f"DROP DATABASE IF EXISTS {database} WITH (FORCE)")
+        _psql(f"DROP ROLE IF EXISTS {owner}")
+        _psql(f"DROP ROLE IF EXISTS {serving}")
         shutil.rmtree(scratch, ignore_errors=True)
 
 

@@ -7,7 +7,7 @@ answers: why tenancy is a first-class design object rather than an operator conv
 
 # ADR-0007 — Tenancy is first-class
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0034](ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
 
 ## Context
 

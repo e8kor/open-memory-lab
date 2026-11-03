@@ -27,13 +27,14 @@ use oml_app::types::{
     UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
-use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Postgres, QueryBuilder, Row, Transaction};
+use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
+use sqlx::{Connection, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
 /// The committed migrations, embedded at build time. The migrations are
 /// normative in bytes (postgres-schema.md "Migrations"); the server/bootstrap
-/// calls [`PgStore::migrate`] (or runs this migrator) before serving.
+/// calls [`PgStore::migrate`] (or runs this migrator, as the owner with
+/// `oml.serving_role` set) before serving.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations");
 
 const FORK_CHECK_PAGE: usize = 1024;
@@ -51,26 +52,456 @@ pub enum ForkCheckError {
     Verify(#[from] VerifyError),
 }
 
+/// Why the lead refuses to serve over its two URLs (ADR-0034 d5): the
+/// `details.reason` of its `postgres.role_split` exit, before any listener
+/// binds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoleSplitReason {
+    /// `postgres.owner_url` is unset; the lead reads its configuration and
+    /// names this one itself.
+    OwnerUrlMissing,
+    /// Both URLs log in as one role, compared by login, not URL.
+    SameRole,
+    /// The two logins see different databases.
+    DifferentDatabases,
+    /// The serving role holds an attribute or membership d2 refuses, can
+    /// create in the database or `public`, or, after migrating, holds
+    /// `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN` on a table.
+    ServingRolePrivileged,
+    /// The serving role owns the database or an object in it, as in every
+    /// unsplit install.
+    ServingRoleOwns,
+    /// The serving role holds a privilege on `_sqlx_migrations` (d6).
+    ServingRoleReadsMigrations,
+    /// The serving role has no `SELECT` on `journal`: the migrations did
+    /// not grant the role `postgres.url` names.
+    ServingRoleUngranted,
+    /// A table but `_sqlx_migrations`, a partition included, is not the
+    /// owner's, lacks `ENABLE` or `FORCE ROW LEVEL SECURITY`, or has no
+    /// policy.
+    TableUnfenced,
+    /// A function in `public` is `SECURITY DEFINER`, which runs a serving
+    /// call as the owner.
+    DefinerFunction,
+}
+
+impl RoleSplitReason {
+    /// The reason as the lead's exit names it (ADR-0034 d5).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OwnerUrlMissing => "owner_url_missing",
+            Self::SameRole => "same_role",
+            Self::DifferentDatabases => "different_databases",
+            Self::ServingRolePrivileged => "serving_role_privileged",
+            Self::ServingRoleOwns => "serving_role_owns",
+            Self::ServingRoleReadsMigrations => "serving_role_reads_migrations",
+            Self::ServingRoleUngranted => "serving_role_ungranted",
+            Self::TableUnfenced => "table_unfenced",
+            Self::DefinerFunction => "definer_function",
+        }
+    }
+}
+
+impl std::fmt::Display for RoleSplitReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A refusal of the role split (ADR-0034 d5): `postgres.role_split` and its
+/// reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("postgres.role_split: {reason}")]
+pub struct RoleSplitError {
+    pub reason: RoleSplitReason,
+}
+
+/// A boot check's failure: the split refused by name, or a catalog read
+/// that did not complete, which proves nothing and refuses as well.
+#[derive(Debug, thiserror::Error)]
+pub enum RoleSplitCheckError {
+    #[error(transparent)]
+    Refused(#[from] RoleSplitError),
+    #[error("postgres.role_split: the check could not read the catalog: {0}")]
+    Backend(#[from] sqlx::Error),
+}
+
+impl RoleSplitCheckError {
+    /// The refusal's reason, `None` for a catalog read that failed.
+    #[must_use]
+    pub fn reason(&self) -> Option<RoleSplitReason> {
+        match self {
+            Self::Refused(e) => Some(e.reason),
+            Self::Backend(_) => None,
+        }
+    }
+}
+
+/// Who a pool logs in as and where: `session_user`, `current_user` and
+/// `current_database()`.
+async fn login_of(pool: &PgPool) -> Result<(String, String, String), sqlx::Error> {
+    sqlx::query_as("SELECT session_user::text, current_user::text, current_database()::text")
+        .fetch_one(pool)
+        .await
+}
+
+/// Whether `sql` returns true, read on the owner pool with the logins in
+/// scope as `split.serving` and `split.owner`.
+async fn holds(
+    owner: &PgPool,
+    sql: &str,
+    serving: &str,
+    owner_role: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "WITH split (serving, owner) AS (VALUES ($1::text, $2::text)) {sql}"
+    ))
+    .bind(serving)
+    .bind(owner_role)
+    .fetch_one(owner)
+    .await
+}
+
+/// `pg_depend` marks `<alias>.oid`, of catalog `<catalog>`, as an
+/// extension's member (`deptype` `'e'`), such as 0006's `ltree` objects,
+/// which stay with the bootstrap superuser (ADR-0034 d2).
+macro_rules! not_extension_member {
+    ($catalog:literal, $alias:literal) => {
+        concat!(
+            "NOT EXISTS (SELECT 1 FROM pg_depend dep WHERE dep.classid = '",
+            $catalog,
+            "'::regclass AND dep.objid = ",
+            $alias,
+            ".oid AND dep.deptype = 'e')"
+        )
+    };
+}
+
+/// The serving role owns the database or a relation, function or type in
+/// it, extension members skipped.
+const SERVING_ROLE_OWNS: &str = concat!(
+    "SELECT EXISTS (SELECT 1 FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba \
+                    WHERE d.datname = current_database() AND r.rolname = split.serving) \
+         OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner \
+                    WHERE r.rolname = split.serving AND ",
+    not_extension_member!("pg_class", "c"),
+    ") OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner \
+                    WHERE r.rolname = split.serving AND ",
+    not_extension_member!("pg_proc", "p"),
+    ") OR EXISTS (SELECT 1 FROM pg_type t JOIN pg_roles r ON r.oid = t.typowner \
+                    WHERE r.rolname = split.serving AND ",
+    not_extension_member!("pg_type", "t"),
+    ") FROM split"
+);
+
+/// The serving role holds an attribute d2 refuses, is a member of any role,
+/// or can create in the database or `public`.
+const SERVING_ROLE_PRIVILEGED_BEFORE: &str = "\
+    SELECT r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls \
+        OR EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid) \
+        OR has_database_privilege(r.oid, current_database(), 'CREATE') \
+        OR has_schema_privilege(r.oid, 'public', 'CREATE') \
+    FROM split JOIN pg_roles r ON r.rolname = split.serving";
+
+/// The tables of `public` the checks after migrating read: plain and
+/// partitioned tables, partitions included, extension members skipped.
+macro_rules! public_tables {
+    () => {
+        concat!(
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND ",
+            not_extension_member!("pg_class", "c")
+        )
+    };
+}
+
+/// The serving role holds a privilege row security does not bind on a
+/// table but `_sqlx_migrations`, granted to it, a role it is in or
+/// `PUBLIC`. `MAINTAIN` needs PostgreSQL 17, the pin.
+const SERVING_ROLE_PRIVILEGED_AFTER: &str = concat!(
+    "SELECT EXISTS (SELECT 1 ",
+    public_tables!(),
+    " AND c.relname <> '_sqlx_migrations' \
+       AND has_table_privilege(split.serving, c.oid, 'TRUNCATE, REFERENCES, TRIGGER, MAINTAIN')) \
+     FROM split"
+);
+
+/// The serving role holds any privilege on `_sqlx_migrations` (ADR-0034 d6).
+const SERVING_ROLE_READS_MIGRATIONS: &str = "\
+    SELECT has_table_privilege(split.serving, 'public._sqlx_migrations', \
+        'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN') FROM split";
+
+/// The serving role cannot read `journal`: the migrations did not grant it.
+const SERVING_ROLE_UNGRANTED: &str =
+    "SELECT NOT has_table_privilege(split.serving, 'public.journal', 'SELECT') FROM split";
+
+/// A table but `_sqlx_migrations` is not the owner's, lacks `ENABLE` or
+/// `FORCE ROW LEVEL SECURITY`, or has no policy.
+const TABLE_UNFENCED: &str = concat!(
+    "SELECT EXISTS (SELECT 1 ",
+    public_tables!(),
+    " AND c.relname <> '_sqlx_migrations' \
+       AND (c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = split.owner) \
+            OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity \
+            OR NOT EXISTS (SELECT 1 FROM pg_policy pol WHERE pol.polrelid = c.oid))) \
+     FROM split"
+);
+
+/// A function in `public` is `SECURITY DEFINER`.
+const DEFINER_FUNCTION: &str = concat!(
+    "SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+                    WHERE n.nspname = 'public' AND p.prosecdef AND ",
+    not_extension_member!("pg_proc", "p"),
+    ") FROM split"
+);
+
+/// Runs `checks` in order on the owner pool and refuses with the first
+/// that holds.
+async fn refuse_first(
+    owner: &PgPool,
+    serving: &str,
+    owner_role: &str,
+    checks: &[(RoleSplitReason, &str)],
+) -> Result<(), RoleSplitCheckError> {
+    for (reason, sql) in checks {
+        if holds(owner, sql, serving, owner_role).await? {
+            return Err(RoleSplitError { reason: *reason }.into());
+        }
+    }
+    Ok(())
+}
+
+/// The checks before migrating (ADR-0034 d5; postgres-schema.md
+/// "Privileges"), over the owner pool and the serving pool, in this order:
+/// both pools log in as one role, by `session_user` or `current_user`, never
+/// by URL (`same_role`); they see two databases (`different_databases`);
+/// the serving role owns the database or a relation, function or type in
+/// it (`serving_role_owns`), checked before the next since a database's
+/// owner can create in it; the serving role holds `SUPERUSER`, `CREATEDB`,
+/// `CREATEROLE`, `REPLICATION` or `BYPASSRLS`, is a member of any role, or
+/// holds `CREATE` on the database or `public` (`serving_role_privileged`).
+/// Extension members, `ltree`'s owned by the bootstrap superuser, are
+/// skipped (d2). A catalog read that fails refuses as well.
+pub async fn role_split_preflight(
+    owner: &PgPool,
+    serving: &PgPool,
+) -> Result<(), RoleSplitCheckError> {
+    let (owner_session, owner_role, owner_db) = login_of(owner).await?;
+    let (serving_session, serving_role, serving_db) = login_of(serving).await?;
+    if owner_role == serving_role || owner_session == serving_session {
+        return Err(RoleSplitError {
+            reason: RoleSplitReason::SameRole,
+        }
+        .into());
+    }
+    if owner_db != serving_db {
+        return Err(RoleSplitError {
+            reason: RoleSplitReason::DifferentDatabases,
+        }
+        .into());
+    }
+    refuse_first(
+        owner,
+        &serving_role,
+        &owner_role,
+        &[
+            (RoleSplitReason::ServingRoleOwns, SERVING_ROLE_OWNS),
+            (
+                RoleSplitReason::ServingRolePrivileged,
+                SERVING_ROLE_PRIVILEGED_BEFORE,
+            ),
+        ],
+    )
+    .await
+}
+
+/// The checks after migrating (ADR-0034 d5; postgres-schema.md
+/// "Privileges"), by `has_table_privilege`, so a grant through `PUBLIC` or
+/// a role counts, in this order: the serving role holds `TRUNCATE`,
+/// `REFERENCES`, `TRIGGER` or `MAINTAIN` on a table but `_sqlx_migrations`
+/// (`serving_role_privileged`); any of those or `SELECT`, `INSERT`,
+/// `UPDATE` or `DELETE` on `_sqlx_migrations` (`serving_role_reads_migrations`,
+/// d6); no `SELECT` on `journal` (`serving_role_ungranted`); a table but
+/// `_sqlx_migrations`, partitions included, is not the owner's, lacks
+/// `ENABLE` or `FORCE ROW LEVEL SECURITY`, or has no policy
+/// (`table_unfenced`); a function in `public` is `SECURITY DEFINER`
+/// (`definer_function`). Extension members are skipped (d2). A catalog read
+/// that fails refuses as well.
+pub async fn role_split_postflight(
+    owner: &PgPool,
+    serving: &PgPool,
+) -> Result<(), RoleSplitCheckError> {
+    let (_, owner_role, _) = login_of(owner).await?;
+    let (_, serving_role, _) = login_of(serving).await?;
+    refuse_first(
+        owner,
+        &serving_role,
+        &owner_role,
+        &[
+            (
+                RoleSplitReason::ServingRolePrivileged,
+                SERVING_ROLE_PRIVILEGED_AFTER,
+            ),
+            (
+                RoleSplitReason::ServingRoleReadsMigrations,
+                SERVING_ROLE_READS_MIGRATIONS,
+            ),
+            (
+                RoleSplitReason::ServingRoleUngranted,
+                SERVING_ROLE_UNGRANTED,
+            ),
+            (RoleSplitReason::TableUnfenced, TABLE_UNFENCED),
+            (RoleSplitReason::DefinerFunction, DEFINER_FUNCTION),
+        ],
+    )
+    .await
+}
+
+/// The owner's URL, held for d11's partition DDL alone; its `Debug` never
+/// prints it, since it carries the owner's password (ADR-0034 d4).
+#[derive(Clone)]
+struct OwnerUrl(std::sync::Arc<str>);
+
+impl std::fmt::Debug for OwnerUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OwnerUrl(<redacted>)")
+    }
+}
+
+/// The lock timeout of a tenant's partition DDL: a `55P03` past it answers
+/// `system.unavailable`, `partition_lock_timeout` (ADR-0034 d11).
+const PARTITION_LOCK_TIMEOUT: &str = "5s";
+
+/// The partition `memories` holds `tenant_id`'s rows in: the tenant's id in
+/// 32 hex digits, never its name, which would put every tenant's name in
+/// `pg_class` for every role (postgres-schema.md, the per-tenant
+/// partitions; ADR-0034 d11). 0009 names each existing tenant's so.
+fn memories_partition(tenant_id: Uuid) -> String {
+    format!("memories_t_{}", tenant_id.simple())
+}
+
+/// A partition DDL failure as the port answers it: a lock contest the DDL
+/// lost, a wait past the timeout (`55P03`) or a deadlock the detector broke
+/// by aborting it (`40P01`), is [`StoreError::PartitionLockTimeout`],
+/// retryable; anything else [`StoreError::Partition`] (ADR-0034 d11).
+fn partition_error(e: &sqlx::Error) -> StoreError {
+    match e.as_database_error().and_then(|db| db.code()) {
+        Some(code) if code == "55P03" || code == "40P01" => StoreError::PartitionLockTimeout,
+        _ => StoreError::Partition(e.to_string()),
+    }
+}
+
+/// `tenant_id`'s partition DDL, in one owner transaction under `SET LOCAL
+/// lock_timeout`: the table `LIKE memories INCLUDING ALL`, its `ENABLE` and
+/// `FORCE ROW LEVEL SECURITY` and its parent's `tenant_isolation` policy,
+/// then `ATTACH PARTITION`, which takes `ShareUpdateExclusiveLock` on the
+/// parent where `CREATE TABLE … PARTITION OF` would take
+/// `AccessExclusiveLock` and stop every tenant's reads and writes. The
+/// attach clones `memories`' foreign keys, so it also takes
+/// `ShareRowExclusiveLock` on `journal`, `tenants` and `review_queue`:
+/// every tenant's commits, each of which inserts into `journal`, wait for
+/// it, bounded by the timeout, and a commit that inserts into `tenants`
+/// then `journal`, as a genesis does, can deadlock with it
+/// ([`partition_error`]; postgres-schema.md, the per-tenant partitions;
+/// ADR-0034 d11). The identifiers and the bound derive from the id alone,
+/// which is why they are spelled into the DDL, which takes no parameters.
+async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Result<(), sqlx::Error> {
+    let partition = memories_partition(tenant_id);
+    let mut tx = owner.begin().await?;
+    for statement in [
+        format!("SET LOCAL lock_timeout = '{PARTITION_LOCK_TIMEOUT}'"),
+        format!("CREATE TABLE {partition} (LIKE memories INCLUDING ALL)"),
+        format!("ALTER TABLE {partition} ENABLE ROW LEVEL SECURITY"),
+        format!("ALTER TABLE {partition} FORCE ROW LEVEL SECURITY"),
+        format!(
+            "CREATE POLICY tenant_isolation ON {partition} \
+             USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) \
+             WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)"
+        ),
+        format!("ALTER TABLE memories ATTACH PARTITION {partition} FOR VALUES IN ('{tenant_id}')"),
+    ] {
+        sqlx::query(&statement)
+            .persistent(false)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
+}
+
+/// The full-text recall statement `recall_fts` runs, binding `$1` the
+/// tenant, `$2` the readable nodes, `$3` the query, `$4` the kinds and `$5`
+/// `k`. Its `m.tenant_id = $1` is the tenant `oml.tenant_id` names, so the
+/// plan keeps that tenant's partition alone, or drops the rest as it
+/// starts; row security stays the fence (ADR-0034 d11). Exported so the
+/// suite plans the statement the adapter runs.
+pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
+            ts_rank(to_tsvector('simple', m.claim), \
+                    plainto_tsquery('simple', $3), 0) AS score \
+     FROM memories m \
+     WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+       AND NOT m.retirement AND m.kind = ANY($4::text[]) \
+       AND m.workarea_id = ANY($2::uuid[]) \
+       AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
+     ORDER BY score DESC, m.id ASC \
+     LIMIT $5";
+
+/// The own held recall statement `recall_own_held` runs, binding `$1` the
+/// tenant, `$2` the author keys, `$3` the readable nodes, `$4` the query,
+/// `$5` the kinds and `$6` `k`; pruned to the tenant's partition as
+/// [`RECALL_FTS`] is (ADR-0034 d11).
+pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
+            ts_rank(to_tsvector('simple', m.claim), \
+                    plainto_tsquery('simple', $4), 0) AS score \
+     FROM memories m \
+     WHERE m.tenant_id = $1 AND m.status = 'held' \
+       AND m.author_key_id = ANY($2::uuid[]) \
+       AND NOT m.retirement AND m.kind = ANY($5::text[]) \
+       AND m.workarea_id = ANY($3::uuid[]) \
+       AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
+     ORDER BY score DESC, m.id ASC \
+     LIMIT $6";
+
 /// The Postgres `JournalStore`.
 #[derive(Debug, Clone)]
 pub struct PgStore {
     pool: PgPool,
+    owner_url: Option<OwnerUrl>,
 }
 
 impl PgStore {
     /// Connects a pool to `database_url` (no migration side effect; call
-    /// [`Self::migrate`] where bootstrap wants it).
+    /// [`Self::migrate`] where bootstrap wants it). The store creates no
+    /// tenant's partitions until [`Self::with_owner_url`] gives it the
+    /// owner's URL.
     pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(4)
             .connect(database_url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            owner_url: None,
+        })
     }
 
     #[must_use]
     pub fn from_pool(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            owner_url: None,
+        }
+    }
+
+    /// The owner's URL, which the store opens a connection to for each
+    /// tenant's partition DDL alone and closes after it (ADR-0034 d4, d11);
+    /// without it, [`JournalStore::create_tenant_partitions`] refuses.
+    #[must_use]
+    pub fn with_owner_url(self, owner_url: &str) -> Self {
+        Self {
+            owner_url: Some(OwnerUrl(owner_url.into())),
+            ..self
+        }
     }
 
     #[must_use]
@@ -78,10 +509,52 @@ impl PgStore {
         &self.pool
     }
 
+    /// Opens the owner's connection at `owner_url` (ADR-0034 d2, d4): one
+    /// connection whose `after_connect` sets `oml.serving_role` to this
+    /// store's login, its pool's `current_user`, so a granting migration names
+    /// it (d3); no role name is read from configuration (d2). It is not a
+    /// long-lived pool: the caller runs [`role_split_preflight`],
+    /// [`Self::migrate_as`] and [`role_split_postflight`] on it, then closes
+    /// it before serving (d4), and no owner connection outlives the boot but
+    /// d11's partition DDL (d8).
+    pub async fn connect_owner(&self, owner_url: &str) -> Result<PgPool, sqlx::Error> {
+        let serving: String = sqlx::query_scalar("SELECT current_user::text")
+            .fetch_one(&self.pool)
+            .await?;
+        PgPoolOptions::new()
+            .max_connections(1)
+            .after_connect(move |conn, _meta| {
+                let serving = serving.clone();
+                Box::pin(async move {
+                    sqlx::query("SELECT set_config('oml.serving_role', $1, false)")
+                        .bind(serving)
+                        .execute(conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .connect(owner_url)
+            .await
+    }
+
     /// Applies any pending committed migrations (forward-only,
-    /// postgres-schema.md "Migrations").
-    pub async fn migrate(&self) -> Result<(), sqlx::migrate::MigrateError> {
-        MIGRATOR.run(&self.pool).await
+    /// postgres-schema.md "Migrations") on `owner`, a pool from
+    /// [`Self::connect_owner`] (ADR-0034 d2, d3, d4), so each table's
+    /// migration grants this store's login the DML the adapter's statements
+    /// use (postgres-schema.md "Privileges"). A migration that grants, run
+    /// without `oml.serving_role`, fails at `current_setting` (`42704`).
+    pub async fn migrate_as(&self, owner: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+        MIGRATOR.run(owner).await
+    }
+
+    /// [`Self::migrate_as`] over an owner connection opened at `owner_url`
+    /// by [`Self::connect_owner`] and closed before this returns (ADR-0034
+    /// d4), with no boot check run around it.
+    pub async fn migrate(&self, owner_url: &str) -> Result<(), sqlx::migrate::MigrateError> {
+        let owner = self.connect_owner(owner_url).await?;
+        let applied = self.migrate_as(&owner).await;
+        owner.close().await;
+        applied
     }
 
     /// The startup fork check (ADR-0002 d7): pages the stored events and
@@ -832,7 +1305,10 @@ async fn apply_fold(
             // 'committed', every other node's 'development'. The path is the
             // parent's with this node's name appended, the root's its name
             // alone (ADR-0026 d7); a parent the lead has not named yet has
-            // no path, and neither does its child until the naming fold.
+            // no path, and neither does its child until the naming fold. A
+            // parent the tenant does not hold, another tenant's node
+            // included, meets the key (tenant_id, parent_id) and is the
+            // backend's refusal, as any 23503 is (ADR-0034 d12).
             let crew = w
                 .crew
                 .as_ref()
@@ -1252,6 +1728,22 @@ impl JournalStore for PgStore {
         Ok(receipt)
     }
 
+    async fn create_tenant_partitions(&self, tenant_id: Uuid) -> Result<(), StoreError> {
+        let Some(OwnerUrl(owner_url)) = &self.owner_url else {
+            return Err(StoreError::Partition(
+                "this store holds no owner URL for the partition DDL (ADR-0034 d4)".to_owned(),
+            ));
+        };
+        // An owner connection opened for this call alone and closed after
+        // it, so none outlives the DDL (ADR-0034 d4, d8).
+        let mut owner = PgConnection::connect(owner_url)
+            .await
+            .map_err(|e| partition_error(&e))?;
+        let created = create_partition_on(&mut owner, tenant_id).await;
+        let _ = owner.close().await;
+        created.map_err(|e| partition_error(&e))
+    }
+
     async fn chain_head(&self, tenant_id: Uuid) -> Result<Option<ChainHead>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
@@ -1436,20 +1928,11 @@ impl JournalStore for PgStore {
         // replaced version nor a retired claim is a hit (retrieval.md R3 at
         // the store; ADR-0025 d8), within the readable set alone — an empty
         // array matches nothing (ADR-0025 d1); the 'simple' configuration
-        // matches 0001's GIN expression index. The score is ts_rank with
+        // matches the GIN expression index each tenant's partition holds
+        // (0009). The score is ts_rank with
         // normalization 0 as float4, ties broken by id. A candidate carries
         // no body: the served rows hydrate after the cuts (ADR-0025 d7).
-        let sql = "SELECT m.id, m.body_bytes, \
-                    ts_rank(to_tsvector('simple', m.claim), \
-                            plainto_tsquery('simple', $3), 0) AS score \
-             FROM memories m \
-             WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
-               AND NOT m.retirement AND m.kind = ANY($4::text[]) \
-               AND m.workarea_id = ANY($2::uuid[]) \
-               AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
-             ORDER BY score DESC, m.id ASC \
-             LIMIT $5";
-        let rows = sqlx::query(sql)
+        let rows = sqlx::query(RECALL_FTS)
             .bind(tenant_id)
             .bind(readable)
             .bind(query)
@@ -1485,18 +1968,7 @@ impl JournalStore for PgStore {
         // row or a retirement version, never off the readable nodes, and the
         // score is the same ts_rank as recall_fts, so the two lists merge
         // under one order (ADR-0025 d4).
-        let sql = "SELECT m.id, m.body_bytes, \
-                    ts_rank(to_tsvector('simple', m.claim), \
-                            plainto_tsquery('simple', $4), 0) AS score \
-             FROM memories m \
-             WHERE m.tenant_id = $1 AND m.status = 'held' \
-               AND m.author_key_id = ANY($2::uuid[]) \
-               AND NOT m.retirement AND m.kind = ANY($5::text[]) \
-               AND m.workarea_id = ANY($3::uuid[]) \
-               AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
-             ORDER BY score DESC, m.id ASC \
-             LIMIT $6";
-        let rows = sqlx::query(sql)
+        let rows = sqlx::query(RECALL_OWN_HELD)
             .bind(tenant_id)
             .bind(author_key_ids)
             .bind(readable)
@@ -1705,10 +2177,12 @@ impl JournalStore for PgStore {
         // authored (admission.md review; roles-and-keys.md rival
         // successors, ADR-0025 d10; R2 proper re-runs at verdict time). A
         // re-claim by the same key matches its own held_by_key row again.
+        // Every reference to memories names the tenant, so the plan keeps
+        // its partition alone (ADR-0034 d11).
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM review_queue q \
-             JOIN memories m ON m.id = q.memory_id \
-             WHERE q.tenant_id = $1 \
+             JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
+             WHERE q.tenant_id = $1 AND m.tenant_id = $1 \
                AND m.workarea_id = ANY($4::uuid[]) \
                AND (q.held_by_key IS NULL OR q.held_by_key = $2) \
                AND NOT (m.lineage_principals @> ARRAY[$3]::text[]) \
@@ -2016,9 +2490,11 @@ impl JournalStore for PgStore {
         let Some(top) = ancestry.last() else {
             return Ok(None);
         };
-        // A walk that stops short of a root left the tenant (a parent_id the
-        // foreign key admits across tenants); it would drop ancestors'
-        // grants and denials, so it is refused.
+        // A walk that stops short of a root left the tenant; it would drop
+        // ancestors' grants and denials, so it is refused. Since 0008 the
+        // key (tenant_id, parent_id) refuses such a parent at its insert,
+        // having validated every row before it (ADR-0034 d12); this refusal
+        // stays as the walk's own guard.
         if let Some(parent_id) = top.parent_id {
             return Err(StoreError::Backend(format!(
                 "the ancestry of {workarea_id} names parent {parent_id}, \

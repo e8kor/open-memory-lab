@@ -1,7 +1,9 @@
 # The values CI installs the chart with on kind (.github/workflows/ci.yml, job
 # chart): the image is the one CI built from the checkout and loaded into the
 # cluster, so it is never pulled. The Ingress stays off, as on any install
-# before the claim (ADR-0033 d8).
+# before the claim (ADR-0033 d8). The job's Secret, oml-postgres, carries both
+# the serving URL and the owner URL, over the role pair its in-cluster
+# Postgres creates (ADR-0034 d2, d10 step 2).
 image:
   pullPolicy: Never
 networkPolicy:

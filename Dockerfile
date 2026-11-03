@@ -38,11 +38,13 @@ COPY --from=builder /build/target/release/oml-server-lead /usr/local/bin/oml-ser
 # The administration CLI rides along so `docker compose exec oml-server oml …`
 # runs the ceremonies without a local Rust toolchain.
 COPY --from=builder /build/target/release/oml /usr/local/bin/oml
-# Migrations ship in the image: the PoC binary applies them itself at startup
-# (migrate-on-boot). That is a PoC shortcut — in the specified deployment the
-# bootstrap workload owns migrations, running them under the owner role on
-# first install and on every upgrade (docs/operations/upgrades.md); when the
-# oml-bootstrap service lands, migrate-on-boot goes away.
+# Migrations ship in the image: the lead applies them itself at startup
+# (migrate-on-boot), under postgres.owner_url, closes that connection and
+# serves under postgres.url, a role that owns nothing (ADR-0034 d4). That is a
+# PoC shortcut — in the specified deployment the bootstrap workload owns
+# migrations, running them under the owner role on first install and on every
+# upgrade (docs/operations/upgrades.md); when the oml-bootstrap service lands,
+# migrate-on-boot goes away.
 COPY --from=builder /build/migrations /usr/local/share/oml/migrations
 
 USER oml
