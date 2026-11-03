@@ -1,6 +1,11 @@
-//! `oml-server-lead` — boot order per deployment.md and ADR-0002 d7:
-//! configuration, Postgres, migrations, keyring, fork check, the naming of
-//! rows that predate names, then the listener. A failed fork check does not
+//! `oml-server-lead` — boot order per deployment.md, ADR-0002 d7 and
+//! ADR-0034 d4: configuration; the serving and owner pools; the role-split
+//! checks before migrating, the migrations as the owner, the checks after;
+//! the owner pool closed; then, over the serving pool alone, keyring, fork
+//! check, the naming of rows that predate names, the enrollment token and
+//! the listener. A role-split refusal exits non-zero, logged as
+//! `postgres.role_split` with its reason, before the listener binds
+//! (ADR-0034 d5). A failed fork check does not
 //! exit: `/readyz` answers 503 and every write answers `system.unavailable`
 //! until an operator intervenes (http-api.md "Health"). Nor does a failed
 //! naming: a row the start could not name (ADR-0026 d11) keeps `/readyz` at
@@ -11,7 +16,46 @@ use std::process::ExitCode;
 
 use oml_app::ports::{KeyringStore as _, Signer as _};
 use oml_pg::PgStore;
-use oml_server_lead::{Config, FileKeyring, LeadSigner, start_lead};
+use oml_server_lead::{
+    Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot, start_lead,
+};
+
+/// Why the boot stopped: a `postgres.role_split` refusal, which `main`
+/// logs under that code with its reason (ADR-0034 d5), or another fatal
+/// failure.
+enum BootError {
+    RoleSplit(String),
+    Fatal(String),
+}
+
+impl From<String> for BootError {
+    fn from(e: String) -> Self {
+        Self::Fatal(e)
+    }
+}
+
+impl From<ConfigError> for BootError {
+    fn from(e: ConfigError) -> Self {
+        match e {
+            ConfigError::RoleSplit(e) => Self::RoleSplit(e.reason.to_string()),
+            ConfigError::Invalid(e) => Self::Fatal(e),
+        }
+    }
+}
+
+impl From<SplitBootError> for BootError {
+    fn from(e: SplitBootError) -> Self {
+        match e {
+            SplitBootError::RoleSplit(check) => Self::RoleSplit(check.reason().map_or_else(
+                // A catalog read that failed proves nothing and refuses as
+                // well (ADR-0034 d5).
+                || check.to_string(),
+                |reason| reason.to_string(),
+            )),
+            other => Self::Fatal(other.to_string()),
+        }
+    }
+}
 
 fn config_path_arg() -> Result<Option<PathBuf>, String> {
     let mut args = std::env::args().skip(1);
@@ -30,25 +74,23 @@ fn config_path_arg() -> Result<Option<PathBuf>, String> {
     Ok(path)
 }
 
-async fn run() -> Result<(), String> {
+async fn run() -> Result<(), BootError> {
     let config_path = config_path_arg()?;
     let config = Config::load(config_path.as_deref(), &|name| std::env::var(name).ok())?;
     tracing::info!(listen = %config.listen, "oml-server-lead starting (standalone profile: always the lead of a cluster of one, ADR-0023 d16)");
     let build = oml_server_lead::build_info();
     tracing::info!(version = %build.version, commit = %build.commit, commit_time = %build.commit_time, build_time = %build.build_time, rustc = %build.rustc, target = %build.target, profile = %build.profile, "build");
 
-    // ADR-0034 d10 step 2 lands d4's postgres.owner_url; until then the one
-    // URL migrates as its own owner, 0007 grants that same login, and it
-    // runs each new tenant's partition DDL (d11).
+    // ADR-0034 d4: the serving pool, then an owner pool that runs d5's
+    // checks and the migrations and is closed before anything serves. The
+    // store keeps the owner URL for a new tenant's partition DDL alone
+    // (d11), which opens and closes its own owner connection.
     let store = PgStore::connect(&config.postgres_url)
         .await
         .map_err(|e| format!("postgres connect: {e}"))?
-        .with_owner_url(&config.postgres_url);
-    store
-        .migrate(&config.postgres_url)
-        .await
-        .map_err(|e| format!("migrate on boot: {e}"))?;
-    tracing::info!("migrations applied");
+        .with_owner_url(&config.postgres_owner_url);
+    let roles = split_boot(&store, &config.postgres_owner_url).await?;
+    tracing::info!(owner_role = %roles.owner, serving_role = %roles.serving, "migrations applied as the owner; owner pool closed; serving as the serving role (ADR-0034 d4)");
 
     let keyring = FileKeyring::new(config.keyring_path.clone());
     let signing_key = keyring
@@ -135,7 +177,11 @@ async fn main() -> ExitCode {
         .init();
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
+        Err(BootError::RoleSplit(reason)) => {
+            tracing::error!(code = "postgres.role_split", %reason, "postgres.role_split: refusing to serve before any listener binds (ADR-0034 d5)");
+            ExitCode::FAILURE
+        }
+        Err(BootError::Fatal(e)) => {
             tracing::error!("fatal: {e}");
             ExitCode::FAILURE
         }

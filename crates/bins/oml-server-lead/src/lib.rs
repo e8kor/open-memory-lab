@@ -1,7 +1,8 @@
 //! The lead composition pieces (workspace-plan.md: binaries are thin
 //! compositions): configuration (oml.toml + `OML_` environment,
-//! configuration.md), the kms-file keyring (ADR-0023 d4), the runtime
-//! clock/id/scanner adapters, the startup fork check (ADR-0002 d7), the
+//! configuration.md), the role-split boot (ADR-0034 d4, d5), the kms-file
+//! keyring (ADR-0023 d4), the runtime clock/id/scanner adapters, the
+//! startup fork check (ADR-0002 d7), the
 //! startup naming and names check (ADR-0026 d11), and the start and state
 //! constructors the integration tests share with `main`.
 
@@ -20,7 +21,10 @@ use oml_app::ports::{
     AdmissionEnvelope, Clock, IdGen, KeyringError, KeyringStore, ScanOutcome, Scanner, Signer,
 };
 use oml_app::types::AssignedNames;
-use oml_pg::{ForkCheckError, PgStore};
+use oml_pg::{
+    ForkCheckError, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
+    role_split_postflight, role_split_preflight,
+};
 use oml_transport_http::{ApiState, BuildInfo, DbPing, time::system_event_time};
 
 // ---------------------------------------------------------------------------
@@ -32,12 +36,28 @@ use oml_transport_http::{ApiState, BuildInfo, DbPing, time::system_event_time};
 /// not accepted in standalone — a standalone node is always the lead).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
+    /// The serving role's URL, which the lead serves under (ADR-0034 d2, d4).
     pub postgres_url: String,
+    /// The owner's URL, which the lead migrates under and opens again only
+    /// for a new tenant's partition DDL (ADR-0034 d2, d4, d11).
+    pub postgres_owner_url: String,
     pub listen: String,
     pub keyring_path: PathBuf,
 }
 
+/// Why a configuration is refused: `postgres.owner_url` unset is the role
+/// split's `owner_url_missing`, named as the boot's other refusals are
+/// (ADR-0034 d5); anything else is a configuration that does not load.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ConfigError {
+    #[error(transparent)]
+    RoleSplit(#[from] RoleSplitError),
+    #[error("{0}")]
+    Invalid(String),
+}
+
 const KEY_POSTGRES_URL: &str = "postgres.url";
+const KEY_POSTGRES_OWNER_URL: &str = "postgres.owner_url";
 const KEY_LISTEN: &str = "server.listen";
 const KEY_KMS_ADAPTER: &str = "kms.adapter";
 const KEY_KEYRING_PATH: &str = "kms.keyring_path";
@@ -62,16 +82,18 @@ impl Config {
     /// that precedence (configuration.md: defaults < file < environment).
     /// `env` is injected so the precedence law is testable without mutating
     /// the process environment.
+    /// `postgres.owner_url` is required, and its absence is refused as
+    /// `postgres.role_split` `owner_url_missing`: no single-URL mode exists
+    /// (ADR-0034 d4, d5).
     pub fn from_sources(
         file: Option<&str>,
         env: &dyn Fn(&str) -> Option<String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ConfigError> {
         let doc: Option<toml::Value> = match file {
             None => None,
-            Some(text) => Some(
-                text.parse::<toml::Value>()
-                    .map_err(|e| format!("the configuration file is not TOML: {e}"))?,
-            ),
+            Some(text) => Some(text.parse::<toml::Value>().map_err(|e| {
+                ConfigError::Invalid(format!("the configuration file is not TOML: {e}"))
+            })?),
         };
         let lookup = |key: &str| -> Option<String> {
             if let Some(v) = env(&env_name(key)) {
@@ -86,18 +108,24 @@ impl Config {
         if let Some(adapter) = lookup(KEY_KMS_ADAPTER)
             && adapter != "file"
         {
-            return Err(format!(
+            return Err(ConfigError::Invalid(format!(
                 "kms.adapter {adapter:?} is not available in this composition (kms-file only, ADR-0023 d4)"
-            ));
+            )));
         }
         let postgres_url = lookup(KEY_POSTGRES_URL).ok_or_else(|| {
-            format!("{KEY_POSTGRES_URL} is required (none — required, configuration.md)")
+            ConfigError::Invalid(format!(
+                "{KEY_POSTGRES_URL} is required (none — required, configuration.md)"
+            ))
+        })?;
+        let postgres_owner_url = lookup(KEY_POSTGRES_OWNER_URL).ok_or(RoleSplitError {
+            reason: RoleSplitReason::OwnerUrlMissing,
         })?;
         let listen = lookup(KEY_LISTEN).unwrap_or_else(|| "127.0.0.1:8080".to_owned());
         let keyring_path =
             lookup(KEY_KEYRING_PATH).map_or_else(|| PathBuf::from("oml-keyring"), PathBuf::from);
         Ok(Self {
             postgres_url,
+            postgres_owner_url,
             listen,
             keyring_path,
         })
@@ -107,16 +135,76 @@ impl Config {
     pub fn load(
         config_path: Option<&Path>,
         env: &dyn Fn(&str) -> Option<String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ConfigError> {
         let file = match config_path {
             None => None,
-            Some(path) => Some(
-                std::fs::read_to_string(path)
-                    .map_err(|e| format!("cannot read {}: {e}", path.display()))?,
-            ),
+            Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
+                ConfigError::Invalid(format!("cannot read {}: {e}", path.display()))
+            })?),
         };
         Self::from_sources(file.as_deref(), env)
     }
+}
+
+// ---------------------------------------------------------------------------
+// The role-split boot (ADR-0034 d4, d5)
+// ---------------------------------------------------------------------------
+
+/// Why the role-split boot did not finish: a `postgres.role_split`
+/// refusal, by reason or as a catalog read that failed (ADR-0034 d5), or a
+/// connection or migration that failed.
+#[derive(Debug, thiserror::Error)]
+pub enum SplitBootError {
+    #[error(transparent)]
+    RoleSplit(#[from] RoleSplitCheckError),
+    #[error("postgres owner connect: {0}")]
+    OwnerConnect(sqlx::Error),
+    #[error("migrate on boot: {0}")]
+    Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error("postgres login: {0}")]
+    Login(sqlx::Error),
+}
+
+/// The two logins the boot migrated and serves under, as each URL's
+/// `current_user` reads them (ADR-0034 d2: no role name is configured).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitRoles {
+    pub owner: String,
+    pub serving: String,
+}
+
+/// The lead's boot before its keyring (ADR-0034 d4): over `store`'s
+/// serving pool and an owner pool opened at `owner_url` with
+/// `oml.serving_role` set, d5's checks before migrating, the migrations on
+/// the owner pool, d5's checks after, then the owner pool closed on every
+/// path, a refusal's included, so no owner connection outlives the boot
+/// but d11's partition DDL (d8). The caller binds no listener unless this
+/// returns `Ok`.
+pub async fn split_boot(store: &PgStore, owner_url: &str) -> Result<SplitRoles, SplitBootError> {
+    let owner = store
+        .connect_owner(owner_url)
+        .await
+        .map_err(SplitBootError::OwnerConnect)?;
+    let booted = split_boot_on(store, &owner).await;
+    owner.close().await;
+    booted
+}
+
+async fn split_boot_on(store: &PgStore, owner: &PgPool) -> Result<SplitRoles, SplitBootError> {
+    role_split_preflight(owner, store.pool()).await?;
+    store.migrate_as(owner).await?;
+    role_split_postflight(owner, store.pool()).await?;
+    Ok(SplitRoles {
+        owner: current_user(owner).await?,
+        serving: current_user(store.pool()).await?,
+    })
+}
+
+async fn current_user(pool: &PgPool) -> Result<String, SplitBootError> {
+    sqlx::query_scalar("SELECT current_user::text")
+        .fetch_one(pool)
+        .await
+        .map_err(SplitBootError::Login)
 }
 
 // ---------------------------------------------------------------------------
@@ -558,8 +646,7 @@ mod tests {
 
     #[test]
     fn precedence_is_defaults_file_env() {
-        let file =
-            "[postgres]\nurl = \"postgres://file/db\"\n[server]\nlisten = \"0.0.0.0:9999\"\n";
+        let file = "[postgres]\nurl = \"postgres://file/db\"\nowner_url = \"postgres://owner@file/db\"\n[server]\nlisten = \"0.0.0.0:9999\"\n";
         // file over defaults
         let cfg = Config::from_sources(Some(file), &|_| None).expect("file config loads");
         assert_eq!(cfg.postgres_url, "postgres://file/db");
@@ -578,11 +665,54 @@ mod tests {
         assert!(Config::from_sources(None, &|_| None).is_err());
         let env = env_of(&[
             ("OML_POSTGRES__URL", "postgres://env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
             ("OML_KMS__ADAPTER", "aws"),
         ]);
         let err = Config::from_sources(None, &|k| env.get(k).cloned())
             .expect_err("a non-file kms adapter is refused in this composition");
-        assert!(err.contains("kms.adapter"), "got: {err}");
+        assert!(matches!(err, ConfigError::Invalid(_)), "got: {err:?}");
+        assert!(err.to_string().contains("kms.adapter"), "got: {err}");
+    }
+
+    #[test]
+    fn postgres_owner_url_is_read_from_file_and_from_oml_postgres_owner_url() {
+        let file = "[postgres]\nurl = \"postgres://serving@file/db\"\nowner_url = \"postgres://owner@file/db\"\n";
+        let cfg = Config::from_sources(Some(file), &|_| None).expect("file config loads");
+        assert_eq!(cfg.postgres_owner_url, "postgres://owner@file/db");
+        assert_eq!(cfg.postgres_url, "postgres://serving@file/db");
+        let env = env_of(&[("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db")]);
+        let cfg = Config::from_sources(Some(file), &|k| env.get(k).cloned())
+            .expect("env-over-file config loads");
+        assert_eq!(cfg.postgres_owner_url, "postgres://owner@env/db");
+        let env = env_of(&[
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ]);
+        let cfg =
+            Config::from_sources(None, &|k| env.get(k).cloned()).expect("env-only config loads");
+        assert_eq!(cfg.postgres_owner_url, "postgres://owner@env/db");
+    }
+
+    #[test]
+    fn a_missing_owner_url_refuses_with_postgres_role_split_owner_url_missing() {
+        let file = "[postgres]\nurl = \"postgres://serving@file/db\"\n";
+        for err in [
+            Config::from_sources(Some(file), &|_| None),
+            Config::from_sources(None, &|k| {
+                (k == "OML_POSTGRES__URL").then(|| "postgres://serving@env/db".to_owned())
+            }),
+        ]
+        .map(|r| r.expect_err("no owner URL is refused (ADR-0034 d5)"))
+        {
+            assert_eq!(
+                err,
+                ConfigError::RoleSplit(RoleSplitError {
+                    reason: RoleSplitReason::OwnerUrlMissing
+                }),
+                "got: {err}"
+            );
+            assert_eq!(err.to_string(), "postgres.role_split: owner_url_missing");
+        }
     }
 
     #[tokio::test]
