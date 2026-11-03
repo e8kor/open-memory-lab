@@ -535,6 +535,66 @@ fn a_command_that_does_not_tokenise_or_holds_a_substitution_asks() {
 }
 
 #[test]
+fn a_compound_command_or_a_dollar_quote_asks() {
+    for (command, refusal) in [
+        ("if git push; then :; fi", ShellRefusal::CompoundCommand),
+        (
+            "while true; do git push; done",
+            ShellRefusal::CompoundCommand,
+        ),
+        (
+            "until false; do git push; done",
+            ShellRefusal::CompoundCommand,
+        ),
+        (
+            "for x in 1; do git push; done",
+            ShellRefusal::CompoundCommand,
+        ),
+        (
+            "select x in a; do git push; done",
+            ShellRefusal::CompoundCommand,
+        ),
+        (
+            "case x in x) git push;; esac",
+            ShellRefusal::CompoundCommand,
+        ),
+        ("! git push", ShellRefusal::CompoundCommand),
+        ("time git push", ShellRefusal::CompoundCommand),
+        ("coproc git push", ShellRefusal::CompoundCommand),
+        ("make && then git push", ShellRefusal::CompoundCommand),
+        ("$'git' push", ShellRefusal::DollarQuote),
+        ("$\"git\" push", ShellRefusal::DollarQuote),
+        ("git $'push'", ShellRefusal::DollarQuote),
+    ] {
+        assert_eq!(shell_segments(command), Err(refusal), "{command:?}");
+        assert_eq!(
+            verdict(&[deny_push()], "Bash", json!({ "command": command })),
+            Verdict::Decide(oml_domain::guardrail::Decision {
+                effect: Effect::Ask,
+                causes: vec![Cause::Uncheckable(Uncheckable::Shell(refusal))],
+            }),
+            "{command:?}"
+        );
+        assert_eq!(
+            verdict(&[], "Bash", json!({ "command": command })),
+            Verdict::Nothing,
+            "with no shell rule cached, {command:?} asks nothing"
+        );
+    }
+    // A reserved word quoted, or past a segment's first word, is a word.
+    assert_eq!(
+        shell_segments("'if' x; echo if then fi; \"time\" y; echo $HOME '$x' \"$'z'\"")
+            .expect("tokenises"),
+        words(&[
+            &["if", "x"],
+            &["echo", "if", "then", "fi"],
+            &["time", "y"],
+            &["echo", "$HOME", "$x", "$'z'"],
+        ])
+    );
+}
+
+#[test]
 fn a_final_star_word_matches_zero_or_more_words_from_the_first_word_on() {
     let star = cached(
         1,
@@ -781,6 +841,100 @@ fn a_fetch_host_is_the_whatwg_host_lower_cased_without_a_trailing_dot() {
     assert_eq!(fetch("https://b\u{fc}cher.example/"), Some(Effect::Ask));
 }
 
+#[test]
+fn a_fetch_ipv6_host_is_compared_in_its_whatwg_serialisation() {
+    for (url, host) in [
+        ("http://[0:0:0:0:0:0:0:1]/", "[::1]"),
+        ("http://[0::1]/", "[::1]"),
+        ("http://[::0001]/", "[::1]"),
+        ("http://[::]/", "[::]"),
+        ("http://[1::]/", "[1::]"),
+        ("http://[1:0:0:0:0:0:0:0]/", "[1::]"),
+        ("http://[2001:DB8:0:0:1:0:0:1]:8080/", "[2001:db8::1:0:0:1]"),
+        ("http://[1:0:2:3:4:5:6:7]/", "[1:0:2:3:4:5:6:7]"),
+        ("http://[1:0:0:2:0:0:0:3]/", "[1:0:0:2::3]"),
+        ("http://[::FFFF:127.0.0.1]/", "[::ffff:7f00:1]"),
+        ("http://[::ffff:7f00:1]/", "[::ffff:7f00:1]"),
+        ("ssh://[0:0::1]/repo", "[::1]"),
+    ] {
+        assert_eq!(url_host(url).as_deref(), Some(host), "{url}");
+    }
+    for url in [
+        "http://[]/",
+        "http://[:1]/",
+        "http://[1:::2]/",
+        "http://[::1::]/",
+        "http://[1:2:3:4:5:6:7:8:9]/",
+        "http://[1:2:3:4:5:6:7]/",
+        "http://[12345::]/",
+        "http://[::01.2.3.4]/",
+        "http://[::1.2.3]/",
+        "http://[::256.0.0.1]/",
+        "http://[::g]/",
+        "http://[::1]x/",
+    ] {
+        assert_eq!(url_host(url), None, "{url:?}");
+    }
+    let rules = [cached(
+        1,
+        "x",
+        json!({"rule": "oml-gr/1", "tool": "fetch", "host": "[::1]", "effect": "deny"}),
+    )];
+    let fetch = |url: &str| effect(&verdict(&rules, "WebFetch", json!({ "url": url })));
+    for url in [
+        "http://[::1]/",
+        "http://[0:0:0:0:0:0:0:1]/",
+        "http://[0::1]/",
+        "http://[::0001]/",
+    ] {
+        assert_eq!(fetch(url), Some(Effect::Deny), "{url}");
+    }
+    assert_eq!(fetch("http://[::2]/"), None);
+}
+
+#[test]
+fn a_rule_host_not_in_whatwg_serialised_form_is_vetoed() {
+    for host in [
+        "127.1",
+        "0x7f.0.0.1",
+        "2130706433",
+        "0177.0.0.1",
+        "127.0.0.01",
+        "256.0.0.1",
+        "example.123",
+        "*.0.0.1",
+        "*.1",
+        "[0:0::1]",
+        "[0:0:0:0:0:0:0:1]",
+        "[::ffff:127.0.0.1]",
+        "[::0001]",
+        "[1::2::3]",
+        "*.[::1]",
+    ] {
+        let value = json!({"rule": "oml-gr/1", "tool": "fetch", "host": host, "effect": "deny"});
+        assert!(Rule::parse(&value).is_err(), "{host} parsed");
+        assert!(
+            matches!(
+                admit(Severity::Must, "A body.", Some(&value)),
+                Err(GuardrailRefusal::RuleUnparsable(_))
+            ),
+            "{host} admitted"
+        );
+    }
+    for host in [
+        "127.0.0.1",
+        "10.0.0.255",
+        "[::1]",
+        "[2001:db8::1:0:0:1]",
+        "[::ffff:7f00:1]",
+        "*.example.com",
+        "1.example",
+    ] {
+        let value = json!({"rule": "oml-gr/1", "tool": "fetch", "host": host, "effect": "deny"});
+        assert_eq!(rule(value.clone()).to_value(), value, "{host}");
+    }
+}
+
 // --- the glob is linear: no regular expressions, no backtracking ---------
 
 /// A plain backtracking matcher, the reference the linear one must agree with.
@@ -990,6 +1144,39 @@ fn an_edit_of_the_cache_directory_or_a_shell_word_naming_it_asks() {
         json!({"rule": "oml-gr/1", "tool": "shell", "command": ["rm", "*"], "effect": "deny"}),
     );
     assert_eq!(shell(&[deny_rm], "rm oml/guardrails/x"), Some(Effect::Deny));
+}
+
+#[test]
+fn a_redirection_into_the_cache_directory_asks() {
+    for command in [
+        "echo x > ~/.local/state/oml/guardrails/s.json",
+        "echo x >~/.local/state/oml/guardrails/s.json",
+        "echo x >> ~/.local/state/oml/guardrails/s.json",
+        "echo x &> ~/.local/state/oml/guardrails/s.json",
+        "echo x &>> ~/.local/state/oml/guardrails/s.json",
+        "echo x 2> ~/.local/state/oml/guardrails/s.json",
+        "echo x >| ~/.local/state/oml/guardrails/s.json",
+        "> ~/.local/state/oml/guardrails/s.json",
+        "make; echo x > 'oml/guardrails/s.json'",
+    ] {
+        assert_eq!(
+            verdict(&[], "Bash", json!({ "command": command })),
+            Verdict::Decide(oml_domain::guardrail::Decision {
+                effect: Effect::Ask,
+                causes: vec![Cause::CacheDirectory]
+            }),
+            "{command:?}"
+        );
+    }
+    // A redirection's target is still no word a rule matches on.
+    let any = cached(
+        2,
+        "deny every command",
+        json!({"rule": "oml-gr/1", "tool": "shell", "command": ["*"], "effect": "deny"}),
+    );
+    assert_eq!(shell(&[deny_push()], "echo x > git push"), None);
+    assert_eq!(shell(std::slice::from_ref(&any), "> out"), None);
+    assert_eq!(shell(&[any], "echo x > out"), Some(Effect::Deny));
 }
 
 // --- d9: the cache file codec and its failure modes ----------------------

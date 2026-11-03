@@ -1,7 +1,7 @@
 //! Argument normalisation for the `edit`, `read` and `fetch` classes: a
 //! path made absolute against the input's `cwd` and normalised lexically,
-//! and the WHATWG host of a URL, lower-cased, without a trailing dot
-//! (proposed ADR-0037 d8).
+//! and the WHATWG host of a URL, serialised as the standard serialises it,
+//! lower-cased, without a trailing dot (proposed ADR-0037 d8).
 
 /// `path` made absolute against `cwd` and normalised lexically: `.` and
 /// empty components dropped, `..` removing the component before it (never
@@ -41,7 +41,7 @@ const SPECIAL: [&str; 6] = ["http", "https", "ws", "wss", "ftp", "file"];
 /// The host of `url` as the WHATWG URL Standard parses it, lower-cased and
 /// without one trailing dot: userinfo and port removed, percent-decoded,
 /// an IPv4 address in any of the standard's numeric spellings written as
-/// four decimals. `None` when the URL has no host or does not parse, and
+/// four decimals, an IPv6 address in the standard's compressed form. `None` when the URL has no host or does not parse, and
 /// for a host this matcher cannot spell exactly: a non-ASCII (IDNA) domain,
 /// which the check then asks on as an argument it lacks.
 #[must_use]
@@ -75,16 +75,16 @@ pub fn url_host(url: &str) -> Option<String> {
     };
     let authority = &after[..after.find(authority_end).unwrap_or(after.len())];
     let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let host = if host_port.starts_with('[') {
-        &host_port[..=host_port.find(']')?]
-    } else {
-        host_port.split(':').next().unwrap_or_default()
-    };
+    if let Some(bracketed) = host_port.strip_prefix('[') {
+        let (address, port) = bracketed.split_once(']')?;
+        if !(port.is_empty() || port.starts_with(':')) {
+            return None;
+        }
+        return ipv6(address).map(|a| format!("[{a}]"));
+    }
+    let host = host_port.split(':').next().unwrap_or_default();
     if host.is_empty() {
         return None;
-    }
-    if host.starts_with('[') {
-        return Some(host.to_ascii_lowercase());
     }
     let host = if special {
         percent_decode(host)?
@@ -134,9 +134,144 @@ fn percent_decode(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+/// The WHATWG IPv6 parser over the text between a host's brackets, written
+/// back by the WHATWG IPv6 serializer: lower-case hexadecimal pieces without
+/// leading zeros, the first longest run of two or more zero pieces written
+/// `::`, an embedded IPv4 address written as two pieces. `None` when the
+/// standard's parser fails.
+pub(crate) fn ipv6(input: &str) -> Option<String> {
+    let c: Vec<char> = input.chars().collect();
+    let at = |i: usize| c.get(i).copied();
+    let mut address = [0_u16; 8];
+    let mut piece = 0;
+    let mut compress: Option<usize> = None;
+    let mut p = 0;
+    if at(0) == Some(':') {
+        if at(1) != Some(':') {
+            return None;
+        }
+        p = 2;
+        piece = 1;
+        compress = Some(1);
+    }
+    while let Some(ch) = at(p) {
+        if piece == 8 {
+            return None;
+        }
+        if ch == ':' {
+            if compress.is_some() {
+                return None;
+            }
+            p += 1;
+            piece += 1;
+            compress = Some(piece);
+            continue;
+        }
+        let mut value: u16 = 0;
+        let mut length = 0;
+        while length < 4 {
+            let Some(d) = at(p).and_then(|h| h.to_digit(16)) else {
+                break;
+            };
+            value = value * 16 + d as u16;
+            p += 1;
+            length += 1;
+        }
+        match at(p) {
+            Some('.') => {
+                if length == 0 || piece > 6 {
+                    return None;
+                }
+                p -= length;
+                let mut seen = 0;
+                while at(p).is_some() {
+                    if seen > 0 {
+                        if at(p) == Some('.') && seen < 4 {
+                            p += 1;
+                        } else {
+                            return None;
+                        }
+                    }
+                    let mut number: Option<u16> = None;
+                    while let Some(d) = at(p).and_then(|d| d.to_digit(10)) {
+                        number = match number {
+                            None => Some(d as u16),
+                            Some(0) => return None,
+                            Some(n) => Some(n * 10 + d as u16),
+                        };
+                        if number > Some(255) {
+                            return None;
+                        }
+                        p += 1;
+                    }
+                    address[piece] = address[piece] * 0x100 + number?;
+                    seen += 1;
+                    if seen == 2 || seen == 4 {
+                        piece += 1;
+                    }
+                }
+                if seen != 4 {
+                    return None;
+                }
+                break;
+            }
+            Some(':') => {
+                p += 1;
+                at(p)?;
+            }
+            Some(_) => return None,
+            None => {}
+        }
+        address[piece] = value;
+        piece += 1;
+    }
+    if let Some(compress) = compress {
+        let mut swaps = piece - compress;
+        piece = 7;
+        while piece != 0 && swaps > 0 {
+            address.swap(piece, compress + swaps - 1);
+            piece -= 1;
+            swaps -= 1;
+        }
+    } else if piece != 8 {
+        return None;
+    }
+    // The first longest run of two or more zero pieces.
+    let mut run: Option<(usize, usize)> = None;
+    let mut i = 0;
+    while i < 8 {
+        let start = i;
+        while i < 8 && address[i] == 0 {
+            i += 1;
+        }
+        let length = i - start;
+        if length > 1 && run.is_none_or(|(_, longest)| length > longest) {
+            run = Some((start, length));
+        }
+        i = i.max(start + 1);
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < 8 {
+        if let Some((start, length)) = run
+            && i == start
+        {
+            out.push_str(if i == 0 { "::" } else { ":" });
+            i += length;
+            continue;
+        }
+        out.push_str(&format!("{:x}", address[i]));
+        if i != 7 {
+            out.push(':');
+        }
+        i += 1;
+    }
+    Some(out)
+}
+
 /// The WHATWG "ends in a number" test: the last label, after one empty
 /// trailing label is dropped, is all digits or a `0x` hexadecimal number.
-fn ends_in_a_number(host: &str) -> bool {
+pub(crate) fn ends_in_a_number(host: &str) -> bool {
     let mut labels: Vec<&str> = host.split('.').collect();
     if labels.last() == Some(&"") && labels.len() > 1 {
         labels.pop();
@@ -170,7 +305,7 @@ fn ipv4_number(part: &str) -> Option<u64> {
 }
 
 /// The WHATWG IPv4 parser, written back as four decimals.
-fn ipv4(host: &str) -> Option<String> {
+pub(crate) fn ipv4(host: &str) -> Option<String> {
     let mut parts: Vec<&str> = host.split('.').collect();
     if parts.last() == Some(&"") && parts.len() > 1 {
         parts.pop();

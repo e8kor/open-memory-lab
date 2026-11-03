@@ -4,6 +4,7 @@
 
 use serde_json::{Map, Value, json};
 
+use super::argument::{ends_in_a_number, ipv4, ipv6};
 use super::glob::Glob;
 use super::{Effect, GRAMMAR};
 
@@ -260,20 +261,22 @@ impl Rule {
     }
 }
 
-/// A host pattern as written: an exact host, or `*.` and a host. A host is
+/// A host pattern as written: an exact host, or `*.` and a domain, each
+/// already in the form the matched host is serialised in, so that no
+/// admitted rule binds nothing (proposed ADR-0037 d8). A domain is
 /// lower-case ASCII letters, digits, `-` and `_` in non-empty dot-separated
-/// labels with no trailing dot, or a bracketed IPv6 address.
+/// labels with no trailing dot; one that ends in a number is an IPv4
+/// address and is taken only as four canonical decimals, exact. An IPv6
+/// address is taken bracketed, exact and in its WHATWG serialisation.
 fn host_pattern(text: &str) -> Option<HostPattern> {
     let (suffix, host) = match text.strip_prefix("*.") {
         Some(rest) => (true, rest),
         None => (false, text),
     };
-    let ipv6 = host.starts_with('[')
-        && host.ends_with(']')
-        && host.len() > 2
-        && host[1..host.len() - 1]
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase() || matches!(c, ':' | '.'));
+    if let Some(address) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        return (!suffix && ipv6(address).as_deref() == Some(address))
+            .then(|| HostPattern::Exact(host.to_owned()));
+    }
     let domain = !host.is_empty()
         && host.split('.').all(|label| {
             !label.is_empty()
@@ -281,7 +284,7 @@ fn host_pattern(text: &str) -> Option<HostPattern> {
                     .chars()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
         });
-    if !(domain || ipv6 && !suffix) {
+    if !domain || ends_in_a_number(host) && (suffix || ipv4(host).as_deref() != Some(host)) {
         return None;
     }
     Some(if suffix {
