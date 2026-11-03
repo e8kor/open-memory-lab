@@ -26,23 +26,23 @@ and its promise only. They never name languages, databases, protocols, deploymen
 tool integrations, and they never show the repository address. Those belong in the docs.
 
 - **Tagline:** Steady at the centre. Forming at the edges.
-- **Proposal:** Shared memory for AI agents and crews: a steady foundation where nothing joins
-  until someone other than its writer has looked, and a lab designed to keep forming around it.
-- **The foundation:**
-  - A complete memory your agents can depend on, with a promise not to break it.
-  - Nothing becomes shared until someone other than its writer has looked.
-  - Every decision stays on record, from the first write to the last removal.
-- **The lab:**
-  - Designed for shared vocabularies, so crews mean the same thing by the same word.
-  - Grows to include whole datasets brought in as governed memory, and relationships between memories.
-  - Designed for fenced experiments whose results never leak into real memory.
+- **Proposal:** The memory foundation for AI agents and crews: one shared home for what your
+  agents learn, with the capabilities your work needs built on top.
+- **The foundation (the star):**
+  - A complete memory store your agents can depend on, with a promise not to break it.
+  - Workareas organised the way your teams are, with an artifact store for their files.
+  - Recall within a budget, with standing instructions always served first.
+- **The capabilities (in orbit):**
+  - Shared vocabularies, so crews mean the same thing by the same word.
+  - Trusted memory: a second look on every write, and every decision on record.
+  - Fenced simulations, dataset imports and plugins.
 - **Stance:** AI-first, human in the loop. Open source.
 - **Alternate lines:** "Nothing takes an orbit unseen." · "Shared memory with gravity."
 
 ### Rules for copy
 
-- The lab is designed and on the roadmap. Say "designed for" or "grows to include", never that
-  it ships today. State no numbers about OML.
+- Lead with the foundation. Trusted memory is one capability among several, not the headline.
+  Describe capabilities as part of the product. State no numbers about OML.
 - Keep clear of a sibling product's voice. Don't use "claim under test", "held", "signed",
   "admission control", "gate" or "agentic memory lab" as headline or brand words. Describe the
   review in plain words: "someone other than its writer has looked", "a second look".
@@ -51,13 +51,13 @@ tool integrations, and they never show the repository address. Those belong in t
 
 ### GitHub About
 
-- **Description:** Shared memory for AI agents and crews. A steady foundation: nothing becomes
-  shared until someone other than its writer has looked, and every decision stays on record. A
-  lab designed to grow around it: shared vocabularies, whole datasets, fenced experiments. Open
-  source, AI-first, human in the loop.
+- **Description:** The memory foundation for AI agents and crews. One shared home for what your
+  agents learn: memories, files and standing instructions, organised by crew. Add shared
+  vocabularies, trusted memory, simulations, datasets and plugins on top. Open source, AI-first,
+  human in the loop.
 - **Website:** https://e8kor.github.io/open-memory-lab/
 - **Topics:** `ai-agents` `agent-memory` `ai-memory` `multi-agent` `human-in-the-loop`
-  `ai-governance` `knowledge-management` `open-source`
+  `ai-governance` `knowledge-management` `ontology` `mcp` `open-source`
 - **Social preview:** upload [`social-preview.png`](docs/assets/brand/social-preview.png) under
   Settings → General → Social preview.
 

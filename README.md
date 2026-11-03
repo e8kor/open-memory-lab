@@ -1,77 +1,130 @@
-<p align="center">
-  <a href="https://e8kor.github.io/open-memory-lab/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/readme-hero-dark.svg">
-      <img alt="Open Memory Lab: steady at the centre, forming at the edges" src="docs/assets/brand/readme-hero-light.svg" width="100%">
-    </picture>
-  </a>
-</p>
+<div align="center">
 
-<p align="center">
-  <a href="https://github.com/e8kor/open-memory-lab/releases"><img alt="Release" src="https://img.shields.io/github/v/release/e8kor/open-memory-lab?style=flat-square&labelColor=0A0D22&color=F6A83E&label=release"></a>
-  <a href="https://e8kor.github.io/open-memory-lab/"><img alt="Docs" src="https://img.shields.io/badge/docs-design%20draft-9FC6E6?style=flat-square&labelColor=0A0D22"></a>
-  <a href="https://e8kor.github.io/open-memory-lab/atlas/"><img alt="Live atlas" src="https://img.shields.io/badge/live%20atlas-3D%20tour-9FC6E6?style=flat-square&labelColor=0A0D22"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-EFE9DA?style=flat-square&labelColor=0A0D22"></a>
-</p>
+<a href="https://e8kor.github.io/open-memory-lab/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/readme-hero-dark.svg">
+    <img alt="Open Memory Lab: steady at the centre, forming at the edges" src="docs/assets/brand/readme-hero-light.svg" width="100%">
+  </picture>
+</a>
 
-<p align="center">
-  <a href="https://e8kor.github.io/open-memory-lab/"><b>Read the design</b></a> ·
-  <a href="https://e8kor.github.io/open-memory-lab/atlas/"><b>Live atlas</b></a> ·
+<p><strong>The memory foundation for AI agents and crews.</strong><br>
+<i>One shared home for what your agents learn, with the capabilities your work needs built on top.</i></p>
+
+<a href="https://github.com/e8kor/open-memory-lab/releases"><img alt="Release" src="https://img.shields.io/github/v/release/e8kor/open-memory-lab?style=flat-square&labelColor=0A0D22&color=F6A83E&label=release"></a>
+<a href="https://github.com/e8kor/open-memory-lab/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/e8kor/open-memory-lab/ci.yml?branch=main&style=flat-square&labelColor=0A0D22&label=ci"></a>
+<a href="https://e8kor.github.io/open-memory-lab/"><img alt="Docs" src="https://img.shields.io/badge/docs-online-9FC6E6?style=flat-square&labelColor=0A0D22"></a>
+<a href="https://github.com/e8kor/open-memory-lab/discussions"><img alt="Discussions" src="https://img.shields.io/badge/discussions-join-9FC6E6?style=flat-square&labelColor=0A0D22"></a>
+<a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-EFE9DA?style=flat-square&labelColor=0A0D22"></a>
+
+<p>
   <a href="#quickstart"><b>Quickstart</b></a> ·
-  <a href="docs/review-guide.md"><b>Review guide</b></a>
+  <a href="https://e8kor.github.io/open-memory-lab/"><b>Documentation</b></a> ·
+  <a href="https://e8kor.github.io/open-memory-lab/atlas/"><b>Live atlas</b></a> ·
+  <a href="https://github.com/e8kor/open-memory-lab/discussions"><b>Discussions</b></a>
 </p>
 
-# Open Memory Lab
+</div>
 
-**Status:** design draft for review · decided, not built
+---
 
-**Read the published design at <https://e8kor.github.io/open-memory-lab/>.**
+**Open Memory Lab (OML)** gives AI agents and crews one shared memory: what they learn, the files
+that go with it, and the standing instructions they must follow, organised the way your teams
+are. The foundation is steady and built not to break. Around it sit capabilities you add where
+they pay off: shared vocabularies, trusted memory, what-if simulations, dataset imports and
+plugins. Open source, AI-first, human in the loop, and it runs in your own environment.
 
-Open Memory Lab (OML) is an external memory provider for AI agents and crews. Agents connect over
-HTTP, authenticate with scoped API keys, and write memories — text, files, images, PDFs — into
-shared workareas that mirror how their crews are organized. The premise in one line: **every memory
-is a claim under test** — held on arrival, scanned, reviewed by an identity that did not write it,
-and only then visible to anyone else. Nothing an agent writes becomes shared knowledge on its own
-say-so.
+## Table of contents
 
-That gate is structural, not advisory. The verbs an agent can call cannot approve, delete, or
-rewrite history; review is performed by a different identity; erasure is an explicit, recorded act
-with a stated boundary rather than a silent delete; and every decision leaves a signed, verifiable
-trail that can be exported as evidence. The internals commit to one shape too: a single pure core
-holds every one of these rules, and everything that touches the world — storage, transport,
-plugins — sits behind an explicit boundary around it
-([ADR-0019](docs/adr/ADR-0019-hexagonal-architecture-and-plugins.md)). The cost of this design is equally plain: writes are not
-instantly visible, review capacity is a real operational constraint, and the documentation marks
-every unmeasured or unbuilt property as exactly that.
+- [Why Open Memory Lab](#why-open-memory-lab)
+- [The foundation](#the-foundation)
+- [Capabilities](#capabilities)
+- [Works with](#works-with)
+- [Quickstart](#quickstart)
+- [Connect your agent](#connect-your-agent)
+- [How it fits together](#how-it-fits-together)
+- [Roles and keys](#roles-and-keys)
+- [Run it your way](#run-it-your-way)
+- [Security and privacy](#security-and-privacy)
+- [Documentation](#documentation)
+- [Community and support](#community-and-support)
+- [Contributing](#contributing)
+- [License](#license)
 
-## Status
+## Why Open Memory Lab
 
-This repository contains a design under review, plus a first working slice of it. **The design
-is the authority; the code implements its M1 slice** (the signed journal chain, the one-transaction
-commit point, submit → review → promote → recall over the standalone profile) and the part of M2
-that lets an agent keep its whole memory in OML on one key, through eight of the agent plugin's
-twelve tools. You can run it today: see the [quickstart](#quickstart). Every
-capability beyond that slice is a design commitment with a tracked exit criterion, not a property
-of running software. If you are here to evaluate the design, start at the
-[review guide](docs/review-guide.md).
+Agents learn things all day: findings, decisions, files and house rules. Most of it is lost when
+a session ends, scattered across tools, or mixed up between teams. Every new agent starts from
+zero and pays to rediscover what the last one already knew.
+
+OML keeps that knowledge in one place. Agents save what they learn, recall it within a budget,
+and find the right instructions first. Each crew works in its own space, and what a crew has
+approved can be locked as the baseline the next team starts from.
+
+## The foundation
+
+Everything in this section is part of every OML deployment.
+
+| | What you get |
+| --- | --- |
+| **Memory store** | Agents remember, recall, fetch and revise memories through one stable agent interface. A new version keeps the full history behind it, and retiring a memory is a recorded step, never a silent delete. |
+| **Workareas** | One tree per organisation, with a workarea for each crew. Access follows the tree, so a key granted a workarea covers what sits beneath it, and nothing else. |
+| **Artifact store** | Documents, images and PDFs live with the memory they belong to. Each file is named by its own fingerprint, so it can't be swapped later, and encrypted with its own key. |
+| **Recall** | Keyword and semantic search within a budget you set. Standing instructions always come first and are never cut, so house rules are never crowded out by search results. |
+| **Lifecycle** | A workarea moves one way from development, to committed, to validated. Each step is proposed by one person or agent and confirmed by another. A validated workarea is locked: it stays readable and takes no new writes. |
+| **Access** | A key per agent, scoped to the workareas it needs. Names instead of ids everywhere, safe retries on every write, and an event feed that shows each key only what it may see. |
+
+## Capabilities
+
+Each capability builds on the foundation and shares its access model, so you add value without
+moving your data.
+
+| Capability | What it adds |
+| --- | --- |
+| **Vocabularies** | Shared glossaries and ontologies. Terms keep permanent identifiers, are released in versions, and are deprecated with a pointer to their successor. A workarea can require every write to use valid terms, so "active customer" means the same thing in every crew. |
+| **Trusted memory** | A second look on every write. A new memory reaches other agents once someone other than its author approves it, and every decision is kept in a tamper-evident history. One export answers "who wrote this, who approved it, and when" for any memory, and erasure is a recorded act that makes content permanently unreadable. |
+| **Simulations** | Safe what-if testing. Run a crew against invented facts, such as a market shock, inside a fenced scenario. Only the agents in it can see those facts, and real memory never changes. |
+| **Datasets** | Import a snapshot of an existing table or file set as memory, checked as one batch with sampled rows. An analytics layer keeps lineage, so every figure traces back to its source. |
+| **Plugins** | Swap in your own content checks, embedding models and export formats. A plugin can make the rules stricter, never looser. |
+
+## Works with
+
+| Surface | Use it for |
+| --- | --- |
+| **Claude Code plugin** | Give a coding agent its memory in two commands ([plugins/oml](plugins/oml/README.md)). |
+| **Any MCP client** | The same agent tools over the open Model Context Protocol ([docs](docs/api/mcp-plugin.md)). |
+| **HTTP API** | Any language, any framework ([OpenAPI](docs/api/openapi.yaml)). |
+| **Python and TypeScript SDKs** | Typed clients for the HTTP API ([Python](sdks/python/README.md), [TypeScript](sdks/typescript/README.md)). |
+| **`oml` CLI** | Administration and review, with JSON output for scripts and your own dashboards ([reference](docs/cli/reference.md)). |
 
 ## Quickstart
 
-Docker with the compose plugin, `curl` and `jq` are enough. From a checkout:
+You need Docker with the compose plugin, `curl` and `jq`. From a checkout:
 
 ```sh
-docker compose up -d          # Postgres and oml-server on 127.0.0.1:8080
-bash scripts/quickstart.sh    # claim the server, issue keys, check the agent plugin
+docker compose up -d          # the database and oml-server on 127.0.0.1:8080
+bash scripts/quickstart.sh    # enroll the server, create a workarea, issue keys
 ```
 
-The compose file uses the published image `ghcr.io/e8kor/open-memory-lab`. Use
-`docker compose up -d --build` to build it from the checkout instead. The quickstart claims the
-server's one-time enrollment token from its log and creates a workarea. It then issues two keys:
-one key for your agent, which both stores memories and searches them, and a dreamer key for the
-person who reviews. With the agent's key it writes one memory through the plugin's endpoint,
-finds it waiting for review in the agent's own list and in the agent's own search, has the
-dreamer key approve it, and searches for it again. Then it prints the lines to connect Claude
-Code:
+The quickstart creates a workarea and issues two keys: an agent key that stores and searches,
+and a reviewer key. It writes a first memory with the agent key, approves it with the reviewer
+key, and finds it again with a search. Then it prints the lines to connect Claude Code. Each key
+is shown once, so store them when they're printed.
+
+To review what agents have written:
+
+```sh
+docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <reviewer key> review next
+docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <reviewer key> \
+    review verdict --memory <artifact_id> --approve
+```
+
+The compose credentials are for a laptop, and the server listens on the loopback interface
+only. For production, see [Run it your way](#run-it-your-way).
+
+## Connect your agent
+
+<details open>
+<summary><b>Claude Code</b></summary>
 
 ```sh
 export OML_URL=http://127.0.0.1:8080
@@ -80,135 +133,141 @@ claude plugin marketplace add e8kor/open-memory-lab
 claude plugin install oml@open-memory-lab
 ```
 
-Each key is shown once, so store them when the quickstart prints them. The agent sees its own
-writes while they wait, but nothing it writes reaches anyone else until someone approves it
-with the dreamer key:
+The plugin adds the OML tools and a skill that tells the agent when to recall, remember and
+revise. See [plugins/oml](plugins/oml/README.md).
+</details>
+
+<details>
+<summary><b>Python</b></summary>
 
 ```sh
-docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <dreamer key> review next
-docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <dreamer key> \
-    review verdict --memory <artifact_id> --approve
+pip install ./sdks/python
 ```
 
-Python and TypeScript clients for the HTTP API are in [sdks/python](sdks/python/README.md) and
-[sdks/typescript](sdks/typescript/README.md); they do not upload files yet.
+```python
+from oml_sdk import OmlClient
 
-The compose credentials are for a laptop, and the server listens on the loopback interface only.
-The plugin and its tools are described in [plugins/oml](plugins/oml/README.md). Releases, their
-signatures and SBOMs are on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
+# Reads OML_URL and OML_API_KEY from the environment.
+with OmlClient() as oml:
+    oml.remember("deploy-runbook", "The canary stage must drain before the next one starts.")
+
+    for hit in oml.recall("canary stage").hits:
+        print(hit.memory.body)
+```
+</details>
+
+<details>
+<summary><b>TypeScript</b></summary>
+
+```sh
+cd sdks/typescript && npm ci && npm run build
+npm install /path/to/open-memory-lab/sdks/typescript
+```
+
+```ts
+import { OmlClient } from "oml-sdk";
+
+// Reads OML_URL and OML_API_KEY from the environment.
+const oml = new OmlClient();
+await oml.remember({
+  claim_key: "deploy-runbook",
+  body: "The canary stage must drain before the next one starts.",
+});
+
+const { hits } = await oml.recall({ query: "canary stage" });
+for (const hit of hits) console.log(hit.memory.body);
+```
+</details>
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    A["Agents and crews"] -->|"agent API · MCP tools"| F
+    H["Admins and reviewers"] -->|"oml CLI"| C
+    subgraph OML["Open Memory Lab"]
+      F["Foundation<br/>memory store · workareas · artifacts · recall"]
+      C["Capabilities<br/>vocabularies · trusted memory · simulations · datasets · plugins"]
+      J[("History<br/>append-only, tamper-evident")]
+      C --- F
+      F --> J
+    end
+    J --> L["Analytics and lineage"]
+```
+
+The foundation's agent API carries a compatibility promise: what you build on it keeps working
+as OML grows. Administration and capabilities live on a separate API surface, so they extend
+the foundation without changing it. One core holds every rule. Storage, transport and plugins
+sit behind explicit boundaries around it.
+
+## Roles and keys
+
+| Role | Can |
+| --- | --- |
+| **reader** | Recall, search and fetch within its grants. |
+| **writer** | Remember, learn, attach files and propose new versions of its own memories. |
+| **reviewer** | Review and approve other authors' work, and propose edits and connections. |
+| **admin** | Manage keys, grants, workareas, lifecycle steps, erasure, simulations and exports for one organisation. Admins never review content. |
+| **operator** | Create organisations and their first admin key. Operators never read memory. |
+
+Give each agent its own key. Attribution, and the rule that nobody reviews their own work, both
+depend on it.
+
+## Run it your way
+
+| Profile | Use it for |
+| --- | --- |
+| **One host** | A laptop or a single server. |
+| **Compose** | A small team, with read followers when more agents rely on it. |
+| **Cluster** | Production, from one chart, with read followers for scale. |
+
+Every profile runs the same binaries, the same history format and the same conformance suite.
+See [deployment](docs/operations/deployment.md) and [configuration](docs/operations/configuration.md).
+
+## Security and privacy
+
+- **Your infrastructure.** OML runs where you deploy it, and your memories and files never
+  leave it.
+- **Least privilege.** Every key is scoped to the workareas it needs, and every read is logged
+  for the retention period you set.
+- **Encryption per item.** Memory content and files are encrypted with their own keys, and
+  erasure destroys the key.
+- **Verifiable releases.** Every release ships with signatures and a software bill of
+  materials on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
+
+Found a vulnerability? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
-The full design lives in [`docs/`](docs/) and is published via GitHub Pages at
-<https://e8kor.github.io/open-memory-lab/>.
+The full documentation is at **<https://e8kor.github.io/open-memory-lab/>**.
 
 | Section | What it covers |
 | --- | --- |
-| [Live Atlas](https://e8kor.github.io/open-memory-lab/atlas/) | See it move: an interactive 3D tour of crews working memory through OML — grant-scoped recall, admission, review, the signed chain — over mocked data |
-| [Overview](docs/index.md) | What OML is: the problem, what you get, the evidence it produces |
-| [Concepts](docs/concepts.md) | The design's vocabulary: tenants, claims, workareas, roles, admission, simulations, the journal |
-| [Review guide](docs/review-guide.md) | What a reviewer of this design decides, in order |
-| [Product](docs/product/positioning.md) | Who it is for, and the [roadmap](docs/product/roadmap.md) of open questions with exit criteria |
-| [Architecture](docs/architecture/overview.md) | System structure: admission, workareas, roles, storage, retrieval, security |
-| [Data](docs/data/postgres-schema.md) | Schemas, lake tables, and the event catalog |
-| [API](docs/api/http-api.md) | The HTTP contract, the agent plugin, and the error taxonomy |
-| [CLI](docs/cli/reference.md) | Administration and review ceremonies, with session transcripts |
-| [Operations](docs/operations/deployment.md) | Deployment profiles and observability |
-| [Decisions](docs/adr/index.md) | The architecture decision records |
+| [Live atlas](https://e8kor.github.io/open-memory-lab/atlas/) | An interactive 3D tour of crews working with OML |
+| [Overview](docs/index.md) | What OML is and what you get |
+| [Concepts](docs/concepts.md) | Workareas, roles, vocabularies, simulations and the history |
+| [Architecture](docs/architecture/overview.md) | How the system is built and why |
+| [API](docs/api/http-api.md) | The HTTP API, the MCP tools and the error catalogue |
+| [CLI](docs/cli/reference.md) | Every administration and review command |
+| [Operations](docs/operations/deployment.md) | Deployment, configuration, upgrades and observability |
 
-## Building the site locally
+To build the site locally: `uvx --with mkdocs-material mkdocs serve`, then open
+<http://127.0.0.1:8000>.
 
-```sh
-uvx --with mkdocs-material mkdocs serve
-```
+## Community and support
 
-Then open http://127.0.0.1:8000.
+- **Questions and ideas:** [GitHub Discussions](https://github.com/e8kor/open-memory-lab/discussions)
+- **Bugs and feature requests:** [GitHub Issues](https://github.com/e8kor/open-memory-lab/issues/new/choose)
+- **Security reports:** [private vulnerability reporting](https://github.com/e8kor/open-memory-lab/security/advisories/new)
 
-## Reviewing this design
-
-Start at the [review guide](docs/review-guide.md), which lays out the questions a reviewer should
-answer and the order in which the design asks them. Disagreements belong at the decision level:
-each page links the decision record it rests on.
+Everyone taking part is expected to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Contributing
 
-Review findings and proposals are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how
-feedback and decision changes work, and [SECURITY.md](SECURITY.md) for reporting
-security-relevant findings.
+Contributions are welcome, from a typo fix to a new plugin. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+for how to build, test and propose a change. If OML is useful to you, a star helps others find it.
 
 ## License
 
-The repository and any future code are licensed under [Apache-2.0](LICENSE). The documentation
-under [`docs/`](docs/) is additionally licensed under [CC-BY-4.0](LICENSE-docs).
-
-## Running the PoC
-
-The repository now carries a proof-of-concept implementation of the design's M1 slice and of the
-part of M2 that makes OML an agent's only memory: the standalone lead server (`oml-server-lead`) and the thin administration CLI (`oml`), composed
-per [docs/engineering/workspace-plan.md](docs/engineering/workspace-plan.md).
-
-**Prerequisites**
-
-- Rust (stable, via rustup) — `cargo build --release` builds both binaries.
-- A local PostgreSQL with a role that can create databases, e.g.
-  `postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev` (or start one with
-  `docker compose up -d postgres`). Migrations are embedded and apply on server boot;
-  there is no separate migrate step.
-- `jq` and `psql` for the demo script.
-
-**Two commands**
-
-```sh
-# 1. Build, then boot the lead (migrates on start, mints the keyring, prints the
-#    one-time enrollment token on stdout and the signing public key in the boot log):
-cargo build --release
-OML_POSTGRES__URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev ./target/release/oml-server-lead
-
-# 2. Or let the demo script drive the whole story against a throwaway database —
-#    bootstrap, keys, submit, review, the R2 refusal, supersede, audit, shutdown:
-bash scripts/poc-demo.sh
-```
-
-CLI verbs, exit codes and transcripts are specified in [docs/cli/reference.md](docs/cli/reference.md).
-
-**Honest status.** The PoC is the M1 slice of the
-[critical path](docs/product/critical-path.md) and the part of M2 that makes OML an agent's
-only memory: one standalone lead, one tenant (bootstrap-claimed), held-by-default admission with
-a deterministic marker scanner, the dreamer review ceremony with R2 enforced against the lineage
-closure, full-text recall, the signed per-tenant hash chain, and eight of the agent plugin's
-twelve tools (`oml_remember`, `oml_learn`, `oml_recall`, `oml_get`, `oml_supersede`,
-`oml_my_work`, `oml_workarea_info`, `oml_events_tail`). One key both stores and searches through
-the workareas it is granted. With it an agent reads back its own writes while they wait for
-review, searches within a budget with standing instructions served first, replaces a memory with
-a new version and proposes retiring one; a new version replaces the old one for other readers
-only once someone other than its author approves it, and the event feed shows each key only the
-events it may see. Workareas, crews, keys and tenants carry names: one each, given at creation,
-unique among its kind and never changed or reused, and the server, the command-line tool and the
-plugin's tools accept a name wherever they accept an id, so an agent is pointed at `metals-crew`
-rather than at a long id.
-A name a key may not see is answered exactly as its id would be. Crews are records of their own
-that workareas and keys point to, and an administrator's key reads the shape of its tenant's
-workarea tree but never a memory in it. On its first start on data an earlier version wrote, the
-server names every row that has no name (the root workarea becomes `universe`, a usable earlier
-name is kept, and any other row gets a name made from its id), turns each crew an earlier version
-stored on a workarea into a crew record, ends every denial an earlier version let an
-administrator's key carry, and records all of it in the signed history before it serves a
-request. **Not implemented yet:** the other four plugin tools, attachments and the
-object lake, erasure ceremonies, checking the signed chain against a live server (the
-command-line verifier reads an export of the whole chain that the server does not serve yet, so
-`oml audit verify-chain` stops with an error that says so), follower servers and read scaling,
-simulations, embedding-based retrieval, and the operator tier; on keys, revoking a key, adding or
-revoking a grant after issuance, an administrator lifting a denial, retrying an issuance safely,
-rotation, and expiry (a key issued with an expiry is refused); using crews to decide whether a
-reviewer is independent of a memory's author; held writes that expire when nobody reviews them;
-the record of what each search served; and links between workareas. Three working pieces differ
-from the design. An agent's search of its own waiting writes reads them through a store query
-restricted to their author, not through the separate author-only search index the design
-specifies. A write retried while its first attempt is still running never gets the design's "still
-in progress" answer: it gets the first attempt's receipt as a replay, or, for a new memory whose
-claim the first attempt has just recorded, the refusal that the claim already exists. And the
-design records each tenant's name in a history kept for the whole deployment, where the one-time
-enrollment also names the deployment's first operator key; this build has neither that history nor
-operator keys, so it records the tenant's name in the tenant's own signed history, and the
-enrollment names the tenant's first administrator key within that tenant. The [critical
-path](docs/product/critical-path.md) orders what lands next.
+Open Memory Lab is licensed under [Apache-2.0](LICENSE). The documentation under [`docs/`](docs/)
+is also available under [CC-BY-4.0](LICENSE-docs).
