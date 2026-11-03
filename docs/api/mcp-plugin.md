@@ -2,7 +2,7 @@
 id: api/mcp-plugin
 tier: engineering
 status: design draft for review · decided, not built
-answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape; how a tool's workarea argument takes an id or a name
+answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape; how a tool's workarea argument takes an id or a name; how an agent authenticates, by key or by a connection, and how Claude's hosted apps are wired in
 -->
 
 # The agent plugin: MCP over streamable HTTP
@@ -75,13 +75,23 @@ The MCP specification revision the implementation pins, and the transport
 behavior verified against it, are recorded with a fetch date at implementation
 time — the same sourcing discipline the auth question below already follows.
 
-## Authentication: bearer keys
+## Authentication: bearer keys and connections
 
-Every HTTP request carrying an MCP message presents the agent's API key:
+Every HTTP request carrying an MCP message presents one credential in the same header: the
+agent's API key, or, for a client that cannot hold a key, a connection's access token:
 
 ```
 Authorization: Bearer oml_k_01JB2X8F0YQZ6W4N7R9T3VH5MD
 ```
+
+A **connection** binds one OAuth client — Claude's hosted apps, through a claude.ai custom
+connector — to one connector key, opened by a one-time connect code an admin issues; its access
+token resolves to that key on every call, so the tools below answer exactly as they would to the
+key, and never more, with one exception: [`oml_attach`](#oml_attach) `open` is refused under a
+connection ([roles and keys — connections](../architecture/roles-and-keys.md#connections),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md); decided, not built). A refused
+call keeps its typed `401` and carries the OAuth challenge that starts a client's sign-in
+([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)).
 
 The mapping is entirely server-side (D6): the key resolves to a tenant, a
 role, and a set of grants over workarea subtrees
@@ -97,11 +107,11 @@ reciprocal-approval statistics in the evidence export all key off the
 (key, principal) pair. A key shared across crew members makes their work
 mutually indistinguishable to every one of those mechanisms.
 
-The MCP specification defines an OAuth 2.1 authorization model; OML ships
-bearer keys in v1. Whether and when OML adopts OAuth is an open research
-row with a sourcing requirement on it — see
-[RS-2 in the roadmap](../product/roadmap.md), which may only be finalized
-with spec revision, fetch date and verified client support.
+Bearer keys stay the credential of every client that can hold one — the Claude
+Code plugin, scripts, reviewer crews — and nothing about them changes. The
+MCP authorization specification, revision 2025-11-25 (fetched 2026-10-31),
+and the clients that need it are recorded in
+[RS-2 on the roadmap](../product/roadmap.md).
 
 ## The verb ceiling: what this surface can never do (R1)
 
@@ -125,9 +135,9 @@ Concretely:
   ([permission matrix](../architecture/roles-and-keys.md#permission-matrix)).
 - Signing is done by `oml-server` with the deployment key
   ([storage](../architecture/storage.md)); no client signs anything.
-- Review verdicts and connection ratification are dreamer(review) verbs on
-  the [HTTP API](http-api.md), bound to the serve ceremony — a server-issued,
-  expiring `serve_id` consumed by its first verdict (D14,
+- Review verdicts and the ratification of connection proposals are
+  dreamer(review) verbs on the [HTTP API](http-api.md), bound to the serve
+  ceremony — a server-issued, expiring `serve_id` consumed by its first verdict (D14,
   [review guide](../review-guide.md)). They are deliberately not MCP tools:
   the catalog stays writer/reader/propose-safe, so handing an agent this
   plugin config hands it no path to a verdict, whatever role its key carries.
@@ -739,6 +749,17 @@ sessions, nothing more. That split is the accepted cost of keeping the MCP
 surface small; an agent whose harness cannot issue a plain HTTP PUT cannot
 attach files through this plugin.
 
+**Under a connection.** A connection has no key value, and a token is a
+credential only at `/mcp`: it is never accepted on the parts route. Under a
+connection, `open` is therefore refused before any session is created, so no
+session counts against the key's upload quota, with `oauth.attach_refused`
+([errors](errors.md#oauth-connections),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11);
+`status` answers as it would to the key, which has no session to show. No
+file's bytes travel through an upload session under a connection; ADR-0035
+(proposed, in pull request #17) gives a connection small text files inline on
+`oml_remember` instead.
+
 **Who may call:** keys with writer effective access (the session binds to a
 workarea only when a submission references it).
 
@@ -783,8 +804,9 @@ deterministic extractor exists, provenance + digest + scan result for opaque
 binaries — is stated honestly in [admission](../architecture/admission.md).
 
 **Refusals** — a key without writer effective access; a session quota or size
-ceiling (typed 429/413 family, [errors.md](errors.md)); referencing an
-incomplete or mismatched session from `oml_remember`. Example:
+ceiling (typed 429/413 family, [errors.md](errors.md)); `open` under a
+connection (`oauth.attach_refused`, above); referencing an incomplete or
+mismatched session from `oml_remember`. Example:
 
 ```json
 {
@@ -1274,7 +1296,46 @@ the key names to yours:
 }
 ```
 
-Operational notes:
+### Claude on the web, on the desktop and on a phone
+
+Claude's hosted apps — claude.ai, Claude Desktop, and the Claude iOS and Android
+apps — cannot carry the header above, so they connect through a connection
+instead (decided, not built; [FR-34](../product/roadmap.md)). The deployment
+must set `oauth.issuer` ([configuration](../operations/configuration.md)).
+
+1. An admin issues the agent's connector key and its connect code in one call,
+   one principal per agent as always:
+
+    ```console
+    $ oml keys issue-agent claude-mobile --principal crew/claude-mobile --workarea <workarea> --connect-code
+    https://oml.example.com/mcp
+    7KQ2-M9XD-4TPA
+    ```
+
+    `claude-mobile` is the key's [name](http-api.md#names-and-ids). The first
+    line is the connector URL, the second the code: single use, alive 10 minutes
+    by default, shown this once
+    ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
+
+2. On claude.ai, at Customize > Connectors, add a custom connector with exactly
+   that URL — no trailing slash. Custom connectors are offered on the Free plan
+   (one connector), Pro, Max, Ultra, Team and Enterprise
+   ([Anthropic Help Center](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
+   fetched 2026-10-31).
+3. Claude opens OML's connect page; enter the code there and confirm. What
+   the page says, word for word, is declared on the
+   [HTTP API](http-api.md#connections-oauth-for-hosted-mcp-clients).
+4. The connector is then usable from every Claude app signed in to that account,
+   the mobile apps included. claude.ai holds only tokens bound to that one key;
+   no key value exists to paste. The one call it cannot make is `oml_attach`
+   `open`, so it opens no upload session ([`oml_attach`](#oml_attach)).
+
+`oml keys disconnect claude-mobile <connection-id>` ends the connection, and
+revoking the key ends it too. A code that lapsed before use is replaced with
+`oml keys connect-code claude-mobile`. Claude Code keeps the header
+configuration above.
+
+### Operational notes
 
 - **One key per agent.** Issue each crew member its own key
   ([key issuance](../architecture/roles-and-keys.md#key-lifecycle), via the
@@ -1323,11 +1384,14 @@ Operational notes:
 This surface is owned by ADR-0014 ([decision register](../adr/index.md)): one
 versioned JSON HTTP API with MCP as a stateless streamable-HTTP facade, and
 idempotency records. The two-ring split each tool rides, and the
-token-derived target workarea that made the `workarea` arguments optional,
+key-derived target workarea that made the `workarea` arguments optional,
 are [ADR-0022](../adr/ADR-0022-two-ring-api.md)'s. `oml_get`,
 `oml_supersede`, the claim item, own held rows and budgets on recall, the
 own-work and workarea reads, and the events-tail visibility rule are
 the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
 which would amend ADR-0014 d2. Workarea arguments that take a name as well as
 an id, and the named crew record the workarea read serves, are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s.
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s. Authentication by a connection,
+for Claude's hosted apps, is the proposed
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s, which would
+amend ADR-0014 d1, d2 and d4.

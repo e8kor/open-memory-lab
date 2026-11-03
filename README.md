@@ -45,6 +45,7 @@ plugins. Open source, AI-first, human in the loop, and it runs in your own envir
 - [Roles and keys](#roles-and-keys)
 - [Run it your way](#run-it-your-way)
 - [Security and privacy](#security-and-privacy)
+- [Using OML from claude.ai and your phone](#using-oml-from-claudeai-and-your-phone)
 - [Documentation](#documentation)
 - [Community and support](#community-and-support)
 - [Contributing](#contributing)
@@ -242,6 +243,42 @@ See [deployment](docs/operations/deployment.md) and [configuration](docs/operati
   materials on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
 
 Found a vulnerability? Please report it privately, as described in [SECURITY.md](SECURITY.md).
+
+## Using OML from claude.ai and your phone
+
+**Status:** decided, not built. The [roadmap](docs/product/roadmap.md) tracks it.
+
+Claude on the web, Claude Desktop and the Claude apps for iOS and Android cannot hold an OML key,
+so OML will connect them with a one-time connect code. The server must run at a public HTTPS
+address with connections turned on, and the person connecting needs a claude.ai account; Anthropic
+offers custom connectors on every plan, one on the Free plan
+([Anthropic Help Center](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
+read 2026-10-31).
+
+1. The administrator creates the agent's key together with a connect code:
+
+    ```sh
+    oml keys issue-agent claude-mobile --principal crew/claude-mobile --workarea <workarea> --connect-code
+    ```
+
+    `claude-mobile` is the key's name, and `<workarea>` the workarea's name or id. It will print
+    two lines: the connector address, such as `https://oml.example.com/mcp`, and a code such as
+    `7KQ2-M9XD-4TPA`. The code will work once, for ten minutes.
+
+2. On claude.ai, open Customize > Connectors and add a custom connector with exactly that
+   address.
+3. Claude will open OML's connect page. Enter the code there only if you reached the page this way
+   yourself; if someone sent you a link to it, close it. After the code, the page will show which
+   organisation's space, which agent identity and which workareas the connection will use, and
+   what it may do there: remember, recall, or both, as that identity allows. Where it may write,
+   the page will say that nothing it writes reaches anyone else until someone else reviews it, and
+   will name any workarea set up so that its writes are readable there without review. Confirm.
+4. The connector will then be available in every Claude app signed in to that account, the phone
+   apps included.
+
+Claude will never receive the key itself, only access that OML can withdraw. The administrator
+will end it with `oml keys disconnect`; revoking the key will end it too, and a code that ran out
+before use will be replaced with `oml keys connect-code`.
 
 ## Documentation
 

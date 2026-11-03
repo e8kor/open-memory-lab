@@ -2,7 +2,7 @@
 id: architecture/roles-and-keys
 tier: engineering
 status: design draft for review · decided, not built
-answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants
+answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants; what a connector key, a connect code and a connection are, and why a connection's token is never more than its key
 -->
 
 # Roles and keys
@@ -27,7 +27,7 @@ and the row's derivation lineage closure, not just at key issuance.
 |---|---|
 | `reader` | Recall, read, search and graph-read within scope. Every read is logged ([retrieval.md](retrieval.md)). |
 | `writer` | Remember and learn — every write is held on arrival — plus attachments, supersession proposals on its own claims, and steering rows. Never a verdict. |
-| `dreamer` | One role name, two capability classes: **propose** (edit-as-proposal, connection proposals) and **review** (verdicts, connection ratification). The review class is refused per row by lineage-closure exclusion (below). |
+| `dreamer` | One role name, two capability classes: **propose** (edit-as-proposal, connection proposals) and **review** (verdicts, ratification of connection proposals). The review class is refused per row by lineage-closure exclusion (below). |
 | `admin` | Tenant governance: keys, workareas, reassignment, bans, erasure, crew metadata, simulations. Admin verdicts on content are refused: admin ≠ reviewer. |
 | `operator` | Provider level: creates tenants and issues each tenant's first admin key. Never writes, reads or reviews content. |
 
@@ -81,14 +81,15 @@ settings, tenants — a column names the key's role itself.
 | propose supersession of own claim (including retirement) | — | ✓ | — | — ¹ | — |
 | write steering row (held + reviewed) | — | ✓ | — | — ¹ | — |
 | edit-as-proposal (new attributed submission with `derives_from`, including retirement) | — | — | ✓ propose | — | — |
-| propose connection, claim↔claim or workarea↔workarea | — | — | ✓ propose ² | — | — |
+| propose a connection edge, claim↔claim or workarea↔workarea | — | — | ✓ propose ² | — | — |
 | verdict on a held item | — | — | ✓ review ³ | — (refused) | — |
-| ratify a connection | — | — | ✓ review ³ | — | — |
+| ratify a connection proposal | — | — | ✓ review ³ | — | — |
 | reopen a rejection (non-author) | — | — | ✓ review ³ | — | — |
 | re-enqueue a dead-lettered held item (journalled; [admission.md](admission.md)) | — | — | ✓ | ✓ | — |
 | propose workarea status transition | — | — | ✓ | ✓ | — |
 | ratify status transition (non-proposer) | — | — | ✓ | ✓ | — |
 | issue / revoke / rotate keys (issuer ceiling) | — | — | — | ✓ | ✓ ⁴ |
+| mint a connect code / revoke a connection ([connections](#connections)) | — | — | — | ✓ | — |
 | create / re-parent workareas | — | — | — | ✓ | — |
 | reassign claims between workareas | — | — | — | ✓ | — |
 | ban / lift-ban an author or source | — | — | — | ✓ | — |
@@ -194,7 +195,10 @@ order, and the first failure answers:
 6. a `default_workarea_id`, when present, is covered by some grant of the key — else
    `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
    key has none, and a key never inherits its issuer's default;
-7. the key's `name` is not taken — else [`name.taken`](../api/errors.md).
+7. with `connect_code: true`, the key can hold a connection — a role other than `admin` or
+   `operator`, `held_by` other than `service`, and a deployment that sets `oauth.issuer` — else
+   `oauth.connect_refused` ([connections](#connections));
+8. the key's `name` is not taken — else [`name.taken`](../api/errors.md).
 
 Every workarea, crew and tenant reference in the body — a grant's node, a deny's subtree, the
 default workarea, `crew`, `tenant_id` — takes an id or a [name](../api/http-api.md#names-and-ids),
@@ -202,7 +206,7 @@ and each name is replaced by its row's id, or by its unresolved value when no ro
 step 1, in the caller's namespace ([names](../api/http-api.md#names-and-ids)), so an unknown name
 fails step 4 exactly as an unknown id does, an unknown `tenant_id` included. Step 2 refuses an
 operator's admin key for a tenant that has held a key before any check answers from that
-tenant's names, so that issuance reaches step 4 and step 7 only in a tenant that has never held a
+tenant's names, so that issuance reaches step 4 and step 8 only in a tenant that has never held a
 key, whose key and crew namespaces are empty, apart from a concurrent issuance of its own. `name`
 is checked against the [creation grammar](../api/http-api.md#names-and-ids) with the rest of the
 body, before step 0. The
@@ -215,7 +219,9 @@ any other grant.
 working key.
 
 `key.issued` is journalled first and one `grant.issued` per grant follows; the key value is
-returned only after the last `grant.issued` commits. If issuance fails after `key.issued`, the
+returned only after the last `grant.issued` commits. A connector key has no value: its
+`connection.code_issued` follows the last `grant.issued`, and its connect code is returned only
+after that commits. If issuance fails after `key.issued`, the
 server journals `key.revoked` for the key in a following commit, with `reason_digest` over the
 fixed reason `issuance_incomplete`, and the key is listed as revoked. Its value was never
 disclosed, so it authenticates no request either way, including before that commit lands.
@@ -345,7 +351,7 @@ A dreamer key carries one role name and two capability classes:
 - **propose** — edit-as-proposal: a change to someone else's claim is a new, attributed submission
   carrying `derives_from`, which enters the pipeline held like any write. Connection proposals,
   claim↔claim and workarea↔workarea, follow the same shape: proposed, then separately ratified.
-- **review** — verdicts on held items and ratification of proposed connections. A verdict counts
+- **review** — verdicts on held items and ratification of connection proposals. A verdict counts
   only against a valid serve: the reviewer was served the full item — all attachments, and for a
   supersession the version it replaces — under a server-side serve binding
   ([cli/reference.md](../cli/reference.md)).
@@ -453,8 +459,9 @@ mechanics are declared in [security.md](security.md).
 **Bootstrap.** On first start, a Helm job mints a **single-use, expiring enrollment secret**
 (stored as a Kubernetes Secret; the job's logs carry progress only, never key material). The
 operator exchanges it over TLS — `oml bootstrap claim` — for the root operator key, shown exactly
-once in the operator's terminal and journalled as **issued-without-value**: the event carries the
-key id and hash, never the secret. The enrollment secret is consumed on first use. A
+once in the operator's terminal and journalled as **issued-without-value**: `key.issued` carries
+the key id, never the value or its hash, which lives only in `api_keys.hash`. The enrollment
+secret is consumed on first use. A
 lost root operator key is therefore not recoverable from the system; it is replaced by the
 rotation path below, or, if no operator key survives, by re-running the bootstrap ceremony — a
 deliberate ceremony, not an everyday verb. The mockup transcript lives in
@@ -544,7 +551,10 @@ caller's `Authorization` header is a defect. The one exception is the file `oml 
 --out` creates for it, the one place a key value may rest outside the show-once response: new,
 owner-only (mode 0600), written once, never overwritten, and the operator's to delete once the key
 is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),
-[ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1).
+[ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). The stored response in the idempotency
+record of an issuance or a rotation is a copy this rule does not yet exclude
+([FR-36](../product/roadmap.md)). A connector key has no value anywhere: the server mints none,
+and `api_keys.hash` is null ([connections](#connections)).
 
 ## Key lifecycle
 
@@ -572,7 +582,8 @@ and crew reproduced from the journalled records — and starts a bounded grace w
 ids and the grace deadline; the holder switches credentials inside the window, and at the
 deadline the old key is revoked — a journalled `key.revoked` citing the rotation as cause — so
 the export shows exactly when each credential could act. An admin who wants different grants on
-the successor amends them afterward, as ordinary journalled grant acts. Bulk rotation ergonomics
+the successor amends them afterward, as ordinary journalled grant acts. A connector key is not
+rotated ([connections](#connections)). Bulk rotation ergonomics
 for whole crews (re-issue many keys in one ceremony) is unbuilt and tracked as a roadmap FR
 ([roadmap](../product/roadmap.md): key rotation ergonomics for crews).
 
@@ -585,6 +596,157 @@ reads a revocation takes effect after replication lag — the window
 journalled state each answer was computed against, so "when did this key stop being able to do
 X" is answerable from journalled grants plus epochs — reproducibly, which is the property the
 evidence export leans on.
+
+## Connections
+
+This section is the single declaration site for connector keys, connect codes, connections and
+their tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, d8, d10, d11).
+The HTTP side — the `/mcp` challenge, the discovery documents, the OAuth endpoints and the
+authorization page — is declared on the
+[HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients). A **connection** is one
+OAuth client's standing authority to act as one connector key at `/mcp`; it exists so that
+Claude's hosted apps, which cannot hold a key, can use the [agent plugin](../api/mcp-plugin.md)
+without a key value being pasted anywhere. Decided, not built ([FR-34](../product/roadmap.md)).
+
+**Connector keys.** A key issued with `connect_code: true` (`oml keys issue-agent …
+--connect-code`, [CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)) is a connector
+key. The server mints no value for it — `api_keys.credential` is `connection` and
+`api_keys.hash` is null — so it authenticates no request by itself; its one credential path is a
+connection, and a connection reaches only `/mcp`. Its role is `reader`, `writer` or `dreamer` and
+it is not `held_by: service`, which step 7 of the
+[issuance order](#grant-admissibility-and-refusal-order) checks; the order is otherwise unchanged. A key is a bearer key or a connector key, never both, and a connector key has
+at most one connection open: opening one revokes the earlier open one, live or not, in the same
+commit. The key id on
+every journal event therefore names exactly one credential path. A connector key is not rotated:
+`POST /v2/keys/{key_id}/rotate` on one answers `422 oauth.connect_refused`
+(`details.reason: connector_key`), because a rotated successor's value would make it a bearer key.
+A fresh connection is a new code (`oml keys connect-code`); a fresh identity is a new connector
+key, and the old one is revoked.
+
+**Connect codes.** A connect code is twelve symbols of Crockford's base32 alphabet (`0`–`9`,
+`A`–`Z` without `I`, `L`, `O`, `U`), 60 bits from a cryptographically secure generator, shown as
+three groups of four, `7KQ2-M9XD-4TPA`. An entry is decoded by Crockford's rule — case, hyphens
+and spaces ignored, `O` read as `0`, `I` and `L` as `1`. The code is shown once, in the issuance
+or minting response, and appears in no log line, no URL and no journal payload; `connect_codes`
+holds the SHA-256 of the decoded symbols, and `connection.code_issued` carries only the code's id
+and expiry ([event catalog](../data/event-catalog.md#connectioncode_issued)). It lives
+`oauth.connect_code_ttl` ([configuration](../operations/configuration.md); shipped 10 minutes, 1
+to 60), is spent by its first correct entry on the authorization page, and is voided when a newer
+code is minted for the same key or when the key is revoked, in that `key.revoked`'s commit.
+Minting a code, or revoking a connection of the key (`connection.revoked`, whatever its cause),
+also ends every live authorization request
+holding a code of that key and every `authorized` connection of it, in the same commit: it voids
+every code of the key from which no connection has opened, spent or not, and code entry, Connect and
+the token exchange refuse a voided code, so a later Connect answers `oauth.authorization_expired`
+and a later exchange `invalid_grant` (`oauth.authorization_code_invalid`). A page holding a code someone else
+entered therefore cannot open a connection after the admin mints a new one. The
+idempotency record of an issuance or a minting stores its response without the code, so a replay
+returns no code ([HTTP API — idempotency](../api/http-api.md#idempotency)). With L live codes and G wrong entries
+during their life, the chance that any entry finds one is at most L·G / 2⁶⁰; L counts every
+tenant's live codes, since a code is looked up before its tenant is known.
+
+**Lifecycle.**
+
+```mermaid
+stateDiagram-v2
+    [*] --> code_live : connector key issued, or code minted\n(connection.code_issued)
+    code_live --> code_voided : newer code minted,\na connection of the key revoked,\nor key revoked
+    code_live --> code_lapsed : expiry reached
+    code_live --> code_spent : correct entry on the page
+    code_spent --> authorized : Connect\n(authorization code, 60 s)
+    code_spent --> [*] : Cancel, the page lapses after 10 minutes,\nor a newer code or a connection revoke voids it
+    authorized --> open : token exchange\n(connection.opened)
+    authorized --> [*] : authorization code expires unexchanged,\nor a newer code or a connection revoke voids it
+    open --> revoked : admin revoke, refresh or code reuse,\nor a newer connection for the key\n(connection.revoked, or the newer connection.opened)
+    code_voided --> [*]
+    code_lapsed --> [*]
+    revoked --> [*]
+```
+
+Code entry, the token exchange and every refresh read the key's state as `/mcp` does: a revoked or
+expired key's code answers `oauth.connect_code_invalid`, the one message for a code that is not
+valid, and its authorization code or refresh token answers `invalid_grant`
+(`oauth.authorization_code_invalid`, `oauth.refresh_invalid`). The token exchange reads it in the
+transaction that commits `connection.opened`, so no connection opens after its key's
+`key.revoked`. The connection row is created at Connect, `authorized`; until then the
+authorization request's row, written when the code verified, holds the code's id, and Connect and
+Cancel each delete that row, so one code yields at most one connection. An
+`authorized` connection is not journalled and not listed: `oml keys disconnect` names an open
+connection, and naming an `authorized` one answers `access.not_found`, as an unknown id does; a
+newer code or the revocation of the key's open connection ends it.
+
+A connection is **live** while it is open, its key is neither revoked nor expired, its newest
+refresh token is unexpired, and its resource is the current `<issuer>/mcp`. An open connection
+that is not live stays `open` in the table, with no event, because nothing an actor did ended it:
+
+- one whose key was revoked or expired is refused at every request, because each token lookup
+  reads the key's state, and `key.revoked` records when;
+- one whose newest refresh token lapsed is dead: its next refresh answers `oauth.refresh_invalid`,
+  and a new code's connection replaces it;
+- one whose resource is not the current `<issuer>/mcp`, after `oauth.issuer` was changed or unset,
+  is refused at every request, and works again only if that origin is set again before its
+  refresh token lapses ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1).
+
+An open connection that is not live is still replaced, and so never revives, once a newer
+connection of its key opens. A revoked connection never reopens: the key needs a new code.
+
+**Tokens.** An access token is `oml_at_` and a refresh token `oml_rt_`, each followed by 43 base62
+characters under the generation rule of the [key format](#key-format). The second underscore
+keeps a token from parsing as a key, and so from matching the scan's key pattern; the scan's
+`secret.api_token` row names both token formats beside the key format
+([admission](admission.md)). `oauth_tokens` stores the SHA-256 of each, never the token, by the
+same argument as a key's hash. An access token lives `oauth.access_token_ttl` and a refresh token
+unused for `oauth.refresh_token_ttl` expires; both are journalled settings whose defaults and
+admissible ranges are declared on [configuration](../operations/configuration.md). An access token
+is bound to its connection's resource, `<issuer>/mcp` when the connection was created. Every
+refresh answers a new pair and marks the presented refresh token rotated, in one conditional
+update that two racing refreshes cannot both pass
+([Postgres schema](../data/postgres-schema.md#connections-adr-0031)). A rotated refresh token
+presented again revokes the connection and every token it holds. A redeemed authorization code
+presented again does the same only when the request's `client_id` is the connection's and the
+S256 of its `code_verifier` is the stored challenge, because only the holder of the verifier can
+have redeemed first; any other presentation of a redeemed code answers `invalid_grant`
+(`oauth.authorization_code_invalid`) and revokes nothing, and a failed exchange — a wrong
+verifier, client or `redirect_uri` — does not consume the code. The evidence outlives the first
+use: an authorization code's digest is kept after
+redemption, marked redeemed, until the connection is revoked, and a rotated refresh token's row
+keeps its own expiry and stays until that expiry or the revocation, so a reuse inside either window
+is always recognized. Tokens are read from the `Authorization` header only, never from a body or a
+query string.
+
+**Where a connection secret never appears.** No access token, refresh token, authorization code,
+PKCE code verifier, authorization-request handle or connect code, nor any digest of one, appears
+in a log line at any level, a metric label, an `error_description`, a `details` field or a journal
+payload. Log lines name a connection by `connection_id`, a code by `code_id` and an authorization
+request by its row id, and the `/oauth/authorize` response's log line omits the `Location` query,
+which carries the authorization code. [Observability](../operations/observability.md) owns the
+logging rules and lists these among what a log line never carries.
+
+**A token is exactly its key.** At `/mcp` an access token resolves to its connection, which must
+be open and whose `resource` must equal the current `<issuer>/mcp`, else `auth.invalid`
+(`reason: unknown`), and to that connection's key, which must be neither revoked nor expired; from
+there the request is the key's request. At `/mcp` only an `oauth_tokens` row of kind `access`
+authenticates. A refresh token presented there answers `auth.invalid` (`reason: unknown`) and is
+neither rotated nor counted as reuse. At `/oauth/token` only a row of kind `refresh` is a
+`refresh_token`, and any other token answers `invalid_grant` (`oauth.refresh_invalid`). A refresh
+refuses the same resource mismatch as
+`oauth.refresh_invalid`. The verb ceiling, [grant admissibility and the refusal
+order](#grant-admissibility-and-refusal-order), grants, denials, [own](#own) and the permission
+epoch apply to the key, on every request, with no cache. The scope `mcp` adds and narrows nothing.
+A token is accepted nowhere but `/mcp`, so it reaches only the agent-safe subset: a connection can
+do at most what its key can, never more. The MCP facade dispatches its ring calls under the key it
+resolved and never forwards the token. For the same reason a connection cannot upload: an upload's
+parts travel on `/v1` under a key value, and `oml_attach` `open` under a connection answers
+`oauth.attach_refused` before any session is created
+([agent plugin](../api/mcp-plugin.md#oml_attach)).
+
+**Revocation.** `oml keys disconnect <key> <connection-id>`
+(`POST /v2/keys/{key_id}/connections/{connection_id}/revoke`) ends a connection: the lead refuses
+its tokens at their next request, and a follower after replication lag, as for a revoked key
+([key lifecycle](#key-lifecycle)); the same commit voids the key's codes from which no connection
+has opened, as minting does. Revoking or expiring the key ends every connection of it the same way.
+Revoking a connection and listing a key's connections are served whether or not `oauth.issuer` is
+set, so an admin can clean up while the surface is off.
 
 ## Review independence and the evidence of collusion
 
@@ -624,5 +786,7 @@ admissibility, the refusal order, the issuance order, own and the effective verb
 [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14); key names and the
 key's crew and the admin structure reads are the proposed
 [ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9, d15). One
-adjacent decision is named elsewhere: programs hold keys, humans hold ceremonies, and OAuth for
-MCP clients remains a named roadmap trigger ([roadmap](../product/roadmap.md)).
+adjacent decision is named elsewhere: programs hold keys and humans hold ceremonies. Connector
+keys, connect codes and connections are the proposed
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s (d7, d8, d10, d11), which
+restates [RS-2](../product/roadmap.md).
