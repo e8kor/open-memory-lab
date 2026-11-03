@@ -32,7 +32,11 @@ disagreement found:
 - ci.yml job cli-matrix runs on the same target and runner pairs and, on each,
   runs `oml --version` and the CLI's unit tests, so a broken platform fails a
   pull request before a tag (docs/engineering/ci-and-toolchain.md "Release
-  artifacts").
+  artifacts");
+- both of those jobs name musl-gcc as the C compiler of every musl target, in
+  CC_<target> of the job's env: on the aarch64 runner the cc crate counts the
+  musl target as a cross compile and would otherwise call
+  aarch64-linux-musl-gcc, which Ubuntu's musl-tools does not ship.
 
 Dependencies: stdlib + PyYAML.
 """
@@ -56,6 +60,14 @@ CLI_TARGETS = {
     "x86_64-pc-windows-msvc": "windows-2025",
 }
 SERVER_TARGETS = {"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"}
+# The compiler each musl CLI target's C (ring's) is built with: the wrapper
+# Ubuntu's musl-tools ships for the runner's own architecture. cc 1.10.0 maps
+# aarch64-unknown-linux-musl to the fixed prefix aarch64-linux-musl when the
+# host is aarch64-unknown-linux-gnu, a binary musl-tools does not ship
+# (packages.ubuntu.com/noble/arm64/musl-tools/filelist, fetched 2026-11-03).
+MUSL_CC = {
+    f"CC_{target.replace('-', '_')}": "musl-gcc" for target in CLI_TARGETS if target.endswith("-linux-musl")
+}
 CLI_ARCHIVE = "oml-cli-${VERSION}-${TARGET}"
 SERVER_ARCHIVE = "oml-server-lead-${VERSION}-${TARGET}"
 CARGO_BUILD = re.compile(r"\bcargo\s+build\b[^\n]*--bin\s+(\S+)")
@@ -156,6 +168,7 @@ def check_binaries(errors: list[str], jobs: dict) -> None:
         script = "\n".join(runs(job))
         if job.get("runs-on") != "${{ matrix.runner }}":
             errors.append(f"job {name}: does not run each target on its own runner")
+        check_musl_cc(errors, f"job {name}", job)
         for needle, why in (
             (CLI_ARCHIVE, "does not name its archive oml-cli-${VERSION}-${TARGET}"),
             ('.zip"', "does not package Windows as a .zip"),
@@ -226,11 +239,20 @@ def check_cli_matrix(errors: list[str], jobs: dict) -> None:
     }
     if rows != released:
         errors.append(f"ci.yml cli-matrix runs {rows}, but release.yml builds the CLI on {released}")
+    check_musl_cc(errors, "ci.yml cli-matrix", job)
     script = "\n".join(runs(job))
     if "--version" not in script:
         errors.append("ci.yml cli-matrix does not run the built oml --version")
     if not re.search(r"\bcargo\s+test\b[^\n]*-p\s+oml-cli\b[^\n]*--target", script):
         errors.append("ci.yml cli-matrix does not run the CLI's unit tests for its target")
+
+
+def check_musl_cc(errors: list[str], where: str, job: dict) -> None:
+    """The job's env names musl-gcc as the C compiler of every musl CLI target."""
+    env = job.get("env", {})
+    for var, want in MUSL_CC.items():
+        if str(env.get(var, "")) != want:
+            errors.append(f"{where}: env {var} is {env.get(var)!r}, not {want!r}, so cc may call a compiler musl-tools lacks")
 
 
 def check_chart(errors: list[str], jobs: dict) -> None:
