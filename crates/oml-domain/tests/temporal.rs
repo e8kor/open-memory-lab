@@ -31,7 +31,7 @@ fn id(n: u8) -> Uuid {
 // ---- d2: the shape ---------------------------------------------------------
 
 #[test]
-fn a_valid_from_not_before_valid_to_is_refused() {
+fn valid_interval_parse_refuses_a_valid_from_not_before_valid_to() {
     for (from, to) in [
         ("2026-10-01", "2026-07-01"),
         ("2026-07-01", "2026-07-01"),
@@ -57,7 +57,7 @@ fn a_valid_from_not_before_valid_to_is_refused() {
 }
 
 #[test]
-fn a_date_compares_as_utc_midnight_and_is_served_as_a_date() {
+fn a_date_compares_as_utc_midnight_and_keeps_its_date_form() {
     let q3 = point("2026-07-01");
     assert!(q3.is_date());
     assert_eq!(q3.as_str(), "2026-07-01", "the date stays a date");
@@ -144,7 +144,7 @@ fn an_absent_end_is_open() {
 }
 
 #[test]
-fn steering_vocabulary_kinds_and_retirements_refuse_valid_time() {
+fn check_kind_refuses_valid_time_on_steering_vocabulary_kinds_and_retirements() {
     let q3 = interval(Some("2026-07-01"), Some("2026-10-01"));
     let to_only = interval(None, Some("2026-10-01"));
     for kind in [MemoryKind::Memory, MemoryKind::DerivedFact] {
@@ -441,7 +441,7 @@ fn arb_at() -> impl Strategy<Value = EventTime> {
 
 proptest! {
     #[test]
-    fn an_instant_resolves_to_the_longest_prefix_stamped_at_or_before_it(
+    fn resolve_as_of_names_the_longest_prefix_stamped_at_or_before_the_instant(
         ats in proptest::collection::vec(arb_at(), 0..20),
         t in arb_at(),
     ) {
@@ -485,7 +485,7 @@ fn the_tip_at_s_is_the_version_the_last_tip_move_at_or_before_s_made_one() {
 }
 
 #[test]
-fn a_get_at_s_of_a_version_submitted_after_s_is_not_found() {
+fn a_version_submitted_after_s_does_not_exist_at_s() {
     assert!(!exists_at(2310, 2300));
     assert!(!exists_at(2310, 2309));
     assert!(exists_at(2310, 2310));
