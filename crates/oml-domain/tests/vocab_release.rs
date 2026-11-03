@@ -201,14 +201,23 @@ fn an_is_a_or_replaced_by_cycle_in_a_release_is_refused() {
         }))
     );
     assert_eq!(
-        build_release(&tips, &[replaced_by(CHURN, CHURN)]),
+        build_release(
+            &[active(RISK), tip(CHURN, replaced(CHURN))],
+            &[replaced_by(CHURN, CHURN)]
+        ),
         Err(ReleaseRefusal::Cycle(CycleRefused {
             label: OmlLabel::ReplacedBy
         }))
     );
     // Each invariant runs over its own relation: a loop that mixes the
     // labels closes neither, and part_of carries no invariant.
-    assert!(build_release(&tips, &[is_a(RISK, CHURN), replaced_by(CHURN, RISK)]).is_ok());
+    assert!(
+        build_release(
+            &[active(RISK), tip(CHURN, replaced(RISK))],
+            &[is_a(RISK, CHURN), replaced_by(CHURN, RISK)]
+        )
+        .is_ok()
+    );
     assert!(
         build_release(
             &tips,
@@ -219,6 +228,87 @@ fn an_is_a_or_replaced_by_cycle_in_a_release_is_refused() {
         )
         .is_ok()
     );
+}
+
+#[test]
+fn a_tip_replaced_by_itself_or_a_tip_cycle_is_refused() {
+    // A tip replaced by itself, alone or with the self-edge it implies.
+    let selfish = [tip(CHURN, replaced(CHURN))];
+    assert_eq!(
+        build_release(&selfish, &[]),
+        Err(ReleaseRefusal::SuccessorEdgeMismatch {
+            curie: curie(CHURN)
+        })
+    );
+    assert_eq!(
+        build_release(&selfish, &[replaced_by(CHURN, CHURN)]),
+        Err(ReleaseRefusal::Cycle(CycleRefused {
+            label: OmlLabel::ReplacedBy
+        }))
+    );
+    // Two tips replaced by each other, alone or with their edges.
+    let pair = [tip(RISK, replaced(CHURN)), tip(CHURN, replaced(RISK))];
+    assert_eq!(
+        build_release(&pair, &[]),
+        Err(ReleaseRefusal::SuccessorEdgeMismatch {
+            curie: curie(CHURN)
+        })
+    );
+    assert_eq!(
+        build_release(&pair, &[replaced_by(RISK, CHURN), replaced_by(CHURN, RISK)]),
+        Err(ReleaseRefusal::Cycle(CycleRefused {
+            label: OmlLabel::ReplacedBy
+        }))
+    );
+}
+
+#[test]
+fn a_tip_successor_that_no_replaced_by_edge_carries_is_refused() {
+    let tips = [active(RISK), active(CHURN), tip(ATTRITION, replaced(CHURN))];
+    let mismatch = Err(ReleaseRefusal::SuccessorEdgeMismatch {
+        curie: curie(ATTRITION),
+    });
+    // The tip names a successor and no edge carries it.
+    assert_eq!(build_release(&tips, &[]), mismatch);
+    // The edge names another successor than the tip does.
+    assert_eq!(
+        build_release(&tips, &[replaced_by(ATTRITION, RISK)]),
+        mismatch
+    );
+    assert_eq!(
+        build_release(
+            &tips,
+            &[replaced_by(ATTRITION, CHURN), replaced_by(ATTRITION, RISK)]
+        ),
+        mismatch
+    );
+    // A replaced_by edge out of an active term, a consider term, or a term
+    // with no tip.
+    let consider = tip(
+        VOLUNTARY,
+        TipState::Deprecated(Successors::Consider(vec![curie(RISK)])),
+    );
+    let all = [
+        active(RISK),
+        active(CHURN),
+        tip(ATTRITION, replaced(CHURN)),
+        consider,
+    ];
+    let carried = replaced_by(ATTRITION, CHURN);
+    for (stray, named) in [
+        (replaced_by(CHURN, RISK), CHURN),
+        (replaced_by(VOLUNTARY, RISK), VOLUNTARY),
+        (replaced_by("biz:absent", RISK), "biz:absent"),
+    ] {
+        assert_eq!(
+            build_release(&all, &[carried.clone(), stray]),
+            Err(ReleaseRefusal::SuccessorEdgeMismatch {
+                curie: curie(named)
+            })
+        );
+    }
+    // The tip and its edge together are one release.
+    assert!(build_release(&all, &[carried]).is_ok());
 }
 
 #[test]
@@ -292,17 +382,14 @@ fn a_diff_names_terms_added_deprecations_with_their_successors_and_edge_and_clos
     );
     assert!(!diff.is_empty());
 
-    // A deprecated term whose successors change is a deprecation again; one
-    // whose deprecation is unchanged is not.
-    let reconsidered = build(
+    // A deprecated term whose deprecation is unchanged is no deprecation.
+    let unchanged = build(
         &[
             active(RISK),
             active(CHURN),
-            tip(
-                ATTRITION,
-                TipState::Deprecated(Successors::Consider(vec![curie(RISK), curie(CHURN)])),
-            ),
+            tip(ATTRITION, replaced(CHURN)),
             active(VOLUNTARY),
+            active("biz:turnover"),
         ],
         &[
             is_a(CHURN, RISK),
@@ -311,18 +398,18 @@ fn a_diff_names_terms_added_deprecations_with_their_successors_and_edge_and_clos
         ],
     );
     assert_eq!(
-        diff_releases(&next, &reconsidered),
+        diff_releases(&next, &unchanged),
         Ok(ReleaseDiff {
-            deprecations: BTreeMap::from([(
-                curie(ATTRITION),
-                Successors::Consider(vec![curie(CHURN), curie(RISK)])
-            )]),
+            terms_added: BTreeMap::from([(curie("biz:turnover"), TipState::Active)]),
             ..ReleaseDiff::default()
         })
     );
 
     // A term first seen already deprecated is a term added, with its state.
-    let born_deprecated = build(&[active(RISK), tip(CHURN, replaced(RISK))], &[]);
+    let born_deprecated = build(
+        &[active(RISK), tip(CHURN, replaced(RISK))],
+        &[replaced_by(CHURN, RISK)],
+    );
     let diff = diff_releases(&build(&[active(RISK)], &[]), &born_deprecated).expect("added");
     assert_eq!(
         diff.terms_added,
@@ -333,7 +420,10 @@ fn a_diff_names_terms_added_deprecations_with_their_successors_and_edge_and_clos
 
 #[test]
 fn a_diff_refuses_a_later_release_that_drops_or_reinstates_a_term() {
-    let previous = build(&[active(RISK), tip(ATTRITION, replaced(RISK))], &[]);
+    let previous = build(
+        &[active(RISK), tip(ATTRITION, replaced(RISK))],
+        &[replaced_by(ATTRITION, RISK)],
+    );
     assert_eq!(
         diff_releases(&previous, &build(&[active(RISK)], &[])),
         Err(ReleaseDiffRefusal::TermDropped {
@@ -346,6 +436,37 @@ fn a_diff_refuses_a_later_release_that_drops_or_reinstates_a_term() {
             curie: curie(ATTRITION)
         })
     );
+}
+
+#[test]
+fn a_diff_refuses_a_later_release_that_changes_a_deprecated_terms_successors() {
+    let previous = build(
+        &[active(RISK), active(CHURN), tip(ATTRITION, replaced(CHURN))],
+        &[replaced_by(ATTRITION, CHURN)],
+    );
+    let redirected = build(
+        &[active(RISK), active(CHURN), tip(ATTRITION, replaced(RISK))],
+        &[replaced_by(ATTRITION, RISK)],
+    );
+    let reconsidered = build(
+        &[
+            active(RISK),
+            active(CHURN),
+            tip(
+                ATTRITION,
+                TipState::Deprecated(Successors::Consider(vec![curie(RISK), curie(CHURN)])),
+            ),
+        ],
+        &[],
+    );
+    for next in [&redirected, &reconsidered] {
+        assert_eq!(
+            diff_releases(&previous, next),
+            Err(ReleaseDiffRefusal::TermRedeprecated {
+                curie: curie(ATTRITION)
+            })
+        );
+    }
 }
 
 // --- properties -----------------------------------------------------------
@@ -412,10 +533,11 @@ fn arb_spec() -> impl Strategy<Value = Spec> {
     ]
 }
 
-/// `is_a`, `replaced_by` and `part_of` edges, each from a higher node to a
-/// lower, so no label's graph holds a cycle.
+/// `is_a` and `part_of` edges, each from a higher node to a lower, so no
+/// label's graph holds a cycle; the `replaced_by` edges come from the tips
+/// ([`release_input`]).
 fn arb_edges() -> impl Strategy<Value = Vec<TermEdge>> {
-    let labels = [OmlLabel::IsA, OmlLabel::ReplacedBy, OmlLabel::PartOf];
+    let labels = [OmlLabel::IsA, OmlLabel::PartOf];
     prop::collection::vec((0..labels.len(), 0..N, 0..N), 0..16).prop_map(move |raw| {
         raw.into_iter()
             .filter(|(_, i, j)| i != j)
@@ -428,19 +550,37 @@ fn arb_edges() -> impl Strategy<Value = Vec<TermEdge>> {
     })
 }
 
-fn tips_of(specs: &[Option<Spec>]) -> Vec<TermTip> {
-    (0..N)
+type ReleaseInput = (Vec<TermTip>, Vec<TermEdge>);
+
+/// One release's input from a spec per node and its `is_a` and `part_of`
+/// edges: a `replaced_by` tip pointing at a lower node rides with its edge,
+/// as its deprecating submission declares it, and one pointing at itself or
+/// a higher node is held as `consider` instead, so no `replaced_by` cycle
+/// arises. A spec yields the same state wherever it is used.
+fn release_input(specs: &[Option<Spec>], edges: Vec<TermEdge>) -> ReleaseInput {
+    let mut edges = edges;
+    let tips = (0..N)
         .zip(specs)
         .filter_map(|(i, spec)| {
-            spec.as_ref().map(|s| TermTip {
+            let spec = match spec.as_ref()? {
+                Spec::ReplacedBy(j) if *j >= i => Spec::Consider(vec![*j]),
+                spec => spec.clone(),
+            };
+            if let Spec::ReplacedBy(j) = spec {
+                edges.push(TermEdge {
+                    label: OmlLabel::ReplacedBy,
+                    from: node(i),
+                    to: node(j),
+                });
+            }
+            Some(TermTip {
                 curie: node(i),
-                state: s.state(),
+                state: spec.state(),
             })
         })
-        .collect()
+        .collect();
+    (tips, edges)
 }
-
-type ReleaseInput = (Vec<TermTip>, Vec<TermEdge>);
 
 /// One release's input: a tip for some of the terms, and its edges.
 fn arb_release() -> impl Strategy<Value = ReleaseInput> {
@@ -448,12 +588,12 @@ fn arb_release() -> impl Strategy<Value = ReleaseInput> {
         prop::collection::vec(prop::option::of(arb_spec()), usize::from(N)),
         arb_edges(),
     )
-        .prop_map(|(specs, edges)| (tips_of(&specs), edges))
+        .prop_map(|(specs, edges)| release_input(&specs, edges))
 }
 
 /// Two releases' inputs, the later evolved from the earlier as the term
 /// lifecycle allows: every earlier term is kept, a deprecated one stays
-/// deprecated (its successors may change), an active one may be deprecated,
+/// deprecated with its successors unchanged, an active one may be deprecated,
 /// terms may be added, and the edges are drawn afresh.
 fn arb_release_pair() -> impl Strategy<Value = (ReleaseInput, ReleaseInput)> {
     (
@@ -468,17 +608,13 @@ fn arb_release_pair() -> impl Strategy<Value = (ReleaseInput, ReleaseInput)> {
                 .zip(later)
                 .map(|(before, after)| match (before, after) {
                     (Some(before), None) => Some(before.clone()),
-                    (Some(before), Some(after))
-                        if before.is_deprecated() && !after.is_deprecated() =>
-                    {
-                        Some(before.clone())
-                    }
+                    (Some(before), Some(_)) if before.is_deprecated() => Some(before.clone()),
                     (_, after) => after,
                 })
                 .collect();
             (
-                (tips_of(&earlier), earlier_edges),
-                (tips_of(&evolved), later_edges),
+                release_input(&earlier, earlier_edges),
+                release_input(&evolved, later_edges),
             )
         })
 }

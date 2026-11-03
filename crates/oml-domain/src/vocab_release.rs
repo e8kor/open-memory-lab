@@ -16,6 +16,7 @@
 //! |---|---|
 //! | [`ReleaseRefusal::Cycle`] | `vocab.cycle_refused` |
 //! | [`ReleaseRefusal::TwoTips`] | none declared — see the variant |
+//! | [`ReleaseRefusal::SuccessorEdgeMismatch`] | none declared — see the variant |
 //! | [`ReleaseDiffRefusal`], every variant | none declared — see the enum |
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,6 +56,19 @@ pub enum ReleaseRefusal {
     // produce; this refusal names none, and a caller must not invent one.
     #[error("{curie} has two tips in one release's input (no declared code)")]
     TwoTips { curie: Curie },
+    /// A deprecated tip's `replaced_by` successor and the release's
+    /// `replaced_by` edges disagree: a tip names a successor no edge carries,
+    /// or an edge leaves a term whose tip does not name its target. A
+    /// deprecation and its successor edge are one ratified submission
+    /// (ontologies.md, "The term lifecycle"; postgres-schema.md, successors
+    /// are the ratified `oml:replaced_by` claim edges), so each holds the
+    /// other.
+    // reading: the docs declare no code for an input the read model cannot
+    // produce; this refusal names none, and a caller must not invent one.
+    #[error(
+        "{curie}'s replaced_by successor and the release's replaced_by edges disagree (no declared code)"
+    )]
+    SuccessorEdgeMismatch { curie: Curie },
 }
 
 /// The materialized state of one vocabulary release: each term's tip state,
@@ -140,11 +154,13 @@ impl ReleaseSnapshot {
 /// term tips and the ratified edges (ADR-0021 d4): `edges` may hold edges of
 /// any label, of which `is_a` and `replaced_by` enter the release, a CURIE
 /// pair once however many version pairs carry it. Refuses two tips for one
-/// CURIE, then an `is_a` cycle, then a `replaced_by` cycle (ADR-0021 d5).
+/// CURIE, then a `replaced_by` tip and the `replaced_by` edges that disagree,
+/// then an `is_a` cycle, then a `replaced_by` cycle (ADR-0021 d5).
 /// Neither the order of `tips` nor that of `edges` reaches the snapshot.
 // reading: the docs do not confine an `is_a` or `replaced_by` edge to one
 // vocabulary, so the snapshot covers exactly the edges the caller read and
-// asks no endpoint to be among the tips; and `consider` names one or more
+// asks no endpoint to be among the tips beyond a `replaced_by` edge's
+// `from`, which is the deprecated tip that declared it; and `consider` names one or more
 // successors with no order, so the snapshot holds them sorted and once each.
 pub fn build_release(
     tips: &[TermTip],
@@ -170,6 +186,7 @@ pub fn build_release(
         .filter(|e| matches!(e.label, OmlLabel::IsA | OmlLabel::ReplacedBy))
         .cloned()
         .collect();
+    successors_match_edges(&terms, &edges)?;
     let closure = closure_over(&edges, OmlLabel::IsA)?;
     closure_over(&edges, OmlLabel::ReplacedBy)?;
     let document = document(&terms, &edges, &closure);
@@ -181,6 +198,34 @@ pub fn build_release(
         document,
         digest,
     })
+}
+
+/// Refuses unless the (tip, successor) pairs of the `replaced_by` tips are
+/// exactly the `replaced_by` edges, naming the `from` of the first pair in
+/// code-point order that only one side holds; the release's `replaced_by`
+/// cycle check then covers every successor the document records.
+fn successors_match_edges(
+    terms: &BTreeMap<Curie, TipState>,
+    edges: &BTreeSet<TermEdge>,
+) -> Result<(), ReleaseRefusal> {
+    let from_tips: BTreeSet<(&Curie, &Curie)> = terms
+        .iter()
+        .filter_map(|(curie, state)| match state {
+            TipState::Deprecated(Successors::ReplacedBy(to)) => Some((curie, to)),
+            _ => None,
+        })
+        .collect();
+    let from_edges: BTreeSet<(&Curie, &Curie)> = edges
+        .iter()
+        .filter(|e| e.label == OmlLabel::ReplacedBy)
+        .map(|e| (&e.from, &e.to))
+        .collect();
+    match from_tips.symmetric_difference(&from_edges).min() {
+        Some((curie, _)) => Err(ReleaseRefusal::SuccessorEdgeMismatch {
+            curie: (*curie).clone(),
+        }),
+        None => Ok(()),
+    }
 }
 
 /// The transitive closure of the `label` edges among `edges`, each row at
@@ -285,9 +330,8 @@ pub struct ReleaseDiff {
     /// its tip state — deprecated, with its successors, when it was first
     /// released so.
     pub terms_added: BTreeMap<Curie, TipState>,
-    /// Terms of both releases whose next tip is a deprecation the previous
-    /// did not hold: an active term deprecated, or a deprecated term's
-    /// successors changed.
+    /// Terms of both releases active in the previous and deprecated in the
+    /// next, each with its successors.
     pub deprecations: BTreeMap<Curie, Successors>,
     pub edges_added: BTreeSet<TermEdge>,
     pub edges_removed: BTreeSet<TermEdge>,
@@ -309,8 +353,8 @@ impl ReleaseDiff {
 /// A refused diff between two releases: the next release changes a term in
 /// a way a diff does not serve, since a diff serves terms added and
 /// deprecations (ADR-0021 d4).
-// reading: the docs declare no code for either change, both of which the
-// term lifecycle never makes; these refusals name none, and a caller must
+// reading: the docs declare no code for any of these changes, each of which
+// the term lifecycle never makes; these refusals name none, and a caller must
 // not invent one.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReleaseDiffRefusal {
@@ -325,11 +369,19 @@ pub enum ReleaseDiffRefusal {
         "{curie} is deprecated in the previous release and active in the next (no declared code)"
     )]
     TermReinstated { curie: Curie },
+    /// A term deprecated in the previous release is deprecated in the next
+    /// with other successors: the term lifecycle makes a deprecation
+    /// terminal, with no move from deprecated to deprecated (ontologies.md,
+    /// "The term lifecycle").
+    #[error(
+        "{curie} is deprecated in the previous release and deprecated with other successors in the next (no declared code)"
+    )]
+    TermRedeprecated { curie: Curie },
 }
 
 /// The diff from `previous` to `next` (ADR-0021 d4), refusing, at the first
-/// of `previous`'s terms in CURIE order that meets one, a term `next` drops
-/// or reinstates.
+/// of `previous`'s terms in CURIE order that meets one, a term `next` drops,
+/// reinstates, or deprecates again with other successors.
 pub fn diff_releases(
     previous: &ReleaseSnapshot,
     next: &ReleaseSnapshot,
@@ -346,6 +398,11 @@ pub fn diff_releases(
                     curie: curie.clone(),
                 });
             }
+            (TipState::Deprecated(_), Some(after)) if before != after => {
+                return Err(ReleaseDiffRefusal::TermRedeprecated {
+                    curie: curie.clone(),
+                });
+            }
             _ => {}
         }
     }
@@ -355,7 +412,7 @@ pub fn diff_releases(
             (None, _) => {
                 diff.terms_added.insert(curie.clone(), after.clone());
             }
-            (Some(before), TipState::Deprecated(successors)) if before != after => {
+            (Some(TipState::Active), TipState::Deprecated(successors)) => {
                 diff.deprecations.insert(curie.clone(), successors.clone());
             }
             _ => {}
