@@ -6,7 +6,10 @@
 -- docs/data/postgres-schema.md "claim_edges", under "workareas and edges".
 --
 -- The columns are the schema page's: an edge is 'pending' until a ratifier
--- that is not its proposer ratifies it, and nothing deletes one. No
+-- that is not its proposer ratifies it, and nothing deletes one. created_at
+-- is its claim_edge.proposed event's at, the order key of the graph read,
+-- which lists newest first as every list endpoint does (http-api.md
+-- pagination). No
 -- 'rejected' state and no term_curie column: both belong to ADR-0027, which
 -- is not accepted, so the domain's EdgeState::Rejected is unused by the
 -- store. The label is free text here; its admissibility (ADR-0021 d5) is
@@ -52,6 +55,7 @@ CREATE TABLE claim_edges (
     state           text NOT NULL,
     proposer_key_id uuid NOT NULL,
     ratifier_key_id uuid,
+    created_at      timestamptz(6) NOT NULL DEFAULT now(),
     CONSTRAINT claim_edges_pkey PRIMARY KEY (id),
     CONSTRAINT claim_edges_tenant_id_id UNIQUE (tenant_id, id),
     CONSTRAINT claim_edges_tenant_id_fkey
@@ -82,7 +86,8 @@ ALTER TABLE claim_edges
     ALTER COLUMN label           SET STATISTICS 0,
     ALTER COLUMN state           SET STATISTICS 0,
     ALTER COLUMN proposer_key_id SET STATISTICS 0,
-    ALTER COLUMN ratifier_key_id SET STATISTICS 0;
+    ALTER COLUMN ratifier_key_id SET STATISTICS 0,
+    ALTER COLUMN created_at      SET STATISTICS 0;
 
 -- An endpoint's edges, either way; the ratified edges of one label, the
 -- cycle refusal's read (ADR-0021).
@@ -90,6 +95,8 @@ CREATE INDEX claim_edges_src ON claim_edges (tenant_id, src_artifact_id);
 CREATE INDEX claim_edges_dst ON claim_edges (tenant_id, dst_artifact_id);
 CREATE INDEX claim_edges_ratified_label ON claim_edges (tenant_id, label)
     WHERE state = 'ratified';
+-- The graph read's order, newest first (http-api.md pagination).
+CREATE INDEX claim_edges_listing ON claim_edges (tenant_id, created_at DESC, id DESC);
 
 ALTER TABLE claim_edges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE claim_edges FORCE ROW LEVEL SECURITY;
