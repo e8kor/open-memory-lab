@@ -82,12 +82,21 @@ def _psql(sql: str) -> str:
     return done.stdout.strip()
 
 
+# Two columns, so psql -tA prints the boolean in its display form, `t` or `f`,
+# joined to the name by `|`; concatenated to text it would read `true`/`false`.
+ADMIN_ROLE_QUERY = "SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user"
+
+
+def _admin_role(query: str = ADMIN_ROLE_QUERY) -> tuple[str, bool]:
+    """The admin role's name, and whether it is a superuser that can mint (ADR-0034 d8)."""
+    role, superuser = _psql(query).rsplit("|", 1)
+    return role, superuser == "t"
+
+
 def _require_minting() -> None:
     """Skip, or under OML_TEST_REQUIRE_SPLIT=1 fail, when the admin role cannot mint (ADR-0034 d8)."""
-    role, superuser = _psql(
-        "SELECT current_user || ' ' || rolsuper FROM pg_roles WHERE rolname = current_user"
-    ).split()
-    if superuser == "t":
+    role, superuser = _admin_role()
+    if superuser:
         return
     if os.environ.get("OML_TEST_REQUIRE_SPLIT") == "1":
         pytest.fail(

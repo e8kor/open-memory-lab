@@ -64,16 +64,26 @@ function psql(sql: string): string {
   }).trim();
 }
 
+// Two columns, so psql -tA prints the boolean in its display form, `t` or `f`,
+// joined to the name by `|`; concatenated to text it would read `true`/`false`.
+export const ADMIN_ROLE_QUERY =
+  "SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user";
+
+/** The admin role's name, and whether it is a superuser that can mint (ADR-0034 d8). */
+export function adminRole(query: string = ADMIN_ROLE_QUERY): { role: string; superuser: boolean } {
+  const row = psql(query);
+  const bar = row.lastIndexOf("|");
+  return { role: row.slice(0, bar), superuser: row.slice(bar + 1) === "t" };
+}
+
 /**
  * Whether the admin role can mint the role pair, a superuser (ADR-0034 d8);
  * `false`, with `did not run: <role> cannot create roles` printed, when it
  * cannot, and a throw instead under OML_TEST_REQUIRE_SPLIT=1.
  */
 export function mintsRoles(): boolean {
-  const [role, superuser] = psql(
-    "SELECT current_user || ' ' || rolsuper FROM pg_roles WHERE rolname = current_user",
-  ).split(" ");
-  if (superuser === "t") return true;
+  const { role, superuser } = adminRole();
+  if (superuser) return true;
   if (process.env.OML_TEST_REQUIRE_SPLIT === "1") {
     throw new Error(
       `${role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)`,
