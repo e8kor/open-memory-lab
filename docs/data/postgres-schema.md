@@ -297,7 +297,8 @@ A superseded version keeps `state = 'promoted'` with `is_tip = false`
 
 **Status:** `workareas.status` is one stored column, written at create (`development`, and
 `committed` on the universe root) and served back by every workarea read; `workarea_transitions`
-is built in `migrations/0010_workarea_transitions.sql`, and no transition writes it yet
+is built in `migrations/0010_workarea_transitions.sql`, which also adds
+`workareas_universe_committed`, so a root on any other rung is refused; no transition writes it yet
 ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3).
 
 The governed tree (one per tenant, rooted at `universe`) plus the two edge tables. The algebra —
@@ -334,7 +335,9 @@ CREATE TABLE workareas (
     UNIQUE (tenant_id, id),            -- target of the tenant-scoped grant and denial references
     FOREIGN KEY (tenant_id, parent_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
-    CHECK ((parent_id IS NULL) = (name = 'universe'))   -- the root, and only the root, is universe
+    CHECK ((parent_id IS NULL) = (name = 'universe')),  -- the root, and only the root, is universe
+    CONSTRAINT workareas_universe_committed             -- the root is permanently committed
+        CHECK (parent_id IS NOT NULL OR status = 'committed')   -- (ADR-0009 d1; added by 0010)
 );
 
 -- exactly one universe root per tenant; it is permanently 'committed'.
