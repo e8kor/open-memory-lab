@@ -7,10 +7,19 @@
 //! roles, memory status transitions, and the constitution's R2 check
 //! (ADR-0001 d2). `access` holds grant admissibility, effective access, the
 //! refusal order, effective verbs and content-tail visibility (ADR-0025 d1,
-//! d2, d14, d15); `budget` holds the budget token, the budget cut and the
+//! d2, d14, d15), with dreamer grants narrowed by `edge_labels` and the
+//! member-profile check (ADR-0027 d3, d4, d5); `budget` holds the budget token, the budget cut and the
 //! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
 //! classification of a reference as an id or a name, and the naming of rows
-//! that predate names (ADR-0026 d2, d3, d11).
+//! that predate names (ADR-0026 d2, d3, d11). `vocab` holds the CURIE grammar, the
+//! prefix registry, `term_status` and the `oml:` register (ADR-0021 d1, d2;
+//! ADR-0027 d7); `vocab_edges` holds claim-edge states, classification
+//! validation, cycle refusal, the lineage closure without `oml:about`,
+//! retirement and the recall terms match (ADR-0021 d5; ADR-0027 d6–d11);
+//! `vocab_scan` holds the vocabulary policy and the vocab scanner: its
+//! citation checks, its `vocab.*` finding classes and the simulation veto
+//! (ADR-0021 d3, d5, d7, d8, d11); `vocab_suggest` holds the deterministic
+//! term suggest over one vocabulary release (ADR-0021 d9, d10).
 
 #![forbid(unsafe_code)]
 
@@ -22,6 +31,11 @@ pub mod jcs;
 pub mod keys;
 pub mod model;
 pub mod name;
+pub mod vocab;
+pub mod vocab_edges;
+pub mod vocab_release;
+pub mod vocab_scan;
+pub mod vocab_suggest;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,

@@ -110,6 +110,7 @@ nav:
           - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
           - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
       - Client SDKs: engineering/sdks.md
+      - Vocabulary release vectors: engineering/release-vectors.md
   - Decisions:
       - Index: adr/index.md
       - ADR template: adr/TEMPLATE.md
