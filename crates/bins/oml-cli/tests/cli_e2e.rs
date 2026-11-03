@@ -3,9 +3,9 @@
 //! the `oml` binary — bootstrap → issue → submit → review → approve → recall
 //! → verify-chain refused by name while no chain export is served (the
 //! verification vectors live in `vectors.rs`).
-//! The key-tool cases (ADR-0028) and the session-start hook cases (ADR-0029)
-//! run the lead behind a recorder, so a test can name exactly the requests a
-//! verb sent, and with which key.
+//! The key-tool cases (ADR-0028), the names cases (ADR-0026) and the
+//! session-start hook cases (ADR-0029) run the lead behind a recorder, so a
+//! test can name exactly the requests a verb sent, and with which key.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -22,8 +22,12 @@ use serde_json::{Value, json};
 use sqlx::postgres::PgConnection;
 use sqlx::{Connection, Executor};
 
+use oml_app::domain::{
+    EventDraft, EventTime, event_types, next_envelope, sha256_digest_string, sign as sign_envelope,
+};
+use oml_app::ports::{CommitRequest, IdGen as _, JournalStore as _, MetadataFold, OutboxRow};
 use oml_pg::PgStore;
-use oml_server_lead::{lead_state, pg_ping};
+use oml_server_lead::{OsIds, lead_state, pg_ping};
 
 const ENROLLMENT: &str = "enr_cli_e2e_fixture_token";
 
@@ -134,6 +138,7 @@ async fn full_ceremony_through_the_cli() {
         &[
             "bootstrap",
             "claim",
+            "root-admin",
             "--token",
             ENROLLMENT,
             "--tenant-name",
@@ -163,7 +168,7 @@ async fn full_ceremony_through_the_cli() {
         &server,
         &creds,
         None,
-        &["bootstrap", "claim", "--token", ENROLLMENT],
+        &["bootstrap", "claim", "second-admin", "--token", ENROLLMENT],
     );
     assert_eq!(code, 1, "consumed token is a typed refusal: {log}");
     assert_eq!(envelope["error"]["code"], "auth.invalid", "{log}");
@@ -177,6 +182,7 @@ async fn full_ceremony_through_the_cli() {
             &[
                 "keys",
                 "issue",
+                &principal.replace('/', "-"),
                 "--role",
                 role,
                 "--grant",
@@ -201,6 +207,7 @@ async fn full_ceremony_through_the_cli() {
         &[
             "keys",
             "issue",
+            "bad-admin",
             "--role",
             "admin",
             "--grant",
@@ -365,6 +372,12 @@ struct Lab {
     seen: Recorder,
     db_name: String,
     task: tokio::task::JoinHandle<()>,
+    /// The lead's store and signing key, for the one act no route serves:
+    /// the `key.revoked` of an issuance that failed part way.
+    store: PgStore,
+    signing: SigningKey,
+    /// The claim's `201`: the tenant and the first admin key.
+    claim: Value,
 }
 
 impl Lab {
@@ -383,10 +396,11 @@ impl Lab {
 
         let mut seed = [0_u8; 32];
         getrandom::getrandom(&mut seed).expect("OS randomness");
+        let signing = SigningKey::from_bytes(&seed);
         let seen: Recorder = Arc::new(Mutex::new(Vec::new()));
         let router = lead_state(
             &store,
-            SigningKey::from_bytes(&seed),
+            signing.clone(),
             pg_ping(store.pool().clone()),
             true,
             Some(ENROLLMENT.to_owned()),
@@ -413,6 +427,7 @@ impl Lab {
             &[
                 "bootstrap",
                 "claim",
+                "root-admin",
                 "--token",
                 ENROLLMENT,
                 "--principal",
@@ -432,7 +447,72 @@ impl Lab {
             seen,
             db_name,
             task,
+            store,
+            signing,
+            claim,
         }
+    }
+
+    /// Commits, signed by the lead's key and folded by its store, the
+    /// `key.revoked` that an issuance failing after its `key.issued`
+    /// journals, revoked by the first admin key (roles-and-keys.md issuance
+    /// order); no route revokes a key in this build. Answers the event's
+    /// `at`.
+    async fn revoke_in_the_store(&self, key_id: &str) -> String {
+        let tenant =
+            uuid::Uuid::parse_str(self.claim["tenant_id"].as_str().expect("tenant")).expect("uuid");
+        let admin =
+            uuid::Uuid::parse_str(self.claim["key_id"].as_str().expect("admin key")).expect("uuid");
+        let key_id = uuid::Uuid::parse_str(key_id).expect("uuid");
+        let head = self
+            .store
+            .chain_head(tenant)
+            .await
+            .expect("head")
+            .expect("chain");
+        let prev = self
+            .store
+            .events_range(tenant, head.seq, 1)
+            .await
+            .expect("the head event")
+            .remove(0);
+        let draft = EventDraft {
+            tenant_id: tenant,
+            event_id: OsIds.new_id(),
+            event_type: event_types::KEY_REVOKED.to_owned(),
+            principal: "platform/admin".to_owned(),
+            api_key_id: Some(admin),
+            at: EventTime::parse("2026-11-02T10:30:00.123456Z").expect("time"),
+            payload: json!({
+                "key_id": key_id.to_string(),
+                "revoked_by_key_id": admin.to_string(),
+                "reason_digest": sha256_digest_string(b"issuance_incomplete"),
+            }),
+        };
+        let event = sign_envelope(
+            next_envelope(Some(&prev), draft).expect("lawful"),
+            &self.signing,
+        )
+        .expect("signs");
+        let at = event.envelope.at.as_str().to_owned();
+        self.store
+            .commit(CommitRequest {
+                outbox: OutboxRow {
+                    event_id: event.envelope.event_id,
+                    topic: event.envelope.event_type.clone(),
+                    payload: json!({
+                        "tenant_id": tenant.to_string(),
+                        "seq": event.envelope.seq,
+                        "event_type": event.envelope.event_type,
+                    }),
+                },
+                event,
+                fold: MetadataFold::KeyRevoked { key_id },
+                idempotency: None,
+            })
+            .await
+            .expect("the revocation commits");
+        at
     }
 
     /// `oml --json <args>` under the stored admin credentials, or `key`.
@@ -453,9 +533,10 @@ impl Lab {
         created["id"].as_str().expect("workarea id").to_owned()
     }
 
-    /// `oml keys issue <args>` under the admin credentials; the `201` body.
-    fn issue(&self, args: &[&str]) -> Value {
-        let mut all = vec!["keys", "issue"];
+    /// `oml keys issue <key-name> <args>` under the admin credentials; the
+    /// `201` body.
+    fn issue(&self, key_name: &str, args: &[&str]) -> Value {
+        let mut all = vec!["keys", "issue", key_name];
         all.extend_from_slice(args);
         let (code, issued, log) = self.json(None, &all);
         assert_eq!(code, 0, "keys issue: {log}");
@@ -529,14 +610,17 @@ async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_worka
     let wa = lab.workarea("metals");
     lab.take_requests();
 
-    let issued = lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-1",
-        "--grant",
-        &format!("{wa}:writer"),
-    ]);
+    let issued = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    );
 
     let seen = lab.take_requests();
     assert_eq!(routes(&seen), ["POST /v2/keys"]);
@@ -555,21 +639,55 @@ async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_worka
     lab.stop().await;
 }
 
+/// `oml bootstrap claim <key-name>` and `oml keys issue <key-name>` send the
+/// positional name as the body's `name`, and the key is issued under it
+/// (cli/reference.md `oml bootstrap claim`, `oml keys issue`; ADR-0026 d9,
+/// d12).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_claim_and_keys_issue_send_their_positional_key_name_as_the_bodys_name() {
+    let lab = Lab::start().await;
+    let claim = lab.take_requests();
+    assert_eq!(routes(&claim), ["POST /v2/bootstrap/claim"]);
+    assert_eq!(claim[0].body["name"], "root-admin");
+    let wa = lab.workarea("metals");
+    lab.take_requests();
+
+    let issued = lab.issue(
+        "claude-laptop",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "claude/laptop",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    );
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/keys"]);
+    assert_eq!(seen[0].body["name"], "claude-laptop");
+    assert_eq!(issued["name"], "claude-laptop", "the 201 answers the name");
+    lab.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keys_issue_with_write_only_sends_only_the_writer_grant() {
     let lab = Lab::start().await;
     let wa = lab.workarea("metals");
     lab.take_requests();
 
-    let issued = lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-1",
-        "--grant",
-        &format!("{wa}:writer"),
-        "--write-only",
-    ]);
+    let issued = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+            "--write-only",
+        ],
+    );
 
     let seen = lab.take_requests();
     assert_eq!(routes(&seen), ["POST /v2/keys"]);
@@ -587,6 +705,7 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
     let (code, _, stderr) = lab.text(&[
         "keys",
         "issue-agent",
+        "agent-7",
         "--principal",
         "crew/agent-7",
         "--workarea",
@@ -600,6 +719,7 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
         seen[0].body,
         json!({
             "role": "writer",
+            "name": "agent-7",
             "held_by": "agent",
             "principal": "crew/agent-7",
             "default_workarea_id": wa,
@@ -617,6 +737,7 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
     let (code, stdout, stderr) = lab.text(&[
         "keys",
         "issue-agent",
+        "agent-7",
         "--principal",
         "crew/agent-7",
         "--workarea",
@@ -668,6 +789,7 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
     let (code, stdout, stderr) = lab.text(&[
         "keys",
         "issue-agent",
+        "agent-7",
         "--principal",
         "crew/agent-7",
         "--workarea",
@@ -717,6 +839,7 @@ async fn issue_agent_out_refuses_an_existing_file_and_sends_nothing() {
     let (code, stdout, stderr) = lab.text(&[
         "keys",
         "issue-agent",
+        "agent-7",
         "--principal",
         "crew/agent-7",
         "--workarea",
@@ -751,6 +874,7 @@ async fn issue_agent_out_with_json_is_refused() {
         &[
             "keys",
             "issue-agent",
+            "agent-7",
             "--principal",
             "crew/agent-7",
             "--workarea",
@@ -777,6 +901,7 @@ async fn issue_agent_out_refuses_a_path_with_a_quote_or_a_newline_and_sends_noth
         let (code, stdout, stderr) = lab.text(&[
             "keys",
             "issue-agent",
+            "agent-7",
             "--principal",
             "crew/agent-7",
             "--workarea",
@@ -818,6 +943,7 @@ fn issue_agent_to_stub(server: &str, dir: &Path, path: &Path) -> (i32, String, S
         &[
             "keys",
             "issue-agent",
+            "agent-7",
             "--principal",
             "crew/agent-7",
             "--workarea",
@@ -905,27 +1031,33 @@ async fn issue_agent_says_a_key_may_have_been_issued_when_the_connection_closes_
 async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its_workarea() {
     let lab = Lab::start().await;
     let wa = lab.workarea("metals");
-    let writer = lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-1",
-        "--grant",
-        &format!("{wa}:writer"),
-    ])["value"]
+    let writer = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    )["value"]
         .as_str()
         .expect("writer value")
         .to_owned();
-    let dreamer = lab.issue(&[
-        "--role",
-        "dreamer",
-        "--held-by",
-        "human",
-        "--principal",
-        "crew/reviewer-1",
-        "--grant",
-        &format!("{wa}:dreamer"),
-    ])["value"]
+    let dreamer = lab.issue(
+        "crew-reviewer-1",
+        &[
+            "--role",
+            "dreamer",
+            "--held-by",
+            "human",
+            "--principal",
+            "crew/reviewer-1",
+            "--grant",
+            &format!("{wa}:dreamer"),
+        ],
+    )["value"]
         .as_str()
         .expect("dreamer value")
         .to_owned();
@@ -973,15 +1105,18 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
 async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_its_own_held_row() {
     let lab = Lab::start().await;
     let wa = lab.workarea("metals");
-    let writer = lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-1",
-        "--grant",
-        &format!("{wa}:writer"),
-        "--write-only",
-    ])["value"]
+    let writer = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+            "--write-only",
+        ],
+    )["value"]
         .as_str()
         .expect("writer value")
         .to_owned();
@@ -1021,6 +1156,528 @@ async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_i
         .expect("get of the key's own held row");
     assert_eq!(status, 200);
     assert_eq!(row["state"], "held", "{row}");
+    lab.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// Names in every argument (ADR-0026; cli/reference.md conventions)
+// ---------------------------------------------------------------------------
+
+/// The second export line's single-quoted key value.
+fn exported_value(stdout: &str) -> String {
+    stdout
+        .lines()
+        .nth(1)
+        .and_then(|l| l.strip_prefix("export OML_API_KEY='"))
+        .and_then(|l| l.strip_suffix('\''))
+        .expect("the second line exports the key value")
+        .to_owned()
+}
+
+/// `oml keys issue-agent <key-name>` sends the name as the issuance's
+/// `name` and its `--workarea` and `--crew` as the operator spelled them,
+/// and the key it issues answers to that name on `oml keys show`
+/// (cli/reference.md `oml keys issue-agent`, `oml keys show`; ADR-0026 d4,
+/// d9, d12).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
+    let lab = Lab::start().await;
+    let wa = lab.workarea("metals");
+    let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
+    assert_eq!(code, 0, "crews create: {log}");
+    lab.take_requests();
+
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "claude-laptop",
+        "--principal",
+        "claude/laptop",
+        "--workarea",
+        "metals",
+        "--crew",
+        "metals-crew",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/keys"]);
+    assert_eq!(
+        seen[0].body,
+        json!({
+            "role": "writer",
+            "name": "claude-laptop",
+            "held_by": "agent",
+            "principal": "claude/laptop",
+            "default_workarea_id": "metals",
+            "crew": "metals-crew",
+            "grants": [grant("metals", "writer"), grant("metals", "reader")],
+        }),
+        "every reference goes as spelled; the CLI resolves nothing"
+    );
+
+    let (code, shown, log) = lab.json(None, &["keys", "show", "claude-laptop"]);
+    assert_eq!(code, 0, "keys show by name: {log}");
+    assert_eq!(shown["name"], "claude-laptop", "{log}");
+    assert_eq!(shown["principal"], "claude/laptop", "{log}");
+    assert_eq!(shown["crew_id"], crew["crew_id"], "{log}");
+    assert_eq!(
+        shown["default_workarea_id"].as_str(),
+        Some(wa.as_str()),
+        "{log}"
+    );
+    let key_id = shown["key_id"].as_str().expect("key id");
+    assert!(
+        stderr.contains("claude-laptop") && stderr.contains(key_id),
+        "stderr names the key it issued by name and id: {stderr}"
+    );
+    let (code, by_id, log) = lab.json(None, &["keys", "show", key_id]);
+    assert_eq!(code, 0, "keys show by id: {log}");
+    assert_eq!(by_id, shown, "the name answers what the id does");
+
+    // The exported value is the key that answers to the name.
+    let value = exported_value(&stdout);
+    let (code, accepted, log) = lab.json(
+        Some(&value),
+        &["submit", "--claim", "The named key remembers."],
+    );
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(accepted["workarea_id"].as_str(), Some(wa.as_str()), "{log}");
+    lab.stop().await;
+}
+
+/// A revoked key's name still resolves, so `oml keys show` reads it as
+/// history, and its human layout says so: a `revoked` line carries the
+/// revocation time, where a live key's says `no (live)`, so a key revoked
+/// after a part-failed issuance never reads as live without `--json`
+/// (cli/reference.md `oml keys show`; http-api.md keys; ADR-0026 d10).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
+    let lab = Lab::start().await;
+    let wa = lab.workarea("metals");
+    let issued = lab.issue(
+        "agent-7-laptop",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-7",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    );
+    let revoked_line = |stdout: &str| -> Vec<String> {
+        stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("revoked"))
+            .map(ToOwned::to_owned)
+            .collect()
+    };
+
+    let (code, live, stderr) = lab.text(&["keys", "show", "agent-7-laptop"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(revoked_line(&live), ["revoked  : no (live)"], "{live}");
+
+    let at = lab
+        .revoke_in_the_store(issued["key_id"].as_str().expect("key id"))
+        .await;
+    let (code, revoked, stderr) = lab.text(&["keys", "show", "agent-7-laptop"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        revoked_line(&revoked),
+        [format!("revoked  : {at}")],
+        "{revoked}"
+    );
+    assert!(!revoked.contains("live"), "{revoked}");
+    let (code, json, log) = lab.json(None, &["keys", "show", "agent-7-laptop"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(json["revoked_at"], at.as_str(), "{log}");
+    lab.stop().await;
+}
+
+/// `oml workareas crew set <workarea> --crew <crew>` points a workarea at a
+/// crew record, each by id or name sent as typed, in one `POST
+/// /v2/workareas/{workarea_id}/crew {crew}`, and the workarea read then
+/// serves that record (cli/reference.md `oml workareas`; http-api.md
+/// workareas; ADR-0026 d4, d8).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
+    let lab = Lab::start().await;
+    let wa = lab.workarea("metals");
+    let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
+    assert_eq!(code, 0, "crews create: {log}");
+    lab.take_requests();
+
+    let (code, updated, log) = lab.json(
+        None,
+        &[
+            "workareas",
+            "crew",
+            "set",
+            "metals",
+            "--crew",
+            "metals-crew",
+        ],
+    );
+    assert_eq!(code, 0, "workareas crew set: {log}");
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/workareas/metals/crew"]);
+    assert_eq!(seen[0].body, json!({ "crew": "metals-crew" }));
+    assert_eq!(updated["id"].as_str(), Some(wa.as_str()), "{log}");
+    assert_eq!(updated["crew"], crew, "{log}");
+
+    let (code, shown, log) = lab.json(None, &["workareas", "show", &wa]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(
+        shown["crew"], crew,
+        "the read serves the record set by name"
+    );
+
+    let crew_id = crew["crew_id"].as_str().expect("crew id");
+    let (code, stdout, stderr) = lab.text(&["workareas", "crew", "set", &wa, "--crew", crew_id]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("metals-crew") && stdout.contains(crew_id),
+        "the human layout names the crew: {stdout}"
+    );
+    lab.stop().await;
+}
+
+/// A `--grant <workarea>:<role>` takes the workarea's id or its name, the
+/// CLI sends it as spelled, and the server issues the one grant either way
+/// (cli/reference.md `oml keys issue`; ADR-0026 d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
+    let lab = Lab::start().await;
+    let wa = lab.workarea("metals");
+    lab.take_requests();
+
+    let by_id = lab.issue(
+        "agent-by-id",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+            "--default-workarea",
+            &wa,
+        ],
+    );
+    let by_name = lab.issue(
+        "agent-by-name",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-2",
+            "--grant",
+            "metals:writer",
+            "--default-workarea",
+            "metals",
+        ],
+    );
+
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/keys", "POST /v2/keys"]);
+    assert_eq!(
+        seen[1].body["grants"],
+        json!([grant("metals", "writer"), grant("metals", "reader")]),
+        "the name goes as spelled, with its reader grant beside it"
+    );
+    assert_eq!(seen[1].body["default_workarea_id"], "metals");
+    assert_eq!(
+        granted(&by_id),
+        [
+            (wa.clone(), "writer".to_owned()),
+            (wa.clone(), "reader".to_owned())
+        ]
+    );
+    assert_eq!(granted(&by_name), granted(&by_id));
+    assert_eq!(by_name["default_workarea_id"], by_id["default_workarea_id"]);
+    lab.stop().await;
+}
+
+/// `oml crews create <name>` creates a crew record, and `oml crews show`,
+/// `update` and `list` answer it by its name exactly as by its id
+/// (cli/reference.md `oml crews`; ADR-0026 d4, d8).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crews_create_and_show_by_name() {
+    let lab = Lab::start().await;
+    lab.take_requests();
+
+    let (code, created, log) = lab.json(
+        None,
+        &[
+            "crews",
+            "create",
+            "metals-crew",
+            "--charter-uri",
+            "https://crews.example.com/metals/charter.md",
+            "--external-manager",
+            "crewd.example.com",
+        ],
+    );
+    assert_eq!(code, 0, "crews create: {log}");
+    assert_eq!(created["name"], "metals-crew", "{log}");
+    assert_eq!(
+        created["charter_uri"],
+        "https://crews.example.com/metals/charter.md"
+    );
+    assert_eq!(created["external_manager"], "crewd.example.com");
+    let crew_id = created["crew_id"].as_str().expect("crew id").to_owned();
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/crews"]);
+    assert_eq!(
+        seen[0].body,
+        json!({
+            "name": "metals-crew",
+            "charter_uri": "https://crews.example.com/metals/charter.md",
+            "external_manager": "crewd.example.com",
+        })
+    );
+
+    let (code, by_name, log) = lab.json(None, &["crews", "show", "metals-crew"]);
+    assert_eq!(code, 0, "crews show by name: {log}");
+    assert_eq!(by_name, created);
+    let (code, by_id, log) = lab.json(None, &["crews", "show", &crew_id]);
+    assert_eq!(code, 0, "crews show by id: {log}");
+    assert_eq!(by_id, created);
+    let (code, stdout, stderr) = lab.text(&["crews", "show", "metals-crew"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("metals-crew") && stdout.contains(&crew_id),
+        "the human layout names the crew by name and id: {stdout}"
+    );
+
+    let (code, updated, log) = lab.json(
+        None,
+        &[
+            "crews",
+            "update",
+            "metals-crew",
+            "--external-manager",
+            "crewd.example.org",
+        ],
+    );
+    assert_eq!(code, 0, "crews update by name: {log}");
+    assert_eq!(updated["crew_id"], created["crew_id"], "{log}");
+    assert_eq!(updated["name"], "metals-crew", "the name never changes");
+    assert_eq!(updated["external_manager"], "crewd.example.org");
+    assert_eq!(updated["charter_uri"], created["charter_uri"]);
+
+    let (code, listed, log) = lab.json(None, &["crews", "list"]);
+    assert_eq!(code, 0, "crews list: {log}");
+    assert_eq!(listed["items"], json!([updated]), "{log}");
+
+    // A taken name is the server's refusal, typed.
+    let (code, envelope, log) = lab.json(None, &["crews", "create", "metals-crew"]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(envelope["error"]["code"], "name.taken", "{log}");
+
+    // An update names at least one field, or nothing is sent.
+    lab.take_requests();
+    let (code, _, log) = lab.json(None, &["crews", "update", "metals-crew"]);
+    assert_eq!(code, 2, "a local refusal: {log}");
+    assert!(lab.take_requests().is_empty(), "nothing was sent: {log}");
+    lab.stop().await;
+}
+
+/// Under the admin context `oml bootstrap claim` stores, `oml workareas
+/// tree` lists the tenant tree from `universe` down, or from a `--root`
+/// given by name, in one tree read, with each node's name, path, status and
+/// crew record or null, and `oml workareas show` reads one node by name,
+/// while recall under the same key
+/// still answers `access.verb_ceiling` (cli/reference.md `oml workareas`;
+/// ADR-0026 d4, d8, d15).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
+    let lab = Lab::start().await;
+    let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
+    assert_eq!(code, 0, "crews create: {log}");
+    let create = |args: &[&str]| {
+        let mut all = vec!["workareas", "create"];
+        all.extend_from_slice(args);
+        let (code, created, log) = lab.json(None, &all);
+        assert_eq!(code, 0, "workareas create {args:?}: {log}");
+        created
+    };
+    let procurement = create(&["universe", "procurement"]);
+    assert_eq!(procurement["path"], "universe.procurement");
+    let metals = create(&["procurement", "metals", "--crew", "metals-crew"]);
+    assert_eq!(metals["path"], "universe.procurement.metals");
+    assert_eq!(metals["crew"], crew, "the crew record named by its name");
+    let q1 = create(&["metals", "q1-2027"]);
+    create(&["universe", "research"]);
+    lab.take_requests();
+
+    let (code, tree, log) = lab.json(None, &["workareas", "tree"]);
+    assert_eq!(code, 0, "workareas tree: {log}");
+    let nodes = tree["items"].as_array().expect("items");
+    let column = |name: &str| -> Vec<&str> {
+        nodes
+            .iter()
+            .map(|n| n[name].as_str().expect(name))
+            .collect()
+    };
+    assert_eq!(
+        column("path"),
+        [
+            "universe",
+            "universe.procurement",
+            "universe.procurement.metals",
+            "universe.procurement.metals.q1-2027",
+            "universe.research",
+        ],
+        "{log}"
+    );
+    assert_eq!(
+        column("name"),
+        ["universe", "procurement", "metals", "q1-2027", "research"]
+    );
+    assert_eq!(
+        column("status"),
+        [
+            "committed",
+            "development",
+            "development",
+            "development",
+            "development"
+        ]
+    );
+    assert_eq!(nodes[2]["crew"], crew, "each node carries its crew record");
+    assert_eq!(
+        nodes[1].get("crew"),
+        Some(&Value::Null),
+        "a node with no crew carries null"
+    );
+    assert_eq!(tree["next_cursor"], Value::Null, "{log}");
+    assert_eq!(
+        routes(&lab.take_requests()),
+        ["GET /v2/workareas/universe/tree"],
+        "one tree read, the root by its name"
+    );
+
+    let (code, subtree, log) = lab.json(None, &["workareas", "tree", "--root", "metals"]);
+    assert_eq!(code, 0, "workareas tree --root by name: {log}");
+    assert_eq!(
+        routes(&lab.take_requests()),
+        ["GET /v2/workareas/metals/tree"]
+    );
+    let paths: Vec<&str> = subtree["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|n| n["path"].as_str().expect("path"))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "universe.procurement.metals",
+            "universe.procurement.metals.q1-2027"
+        ]
+    );
+
+    let (code, stdout, stderr) = lab.text(&["workareas", "tree"]);
+    assert_eq!(code, 0, "{stderr}");
+    for path in column("path") {
+        assert!(stdout.contains(path), "{path} is listed: {stdout}");
+    }
+    assert!(
+        stdout.contains("metals-crew"),
+        "the crew is shown: {stdout}"
+    );
+
+    let (code, shown, log) = lab.json(None, &["workareas", "show", "metals"]);
+    assert_eq!(code, 0, "workareas show by name: {log}");
+    assert_eq!(shown["id"], metals["id"], "{log}");
+    assert_eq!(shown["crew"], crew, "{log}");
+    assert_eq!(
+        shown["my_effective_verbs"],
+        json!([]),
+        "admin holds no grant verb"
+    );
+    assert_eq!(
+        shown["children"],
+        json!([{ "id": q1["id"], "path_leaf": "q1-2027", "status": "development" }])
+    );
+
+    // Structure, never content: the admin context still recalls nothing.
+    let (code, envelope, log) = lab.json(None, &["recall", "--query", "anything"]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(envelope["error"]["code"], "access.verb_ceiling", "{log}");
+    lab.stop().await;
+}
+
+/// A reference that is neither an id nor a name reaches the server as
+/// typed, one path segment however it is spelled, a dot or an escape
+/// included, and is refused there as `request.validation`: the CLI
+/// classifies nothing but the three spellings a path cannot carry as one
+/// segment (cli/reference.md conventions; ADR-0026 d3, d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reference_that_is_neither_an_id_nor_a_name_is_refused_by_the_server_as_request_validation()
+ {
+    let lab = Lab::start().await;
+    for bad in [
+        "Metals",
+        "universe.procurement",
+        "a/b",
+        "x?y=1",
+        "...",
+        "%2e",
+        "%2e%2e",
+    ] {
+        let (code, envelope, log) = lab.json(None, &["workareas", "show", bad]);
+        assert_eq!(code, 1, "{bad:?}: {log}");
+        assert_eq!(
+            envelope["error"]["code"], "request.validation",
+            "{bad:?}: {log}"
+        );
+    }
+    lab.stop().await;
+}
+
+/// A reference spelled ``, `.` or `..` is refused before anything is sent,
+/// exit 2, on every verb that puts a reference in a path: a URL path cannot
+/// carry it as one segment, the empty value leaving none and the URL parser
+/// removing the other two as dot segments, so it would reach another route
+/// or none, and no id or name is spelled so (cli/reference.md conventions;
+/// ADR-0026 d2, d3, d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reference_spelled_empty_dot_or_dot_dot_is_refused_before_anything_is_sent() {
+    let lab = Lab::start().await;
+    lab.take_requests();
+    for bad in ["", ".", ".."] {
+        for args in [
+            vec!["keys", "show", bad],
+            vec!["deny", "set", bad, "universe"],
+            vec!["workareas", "show", bad],
+            vec!["workareas", "tree", "--root", bad],
+            vec!["workareas", "crew", "set", bad, "--crew", "metals-crew"],
+            vec!["crews", "show", bad],
+            vec![
+                "crews",
+                "update",
+                bad,
+                "--charter-uri",
+                "https://example.org/c",
+            ],
+        ] {
+            let (code, stdout, stderr) = lab.text(&args);
+            assert_eq!(code, 2, "{args:?}: {stdout}{stderr}");
+            assert!(
+                stderr.contains(&format!("{bad:?}")) && stderr.contains("one URL path segment"),
+                "{args:?}: the value and the reason are named: {stderr}"
+            );
+            assert!(stdout.is_empty(), "{args:?}: {stdout}");
+            assert_eq!(
+                routes(&lab.take_requests()),
+                Vec::<String>::new(),
+                "{args:?}: nothing was sent"
+            );
+        }
+    }
     lab.stop().await;
 }
 
@@ -1141,14 +1798,21 @@ struct Crew {
 
 impl Crew {
     async fn start() -> Self {
-        Self::start_in("metals").await
+        Self::start_in(&["metals"]).await
     }
 
-    /// The crew in a workarea named `name` under the root.
-    async fn start_in(name: &str) -> Self {
+    /// The crew in the last of `names`, each workarea a child of the one
+    /// before it and the first a child of the root.
+    async fn start_in(names: &[&str]) -> Self {
         let lab = Lab::start().await;
-        let (code, created, log) = lab.json(None, &["workareas", "create", &lab.root, name]);
-        assert_eq!(code, 0, "workareas create: {log}");
+        let mut created = Value::Null;
+        let mut parent = lab.root.clone();
+        for name in names {
+            let (code, child, log) = lab.json(None, &["workareas", "create", &parent, name]);
+            assert_eq!(code, 0, "workareas create: {log}");
+            parent = child["id"].as_str().expect("workarea id").to_owned();
+            created = child;
+        }
         let wa = created["id"].as_str().expect("workarea id").to_owned();
         let path = created["path"].as_str().expect("workarea path").to_owned();
         let (code, issued, log) = lab.json(
@@ -1156,6 +1820,7 @@ impl Crew {
             &[
                 "keys",
                 "issue-agent",
+                "crew-agent-7",
                 "--principal",
                 "crew/agent-7",
                 "--workarea",
@@ -1164,16 +1829,19 @@ impl Crew {
         );
         assert_eq!(code, 0, "issue-agent: {log}");
         let agent = issued["value"].as_str().expect("agent value").to_owned();
-        let dreamer = lab.issue(&[
-            "--role",
-            "dreamer",
-            "--held-by",
-            "human",
-            "--principal",
-            "crew/reviewer-1",
-            "--grant",
-            &format!("{wa}:dreamer"),
-        ])["value"]
+        let dreamer = lab.issue(
+            "crew-reviewer-1",
+            &[
+                "--role",
+                "dreamer",
+                "--held-by",
+                "human",
+                "--principal",
+                "crew/reviewer-1",
+                "--grant",
+                &format!("{wa}:dreamer"),
+            ],
+        )["value"]
             .as_str()
             .expect("dreamer value")
             .to_owned();
@@ -1187,16 +1855,19 @@ impl Crew {
     }
 
     /// A writer key on the crew workarea for another principal, with its
-    /// reader grant.
+    /// reader grant, named after the principal with `/` spelled `-`.
     fn writer(&self, principal: &str) -> String {
-        self.lab.issue(&[
-            "--role",
-            "writer",
-            "--principal",
-            principal,
-            "--grant",
-            &format!("{}:writer", self.wa),
-        ])["value"]
+        self.lab.issue(
+            &principal.replace('/', "-"),
+            &[
+                "--role",
+                "writer",
+                "--principal",
+                principal,
+                "--grant",
+                &format!("{}:writer", self.wa),
+            ],
+        )["value"]
             .as_str()
             .expect("writer value")
             .to_owned()
@@ -1724,15 +2395,18 @@ async fn the_hook_prints_nothing_and_exits_0_when_the_server_refuses() {
 
     // A write-only key reads its own work, and recall refuses it: the
     // context is whole or absent, never the listing alone.
-    let write_only = crew.lab.issue(&[
-        "--role",
-        "writer",
-        "--principal",
-        "crew/agent-9",
-        "--grant",
-        &format!("{}:writer", crew.wa),
-        "--write-only",
-    ])["value"]
+    let write_only = crew.lab.issue(
+        "crew-agent-9",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-9",
+            "--grant",
+            &format!("{}:writer", crew.wa),
+            "--write-only",
+        ],
+    )["value"]
         .as_str()
         .expect("write-only value")
         .to_owned();
@@ -2075,14 +2749,17 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
         )]
     );
 
-    // A workarea path in which the key value straddles the cut, reached
-    // through a child of the agent's workarea that its newest row names.
-    let name = format!("{}{}-{}", "w".repeat(80), crew.agent, "t".repeat(40));
-    let (code, child, log) = crew
-        .lab
-        .json(None, &["workareas", "create", &crew.wa, &name]);
-    assert_eq!(code, 0, "workareas create: {log}");
-    let child_path = child["path"].as_str().expect("child path").to_owned();
+    // A workarea path in which the key value straddles the cut, named by the
+    // newest own row. A workarea name is a lowercase RFC 1035 label and a
+    // key value carries `_`, so no path the lead serves holds one (ADR-0026
+    // d2); the hook redacts whatever a server sends (ADR-0029 d4), so a stub
+    // serves this path.
+    let child_path = format!(
+        "universe/{}{}-{}",
+        "w".repeat(100),
+        crew.agent,
+        "t".repeat(40)
+    );
     let key_at = child_path
         .find(crew.agent.as_str())
         .expect("the key in the path");
@@ -2090,21 +2767,35 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
         key_at < 119 && key_at + crew.agent.len() > 119,
         "the key straddles the cut: {child_path}"
     );
-    let (code, accepted, log) = crew.lab.json(
-        Some(&crew.agent),
-        &[
-            "submit",
-            "--claim",
-            "Metals lot E: 40 tonnes, Tema, Saturday.",
-            "--claim-key",
-            "metals-lot-e",
-            "--workarea",
-            child["id"].as_str().expect("child id"),
-        ],
+    let own = json!({
+        "items": [{
+            "claim_key": "metals-lot-e",
+            "state": "held",
+            "version": 1,
+            "workarea_path": child_path,
+        }],
+        "next_cursor": null,
+    });
+    let stub = axum::Router::new()
+        .route(
+            "/v1/memories",
+            axum::routing::get(move || {
+                let own = own.clone();
+                async move { axum::Json(own) }
+            }),
+        )
+        .route(
+            "/v1/memories/recall",
+            axum::routing::post(|| async {
+                axum::Json(json!({ "steering": [], "hits": [], "query_digest": "sha256:00" }))
+            }),
+        );
+    let (url, task) = serve_stub(stub).await;
+    let (code, stdout, stderr) = hook(
+        &[("OML_URL", &url), ("OML_API_KEY", crew.agent.as_str())],
+        &stdin,
     );
-    assert_eq!(code, 0, "submit into the child: {log}");
-    assert_eq!(accepted["state"], "held", "{log}");
-    let (code, stdout, stderr) = crew.hook(&[], &stdin);
+    task.abort();
     assert_eq!(code, 0, "{stderr}");
     let context = context_of(&stdout);
     assert_eq!(windows(&context), None, "no part of the key: {context}");
@@ -2113,8 +2804,7 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
         context.lines().next(),
         Some(
             format!(
-                "OML memory for this session, from {}, workarea {}….",
-                crew.lab.server,
+                "OML memory for this session, from {url}, workarea {}….",
                 shown.chars().take(119).collect::<String>()
             )
             .as_str()
@@ -2128,7 +2818,9 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
 async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() {
     // Neither a claim key nor the path counts toward the budget, so each is
     // cut where it is printed, and the record line comes before them all.
-    let crew = Crew::start_in(&"metals".repeat(30)).await;
+    // A name is at most 63 characters and unique in the tenant (ADR-0026 d1,
+    // d2), so the path passes 120 through a child of a child.
+    let crew = Crew::start_in(&[&"metals".repeat(10), &"stocks".repeat(10)]).await;
     let claim_key = format!("metals-{}", "k".repeat(300));
     crew.submit(
         &crew.agent,

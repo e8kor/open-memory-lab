@@ -2,7 +2,7 @@
 id: architecture/workareas
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the workarea algebra works — universe tree, node-id grants, deny-wins semantics, edges — and how the status ladder changes a workarea's behavior
+answers: how the workarea algebra works — universe tree, node-id grants, deny-wins semantics, edges — and how the status ladder changes a workarea's behavior; what the root is named and how paths relate to names; what a crew record is and how workareas and keys name one
 -->
 
 # Workareas: the algebra and the status ladder
@@ -21,14 +21,18 @@ A workarea exists to mirror an externally managed AI crew: the crew is operated
 elsewhere, and OML records which governed space its memories live in. The cost of
 that choice is that OML never orchestrates a crew — it only refuses or admits what
 crews write — and that cost is accepted deliberately (see
-[Crew metadata](#crew-metadata-recorded-not-operated)).
+[Crews](#crews-recorded-not-operated)).
 
 ## The tree: one universe per tenant
 
 A workarea is a governed node in exactly one tree per tenant, rooted at that
 tenant's `universe`. Inclusion is single-parent: every workarea except the
 universe has exactly one parent, so cycles are impossible by construction, and
-every node has one derivable path from the root.
+every node has one derivable path from the root. Every workarea has a
+[name](../api/http-api.md#names-and-ids), unique in its tenant across the whole
+tree and never changed, and the root's is `universe` in every tenant: tenant
+creation creates the root under that name, so no other workarea can take it
+([ADR-0026](../adr/ADR-0026-names-are-keys.md) d6).
 
 The universe root is special in three ways, all of them refusals:
 
@@ -81,18 +85,27 @@ child (see [the status ladder](#the-status-ladder-d8)). `run-grid` under
 ## Grants bind to node ids; paths are derived
 
 A grant names a workarea **node id**, never a path. The path (stored as
-Postgres `ltree`) is derived from the tree at check time: the subtree a grant
-covers is "every node whose derived path is prefixed by the granted node's
-derived path". Two consequences:
+Postgres `ltree`) is derived from the tree at check time — the names from
+`universe` down to the node, joined with `.` — and the subtree a grant covers is
+"every node whose derived path is prefixed by the granted node's derived path". A
+request may name the node by its id or its unique name; the server substitutes
+the id before any check that reads state, and only the id is stored
+([names](../api/http-api.md#names-and-ids)). A path is never accepted as a
+reference: with unique names its last segment already identifies the node. Three
+consequences:
 
-- **Renames and moves never invalidate grants.** A grant on the node that is
-  today at `universe.research-crew.experiments` still covers the same node and
-  its descendants after that node is re-parented elsewhere, because the grant
-  holds the id, and the path is recomputed.
+- **Moves never invalidate grants, and nothing renames a node.** A grant on the
+  node that is today at `universe.research-crew.experiments` still covers the
+  same node and its descendants after that node is re-parented elsewhere,
+  because the grant holds the id, and the path is recomputed; the node keeps its
+  name `experiments`, which no verb can change.
 - **A path string is never an authority.** Anything that compares paths
   (subtree checks, scoped search filters in [retrieval.md](retrieval.md)) is a
   derived view of the tree as of the current permission epoch, reproducible
   from journalled state.
+- **A name is never an authority either.** It is resolved to the id before the
+  [effective-access](#effective-access-union-of-attenuated-grants-then-deny-wins)
+  formula runs, so a name the key may not see answers exactly what its id would.
 
 Every effective-access computation is reproducible from journalled grants: the
 grant, its denies, and the global per-key deny objects are all journalled
@@ -215,27 +228,45 @@ because a ratified edge becomes shared recorded structure of both subtrees, and
 neither side's governance may be bypassed. A pending edge confers nothing and
 appears as pending in graph reads.
 
-## Crew metadata: recorded, not operated
+## Crews: recorded, not operated
 
-A workarea records its crew: name, charter URI, external manager. The record
-answers "whose memory space is this, and who runs that crew" — it does not make
-OML a crew orchestrator. OML never contacts the external manager, never
-schedules the crew, and never validates the charter URI beyond storing it;
-"recorded, not operated" is the honest scope of the feature.
+A crew is a named record of its own: `{crew_id, name, charter_uri,
+external_manager}`. This section is the single declaration site for the record
+and its relations ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8). The record
+answers "who runs this crew, under what charter" — it does not make OML a crew
+orchestrator. OML never contacts the external manager, never schedules the crew,
+and never validates the charter URI beyond storing it; "recorded, not operated"
+is the honest scope of the feature.
 
-Update rules:
+- **A workarea names at most one crew**, the one whose memory space it is; a crew
+  may serve many workareas. The crew is named at workarea create, and pointing
+  the workarea at another crew record is the workarea's journalled
+  crew-metadata update (`workarea.crew_updated`). A vocabulary workarea must
+  name one, its curator crew ([ontologies](ontologies.md)).
+- **A key may name one crew** at issuance; it is journalled in `key.issued`,
+  fixed for the key's life and carried to a rotation's successor. A key holder
+  who changes crews holds a new key ([roles and keys](roles-and-keys.md)).
+- **The crew record itself** is created and updated by journalled admin acts
+  (`crew.created`, `crew.updated`, admin role;
+  [roles-and-keys.md](roles-and-keys.md), [HTTP API](../api/http-api.md#crews)).
+  Its name is a unique, immutable [name](../api/http-api.md#names-and-ids) — OML's
+  key for the crew, not its display title — so a crew that renames itself
+  outside OML keeps its record and its key; its charter URI and external manager
+  are what an update corrects. A crew record has no status, so it stays
+  correctable whatever the status of the workareas that name it.
+- **Reads.** Crew records are admin reads; a key that can read a workarea sees
+  that workarea's crew record in the workarea read, and no other.
 
-- Crew metadata update is a **journalled admin act** (admin role; see
-  [roles-and-keys.md](roles-and-keys.md)).
-- It is allowed **on `validated` areas**. Freezing covers claim content and
-  promotions, not workarea metadata: a crew that renames itself or changes
-  manager after its area froze still gets its record corrected, and the
-  journal shows who corrected it and when.
+The crew-metadata update of a workarea is allowed **on `validated` areas**.
+Freezing covers claim content and promotions, not workarea metadata: a frozen
+area whose crew changes still gets its record corrected, and the journal shows
+who corrected it and when.
 
-The reviewer-independence axis in [admission.md](admission.md)
-resolves reviewer crew and external manager from this journalled
-key→crew→manager metadata at promotion time, which is why its updates must be
-journalled acts rather than free edits.
+The reviewer-independence axis in [admission.md](admission.md) resolves the
+authoring and reviewing keys' crews, and their crews' external managers, from
+these journalled records at promotion time
+([roles and keys](roles-and-keys.md#review-independence-and-the-evidence-of-collusion)),
+which is why every change to them is a journalled act rather than a free edit.
 
 ## Re-parenting
 
@@ -247,9 +278,9 @@ Re-parenting a workarea — giving the node a different parent — exists as a
 3. the **descendant path rewrite**: every derived `ltree` path under the moved
    node is rewritten to its new prefix.
 
-Because grants bind to node ids, no grant is touched; because paths are
-derived, the rewrite is a cache-maintenance act on the derived column, not an
-authority change — but its event still joins every key's permission epoch
+Because grants bind to node ids, no grant is touched, and no name changes;
+because paths are derived, the rewrite is a cache-maintenance act on the derived
+column, not an authority change — but its event still joins every key's permission epoch
 (above), because an access answer computed against old paths no longer
 describes the tree. The cost of the
 single-transaction form is a lock proportional to the size of the moved
@@ -358,4 +389,6 @@ lake is declared: unreviewed content never enters a consumer-readable zone.
 The workarea algebra is registered as ADR-0008 and the status ladder as
 ADR-0009 ([adr/index.md](../adr/index.md)); the permission-epoch reading and
 per-request effective access are
-[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1, d14).
+[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1, d14); the
+root's name, names as references and crew records are the proposed
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d6–d8).

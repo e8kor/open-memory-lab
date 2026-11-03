@@ -265,3 +265,86 @@ jobs:
             --title "Open Memory Lab ${VERSION}" \
             --notes-file notes.md \
             --verify-tag
+
+  # The Helm chart (docs/adr/ADR-0033-interim-helm-chart.md d10): packaged at
+  # the tag's version, signed keyless like every other artifact here, and
+  # attached to the release the publish job created.
+  chart:
+    name: helm chart, packaged and signed
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.22.1
+      - uses: sigstore/cosign-installer@v3
+      - name: The chart's version and appVersion are the tag
+        run: |
+          chart="$(helm show chart deploy/helm/oml)"
+          version="$(awk '/^version:/ {print $2}' <<<"$chart")"
+          app="$(awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}' <<<"$chart")"
+          if [ "$version" != "$VERSION" ] || [ "$app" != "$VERSION" ]; then
+            echo "tag $VERSION, chart version $version, appVersion $app: all three must agree" >&2
+            exit 1
+          fi
+      - name: Package
+        run: |
+          helm lint --strict deploy/helm/oml
+          helm package deploy/helm/oml --destination chart
+          test -f "chart/oml-${VERSION}.tgz"
+      - name: Sign (keyless, bound to this workflow)
+        run: cosign sign-blob --yes --bundle "chart/oml-${VERSION}.tgz.sigstore.json" "chart/oml-${VERSION}.tgz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chart
+          path: chart/
+
+  chart-release:
+    name: helm chart attached to the GitHub release
+    needs: [version, merge, chart, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      DIGEST: ${{ needs.merge.outputs.digest }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chart
+          path: chart
+      - name: Upload the chart and its signature bundle
+        run: |
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            "chart/oml-${VERSION}.tgz" "chart/oml-${VERSION}.tgz.sigstore.json"
+      - name: The release notes name the chart
+        run: |
+          identity='^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/.*$'
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/oml-${VERSION}.tgz"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
+          cat >> notes.md <<EOF
+
+          ## Kubernetes
+
+          The Helm chart runs this release's one lead, with Postgres you bring through a Secret:
+
+              helm install oml ${url} \\
+                --namespace oml --create-namespace --set image.digest=${DIGEST}
+
+          Claim the first admin key through \`kubectl port-forward\` before you enable any Ingress;
+          the install notes print the commands. Verify the archive before installing it:
+
+              cosign verify-blob \\
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+                --certificate-identity-regexp '${identity}' \\
+                --bundle oml-${VERSION}.tgz.sigstore.json \\
+                oml-${VERSION}.tgz
+          EOF
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
