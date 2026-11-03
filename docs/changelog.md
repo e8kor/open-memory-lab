@@ -29,14 +29,21 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
-### 2026-11-03 — `oml-objectstore`: the one object-store port and its conformance suite (implementation, ADR-0035 d12 S1, proposed)
+### 2026-11-03 — `oml-objectstore`: the object-store adapter crate and its conformance suite (implementation, part of ADR-0035 d12 S1, proposed)
 
-A crate with its tests, wired into no binary; no decision changes and no record's Status moves.
-The new crate builds the one store `storage.url` picks with `object_store` 0.13.2, the version
-deltalake 1.1.x requires: `file://` under `oml-data` by default, its file store syncing each
-written file and its directories before it returns, every put but a part's `PutMode::Create`, and
-the `memory` and `http` schemes refused naming the setting. The suite runs on the filesystem, and
-on MinIO in CI's `test` job, where it fails rather than skips without one.
+A crate with its tests, wired into no binary; no decision changes and no record's Status moves,
+and S1's check is not yet closed. The new crate builds the one store `storage.url` picks with
+`object_store` 0.13.2, the version deltalake 1.1.x requires: `file://` under `oml-data` by
+default, its file store syncing each written file and its directories before it returns and, on
+Linux, refused on an NFS or SMB mount; every put but a part's `PutMode::Create`; the promotion
+copy and the multipart assembly of parts into one object; the scratch-key self-test of
+put-if-absent; the `memory` and `http` schemes, and any `storage.options` key the scheme does not
+know, refused naming the setting; and the store handed to other adapters rooted at the URL's path
+on every scheme. The suite runs on the filesystem, and on MinIO in CI's `test` job, where it fails
+rather than skips without one. Still to land for S1: the object-store and KMS ports in `oml-app`,
+`oml-kms` (`kms-file`) and its test, the `upload_sessions` and `artifact_keys` migrations, the
+self-test wired into the lead's readiness, the `minio` service in `docker-compose.yml` with
+`storage.url` set to it, and `storage.url` and `storage.options` on the configuration page.
 
 ### 2026-10-31 — Names as keys (implementation)
 
