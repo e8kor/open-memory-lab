@@ -2204,7 +2204,9 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path') \
                  || jsonb_build_object('name', t.prior_name)"
             }
-            (true, "api_keys") => "to_jsonb(t) - 'name' - 'crew_id'",
+            // 0012 adds credential, folded as bearer for every key it finds
+            // (ADR-0031 d7).
+            (true, "api_keys") => "to_jsonb(t) - 'name' - 'crew_id' - 'credential'",
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
         };
