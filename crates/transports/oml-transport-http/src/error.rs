@@ -399,6 +399,18 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::Store(StoreError::ConnectCodeMoved { .. }) => {
             ApiError::unavailable("connect code contention")
         }
+        // A registration found the unused registrations at their cap and
+        // wrote nothing; retryable once some lapse (errors.md `limit.rate`;
+        // ADR-0031 d5).
+        AppError::Store(StoreError::CapReached) => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "limit.rate",
+            "At most 10 000 registered clients that have not connected exist at once; a \
+             registration past them waits until some lapse 24 hours after registering \
+             (ADR-0031 d5).",
+            "the unused client registrations are at their cap",
+        )
+        .retryable(),
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
         // A tenant's partition DDL lost a lock contest, a timeout or a
         // deadlock, and committed nothing; retryable. Any other DDL failure is a defect

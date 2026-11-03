@@ -45,8 +45,9 @@ mod token;
 
 pub use address::{admit_fetch_answers, admitted_fetch_address};
 pub use client::{
-    ClientId, ClientMetadata, DOCUMENT_MAX_BYTES, DocumentUrl, classify_client_id,
-    validate_document, validate_registration,
+    CACHED_DOCUMENTS_MAX, ClientId, ClientMetadata, DOCUMENT_KEPT_SECONDS, DOCUMENT_MAX_BYTES,
+    DocumentUrl, UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
+    classify_client_id, validate_document, validate_registration,
 };
 pub use code::{CODE_SYMBOLS, CROCKFORD_ALPHABET, ConnectCode};
 pub use discovery::{

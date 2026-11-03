@@ -24,6 +24,9 @@ CREATE TABLE oauth_clients (
     redirect_uris   text[]      NOT NULL,      -- each inside the redirect allowlist (d6)
     metadata_digest bytea       NOT NULL,      -- SHA-256 of the document or registration as received
     fetched_at      timestamptz,               -- cimd: kept at most 24 hours from it
+    max_age         integer     CHECK (max_age BETWEEN 0 AND 86400),
+                                               -- cimd: its Cache-Control lifetime in seconds
+                                               -- from fetched_at, capped at 24 hours
     last_used_at    timestamptz,               -- cimd: the eviction order
     connected_at    timestamptz,               -- the first Connect that named this client
     created_at      timestamptz NOT NULL,

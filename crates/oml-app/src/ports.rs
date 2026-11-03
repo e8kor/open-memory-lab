@@ -17,10 +17,11 @@ use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{
-    AuthorizationRecord, ClaimKeyState, ConnectCode, ConnectCodeRecord, ConnectGrant,
-    ConnectOutcome, ConnectionRecord, CrewRecord, KeyAccess, KeyRecord, ListingFilter,
-    ListingPosition, MemoryRecord, OAuthClientRecord, RecallCandidate, RefreshFacts,
-    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
+    ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess,
+    KeyRecord, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord, RecallCandidate,
+    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, UnnamedRows,
+    WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -80,6 +81,12 @@ pub enum StoreError {
     /// defect, answered `system.internal` (ADR-0034 d11).
     #[error("the tenant's partition DDL failed: {0}")]
     Partition(String),
+    /// A registration found 10 000 registered clients that have not
+    /// connected and are younger than 24 hours: it wrote nothing, and is
+    /// answered `limit.rate` until some lapse (http-api.md
+    /// `POST /oauth/register`; errors.md; ADR-0031 d5).
+    #[error("the unused client registrations are at their cap")]
+    CapReached,
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -826,6 +833,55 @@ pub trait ConnectionStore: JournalStore {
         &self,
         client_id: &str,
     ) -> impl Future<Output = Result<Option<OAuthClientRecord>, StoreError>> + Send;
+
+    /// Caches a fetched client ID metadata document, under the provider
+    /// tenant, for [`cache_lifetime`](oml_domain::oauth::cache_lifetime) of
+    /// `max_age` from `fetched_at`, its `last_used_at` = `fetched_at`. A
+    /// cached client's row is refreshed in place and keeps its
+    /// `connected_at` and `created_at`. A new row in a cache holding
+    /// [`CACHED_DOCUMENTS_MAX`](oml_domain::oauth::CACHED_DOCUMENTS_MAX)
+    /// documents evicts the least recently used one whose client has not
+    /// connected; when every cached client has connected it writes nothing
+    /// and answers [`DocumentCaching::NotCached`], never a refusal
+    /// (postgres-schema.md `oauth_clients`; ADR-0031 d5).
+    fn upsert_cimd(
+        &self,
+        document: ClientDescription,
+        fetched_at: &EventTime,
+        max_age: u64,
+    ) -> impl Future<Output = Result<DocumentCaching, StoreError>> + Send;
+
+    /// A cached document's use at `at`, its `last_used_at`, the cache's
+    /// eviction order: `true` when a cached document's row was touched,
+    /// `false` for a `client_id` no cached document holds (ADR-0031 d5).
+    fn touch_cimd(
+        &self,
+        client_id: &str,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// A dynamic registration's row, created at `at`, under the provider
+    /// tenant. Refused with [`StoreError::CapReached`], writing nothing,
+    /// when
+    /// [`UNUSED_REGISTRATIONS_MAX`](oml_domain::oauth::UNUSED_REGISTRATIONS_MAX)
+    /// registrations that have not connected were created within
+    /// [`UNUSED_REGISTRATION_SECONDS`](oml_domain::oauth::UNUSED_REGISTRATION_SECONDS)
+    /// before `at`; a second row for one `client_id` is refused
+    /// (http-api.md `POST /oauth/register`; ADR-0031 d5).
+    fn insert_dcr(
+        &self,
+        registration: ClientDescription,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// Removes every registration that has not connected and was created at
+    /// or before `registered_by`, which the caller sets 24 hours before
+    /// now; cached documents are untouched. Answers how many rows it
+    /// removed, and journals nothing (ADR-0031 d5, d12).
+    fn remove_unused_dcr(
+        &self,
+        registered_by: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
     /// The key's codes in the order they were issued, voided and spent ones
     /// included; empty for a key the tenant does not hold.

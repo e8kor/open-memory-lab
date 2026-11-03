@@ -191,12 +191,46 @@ pub struct OAuthClientRecord {
     pub redirect_uris: Vec<String>,
     /// SHA-256 of the document or registration as received.
     pub metadata_digest: Sha256Hash,
+    /// A cached document's fetch; it is kept at most 24 hours from it.
     pub fetched_at: Option<EventTime>,
+    /// A cached document's `Cache-Control` lifetime from `fetched_at`, in
+    /// seconds, at most 24 hours; past it the copy is served only when a
+    /// fresh fetch fails or a fetch cap is full (ADR-0031 d5).
+    pub max_age: Option<u32>,
+    /// A cached document's last use, the cache's eviction order.
     pub last_used_at: Option<EventTime>,
     /// Stamped by the first Connect that names the client; eviction and the
-    /// removal of an unused registration read it (ADR-0031 d5, d9).
+    /// removal of an unused registration read it, and a refetch keeps it
+    /// (ADR-0031 d5, d9).
     pub connected_at: Option<EventTime>,
     pub created_at: EventTime,
+}
+
+/// A client's self-description as admitted: a fetched client ID metadata
+/// document or a dynamic registration, before the store keeps it
+/// (postgres-schema.md `oauth_clients`; ADR-0031 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientDescription {
+    /// The document's https URL, or the server-minted id of a registration.
+    pub client_id: String,
+    pub client_name: String,
+    /// Each inside the redirect allowlist (ADR-0031 d6).
+    pub redirect_uris: Vec<String>,
+    /// SHA-256 of the document or registration as received.
+    pub metadata_digest: Sha256Hash,
+}
+
+/// What caching a fetched document did (ADR-0031 d5): a full cache never
+/// refuses a document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentCaching {
+    /// The document is cached, refreshed in place or as a new row; a new
+    /// row in a full cache evicted the named least recently used client
+    /// that had not connected.
+    Cached { evicted: Option<String> },
+    /// The cache is full and every cached client has connected: nothing was
+    /// written, and the fetched document serves its request uncached.
+    NotCached,
 }
 
 /// An authorization request whose connect code verified: a provider-tenant

@@ -12,6 +12,32 @@ use super::syntax;
 /// A fetch is cut at 16 KiB of bytes received (ADR-0031 d5).
 pub const DOCUMENT_MAX_BYTES: usize = 16 * 1024;
 
+/// At most 10 000 client ID metadata documents are cached at once; a full
+/// cache evicts the least recently used one whose client has not connected
+/// (ADR-0031 d5, a design constant by d14).
+pub const CACHED_DOCUMENTS_MAX: u32 = 10_000;
+
+/// A cached document is kept at most 24 hours from its fetch, so the
+/// `Cache-Control` lifetime it is cached for is capped at 24 hours, in
+/// seconds (ADR-0031 d5, d14).
+pub const DOCUMENT_KEPT_SECONDS: u32 = 24 * 60 * 60;
+
+/// At most 10 000 registrations that have not connected and are younger
+/// than [`UNUSED_REGISTRATION_SECONDS`] exist at once; past that,
+/// registration answers `limit.rate` (ADR-0031 d5, d14).
+pub const UNUSED_REGISTRATIONS_MAX: u32 = 10_000;
+
+/// A registered client that has not connected within 24 hours of its
+/// registration is removed, in seconds (ADR-0031 d5, d14).
+pub const UNUSED_REGISTRATION_SECONDS: u32 = 24 * 60 * 60;
+
+/// The lifetime a fetched document is cached for: its `Cache-Control`
+/// `max-age` in seconds, capped at [`DOCUMENT_KEPT_SECONDS`] (ADR-0031 d5).
+#[must_use]
+pub fn cache_lifetime(max_age: u64) -> u32 {
+    u32::try_from(max_age).map_or(DOCUMENT_KEPT_SECONDS, |s| s.min(DOCUMENT_KEPT_SECONDS))
+}
+
 const GRANT_TYPES: [&str; 2] = ["authorization_code", "refresh_token"];
 
 /// What a `client_id` names: a client ID metadata document by its URL, or

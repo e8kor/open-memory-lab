@@ -542,6 +542,11 @@ CREATE TABLE oauth_clients (           -- clients the authorization server knows
                                                -- kept at most 24 hours from it; at most 10 000
                                                -- cimd rows, the least recently used one with no
                                                -- connected_at evicted first (ADR-0031 d5)
+    max_age         integer     CHECK (max_age BETWEEN 0 AND 86400),
+                                               -- cimd: its Cache-Control lifetime in seconds
+                                               -- from fetched_at, capped at 24 hours; past it
+                                               -- the copy is served only when a fresh fetch
+                                               -- fails or a fetch cap is full (ADR-0031 d5)
     last_used_at    timestamptz,               -- cimd: the eviction order
     connected_at    timestamptz,               -- the first Connect that named this client; a
                                                -- refetch keeps it; read by eviction and by the
@@ -663,6 +668,16 @@ writes `oauth_connections`, in one transaction. Connect, before the switch, also
 `oauth_clients.connected_at` for the returned `client_id` where it is null, and the stamp commits
 only with the connection row. A later confirmation with that handle finds no row and answers
 `oauth.authorization_expired`.
+
+**The client caps are counted under a lock.** Caching a new document and inserting a registration
+each take a transaction-scoped advisory lock of their own before they count, so two racing inserts
+cannot both pass a cap at its last free row. A new document in a cache holding 10 000 `cimd` rows
+first deletes the least recently used one whose `connected_at` is null (`last_used_at` nulls
+first), selected `FOR UPDATE` so a Connect that stamped it meanwhile keeps it; finding none, it
+writes nothing and the document serves its request uncached. A refetch updates its row in place,
+keeping `connected_at` and `created_at`. A registration counts the `dcr` rows whose `connected_at`
+is null and whose `created_at` is within 24 hours, and is refused at 10 000 as `limit.rate`; the
+removal of unused registrations deletes those 24 hours old or more (ADR-0031 d5).
 
 **Redemption and rotation are conditional updates.** Two racing requests with one code or one
 refresh token cannot both pass, because each mints only when its own update matched a row. The

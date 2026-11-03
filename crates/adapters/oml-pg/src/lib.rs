@@ -12,7 +12,10 @@
 
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
-use oml_app::domain::oauth::{ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind};
+use oml_app::domain::oauth::{
+    CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
+    UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
+};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, VerifyError, verify_chain,
@@ -23,11 +26,12 @@ use oml_app::ports::{
     JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
-    AuthorizationRecord, ClaimKeyState, ClientKind, ConnectCode, ConnectCodeRecord, ConnectGrant,
-    ConnectOutcome, ConnectionRecord, Credential, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS,
-    KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord,
-    OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport,
-    TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
+    ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
+    DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter,
+    ListingPosition, ListingScope, MemoryRecord, OAuthClientRecord, PROVIDER_TENANT,
+    RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
+    UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2941,8 +2945,29 @@ fn authorization_from_row(row: &PgRow) -> Result<AuthorizationRecord, StoreError
     })
 }
 
+/// The class of the transaction-scoped advisory locks that serialize the
+/// client caps: the document cache's count and eviction, and the count of
+/// unused registrations, so two racing inserts cannot both pass a cap at
+/// its last free row (ADR-0031 d5). The two-key form never meets a tenant's
+/// one-key chain lock.
+const CLIENT_CAP_LOCK: i32 = 0x0031_0005;
+/// The document cache's lock within [`CLIENT_CAP_LOCK`].
+const CIMD_CAP_LOCK: i32 = 1;
+/// The unused registrations' lock within [`CLIENT_CAP_LOCK`].
+const DCR_CAP_LOCK: i32 = 2;
+
+async fn lock_client_cap(tx: &mut Transaction<'_, Postgres>, which: i32) -> Result<(), StoreError> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
+        .bind(CLIENT_CAP_LOCK)
+        .bind(which)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
 const CLIENT_COLUMNS: &str = concat!(
-    "client_id, kind, client_name, redirect_uris, metadata_digest, ",
+    "client_id, kind, client_name, redirect_uris, metadata_digest, max_age, ",
     utc!("fetched_at"),
     " AS fetched_at_signed, ",
     utc!("last_used_at"),
@@ -2962,6 +2987,12 @@ fn client_from_row(row: &PgRow) -> Result<OAuthClientRecord, StoreError> {
         redirect_uris: row.try_get("redirect_uris").map_err(backend)?,
         metadata_digest: hash32(&digest)?,
         fetched_at: event_time_column(row, "fetched_at_signed")?,
+        max_age: row
+            .try_get::<Option<i32>, _>("max_age")
+            .map_err(backend)?
+            .map(u32::try_from)
+            .transpose()
+            .map_err(backend)?,
         last_used_at: event_time_column(row, "last_used_at_signed")?,
         connected_at: event_time_column(row, "connected_at_signed")?,
         created_at: event_time_column(row, "created_at_signed")?
@@ -3550,8 +3581,8 @@ impl ConnectionStore for PgStore {
         set_tenant(&mut tx, PROVIDER_TENANT).await?;
         sqlx::query(
             "INSERT INTO oauth_clients (client_id, tenant_id, kind, client_name, redirect_uris, \
-             metadata_digest, fetched_at, last_used_at, connected_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, ($7)::timestamptz, ($8)::timestamptz, \
+             metadata_digest, fetched_at, max_age, last_used_at, connected_at, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, ($7)::timestamptz, $11, ($8)::timestamptz, \
              ($9)::timestamptz, ($10)::timestamptz)",
         )
         .bind(&record.client_id)
@@ -3564,6 +3595,13 @@ impl ConnectionStore for PgStore {
         .bind(record.last_used_at.as_ref().map(EventTime::as_str))
         .bind(record.connected_at.as_ref().map(EventTime::as_str))
         .bind(record.created_at.as_str())
+        .bind(
+            record
+                .max_age
+                .map(i32::try_from)
+                .transpose()
+                .map_err(backend)?,
+        )
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
@@ -3584,6 +3622,168 @@ impl ConnectionStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         row.as_ref().map(client_from_row).transpose()
+    }
+
+    async fn upsert_cimd(
+        &self,
+        document: ClientDescription,
+        fetched_at: &EventTime,
+        max_age: u64,
+    ) -> Result<DocumentCaching, StoreError> {
+        let lifetime = i32::try_from(cache_lifetime(max_age)).map_err(backend)?;
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, PROVIDER_TENANT).await?;
+        lock_client_cap(&mut tx, CIMD_CAP_LOCK).await?;
+        // A refetch refreshes the row in place, keeping connected_at and
+        // created_at (postgres-schema.md `oauth_clients`).
+        let refreshed = sqlx::query(
+            "UPDATE oauth_clients SET client_name = $3, redirect_uris = $4, \
+             metadata_digest = $5, fetched_at = ($6)::timestamptz, max_age = $7, \
+             last_used_at = ($6)::timestamptz \
+             WHERE tenant_id = $1 AND client_id = $2 AND kind = 'cimd'",
+        )
+        .bind(PROVIDER_TENANT)
+        .bind(&document.client_id)
+        .bind(&document.client_name)
+        .bind(&document.redirect_uris)
+        .bind(document.metadata_digest.0.to_vec())
+        .bind(fetched_at.as_str())
+        .bind(lifetime)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if refreshed.rows_affected() == 1 {
+            tx.commit().await.map_err(backend)?;
+            return Ok(DocumentCaching::Cached { evicted: None });
+        }
+        let cached: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM oauth_clients WHERE tenant_id = $1 AND kind = 'cimd'",
+        )
+        .bind(PROVIDER_TENANT)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let mut evicted = None;
+        if cached >= i64::from(CACHED_DOCUMENTS_MAX) {
+            // The least recently used document whose client has not
+            // connected; FOR UPDATE rechecks connected_at against a Connect
+            // that stamped the row meanwhile, and finding none writes
+            // nothing (ADR-0031 d5).
+            let victim: Option<String> = sqlx::query_scalar(
+                "SELECT client_id FROM oauth_clients \
+                 WHERE tenant_id = $1 AND kind = 'cimd' AND connected_at IS NULL \
+                 ORDER BY last_used_at NULLS FIRST, client_id COLLATE \"C\" \
+                 LIMIT 1 FOR UPDATE",
+            )
+            .bind(PROVIDER_TENANT)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?;
+            let Some(victim) = victim else {
+                tx.rollback().await.map_err(backend)?;
+                return Ok(DocumentCaching::NotCached);
+            };
+            sqlx::query("DELETE FROM oauth_clients WHERE tenant_id = $1 AND client_id = $2")
+                .bind(PROVIDER_TENANT)
+                .bind(&victim)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            evicted = Some(victim);
+        }
+        sqlx::query(
+            "INSERT INTO oauth_clients (client_id, tenant_id, kind, client_name, redirect_uris, \
+             metadata_digest, fetched_at, max_age, last_used_at, created_at) \
+             VALUES ($1, $2, 'cimd', $3, $4, $5, ($6)::timestamptz, $7, ($6)::timestamptz, \
+             ($6)::timestamptz)",
+        )
+        .bind(&document.client_id)
+        .bind(PROVIDER_TENANT)
+        .bind(&document.client_name)
+        .bind(&document.redirect_uris)
+        .bind(document.metadata_digest.0.to_vec())
+        .bind(fetched_at.as_str())
+        .bind(lifetime)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(DocumentCaching::Cached { evicted })
+    }
+
+    async fn touch_cimd(&self, client_id: &str, at: &EventTime) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, PROVIDER_TENANT).await?;
+        let touched = sqlx::query(
+            "UPDATE oauth_clients SET last_used_at = ($3)::timestamptz \
+             WHERE tenant_id = $1 AND client_id = $2 AND kind = 'cimd'",
+        )
+        .bind(PROVIDER_TENANT)
+        .bind(client_id)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(touched.rows_affected() == 1)
+    }
+
+    async fn insert_dcr(
+        &self,
+        registration: ClientDescription,
+        at: &EventTime,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, PROVIDER_TENANT).await?;
+        lock_client_cap(&mut tx, DCR_CAP_LOCK).await?;
+        let unused: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM oauth_clients \
+             WHERE tenant_id = $1 AND kind = 'dcr' AND connected_at IS NULL \
+             AND created_at > ($2)::timestamptz - make_interval(secs => $3)",
+        )
+        .bind(PROVIDER_TENANT)
+        .bind(at.as_str())
+        .bind(f64::from(UNUSED_REGISTRATION_SECONDS))
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if unused >= i64::from(UNUSED_REGISTRATIONS_MAX) {
+            tx.rollback().await.map_err(backend)?;
+            return Err(StoreError::CapReached);
+        }
+        sqlx::query(
+            "INSERT INTO oauth_clients (client_id, tenant_id, kind, client_name, redirect_uris, \
+             metadata_digest, created_at) \
+             VALUES ($1, $2, 'dcr', $3, $4, $5, ($6)::timestamptz)",
+        )
+        .bind(&registration.client_id)
+        .bind(PROVIDER_TENANT)
+        .bind(&registration.client_name)
+        .bind(&registration.redirect_uris)
+        .bind(registration.metadata_digest.0.to_vec())
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn remove_unused_dcr(&self, registered_by: &EventTime) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, PROVIDER_TENANT).await?;
+        let removed = sqlx::query(
+            "DELETE FROM oauth_clients \
+             WHERE tenant_id = $1 AND kind = 'dcr' AND connected_at IS NULL \
+             AND created_at <= ($2)::timestamptz",
+        )
+        .bind(PROVIDER_TENANT)
+        .bind(registered_by.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(removed.rows_affected())
     }
 
     async fn connect_codes(

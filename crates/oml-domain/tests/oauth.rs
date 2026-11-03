@@ -1475,3 +1475,14 @@ fn every_refusal_names_one_code_of_the_closed_taxonomy() {
         ]
     );
 }
+
+#[test]
+fn a_cache_control_lifetime_past_24_hours_is_capped_at_24_hours() {
+    use oml_domain::oauth::{DOCUMENT_KEPT_SECONDS, cache_lifetime};
+    assert_eq!(DOCUMENT_KEPT_SECONDS, 86_400);
+    assert_eq!(cache_lifetime(0), 0);
+    assert_eq!(cache_lifetime(3_600), 3_600);
+    assert_eq!(cache_lifetime(86_400), 86_400);
+    assert_eq!(cache_lifetime(7 * 86_400), 86_400);
+    assert_eq!(cache_lifetime(u64::MAX), 86_400);
+}

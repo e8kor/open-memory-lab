@@ -18,7 +18,8 @@ use oml_app::domain::Sha256Hash;
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::{
-    ConnectionState, Issuer, KeyState, RefreshDecision, RefreshInvalid, RevokedCause, TokenKind,
+    CACHED_DOCUMENTS_MAX, ConnectionState, DOCUMENT_KEPT_SECONDS, Issuer, KeyState,
+    RefreshDecision, RefreshInvalid, RevokedCause, TokenKind, UNUSED_REGISTRATIONS_MAX,
     decide_refresh,
 };
 use oml_app::domain::{
@@ -32,11 +33,11 @@ use oml_app::ports::{
     Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
-    AuthorizationRecord, ClaimKeyState, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
-    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, GrantRecord, KeyAccess,
-    KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord, MintedToken,
-    OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow,
-    TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
+    ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
+    GrantRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord,
+    MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport,
+    TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -4146,6 +4147,7 @@ pub fn oauth_client(client_id: &str, kind: ClientKind) -> OAuthClientRecord {
         redirect_uris: vec!["https://claude.ai/api/mcp/auth_callback".to_owned()],
         metadata_digest: Sha256Hash::digest(b"client metadata"),
         fetched_at: (kind == ClientKind::Cimd).then(|| fixture_time("2026-10-29T12:59:00.000000Z")),
+        max_age: (kind == ClientKind::Cimd).then_some(3_600),
         last_used_at: None,
         connected_at: None,
         created_at: fixture_time("2026-10-29T12:59:00.000000Z"),
@@ -5881,6 +5883,401 @@ pub async fn revocation_clears_the_auth_code_digest_and_the_connections_tokens_a
     );
 }
 
+// ---------------------------------------------------------------------------
+// The client store: the document cache and dynamic registrations (ADR-0031 d5)
+// ---------------------------------------------------------------------------
+
+/// The fixture document of a metadata-document client `n`, as fetched.
+fn fetched_document(n: u32, digest: &[u8]) -> ClientDescription {
+    ClientDescription {
+        client_id: format!("https://client-{n}.example.com/oauth/client.json"),
+        client_name: format!("Client {n}"),
+        redirect_uris: vec!["https://claude.ai/api/mcp/auth_callback".to_owned()],
+        metadata_digest: Sha256Hash::digest(digest),
+    }
+}
+
+/// The fixture registration `n`, as admitted.
+fn registration(n: u32) -> ClientDescription {
+    ClientDescription {
+        client_id: format!("dcr-{n:08}"),
+        client_name: format!("Registered {n}"),
+        redirect_uris: vec!["https://claude.ai/api/mcp/auth_callback".to_owned()],
+        metadata_digest: Sha256Hash::digest(&n.to_be_bytes()),
+    }
+}
+
+/// A cached row of document `n`, last used at `last_used`, connected at
+/// `connected` when it is set.
+fn cached_row(n: u32, last_used: &str, connected: Option<&str>) -> OAuthClientRecord {
+    let document = fetched_document(n, b"cached");
+    OAuthClientRecord {
+        client_id: document.client_id,
+        client_name: document.client_name,
+        redirect_uris: document.redirect_uris,
+        metadata_digest: document.metadata_digest,
+        last_used_at: Some(fixture_time(last_used)),
+        connected_at: connected.map(fixture_time),
+        ..oauth_client("", ClientKind::Cimd)
+    }
+}
+
+/// A registration's row `n`, created at `created`, connected at
+/// `connected` when it is set.
+fn registered_row(n: u32, created: &str, connected: Option<&str>) -> OAuthClientRecord {
+    let registration = registration(n);
+    OAuthClientRecord {
+        client_id: registration.client_id,
+        client_name: registration.client_name,
+        redirect_uris: registration.redirect_uris,
+        metadata_digest: registration.metadata_digest,
+        connected_at: connected.map(fixture_time),
+        created_at: fixture_time(created),
+        ..oauth_client("", ClientKind::Dcr)
+    }
+}
+
+/// A full document cache evicts the least recently used document whose
+/// client has not connected, and never refuses the fetched document: a
+/// connected client's row stays however long unused, and a touch moves a
+/// document out of the eviction's way (postgres-schema.md `oauth_clients`;
+/// http-api.md client identity; ADR-0031 d5).
+pub async fn a_full_document_cache_evicts_the_least_recently_used_unconnected_client_and_never_refuses<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let connected = CACHED_DOCUMENTS_MAX - 2;
+    for n in 0..connected {
+        store
+            .oauth_client_insert(cached_row(
+                n,
+                "2026-10-29T10:00:00.000000Z",
+                Some("2026-10-29T10:00:01.000000Z"),
+            ))
+            .await
+            .expect("connected row");
+    }
+    let (older, newer) = (connected, connected + 1);
+    store
+        .oauth_client_insert(cached_row(older, "2026-10-29T11:00:00.000000Z", None))
+        .await
+        .expect("older unconnected row");
+    store
+        .oauth_client_insert(cached_row(newer, "2026-10-29T12:00:00.000000Z", None))
+        .await
+        .expect("newer unconnected row");
+    let older_id = fetched_document(older, b"").client_id;
+    let newer_id = fetched_document(newer, b"").client_id;
+    assert!(
+        store
+            .touch_cimd(&older_id, &fixture_time("2026-10-29T12:30:00.000000Z"))
+            .await
+            .expect("touch"),
+        "a cached document's use is recorded"
+    );
+    assert!(
+        !store
+            .touch_cimd(
+                "https://absent.example.com/client.json",
+                &fixture_time("2026-10-29T12:30:00.000000Z")
+            )
+            .await
+            .expect("touch"),
+        "a touch of a document no row holds touches nothing"
+    );
+
+    let fetched_at = fixture_time("2026-10-29T13:00:00.000000Z");
+    let fresh = fetched_document(CACHED_DOCUMENTS_MAX, b"fresh");
+    assert_eq!(
+        store
+            .upsert_cimd(fresh.clone(), &fetched_at, 600)
+            .await
+            .expect("a full cache never refuses"),
+        DocumentCaching::Cached {
+            evicted: Some(newer_id.clone())
+        },
+        "the least recently used unconnected document is evicted"
+    );
+    assert_eq!(
+        store.oauth_client(&newer_id).await.expect("read"),
+        None,
+        "the evicted row is gone"
+    );
+    assert!(
+        store.oauth_client(&older_id).await.expect("read").is_some(),
+        "the touched document stays"
+    );
+    assert!(
+        store
+            .oauth_client(&fetched_document(0, b"").client_id)
+            .await
+            .expect("read")
+            .is_some(),
+        "a connected client's row stays, used least recently or not"
+    );
+    assert_eq!(
+        store.oauth_client(&fresh.client_id).await.expect("read"),
+        Some(OAuthClientRecord {
+            client_id: fresh.client_id.clone(),
+            kind: ClientKind::Cimd,
+            client_name: fresh.client_name.clone(),
+            redirect_uris: fresh.redirect_uris.clone(),
+            metadata_digest: fresh.metadata_digest,
+            fetched_at: Some(fetched_at.clone()),
+            max_age: Some(600),
+            last_used_at: Some(fetched_at.clone()),
+            connected_at: None,
+            created_at: fetched_at,
+        }),
+        "the fetched document is cached for its Cache-Control lifetime"
+    );
+}
+
+/// When every cached document's client has connected, a full cache writes
+/// nothing and the fetched document serves its request uncached; a cached
+/// client's refetch still refreshes its row (ADR-0031 d5).
+pub async fn when_every_cached_client_has_connected_the_fetched_document_is_served_uncached<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    for n in 0..CACHED_DOCUMENTS_MAX {
+        store
+            .oauth_client_insert(cached_row(
+                n,
+                "2026-10-29T10:00:00.000000Z",
+                Some("2026-10-29T10:00:01.000000Z"),
+            ))
+            .await
+            .expect("connected row");
+    }
+    let fetched_at = fixture_time("2026-10-29T13:00:00.000000Z");
+    let fresh = fetched_document(CACHED_DOCUMENTS_MAX, b"fresh");
+    assert_eq!(
+        store
+            .upsert_cimd(fresh.clone(), &fetched_at, 600)
+            .await
+            .expect("a full cache never refuses"),
+        DocumentCaching::NotCached
+    );
+    assert_eq!(
+        store.oauth_client(&fresh.client_id).await.expect("read"),
+        None,
+        "an uncached document writes no row"
+    );
+    for n in 0..CACHED_DOCUMENTS_MAX {
+        assert!(
+            store
+                .oauth_client(&fetched_document(n, b"").client_id)
+                .await
+                .expect("read")
+                .is_some(),
+            "no connected client's row is evicted"
+        );
+    }
+    let refetched = fetched_document(0, b"refetched");
+    assert_eq!(
+        store
+            .upsert_cimd(refetched.clone(), &fetched_at, 600)
+            .await
+            .expect("refetch"),
+        DocumentCaching::Cached { evicted: None },
+        "a cached client's refetch refreshes its own row"
+    );
+    assert_eq!(
+        store
+            .oauth_client(&refetched.client_id)
+            .await
+            .expect("read")
+            .map(|row| row.metadata_digest),
+        Some(refetched.metadata_digest)
+    );
+}
+
+/// A refetch refreshes a cached document's row in place: its name, redirect
+/// URIs, digest, fetch, lifetime and use are the new fetch's, and its
+/// `connected_at` and `created_at` are kept (postgres-schema.md
+/// `oauth_clients.connected_at`, "a refetch keeps it"; ADR-0031 d5).
+pub async fn a_refetch_keeps_a_clients_connected_at<S: ConnectionStore>(store: &S) {
+    let stamped = cached_row(
+        2,
+        "2026-10-29T12:00:00.000000Z",
+        Some("2026-10-29T12:10:00.000000Z"),
+    );
+    store
+        .oauth_client_insert(stamped.clone())
+        .await
+        .expect("a connected client's row");
+    let refetched_at = fixture_time("2026-10-29T14:00:00.000000Z");
+    let refetched = ClientDescription {
+        client_id: stamped.client_id.clone(),
+        client_name: "Client 2, renamed".to_owned(),
+        redirect_uris: vec![
+            "https://claude.ai/api/mcp/auth_callback".to_owned(),
+            "http://127.0.0.1/callback".to_owned(),
+        ],
+        metadata_digest: Sha256Hash::digest(b"refetched"),
+    };
+    assert_eq!(
+        store
+            .upsert_cimd(refetched.clone(), &refetched_at, 7 * 86_400)
+            .await
+            .expect("refetch"),
+        DocumentCaching::Cached { evicted: None }
+    );
+    assert_eq!(
+        store.oauth_client(&stamped.client_id).await.expect("read"),
+        Some(OAuthClientRecord {
+            client_id: refetched.client_id,
+            kind: ClientKind::Cimd,
+            client_name: refetched.client_name,
+            redirect_uris: refetched.redirect_uris,
+            metadata_digest: refetched.metadata_digest,
+            fetched_at: Some(refetched_at.clone()),
+            max_age: Some(DOCUMENT_KEPT_SECONDS),
+            last_used_at: Some(refetched_at),
+            connected_at: stamped.connected_at,
+            created_at: stamped.created_at,
+        }),
+        "a refetch keeps connected_at and created_at, and a lifetime past 24 hours is kept as 24 hours"
+    );
+}
+
+/// A registration is refused with [`StoreError::CapReached`], writing
+/// nothing, once 10 000 registered clients exist that have not connected
+/// and are younger than 24 hours; a connected registration, one 24 hours
+/// old and a cached document are not counted (http-api.md
+/// `POST /oauth/register`; ADR-0031 d5).
+pub async fn registration_past_10_000_unused_clients_is_refused<S: ConnectionStore>(store: &S) {
+    let at = fixture_time("2026-10-30T12:00:00.000000Z");
+    store
+        .oauth_client_insert(registered_row(
+            UNUSED_REGISTRATIONS_MAX + 1,
+            "2026-10-30T11:00:00.000000Z",
+            Some("2026-10-30T11:05:00.000000Z"),
+        ))
+        .await
+        .expect("connected registration");
+    store
+        .oauth_client_insert(registered_row(
+            UNUSED_REGISTRATIONS_MAX + 2,
+            "2026-10-29T12:00:00.000000Z",
+            None,
+        ))
+        .await
+        .expect("a registration 24 hours old");
+    store
+        .oauth_client_insert(cached_row(1, "2026-10-30T11:00:00.000000Z", None))
+        .await
+        .expect("cached document");
+    for n in 0..UNUSED_REGISTRATIONS_MAX - 1 {
+        store
+            .oauth_client_insert(registered_row(n, "2026-10-30T11:00:00.000000Z", None))
+            .await
+            .expect("unused registration");
+    }
+    let last = registration(UNUSED_REGISTRATIONS_MAX - 1);
+    store
+        .insert_dcr(last.clone(), &at)
+        .await
+        .expect("the 10 000th unused registration is admitted");
+    assert_eq!(
+        store.oauth_client(&last.client_id).await.expect("read"),
+        Some(OAuthClientRecord {
+            client_id: last.client_id,
+            kind: ClientKind::Dcr,
+            client_name: last.client_name,
+            redirect_uris: last.redirect_uris,
+            metadata_digest: last.metadata_digest,
+            fetched_at: None,
+            max_age: None,
+            last_used_at: None,
+            connected_at: None,
+            created_at: at.clone(),
+        })
+    );
+    let past = registration(UNUSED_REGISTRATIONS_MAX + 3);
+    assert_eq!(
+        store.insert_dcr(past.clone(), &at).await,
+        Err(StoreError::CapReached),
+        "registration past 10 000 unused clients is refused"
+    );
+    assert_eq!(
+        store.oauth_client(&past.client_id).await.expect("read"),
+        None,
+        "a refused registration writes nothing"
+    );
+    store
+        .insert_dcr(past, &fixture_time("2026-10-31T11:00:00.000000Z"))
+        .await
+        .expect("registration is admitted again once the unused ones are 24 hours old");
+}
+
+/// The removal of unused registrations takes every registration that has
+/// not connected and was created 24 hours or more before now, and nothing
+/// else: a younger or a connected registration and a cached document stay
+/// (postgres-schema.md `oauth_clients`; ADR-0031 d5).
+pub async fn a_registered_client_unconnected_after_24_hours_is_removed<S: ConnectionStore>(
+    store: &S,
+) {
+    store
+        .insert_dcr(
+            registration(1),
+            &fixture_time("2026-10-29T12:00:00.000000Z"),
+        )
+        .await
+        .expect("lapsing registration");
+    store
+        .insert_dcr(
+            registration(2),
+            &fixture_time("2026-10-29T13:00:00.000000Z"),
+        )
+        .await
+        .expect("younger registration");
+    store
+        .oauth_client_insert(registered_row(
+            3,
+            "2026-10-29T11:00:00.000000Z",
+            Some("2026-10-29T11:30:00.000000Z"),
+        ))
+        .await
+        .expect("connected registration");
+    store
+        .oauth_client_insert(cached_row(4, "2026-10-29T11:00:00.000000Z", None))
+        .await
+        .expect("cached document");
+    assert_eq!(
+        store
+            .remove_unused_dcr(&fixture_time("2026-10-29T12:00:00.000000Z"))
+            .await
+            .expect("remove"),
+        1,
+        "the registration 24 hours unconnected is removed"
+    );
+    assert_eq!(
+        store
+            .oauth_client(&registration(1).client_id)
+            .await
+            .expect("read"),
+        None
+    );
+    for client_id in [
+        registration(2).client_id,
+        registration(3).client_id,
+        fetched_document(4, b"").client_id,
+    ] {
+        assert!(
+            store
+                .oauth_client(&client_id)
+                .await
+                .expect("read")
+                .is_some(),
+            "{client_id} stays"
+        );
+    }
+}
+
 /// Every connection-store law in one call, each against a fresh store.
 pub async fn run_connection_store_suite<S, F, Fut>(new_store: F)
 where
@@ -5931,6 +6328,17 @@ where
         &new_store().await,
     )
     .await;
+    a_full_document_cache_evicts_the_least_recently_used_unconnected_client_and_never_refuses(
+        &new_store().await,
+    )
+    .await;
+    when_every_cached_client_has_connected_the_fetched_document_is_served_uncached(
+        &new_store().await,
+    )
+    .await;
+    a_refetch_keeps_a_clients_connected_at(&new_store().await).await;
+    registration_past_10_000_unused_clients_is_refused(&new_store().await).await;
+    a_registered_client_unconnected_after_24_hours_is_removed(&new_store().await).await;
 }
 
 // ---------------------------------------------------------------------------

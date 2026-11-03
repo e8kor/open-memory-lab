@@ -17,7 +17,8 @@ use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::{hit_order, steering_order};
 use oml_domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_domain::oauth::{
-    ConnectionAct, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
+    CACHED_DOCUMENTS_MAX, ConnectionAct, ConnectionState, KeyState, RefreshDecision, RevokedCause,
+    TokenKind, UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
     connection_transition,
 };
 use oml_domain::{
@@ -32,11 +33,11 @@ use crate::ports::{
     claim_subject,
 };
 use crate::types::{
-    AuthorizationRecord, ClaimKeyState, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
-    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS,
-    KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord,
-    OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport,
-    TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord,
+    ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord,
+    DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -2181,6 +2182,136 @@ impl ConnectionStore for MemStore {
         let provider = self.tenant(PROVIDER_TENANT);
         let provider = provider.lock().expect("tenant lock");
         Ok(provider.oauth_clients.get(client_id).cloned())
+    }
+
+    async fn upsert_cimd(
+        &self,
+        document: ClientDescription,
+        fetched_at: &EventTime,
+        max_age: u64,
+    ) -> Result<DocumentCaching, StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        let clients = &mut provider.oauth_clients;
+        let refreshed = |prior: Option<&OAuthClientRecord>| OAuthClientRecord {
+            client_id: document.client_id.clone(),
+            kind: ClientKind::Cimd,
+            client_name: document.client_name.clone(),
+            redirect_uris: document.redirect_uris.clone(),
+            metadata_digest: document.metadata_digest,
+            fetched_at: Some(fetched_at.clone()),
+            max_age: Some(cache_lifetime(max_age)),
+            last_used_at: Some(fetched_at.clone()),
+            connected_at: prior.and_then(|row| row.connected_at.clone()),
+            created_at: prior.map_or_else(|| fetched_at.clone(), |row| row.created_at.clone()),
+        };
+        if let Some(prior) = clients.get(&document.client_id) {
+            if prior.kind != ClientKind::Cimd {
+                return Err(StoreError::Backend(format!(
+                    "client {} is a registration",
+                    document.client_id
+                )));
+            }
+            let row = refreshed(Some(prior));
+            clients.insert(row.client_id.clone(), row);
+            return Ok(DocumentCaching::Cached { evicted: None });
+        }
+        let cached = clients
+            .values()
+            .filter(|row| row.kind == ClientKind::Cimd)
+            .count();
+        let mut evicted = None;
+        if cached >= CACHED_DOCUMENTS_MAX as usize {
+            // The least recently used unconnected document; a row never
+            // used sorts first, as `NULLS FIRST` does, and ties fall to the
+            // client id's bytes.
+            let Some(victim) = clients
+                .values()
+                .filter(|row| row.kind == ClientKind::Cimd && row.connected_at.is_none())
+                .min_by_key(|row| {
+                    (
+                        row.last_used_at.as_ref().map(EventTime::unix_micros),
+                        row.client_id.clone(),
+                    )
+                })
+                .map(|row| row.client_id.clone())
+            else {
+                return Ok(DocumentCaching::NotCached);
+            };
+            clients.remove(&victim);
+            evicted = Some(victim);
+        }
+        let row = refreshed(None);
+        clients.insert(row.client_id.clone(), row);
+        Ok(DocumentCaching::Cached { evicted })
+    }
+
+    async fn touch_cimd(&self, client_id: &str, at: &EventTime) -> Result<bool, StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        match provider.oauth_clients.get_mut(client_id) {
+            Some(row) if row.kind == ClientKind::Cimd => {
+                row.last_used_at = Some(at.clone());
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    async fn insert_dcr(
+        &self,
+        registration: ClientDescription,
+        at: &EventTime,
+    ) -> Result<(), StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        let clients = &mut provider.oauth_clients;
+        if clients.contains_key(&registration.client_id) {
+            return Err(StoreError::Backend(format!(
+                "client {} is held already",
+                registration.client_id
+            )));
+        }
+        let window_start = at.unix_micros() - i64::from(UNUSED_REGISTRATION_SECONDS) * 1_000_000;
+        let unused = clients
+            .values()
+            .filter(|row| {
+                row.kind == ClientKind::Dcr
+                    && row.connected_at.is_none()
+                    && row.created_at.unix_micros() > window_start
+            })
+            .count();
+        if unused >= UNUSED_REGISTRATIONS_MAX as usize {
+            return Err(StoreError::CapReached);
+        }
+        clients.insert(
+            registration.client_id.clone(),
+            OAuthClientRecord {
+                client_id: registration.client_id,
+                kind: ClientKind::Dcr,
+                client_name: registration.client_name,
+                redirect_uris: registration.redirect_uris,
+                metadata_digest: registration.metadata_digest,
+                fetched_at: None,
+                max_age: None,
+                last_used_at: None,
+                connected_at: None,
+                created_at: at.clone(),
+            },
+        );
+        Ok(())
+    }
+
+    async fn remove_unused_dcr(&self, registered_by: &EventTime) -> Result<u64, StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        let before = provider.oauth_clients.len();
+        provider.oauth_clients.retain(|_, row| {
+            row.kind != ClientKind::Dcr
+                || row.connected_at.is_some()
+                || row.created_at.unix_micros() > registered_by.unix_micros()
+        });
+        Ok((before - provider.oauth_clients.len()) as u64)
     }
 
     async fn connect_codes(
