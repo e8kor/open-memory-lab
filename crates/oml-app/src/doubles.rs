@@ -147,6 +147,21 @@ pub struct MemStore {
     partitions: Arc<Mutex<Vec<Uuid>>>,
     /// The next partition creation's refusal, then forgotten.
     refuse_partition: Arc<Mutex<Option<StoreError>>>,
+    /// The commit landed just before the next head read, then forgotten.
+    before_next_head: Arc<Mutex<Option<HeadInterleave>>>,
+}
+
+/// A commit built from the head it finds: the one a concurrent writer lands
+/// between a use-case's earlier reads and its head read.
+type HeadCommit = Box<dyn FnOnce(Option<&SignedEnvelope>) -> CommitRequest + Send>;
+
+/// [`MemStore::commit_before_next_head`]'s armed commit.
+struct HeadInterleave(HeadCommit);
+
+impl std::fmt::Debug for HeadInterleave {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HeadInterleave(..)")
+    }
 }
 
 impl MemStore {
@@ -200,6 +215,19 @@ impl MemStore {
     #[must_use]
     pub fn tenant_count(&self) -> usize {
         self.tenant_names.lock().expect("tenant names lock").len()
+    }
+
+    /// Commits what `build` makes of the head it finds just before the next
+    /// `chain_head` read, then reads that head normally: a concurrent
+    /// writer's commit landing between a use-case's earlier reads and its
+    /// head read, which a single-task test cannot otherwise interleave. A
+    /// refusal of that commit is the head read's.
+    pub fn commit_before_next_head(
+        &self,
+        build: impl FnOnce(Option<&SignedEnvelope>) -> CommitRequest + Send + 'static,
+    ) {
+        *self.before_next_head.lock().expect("interleave lock") =
+            Some(HeadInterleave(Box::new(build)));
     }
 
     /// Answers the next idempotency lookup with no record, whatever is
@@ -1130,6 +1158,17 @@ impl JournalStore for MemStore {
     }
 
     async fn chain_head(&self, tenant_id: Uuid) -> Result<Option<ChainHead>, StoreError> {
+        let armed = self
+            .before_next_head
+            .lock()
+            .expect("interleave lock")
+            .take();
+        if let Some(HeadInterleave(build)) = armed {
+            let head = self
+                .tenant_existing(tenant_id)
+                .and_then(|t| t.lock().expect("tenant lock").events.last().cloned());
+            self.commit_chain(vec![build(head.as_ref())]).await?;
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };

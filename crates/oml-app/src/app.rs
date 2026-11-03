@@ -2127,6 +2127,12 @@ where
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
 
+        // The head first, then the ancestors' closures, which a claim edge's
+        // proposal widens, and the claim_key read: a commit landing in
+        // between moves the head, so this commit conflicts and its retry
+        // reads them again (ADR-0001 d2; ADR-0025 d10, ordinals; d18).
+        let prev = self.head_event(key.tenant_id).await?;
+
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
         // ancestor the key cannot read is indistinguishable from none.
@@ -2145,10 +2151,6 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
-        // The head first, then the claim_key read: a capture that commits
-        // in between moves the head, so this commit conflicts and its retry
-        // reads the key again (ADR-0025 d10, ordinals; d18).
-        let prev = self.head_event(key.tenant_id).await?;
         if self
             .journal
             .claim_key_state(key.tenant_id, workarea_id, &req.claim_key)
@@ -2297,6 +2299,12 @@ where
         let key = &caller.key;
         require_admissible(key, Role::Dreamer, "verdict")?;
         refuse_service(key, "verdict")?;
+        // The head first, then every read R2 and the compare-and-set judge:
+        // the row's closure, which a claim edge's proposal widens while the
+        // row is held, its rivals and its target. A commit landing after the
+        // head moves it, so the verdict conflicts and its retry reads them
+        // again (ADR-0001 d2; ADR-0025 d10).
+        let prev = self.head_event(key.tenant_id).await?;
         let memory = self
             .journal
             .memory(key.tenant_id, memory_id)
@@ -2328,10 +2336,6 @@ where
         // row refuses here (admission.md lifecycle).
         let new_status = transition(memory.status, target_status)?;
 
-        // The head first, then the compare-and-set read: a commit landing
-        // in between moves the head, so the verdict conflicts and its retry
-        // reads the target again.
-        let prev = self.head_event(key.tenant_id).await?;
         let replaced = match (verdict, memory.replaces) {
             (Verdict::Approve, Some(target_id)) => {
                 let target = self.journal.memory(key.tenant_id, target_id).await?;
@@ -2711,6 +2715,12 @@ where
             });
         }
 
+        // The head first, then the target, whose closure a claim edge's
+        // proposal widens, the ancestors and the ordinal: a commit landing in
+        // between moves the head, and the retry reads them all again
+        // (ADR-0001 d2; ADR-0025 d10, ordinals).
+        let prev = self.head_event(key.tenant_id).await?;
+
         // Step 2: an unreadable target is indistinguishable from none.
         let target = self
             .journal
@@ -2803,11 +2813,8 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
-        // The head first, then the ordinal: 1 + the greatest version of the
-        // claim_key in the workarea, whatever its state; a capture that
-        // commits in between moves the head, and the retry reads both again
-        // (ADR-0025 d10, ordinals).
-        let prev = self.head_event(key.tenant_id).await?;
+        // The ordinal: 1 + the greatest version of the claim_key in the
+        // workarea, whatever its state, read after the head above.
         let version = self
             .journal
             .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)

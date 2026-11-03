@@ -9,17 +9,18 @@ use oml_app::App;
 use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::name::{Name, NamedKind, Reference};
+use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, event_types, next_envelope, sha256_digest_string, sign, verify_chain,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ed25519_dalek::SigningKey;
-use oml_app::ports::{JournalStore as _, StoreError};
+use oml_app::ports::{CommitRequest, JournalStore as _, MetadataFold, OutboxRow, StoreError};
 use oml_app::types::{
-    AppError, BootstrapRequest, BootstrapResult, CrewCreateRequest, CrewUpdate, GrantRequest,
-    IssueKeyRequest, IssuedKey, ListRequest, NamingRefusal, RecallRequest, RecallResult,
-    SubmitRequest, SupersedeRequest, Verdict, VersionRef,
+    AppError, BootstrapRequest, BootstrapResult, ClaimEdgeRecord, CrewCreateRequest, CrewUpdate,
+    GrantRequest, IssueKeyRequest, IssuedKey, ListRequest, NamingRefusal, RecallRequest,
+    RecallResult, SubmitRequest, SupersedeRequest, Verdict, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -5664,4 +5665,203 @@ async fn a_global_denial_on_an_admin_key_is_refused_naming_key_id() {
     app.deny_key(admin, writer.key_id.into(), by_name("crew"))
         .await
         .expect("a denial on a writer key");
+}
+
+// ---------------------------------------------------------------------------
+// A claim edge proposed between a use-case's reads and its commit
+// ---------------------------------------------------------------------------
+
+/// A pending edge `src -> dst` in `tenant`, proposed by `proposer`.
+fn pending_edge(tenant: Uuid, proposer: &IssuedKey, src: Uuid, dst: Uuid) -> ClaimEdgeRecord {
+    ClaimEdgeRecord {
+        edge_id: Uuid::from_u128(0xED6E_0000_0000_0000_0000_0000_0000_0001),
+        tenant_id: tenant,
+        src_artifact_id: src,
+        dst_artifact_id: dst,
+        label: "acme:supports".to_owned(),
+        state: EdgeState::Pending,
+        proposer_key_id: proposer.key_id,
+        proposer_principal: proposer.principal.clone(),
+        ratifier_key_id: None,
+    }
+}
+
+/// Arms `store` to commit `claim_edge.proposed` for `edge` just before the
+/// next head read: another writer's proposal landing between a use-case's
+/// earlier reads and its head read.
+fn propose_before_next_head(store: &MemStore, edge: ClaimEdgeRecord) {
+    store.commit_before_next_head(move |head| {
+        let head = head.expect("the tenant's chain");
+        let draft = EventDraft {
+            tenant_id: edge.tenant_id,
+            event_id: Uuid::from_u128(0xED6E_0000_0000_0000_0000_0000_0000_00EE),
+            event_type: event_types::CLAIM_EDGE_PROPOSED.to_owned(),
+            principal: edge.proposer_principal.clone(),
+            api_key_id: Some(edge.proposer_key_id),
+            at: head.envelope.at.clone(),
+            payload: json!({
+                "edge_id": edge.edge_id.to_string(),
+                "src_artifact_id": edge.src_artifact_id.to_string(),
+                "dst_artifact_id": edge.dst_artifact_id.to_string(),
+                "label": edge.label,
+                "proposer_key_id": edge.proposer_key_id.to_string(),
+            }),
+        };
+        let envelope = next_envelope(Some(head), draft).expect("a lawful draft");
+        let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+        CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
+            fold: MetadataFold::ClaimEdgeProposed(edge),
+            idempotency: None,
+        }
+    });
+}
+
+/// The stored lineage principals of `memory_id`.
+async fn stored_principals(store: &MemStore, tenant: Uuid, memory_id: Uuid) -> Vec<String> {
+    store
+        .memory(tenant, memory_id)
+        .await
+        .expect("read")
+        .expect("the row")
+        .lineage_principals
+}
+
+#[tokio::test]
+async fn a_claim_edge_proposed_between_a_verdicts_reviewer_check_and_its_commit_never_promotes_past_a_reviewer_it_puts_in_the_lineage()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = issue(&app, admin, Role::Writer, "alice", crew).await;
+    let bob_writer = issue(&app, admin, Role::Writer, "bob", crew).await;
+    let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
+    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let a = app
+        .submit_memory(&alice.value, &submit_req("edge-a", "alice's fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let b = app
+        .submit_memory(&bob_writer.value, &submit_req("edge-b", "bob's fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+
+    // The edge joins bob's row to alice's while bob's verdict is in flight.
+    propose_before_next_head(&store, pending_edge(boot.tenant_id, &pat, a, b));
+    let err = app
+        .post_verdict(&bob_dreamer.value, a, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::Verdict(oml_app::domain::VerdictError::PrincipalInLineage(_))
+        ),
+        "the reviewer the edge put in the lineage is refused: {err:?}"
+    );
+    let row = store
+        .memory(boot.tenant_id, a)
+        .await
+        .expect("read")
+        .expect("the row");
+    assert_eq!(row.status, MemoryStatus::Held, "the row is not promoted");
+    assert!(row.lineage_principals.contains(&"bob".to_owned()));
+}
+
+#[tokio::test]
+async fn a_claim_edge_proposed_on_an_ancestor_between_a_captures_ancestor_read_and_its_commit_reaches_the_captured_rows_closure()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = issue(&app, admin, Role::Writer, "alice", crew).await;
+    let bob = issue(&app, admin, Role::Writer, "bob", crew).await;
+    let carol = agent(&app, admin, "carol", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let a = promoted(
+        &app,
+        &alice.value,
+        &dana.value,
+        &submit_req("anc-a", "alice's fact"),
+    )
+    .await;
+    let b = app
+        .submit_memory(&bob.value, &submit_req("anc-b", "bob's fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+
+    propose_before_next_head(&store, pending_edge(boot.tenant_id, &pat, a, b));
+    let d = app
+        .submit_memory(
+            &carol.value,
+            &SubmitRequest {
+                derives_from: vec![a],
+                ..submit_req("anc-d", "carol builds on alice")
+            },
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let principals = stored_principals(&store, boot.tenant_id, d).await;
+    assert!(
+        principals.contains(&"bob".to_owned()),
+        "the captured row holds the author the edge joined to its ancestor: {principals:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_claim_edge_proposed_on_a_target_between_a_supersedes_target_read_and_its_commit_reaches_the_successors_closure()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let carol = agent(&app, admin, "carol", crew).await;
+    let bob = issue(&app, admin, Role::Writer, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let target = promoted(
+        &app,
+        &carol.value,
+        &dana.value,
+        &submit_req("sup-t", "carol's fact"),
+    )
+    .await;
+    let b = app
+        .submit_memory(&bob.value, &submit_req("sup-b", "bob's fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+
+    propose_before_next_head(&store, pending_edge(boot.tenant_id, &pat, target, b));
+    let successor = app
+        .supersede(
+            &carol.value,
+            &supersede_req("sup-s", target, "carol's revised fact"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    let principals = stored_principals(&store, boot.tenant_id, successor).await;
+    assert!(
+        principals.contains(&"bob".to_owned()),
+        "the successor holds the author the edge joined to its target: {principals:?}"
+    );
 }
