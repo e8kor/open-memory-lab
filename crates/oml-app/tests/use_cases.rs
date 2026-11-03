@@ -6341,8 +6341,9 @@ async fn revoking_an_authorized_connection_answers_not_found() {
 /// `oauth.issuer` is set, so an admin can clean up while the surface is
 /// off: the open connection is listed, its revocation journals
 /// `connection.revoked` with the cause `admin` and the digest of the reason
-/// given, and the listing then holds no open connection (ADR-0031 d1, d11,
-/// d12).
+/// given, and the listing then still holds the connection as revoked by an
+/// admin at that event's seq: a key's open and revoked connections are
+/// listed, an `authorized` one is not (ADR-0031 d1, d11, d12).
 #[tokio::test]
 async fn connections_are_listed_and_revoked_with_oauth_issuer_unset() {
     let store = MemStore::new();
@@ -6401,12 +6402,17 @@ async fn connections_are_listed_and_revoked_with_oauth_issuer_unset() {
             "reason_digest": sha256_digest_string(b"lost phone"),
         })
     );
-    assert!(
-        app.list_connections(&admin.value, issued.key_id.into())
-            .await
-            .expect("the listing")
-            .is_empty()
+    let listed = app
+        .list_connections(&admin.value, issued.key_id.into())
+        .await
+        .expect("the listing");
+    let ids: Vec<Uuid> = listed.iter().map(|c| c.connection_id).collect();
+    assert_eq!(ids, [connection], "a revoked connection is still listed");
+    assert_eq!(
+        listed[0].state,
+        ConnectionState::Revoked(RevokedCause::Admin)
     );
+    assert_eq!(listed[0].revoked_seq, Some(event.seq));
     let err = app
         .revoke_connection(&admin.value, issued.key_id.into(), connection, None)
         .await

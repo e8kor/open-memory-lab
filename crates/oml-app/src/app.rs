@@ -3291,11 +3291,11 @@ where
         Ok(shown)
     }
 
-    /// A key's open connections, the key by id or name: admin key role
-    /// only, and served whether or not `oauth.issuer` is set. An
-    /// `authorized` connection is not journalled and is not listed, and a
-    /// revoked one is history the journal holds; a key the tenant does not
-    /// hold is absent (roles-and-keys.md connections; ADR-0031 d1, d11).
+    /// A key's open and revoked connections in creation order, the key by
+    /// id or name: admin key role only, and served whether or not
+    /// `oauth.issuer` is set. An `authorized` connection is not journalled
+    /// and is not listed; a key the tenant does not hold is absent
+    /// (http-api.md, cli/reference.md `oml keys show`; ADR-0031 d1, d11).
     pub async fn list_connections(
         &self,
         api_key: &str,
@@ -3308,7 +3308,7 @@ where
             return Err(AppError::NotFound);
         }
         let mut connections = self.journal.connections(admin.tenant_id, key_id).await?;
-        connections.retain(|c| c.state == ConnectionState::Open);
+        connections.retain(|c| c.state != ConnectionState::Authorized);
         Ok(connections)
     }
 
