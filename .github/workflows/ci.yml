@@ -176,6 +176,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       TARGET: ${{ matrix.target }}
+      # ring's C, for each musl target, with the wrapper Ubuntu's musl-tools
+      # ships for the runner's own architecture. On the arm64 runner cc counts
+      # aarch64-unknown-linux-musl as a cross compile and would otherwise call
+      # aarch64-linux-musl-gcc, which musl-tools does not ship
+      # (packages.ubuntu.com/noble/arm64/musl-tools/filelist, fetched
+      # 2026-11-03). The archiver falls back to the host's ar, and Rust links
+      # its self-contained musl with the host's cc, both native here.
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
     defaults:
       run:
         shell: bash

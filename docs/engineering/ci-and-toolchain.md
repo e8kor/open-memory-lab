@@ -130,9 +130,16 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   `windows-2025`, labels GitHub lists for public repositories
   ([GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
   fetched 2026-11-03) — and packages it only after the binary prints the tag's version; a musl
-  binary must also carry no program interpreter. The musl legs compile ring's C with Ubuntu's
-  `musl-tools` and link Rust's self-contained musl, on the native arm64 runner for
-  `aarch64`, so no cross toolchain is pinned. Job `server` builds the server on `ubuntu-22.04` and
+  binary must also carry no program interpreter. Both musl legs compile ring's C with `musl-gcc`, the
+  wrapper Ubuntu's `musl-tools` ships for the runner's own architecture, named in
+  `CC_x86_64_unknown_linux_musl` and `CC_aarch64_unknown_linux_musl` of the job's env, and link
+  Rust's self-contained musl with the runner's own `cc`, so no cross toolchain is pinned. The
+  name is needed on the arm64 runner: the `cc` crate (1.10.0 in `Cargo.lock`) counts
+  `aarch64-unknown-linux-musl` as a cross compile there and would otherwise call
+  `aarch64-linux-musl-gcc`, which `musl-tools` does not ship
+  ([noble arm64 file list](https://packages.ubuntu.com/noble/arm64/musl-tools/filelist),
+  fetched 2026-11-03); `scripts/check_release.py` requires both variables in job `cli` and in
+  `ci.yml` job `cli-matrix`. Job `server` builds the server on `ubuntu-22.04` and
   `ubuntu-22.04-arm`, whose glibc is the oldest the listed Linux runners carry. Job `binaries`, once
   every archive exists, writes one SBOM per archive with `cargo cyclonedx --target <target>`
   (`<archive stem>.cdx.json`), one `SHA256SUMS` over every archive and SBOM, and then signs every
