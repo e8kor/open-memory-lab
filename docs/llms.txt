@@ -42,7 +42,8 @@
 
 - [HTTP API](https://e8kor.github.io/open-memory-lab/api/http-api/): the two-ring JSON surface — /v1 provider and /v2 lab — authentication, idempotency, pagination, verb ceilings
 - [Error taxonomy](https://e8kor.github.io/open-memory-lab/api/errors/): the closed set of typed error codes with HTTP status and retryability
-- [OpenAPI document](https://e8kor.github.io/open-memory-lab/api/openapi.yaml): the machine-readable contract, identical to the HTTP API page by construction
+- [OpenAPI document](https://e8kor.github.io/open-memory-lab/api/openapi.yaml): the machine-readable served contract, exactly the operations the server routes
+- [Designed OpenAPI annex](https://e8kor.github.io/open-memory-lab/api/openapi-designed.yaml): the designed operations and the designed fields of served ones, from which nothing is generated; with the served document, identical to the HTTP API page by construction
 - [MCP plugin](https://e8kor.github.io/open-memory-lab/api/mcp-plugin/): the agent-facing MCP tools over streamable HTTP, each a facade over one HTTP call
 - [Reviewer crews](https://e8kor.github.io/open-memory-lab/api/reviewer-crews/): how an external review crew integrates over plain HTTP — queue, serve, verdict
 - [CLI reference](https://e8kor.github.io/open-memory-lab/cli/reference/): every administrative verb; the CLI is the whole administration surface

@@ -20,7 +20,7 @@ export type MemoryPage = Schemas["MemoryPage"];
 export type SupersedeRequest = Schemas["SupersedeRequest"];
 export type Serve = Schemas["Serve"];
 export type VerdictResult = Schemas["VerdictResult"];
-export type ListQuery = NonNullable<operations["searchMemories"]["parameters"]["query"]>;
+export type ListQuery = NonNullable<operations["listMemories"]["parameters"]["query"]>;
 
 /** A submission without its verb; `kind` defaults to the verb's usual kind. */
 export type RememberInput = Omit<SubmitRequest, "verb" | "kind"> & { kind?: SubmitRequest["kind"] };

@@ -104,7 +104,9 @@ def sync_detailed(
         body (SubmitRequest): Names no workarea: the target resolves from the key's
             default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
             with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-            d16 closes the recall, supersede, key-issuance and grant bodies only.
+            d16 closes the recall, supersede, key-issuance and grant bodies only. The designed
+            attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in
+            openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,7 +154,9 @@ def sync(
         body (SubmitRequest): Names no workarea: the target resolves from the key's
             default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
             with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-            d16 closes the recall, supersede, key-issuance and grant bodies only.
+            d16 closes the recall, supersede, key-issuance and grant bodies only. The designed
+            attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in
+            openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,7 +199,9 @@ async def asyncio_detailed(
         body (SubmitRequest): Names no workarea: the target resolves from the key's
             default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
             with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-            d16 closes the recall, supersede, key-issuance and grant bodies only.
+            d16 closes the recall, supersede, key-issuance and grant bodies only. The designed
+            attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in
+            openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -241,7 +247,9 @@ async def asyncio(
         body (SubmitRequest): Names no workarea: the target resolves from the key's
             default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
             with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-            d16 closes the recall, supersede, key-issuance and grant bodies only.
+            d16 closes the recall, supersede, key-issuance and grant bodies only. The designed
+            attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in
+            openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

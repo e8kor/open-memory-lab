@@ -7018,3 +7018,239 @@ async fn whoami_refuses_a_revoked_key_with_the_auth_code() {
 
     drop_db(&rig.db_name).await;
 }
+
+// ---------------------------------------------------------------------------
+// The served contract (ADR-0039 d9)
+// ---------------------------------------------------------------------------
+
+/// docs/api/openapi.yaml, read from the repository this test builds in.
+fn served_openapi() -> String {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../docs/api/openapi.yaml"
+    );
+    std::fs::read_to_string(path).expect("docs/api/openapi.yaml reads")
+}
+
+/// Every `(METHOD, /path)` the document's `paths` declares. The layout is
+/// the document's own style: a path item at two spaces, its operations at
+/// four, and the next top-level key after the last path.
+fn declared_operations(document: &str) -> std::collections::BTreeSet<(String, String)> {
+    let mut operations = std::collections::BTreeSet::new();
+    let mut in_paths = false;
+    let mut path: Option<&str> = None;
+    for line in document.lines() {
+        if !line.is_empty() && !line.starts_with(' ') {
+            in_paths = line == "paths:";
+            path = None;
+            continue;
+        }
+        if !in_paths {
+            continue;
+        }
+        if line.starts_with("  /") {
+            path = line.trim().strip_suffix(':');
+            continue;
+        }
+        if let (Some(path), Some(method)) = (
+            path,
+            line.strip_prefix("    ").and_then(|m| m.strip_suffix(':')),
+        ) && ["get", "put", "post", "delete", "patch"].contains(&method)
+        {
+            operations.insert((method.to_uppercase(), path.to_owned()));
+        }
+    }
+    operations
+}
+
+/// A router over in-memory doubles, its bootstrap open under
+/// [`ENROLLMENT`]: what it routes is what the route table names.
+fn doubles_router() -> Router {
+    use oml_app::App;
+    use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+    let store = MemStore::new();
+    let app = App::new(
+        store.clone(),
+        MemSigner::new([7; 32]),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let ping: DbPing = Arc::new(|| Box::pin(async { true }));
+    oml_transport_http::ApiState::new(
+        Arc::new(app),
+        store,
+        ping,
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .into_router()
+}
+
+/// openapi.yaml declares exactly what the router routes, `GET /v2/whoami`
+/// among them: the router builds its routes from the transport's public
+/// table, the table equals the document's operations, and the router
+/// answers every one of them from a handler, never with its own empty 404
+/// or 405 (ADR-0039 d9).
+#[tokio::test]
+async fn the_served_openapi_document_declares_exactly_the_routed_operations() {
+    let declared = declared_operations(&served_openapi());
+    let routed: std::collections::BTreeSet<(String, String)> = oml_transport_http::ROUTES
+        .iter()
+        .map(|(method, path)| ((*method).to_owned(), (*path).to_owned()))
+        .collect();
+    assert_eq!(
+        routed.len(),
+        oml_transport_http::ROUTES.len(),
+        "the route table lists an operation twice"
+    );
+    let only_declared: Vec<_> = declared.difference(&routed).collect();
+    let only_routed: Vec<_> = routed.difference(&declared).collect();
+    assert!(
+        only_declared.is_empty() && only_routed.is_empty(),
+        "declared but not routed: {only_declared:?}; routed but not declared: {only_routed:?}"
+    );
+    assert!(
+        declared.contains(&("GET".to_owned(), "/v2/whoami".to_owned())),
+        "whoami is declared"
+    );
+    assert_eq!(declared.len(), 23, "the 22 routed operations and whoami");
+
+    let router = doubles_router();
+    for (method, path) in &routed {
+        let uri = filled(path);
+        let request = Request::builder()
+            .method(method.as_str())
+            .uri(&uri)
+            .body(Body::empty())
+            .expect("request builds");
+        let response = router.clone().oneshot(request).await.expect("infallible");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 22).await.expect("body");
+        assert_ne!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
+        assert!(
+            status != StatusCode::NOT_FOUND || !bytes.is_empty(),
+            "{method} {uri} is not routed"
+        );
+    }
+}
+
+/// `path` with each `{placeholder}` segment filled with a value.
+fn filled(path: &str) -> String {
+    path.split('/')
+        .map(|segment| {
+            if segment.starts_with('{') {
+                "00000000-0000-4000-8000-000000000000"
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// docs/api/openapi-designed.yaml, read from the repository this test
+/// builds in.
+fn designed_openapi() -> String {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../docs/api/openapi-designed.yaml"
+    );
+    std::fs::read_to_string(path).expect("docs/api/openapi-designed.yaml reads")
+}
+
+/// The lines of the block a `key:` line at `indent` spaces opens, the key
+/// line excluded: every following line indented deeper, or blank.
+fn block<'a>(document: &'a str, indent: usize, key: &str) -> Vec<&'a str> {
+    let opener = format!("{}{key}:", " ".repeat(indent));
+    let mut lines = document.lines().skip_while(|l| *l != opener);
+    assert!(lines.next().is_some(), "{opener:?} is in the document");
+    lines
+        .take_while(|l| l.is_empty() || l.len() - l.trim_start().len() > indent)
+        .collect()
+}
+
+/// `simulation_id` is a designed field: openapi-designed.yaml declares it
+/// for submitMemory and supersedeMemory under `x-oml-designed-fields`, the
+/// served openapi.yaml declares it on neither request, and a submit or a
+/// supersession carrying one still answers v0.3.0's 404 `access.not_found`,
+/// where the same request without it passes that check: a submit is
+/// accepted, and a supersession of a held target meets the tip check
+/// (ADR-0039 d9).
+#[tokio::test]
+async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
+    let designed = designed_openapi();
+    let fields = block(&designed, 0, "x-oml-designed-fields").join("\n");
+    for operation in ["submitMemory", "supersedeMemory"] {
+        let request = block(&fields, 2, operation).join("\n");
+        assert!(
+            block(&request, 4, "request")
+                .iter()
+                .any(|l| l.starts_with("      simulation_id:")),
+            "{operation} declares simulation_id as designed"
+        );
+    }
+    let served = served_openapi();
+    for schema in ["SubmitRequest", "SupersedeRequest"] {
+        assert!(
+            !block(&served, 4, schema)
+                .iter()
+                .any(|l| l.trim_start().starts_with("simulation_id:")),
+            "openapi.yaml {schema} serves no simulation_id"
+        );
+    }
+
+    let router = &doubles_router();
+    let (admin, _, root) = bootstrap(router).await;
+    let writer = issue_key(router, &admin, "writer", "agent/sim", root).await;
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&writer).idem("sim-1").body(json!({
+            "body": "a simulated quote",
+            "simulation_id": "00000000-0000-4000-8000-000000000001",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_envelope(&refused, "access.not_found");
+
+    let (status, _, accepted) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&writer)
+            .idem("sim-2")
+            .body(json!({ "body": "a real quote" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    let target = accepted["artifact_id"].as_str().expect("artifact id");
+    let supersede = format!("/v1/memories/{target}/supersede");
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        &supersede,
+        Call::auth(&writer).idem("sim-3").body(json!({
+            "body": "a simulated revision",
+            "simulation_id": "00000000-0000-4000-8000-000000000001",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_envelope(&refused, "access.not_found");
+    // Without the field the same supersession passes that check and meets
+    // the next: a held target is no served tip.
+    let (status, _, revised) = send(
+        router,
+        "POST",
+        &supersede,
+        Call::auth(&writer)
+            .idem("sim-4")
+            .body(json!({ "body": "a real revision" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{revised}");
+    assert_envelope(&revised, "submission.tip_conflict");
+}

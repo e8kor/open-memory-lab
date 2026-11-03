@@ -6,6 +6,7 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
+from ...models.workarea_page import WorkareaPage
 from ...types import UNSET, Response, Unset
 
 
@@ -37,7 +38,12 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope:
+) -> ErrorEnvelope | WorkareaPage:
+    if response.status_code == 200:
+        response_200 = WorkareaPage.from_dict(response.json())
+
+        return response_200
+
     response_default = ErrorEnvelope.from_dict(response.json())
 
     return response_default
@@ -45,7 +51,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaPage]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -60,7 +66,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaPage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -79,7 +85,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | WorkareaPage]
     """
 
     kwargs = _get_kwargs(
@@ -101,7 +107,7 @@ def sync(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | WorkareaPage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -120,7 +126,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | WorkareaPage
     """
 
     return sync_detailed(
@@ -137,7 +143,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaPage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -156,7 +162,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | WorkareaPage]
     """
 
     kwargs = _get_kwargs(
@@ -176,7 +182,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | WorkareaPage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -195,7 +201,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | WorkareaPage
     """
 
     return (

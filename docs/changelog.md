@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design and 0
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.3.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.4.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -30,9 +30,35 @@ implementation milestone where it changes what the repository holds.
 ## 0.4.0-design (in progress)
 
 Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
-records. `info.version` stays `0.3.0-design` until that record's build step 1 moves it to
-`0.4.0-design`; entries land here as the build does. ADR-0031's own move to `0.4.0-design` is
-the same bump, so it lands in this section rather than a second one.
+records. `info.version` moved to `0.4.0-design` with the contract split below; entries land
+here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
+this section rather than a second one.
+
+### 2026-11-03 — openapi.yaml declares only what the server routes; the rest is a designed annex (ADR-0039 d9, implementation)
+
+[openapi.yaml](api/openapi.yaml) now holds exactly the 23 routed operations, the 22 of v0.3.0 and
+`GET /v2/whoami`, each with only the fields the build accepts, and the complete `ErrorCode` enum;
+`info.version` is `0.4.0-design`. The new [openapi-designed.yaml](api/openapi-designed.yaml), from
+which nothing is generated, holds the 45 designed operations and, under `x-oml-designed-fields`,
+the designed fields of served ones: the attachment, simulation and vocabulary fields of submit,
+supersede and recall, a workarea's `prefix`, and the workarea read's review policy and pending
+transitions. A designed field sent to a served operation answers its v0.3.0 code.
+
+- **Removed:** `GET /v2/workareas/{id}/status`, a second read of the node the workarea read
+  serves.
+- **Merged:** the claim-edge and workarea-edge families become one designed `/v2/edges` family of
+  three, keyed by `kind` `claim` | `workarea`, each kind keeping its authority, refusal codes and
+  journal events.
+- **Renamed operationIds:** `searchMemories` → `listMemories`, `proposeSupersession` →
+  `supersedeMemory`, `updateCrewMetadata` → `setWorkareaCrew`; the generated SDK modules follow,
+  and the wrappers call them under their existing verbs.
+- **Checks:** the router builds its routes from the transport's public `ROUTES` table, which a
+  server test compares with openapi.yaml; `check_contract_sync.py` compares
+  [http-api.md](api/http-api.md), which now marks each endpoint served or designed, with the
+  union of both documents' paths, and fails on a path in both or on a designed field the served
+  operation also declares; each SDK's tests hold its generated operations equal to openapi.yaml's.
+  The Python generator's recorded warnings are now empty, since the status read's schema, whose
+  name clashed with `Workarea`'s status enum, is gone.
 
 ### 2026-11-03 — The API rewrite and the plugin setup retargeted to v0.4.0 (ADR-0039, ADR-0040, proposed)
 

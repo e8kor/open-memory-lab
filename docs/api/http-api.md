@@ -12,8 +12,14 @@ answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab rou
 This page owns decision **D13** as contract: the two-ring JSON surface — the provider ring
 (`/v1`) and the lab ring (`/v2`) — authentication, idempotency
 records, the pagination convention, and the verb ceiling each endpoint enforces. The
-machine-readable form is [openapi.yaml](openapi.yaml) — the two describe the same contract, and a
-divergence between them is a documentation bug, not an ambiguity to interpret. Every refusal cited
+machine-readable form is two documents: [openapi.yaml](openapi.yaml) declares exactly the
+operations the server routes, with only the fields it accepts, and
+[openapi-designed.yaml](openapi-designed.yaml) holds the designed operations and, under
+`x-oml-designed-fields`, the designed fields of served ones
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). This page describes both and
+marks each endpoint served or designed; a divergence between them is a documentation bug, not an
+ambiguity to interpret. A designed operation answers 404 until the change that serves it moves its
+entry to openapi.yaml, and a designed field sent to a served operation answers its v0.3.0 code. Every refusal cited
 below is a typed error declared in [errors.md](errors.md). The MCP agent plugin is a stateless
 facade over the agent-safe subset of this API ([mcp-plugin.md](mcp-plugin.md)); the `oml` CLI
 drives the administrative and review verbs over this same API
@@ -25,7 +31,8 @@ Field names and endpoint spellings are design identifiers: normative in shape, a
 spelling at implementation without a design change (the same caveat the
 [event catalog](../data/event-catalog.md) carries).
 
-Python and TypeScript clients are generated from [openapi.yaml](openapi.yaml), with hand-written
+Python and TypeScript clients are generated from [openapi.yaml](openapi.yaml) alone, so they carry
+only served operations, with hand-written
 wrappers for the key, idempotency keys, pagination and the error taxonomy; the generators, the
 wrappers and the rule that regenerates them on every change to this contract are decided on
 [client SDKs](../engineering/sdks.md).
@@ -199,7 +206,7 @@ id, and each object of the four kinds carries its `name`.
 
 | Kind | Accepted in |
 |---|---|
-| workarea | `X-OML-Workarea`; the `{id}` of every `/v2/workareas/{id}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/claim-edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue`, on `POST /v2/review/next` and on `GET /v2/keys/{key_id}/effective-access`; `parent_id` on create, `new_parent_id` on re-parent, `to_workarea_id` on an edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea_node_id` and its denies' `subtree_node_id`, a denial's `workarea_node_id`, and `default_workarea_id` on issuance |
+| workarea | `X-OML-Workarea`; the `{id}` of every `/v2/workareas/{id}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue`, on `POST /v2/review/next` and on `GET /v2/keys/{key_id}/effective-access`; `parent_id` on create, `new_parent_id` on re-parent, `from_workarea_id` and `to_workarea_id` on a workarea edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea_node_id` and its denies' `subtree_node_id`, a denial's `workarea_node_id`, and `default_workarea_id` on issuance |
 | crew | the `{crew_id}` of every `/v2/crews/{crew_id}` route; `crew` on workarea create, on `POST /v2/workareas/{id}/crew` and on issuance |
 | key | the `{key_id}` of every `/v2/keys/{key_id}` route; `key_id` in a simulation audience entry |
 | tenant | `tenant_id` on an operator key's issuance of a tenant's first admin key |
@@ -426,56 +433,59 @@ accepts only when it names the target's workarea; get and the own-work listing (
 refuse it with `request.validation`. Get, the own-work listing and supersede never answer
 `request.workarea_unresolved`: get and `own=true` resolve no workarea, and supersede takes the
 target's workarea. The reserved `POST /v1/memories:batch` ([FR-12](../product/roadmap.md)) will
-join this table:
+join this table. The Contract column says where each endpoint is declared: **served** in
+[openapi.yaml](openapi.yaml), routed by the server, or **designed** in
+[openapi-designed.yaml](openapi-designed.yaml), decided and answering 404 until it is built:
 
-| Endpoint | Verb ceiling (effective access unless noted) |
-|---|---|
-| `POST /v1/memories` | writer — and every `derives_from` ancestor readable by the key; lineage is attribution, not an act of connection |
-| `POST /v1/memories/recall` | reader |
-| `GET /v1/memories` | reader; `own=true` admits any tenant role, own rows only |
-| `GET /v1/memories/{artifact_id}` | reader; the calling key fetches its own rows in any state |
-| `POST /v1/memories/{artifact_id}/supersede` | writer (own claims) or dreamer(propose); includes retirement |
-| `POST /v1/attachments/uploads` | writer |
-| `PUT /v1/attachments/uploads/{session_id}/parts/{part_number}` | writer (session owner) |
-| `POST /v1/attachments/uploads/{session_id}/complete` | writer (session owner) |
-| `GET /v1/attachments/{digest}` | reader; reviewer under a valid `serve_id`; the author for own held |
+| Endpoint | Verb ceiling (effective access unless noted) | Contract |
+|---|---|---|
+| `POST /v1/memories` | writer — and every `derives_from` ancestor readable by the key; lineage is attribution, not an act of connection | served |
+| `POST /v1/memories/recall` | reader | served |
+| `GET /v1/memories` | reader; `own=true` admits any tenant role, own rows only | served |
+| `GET /v1/memories/{artifact_id}` | reader; the calling key fetches its own rows in any state | served |
+| `POST /v1/memories/{artifact_id}/supersede` | writer (own claims) or dreamer(propose); includes retirement | served |
+| `POST /v1/attachments/uploads` | writer | designed |
+| `PUT /v1/attachments/uploads/{session_id}/parts/{part_number}` | writer (session owner) | designed |
+| `POST /v1/attachments/uploads/{session_id}/complete` | writer (session owner) | designed |
+| `GET /v1/attachments/{digest}` | reader; reviewer under a valid `serve_id`; the author for own held | designed |
 
 **The lab ring (`/v2`):**
 
-| Endpoint | Verb ceiling (effective access unless noted) |
-|---|---|
-| `GET /v2/memories/{artifact_id}/lineage` | reader |
-| `GET /v2/claim-edges` | reader |
-| `POST /v2/claim-edges` | dreamer(propose) |
-| `POST /v2/claim-edges/{edge_id}/ratify` | dreamer(review); never the proposer (R2) |
-| `GET /v2/workareas` · `GET /v2/workareas/{id}` · `/tree` · `/edges` · `/status` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) |
-| `POST /v2/workareas` | admin (key role) |
-| `POST /v2/workareas/{id}/reparent` | admin (key role) |
-| `POST /v2/workareas/{id}/crew` | admin (key role) |
-| `GET /v2/crews` · `GET /v2/crews/{crew_id}` · `POST /v2/crews` · `POST /v2/crews/{crew_id}/update` | admin (key role) |
-| `POST /v2/workareas/{id}/edges` | dreamer(propose) on ≥1 endpoint, reader on both (edge-authority rule, [workareas.md](../architecture/workareas.md)) |
-| `POST /v2/workarea-edges/{edge_id}/ratify` | dreamer(review) on both endpoints; never the proposer |
-| `POST /v2/workareas/{id}/transitions` | dreamer or admin |
-| `POST /v2/workareas/{id}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin |
-| `GET /v2/events` | reader |
-| `GET /v2/vocab/suggest` · `GET /v2/vocab/terms/{curie}` · `GET /v2/vocab/terms/{curie}/hierarchy` · `GET /v2/vocab/mappings` | reader |
-| `GET /v2/review/queue` · `POST /v2/review/next` · `POST /v2/review/verdicts` · `POST /v2/review/reopen` | dreamer(review); refused per row by lineage-closure exclusion |
-| `POST /v2/keys` and every key, grant, denial verb | admin (key role); operator only for operator keys and a tenant's first admin key |
-| `GET /v2/whoami` | any live key, of any role; its own record only ([Whoami](#whoami-get-v2whoami)) |
-| `GET /v2/bans` · `POST /v2/bans` · `POST /v2/bans/{ban_id}/lift` | admin (key role) |
-| `GET /v2/simulations` · `GET /v2/simulations/{id}` · `POST /v2/simulations` · `POST /v2/simulations/{id}/audience` · `POST /v2/simulations/{id}/end` | admin (key role) |
-| `POST /v2/memories/{artifact_id}/reassign` · `/demote` · `/erase`, `POST /v2/claims/tip-override` | admin (key role) |
-| `POST /v2/exports` · `GET /v2/exports` · `GET /v2/exports/{export_id}` · `/bundle` | admin (key role) |
-| `GET /v2/settings` · `POST /v2/settings/validate` · `POST /v2/settings/apply` | admin (key role) |
-| `POST /v2/tenants` | operator (key role) |
-| `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) |
+| Endpoint | Verb ceiling (effective access unless noted) | Contract |
+|---|---|---|
+| `GET /v2/memories/{artifact_id}/lineage` | reader | designed |
+| `GET /v2/edges` | `kind=claim`: reader; `kind=workarea`: reader, or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | designed |
+| `POST /v2/edges` | `kind=claim`: dreamer(propose); `kind=workarea`: dreamer(propose) on ≥1 endpoint, reader on both (edge-authority rule, [workareas.md](../architecture/workareas.md)) | designed |
+| `POST /v2/edges/{edge_id}/ratify` | dreamer(review), on both endpoints for `kind=workarea`; never the proposer (R2) | designed |
+| `GET /v2/workareas/{id}` · `/tree` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | served |
+| `GET /v2/workareas` | reader; or admin (key role), structure only and tenant-wide | designed |
+| `POST /v2/workareas` | admin (key role) | served |
+| `POST /v2/workareas/{id}/reparent` | admin (key role) | designed |
+| `POST /v2/workareas/{id}/crew` | admin (key role) | served |
+| `GET /v2/crews` · `GET /v2/crews/{crew_id}` · `POST /v2/crews` · `POST /v2/crews/{crew_id}/update` | admin (key role) | served |
+| `POST /v2/workareas/{id}/transitions` | dreamer or admin | designed |
+| `POST /v2/workareas/{id}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin | designed |
+| `GET /v2/events` | reader | served |
+| `GET /v2/vocab/suggest` · `GET /v2/vocab/terms/{curie}` · `GET /v2/vocab/terms/{curie}/hierarchy` · `GET /v2/vocab/mappings` | reader | designed |
+| `POST /v2/review/next` · `POST /v2/review/verdicts` | dreamer(review); refused per row by lineage-closure exclusion | served |
+| `GET /v2/review/queue` · `POST /v2/review/reopen` | dreamer(review); refused per row by lineage-closure exclusion | designed |
+| `POST /v2/keys` · `GET /v2/keys/{key_id}` · `POST /v2/keys/{key_id}/denials` | admin (key role); operator only for operator keys and a tenant's first admin key | served |
+| `GET /v2/keys` · `POST /v2/keys/{key_id}/revoke` · `/rotate` · `/grants` · `GET /v2/keys/{key_id}/effective-access` · `POST /v2/keys/{key_id}/grants/{grant_id}/revoke` · `POST /v2/keys/{key_id}/denials/{denial_id}/lift` | admin (key role) | designed |
+| `GET /v2/whoami` | any live key, of any role; its own record only ([Whoami](#whoami-get-v2whoami)) | served |
+| `GET /v2/bans` · `POST /v2/bans` · `POST /v2/bans/{ban_id}/lift` | admin (key role) | designed |
+| `GET /v2/simulations` · `GET /v2/simulations/{id}` · `POST /v2/simulations` · `POST /v2/simulations/{id}/audience` · `POST /v2/simulations/{id}/end` | admin (key role) | designed |
+| `POST /v2/memories/{artifact_id}/reassign` · `/demote` · `/erase`, `POST /v2/claims/tip-override` | admin (key role) | designed |
+| `POST /v2/exports` · `GET /v2/exports` · `GET /v2/exports/{export_id}` · `/bundle` | admin (key role) | designed |
+| `GET /v2/settings` · `POST /v2/settings/validate` · `POST /v2/settings/apply` | admin (key role) | designed |
+| `POST /v2/tenants` | operator (key role) | designed |
+| `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
 
-A `held_by: service` key is refused every review-class verb above — the review endpoints,
-claim-edge ratify and workarea-edge ratify — and status-transition ratify, with
+A `held_by: service` key is refused every review-class verb above — the review endpoints and
+edge ratify of either kind — and status-transition ratify, with
 `access.verb_ceiling` before any lookup, whatever its grants
 ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 
-`GET /healthz` · `GET /readyz` are unversioned and unauthenticated ([Health](#health)).
+`GET /healthz` · `GET /readyz` are unversioned and unauthenticated ([Health](#health)), and served.
 
 Promote, sign and delete appear nowhere in these tables on purpose: promotion is an effect of
 ratification inside the admission pipeline, signing is `oml-server`'s alone, and deletion does not
@@ -505,6 +515,11 @@ grants. A key with neither is refused with `request.workarea_unresolved` (422).
 }
 ```
 
+- `attachments`, `simulation_id` and `simulated_time` above, and the vocabulary fields `terms`,
+  `term_status`, `successors` and `mapping` ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)),
+  are designed fields, declared in
+  [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent here answers
+  its v0.3.0 code ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9).
 - `body` is the one required field. An omitted `verb` is `learn` when `derives_from` is non-empty
   and `remember` otherwise, and a sent `verb` is honoured; an omitted `kind` is `memory`
   ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d3).
@@ -585,8 +600,9 @@ optional `kinds` filter (hits only), `include_bodies`, and:
 
 The body refuses unknown fields (`request.validation`), and so does an empty `kinds` or `terms`
 array: an absent filter narrows nothing, and a sent one names at least one value. Two optional
-vocabulary fields complete it; a server that does not yet serve them refuses them by name, never
-ignores them:
+vocabulary fields complete it. Both are designed, declared in
+[openapi-designed.yaml](openapi-designed.yaml), and refused by name, never ignored, until they are
+served:
 
 - `terms` — CURIEs; filters to rows whose `terms` annotation cites any of them. A CURIE the key
   cannot read matches nothing (fail closed, as `derives_from` does).
@@ -716,7 +732,8 @@ unreadable target exists. `Idempotency-Key` is required and honoured, scoped to 
 nil workarea; the record is looked up between steps 1 and 2 of that rule, so a committed
 supersession always replays, and claimed only after step 2 passes
 ([Idempotency](#idempotency)). The body refuses unknown fields and carries `simulation_id`,
-`simulated_time` and `mapping` as the submit body does. Of the target's fields only `kind` carries
+`simulated_time` and `mapping` as the submit body does; those, `attachments` and the term fields
+are designed fields of this operation, each answering its v0.3.0 code until it is served. Of the target's fields only `kind` carries
 over: an omitted `kind` makes the successor take the target's, and an omitted `attachments` or
 `terms` leaves the successor with none — nothing else is inherited from the target.
 
@@ -767,20 +784,18 @@ Reads require reader effective access on the node, and nodes outside scope are a
 (`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
 tenant without grants and never claim content
 ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). The algebra — tree, universe, grants, denies — is owned by
-[workareas.md](../architecture/workareas.md); this page only carries the verbs.
+[workareas.md](../architecture/workareas.md); this page only carries the verbs. The labelled
+edges touching a node are read, proposed and ratified on the [edges](#edges) family, with
+`kind=workarea`.
 
 | Endpoint | Returns / does |
 |---|---|
 | `GET /v2/workareas?path=<ltree>` | Resolve a node by derived path. Grants bind to node ids, never paths, and no reference field accepts a path ([names](#names-and-ids)); this is the lookup that bridges the two. |
-| `GET /v2/workareas/{id}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. |
+| `GET /v2/workareas/{id}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. The review policy in force and the pending transitions are designed fields of this read (`policy`, `pending_transitions` under `x-oml-designed-fields`); the status route `/v2/workareas/{id}/status`, which carried them as a second read of the same node, is removed ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
 | `GET /v2/workareas/{id}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
-| `GET /v2/workareas/{id}/edges` | Labelled `related` edges touching the node, `pending` and `ratified`, with proposer and ratifier. Edges confer zero access. |
-| `GET /v2/workareas/{id}/status` | Status, the review policy object in force, pending transitions. |
-| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}` — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). Refused under a `validated` parent (`workarea.frozen`). |
+| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent_id, name, crew?, prefix?}` — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `prefix` is a designed field, refused with `request.validation` until vocabulary workareas are built. Refused under a `validated` parent (`workarea.frozen`). |
 | `POST /v2/workareas/{id}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
 | `POST /v2/workareas/{id}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the workarea. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
-| `POST /v2/workareas/{id}/edges` | Propose an edge `{to_workarea_id, label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`. Requires dreamer(propose) effective access on at least one endpoint and reader effective access on both (an admin who must act here holds a separate dreamer key — a key never combines admin with dreamer grants, `access.role_exclusive`). → `202`, pending. |
-| `POST /v2/workarea-edges/{edge_id}/ratify` | Ratify under dreamer(review) effective access on **both** endpoints; the proposer is refused (`review.ratifier_is_proposer`, R2 extends to edges). |
 | `POST /v2/workareas/{id}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
 | `POST /v2/workareas/{id}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot ([workareas.md](../architecture/workareas.md) transition matrix). |
 
@@ -800,20 +815,32 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 | `GET /v2/crews/{crew_id}` | One crew record, by id or name. |
 | `POST /v2/crews/{crew_id}/update` | `{charter_uri?, external_manager?}`, at least one present — a journalled crew-record update (`crew.updated`). The name is not updatable. A crew record has no status, so an update is admitted whatever the status of the workareas that name it. |
 
-## Claim edges
+## Edges
 
-Claim↔claim connection proposals follow the same propose-then-ratify shape inside the admission
-pipeline ([admission.md](../architecture/admission.md)).
+Claim↔claim and workarea↔workarea connections are one designed family of three operations, keyed
+by `kind` ∈ `claim` | `workarea`, each kind keeping its own authority, refusal codes and journal
+events ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). Both follow the
+propose-then-ratify shape inside the admission pipeline ([admission.md](../architecture/admission.md)),
+and an edge confers zero access.
 
-- `GET /v2/claim-edges?workarea_id=…&artifact_id=…` — paginated graph read, pending and ratified,
-  scoped to read access.
-- `POST /v2/claim-edges` — `{from_artifact_id, to_artifact_id, label}` under dreamer(propose) →
-  `202`, pending. The label vocabulary for claim edges is not fixed by the design (the closed
-  label set exists for workarea edges only); fixing it is an open detail for the
-  [roadmap](../product/roadmap.md).
-- `POST /v2/claim-edges/{edge_id}/ratify` — dreamer(review), never the proposer, and refused when
-  the ratifying key or principal appears in either endpoint's lineage closure
-  (`review.author_in_lineage`).
+- `GET /v2/edges?kind=…` — paginated read, `pending` and `ratified`, with proposer and ratifier.
+  `kind=claim` takes `workarea_id` as a subtree filter and `artifact_id` to narrow to one claim,
+  under reader effective access. `kind=workarea` takes `workarea_id`, required, and returns the
+  labelled `related` edges touching that node, under reader effective access on it or the admin
+  key role ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)).
+- `POST /v2/edges` — `kind=claim`: `{kind, from_artifact_id, to_artifact_id, label}` under
+  dreamer(propose); the label vocabulary for claim edges is not fixed by the design (the closed
+  label set exists for workarea edges only), and fixing it is an open detail for the
+  [roadmap](../product/roadmap.md). `kind=workarea`: `{kind, from_workarea_id, to_workarea_id,
+  label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`, under dreamer(propose)
+  effective access on at least one endpoint and reader effective access on both (an admin who must
+  act here holds a separate dreamer key — a key never combines admin with dreamer grants,
+  `access.role_exclusive`). → `202`, pending.
+- `POST /v2/edges/{edge_id}/ratify` — dreamer(review), never the proposer
+  (`review.ratifier_is_proposer`, R2 extends to edges). A claim edge is also refused when the
+  ratifying key or principal appears in either endpoint's lineage closure
+  (`review.author_in_lineage`); a workarea edge needs dreamer(review) effective access on **both**
+  endpoints.
 
 ## Vocabularies
 

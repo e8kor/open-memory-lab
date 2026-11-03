@@ -145,3 +145,51 @@ test("an upload raises NotBuiltError and sends no request", async () => {
   );
   assert.deepEqual(requests, []);
 });
+
+/** Every [METHOD, path] the document's paths declare, in its own layout. */
+function declaredOperations(document: string): Set<string> {
+  const operations = new Set<string>();
+  let inPaths = false;
+  let path: string | null = null;
+  for (const line of document.split("\n")) {
+    if (line !== "" && !line.startsWith(" ")) {
+      inPaths = line === "paths:";
+      path = null;
+    } else if (inPaths && line.startsWith("  /")) {
+      path = line.trim().replace(/:$/, "");
+    } else if (inPaths && path !== null) {
+      const method = /^ {4}(get|put|post|delete|patch):$/.exec(line)?.[1];
+      if (method) operations.add(`${method.toUpperCase()} ${path}`);
+    }
+  }
+  return operations;
+}
+
+/** Every [METHOD, path] the generated `paths` interface types as an operation. */
+function generatedOperations(schema: string): Set<string> {
+  const operations = new Set<string>();
+  const start = schema.indexOf("export interface paths {");
+  const body = schema.slice(start, schema.indexOf("\nexport ", start));
+  let path: string | null = null;
+  for (const line of body.split("\n")) {
+    const item = /^ {4}"([^"]+)": \{$/.exec(line)?.[1];
+    if (item) path = item;
+    const method = /^ {8}(get|put|post|delete|patch): operations\[/.exec(line)?.[1];
+    if (method && path !== null) operations.add(`${method.toUpperCase()} ${path}`);
+  }
+  return operations;
+}
+
+test("the generated SDK carries no operation the server does not route", () => {
+  // openapi.yaml declares only what the server routes, which the server's
+  // own test holds against its route table (ADR-0039 d9).
+  const declared = declaredOperations(
+    readFileSync(new URL("../../../docs/api/openapi.yaml", import.meta.url), "utf8"),
+  );
+  assert.ok(declared.has("GET /v2/whoami"));
+  assert.equal(declared.size, 23);
+  const generated = generatedOperations(
+    readFileSync(new URL("../src/generated/schema.ts", import.meta.url), "utf8"),
+  );
+  assert.deepEqual([...generated].sort(), [...declared].sort());
+});

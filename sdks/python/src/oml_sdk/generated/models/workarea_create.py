@@ -25,15 +25,11 @@ class WorkareaCreate:
             References use NameRef.
         crew (str | Unset): A crew record, by its id or its name, resolved server-side like every reference (ADR-0026
             d4).
-        prefix (str | Unset): Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never
-            reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a
-            vocabulary needs a named curator crew record.
     """
 
     parent_id: str
     name: str
     crew: str | Unset = UNSET
-    prefix: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,8 +44,6 @@ class WorkareaCreate:
         else:
             crew = self.crew
 
-        prefix = self.prefix
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,8 +54,6 @@ class WorkareaCreate:
         )
         if crew is not UNSET:
             field_dict["crew"] = crew
-        if prefix is not UNSET:
-            field_dict["prefix"] = prefix
 
         return field_dict
 
@@ -83,13 +75,10 @@ class WorkareaCreate:
 
         crew = _parse_crew(d.pop("crew", UNSET))
 
-        prefix = d.pop("prefix", UNSET)
-
         workarea_create = cls(
             parent_id=parent_id,
             name=name,
             crew=crew,
-            prefix=prefix,
         )
 
         workarea_create.additional_properties = d

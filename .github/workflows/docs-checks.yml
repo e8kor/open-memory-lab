@@ -51,4 +51,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install openapi-spec-validator
-      - run: openapi-spec-validator docs/api/openapi.yaml
+      - run: openapi-spec-validator docs/api/openapi.yaml docs/api/openapi-designed.yaml

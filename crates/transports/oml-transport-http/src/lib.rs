@@ -34,7 +34,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{MethodRouter, get, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -59,6 +59,40 @@ use crate::time::{parse_date_time, system_event_time, system_event_time_plus};
 /// up — the concurrent-submitter shape the oml-pg phase prescribed: re-read
 /// the head (the app does, per call) and try again.
 pub const CHAIN_RETRIES: usize = 16;
+
+/// Every HTTP operation the router serves, as `(METHOD, path)` in
+/// docs/api/openapi.yaml's spelling: the served contract declares exactly
+/// these (ADR-0039 d9), and [`ApiState::into_router`] routes exactly these.
+/// `/mcp`, whose contract is docs/api/mcp-tools.json, is not among them.
+pub const ROUTES: &[(&str, &str)] = &[
+    ("GET", "/healthz"),
+    ("GET", "/readyz"),
+    ("POST", "/v1/memories"),
+    ("GET", "/v1/memories"),
+    ("POST", "/v1/memories/recall"),
+    ("GET", "/v1/memories/{artifact_id}"),
+    ("POST", "/v1/memories/{artifact_id}/supersede"),
+    ("POST", "/v2/review/next"),
+    ("POST", "/v2/review/verdicts"),
+    ("POST", "/v2/keys"),
+    ("GET", "/v2/keys/{key_id}"),
+    ("POST", "/v2/keys/{key_id}/denials"),
+    ("GET", "/v2/whoami"),
+    ("POST", "/v2/crews"),
+    ("GET", "/v2/crews"),
+    ("GET", "/v2/crews/{crew_id}"),
+    ("POST", "/v2/crews/{crew_id}/update"),
+    ("POST", "/v2/workareas"),
+    ("GET", "/v2/workareas/{workarea_id}"),
+    ("GET", "/v2/workareas/{workarea_id}/tree"),
+    ("POST", "/v2/workareas/{workarea_id}/crew"),
+    ("GET", "/v2/events"),
+    ("POST", "/v2/bootstrap/claim"),
+];
+
+/// The unversioned probes among [`ROUTES`], served even while names are not
+/// assigned (http-api.md "Health").
+const PROBES: [&str; 2] = ["/healthz", "/readyz"];
 
 const PAGE_LIMIT_MAX: usize = 200; // api.page_limit_max shipped default
 const PAGE_LIMIT_DEFAULT: usize = 50;
@@ -189,43 +223,58 @@ where
         self
     }
 
-    /// The two rings plus the unversioned probes, as one axum router; only
-    /// the probes while names are not assigned.
+    /// The two rings plus the unversioned probes, as one axum router, built
+    /// from [`ROUTES`] so that it routes exactly what that table names, and
+    /// `/mcp` beside them; only the probes while names are not assigned.
     pub fn into_router(self) -> Router {
-        let probes = Router::new()
-            .route("/healthz", get(healthz))
-            .route("/readyz", get(Self::readyz));
+        let mut probes = Router::new();
+        let mut rings = Router::new();
+        for &(method, path) in ROUTES {
+            let handler = Self::handler(method, path);
+            if PROBES.contains(&path) {
+                probes = probes.route(path, handler);
+            } else {
+                rings = rings.route(path, handler);
+            }
+        }
         if !self.names_assigned {
             return probes.fallback(names_unassigned).with_state(self);
         }
         probes
-            .route("/v1/memories", post(Self::submit).get(Self::list_memories))
-            .route("/v1/memories/recall", post(Self::recall))
-            .route("/v1/memories/{artifact_id}", get(Self::get_memory))
-            .route(
-                "/v1/memories/{artifact_id}/supersede",
-                post(Self::supersede),
-            )
-            .route("/v2/review/next", post(Self::review_next))
-            .route("/v2/review/verdicts", post(Self::review_verdicts))
-            .route("/v2/keys", post(Self::issue_key))
-            .route("/v2/keys/{key_id}", get(Self::get_key))
-            .route("/v2/keys/{key_id}/denials", post(Self::deny_key))
-            .route("/v2/whoami", get(Self::whoami))
-            .route("/v2/crews", post(Self::create_crew).get(Self::list_crews))
-            .route("/v2/crews/{crew_id}", get(Self::get_crew))
-            .route("/v2/crews/{crew_id}/update", post(Self::update_crew))
-            .route("/v2/workareas", post(Self::create_workarea))
-            .route("/v2/workareas/{workarea_id}", get(Self::get_workarea))
-            .route("/v2/workareas/{workarea_id}/tree", get(Self::workarea_tree))
-            .route(
-                "/v2/workareas/{workarea_id}/crew",
-                post(Self::set_workarea_crew),
-            )
-            .route("/v2/events", get(Self::events_tail))
-            .route("/v2/bootstrap/claim", post(Self::bootstrap_claim))
+            .merge(rings)
             .route("/mcp", post(Self::mcp).get(mcp::mcp_get))
             .with_state(self)
+    }
+
+    /// The handler of one [`ROUTES`] entry. A table entry with no handler
+    /// here panics when the router is built, which every router test does.
+    fn handler(method: &str, path: &str) -> MethodRouter<Self> {
+        match (method, path) {
+            ("GET", "/healthz") => get(healthz),
+            ("GET", "/readyz") => get(Self::readyz),
+            ("POST", "/v1/memories") => post(Self::submit),
+            ("GET", "/v1/memories") => get(Self::list_memories),
+            ("POST", "/v1/memories/recall") => post(Self::recall),
+            ("GET", "/v1/memories/{artifact_id}") => get(Self::get_memory),
+            ("POST", "/v1/memories/{artifact_id}/supersede") => post(Self::supersede),
+            ("POST", "/v2/review/next") => post(Self::review_next),
+            ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
+            ("POST", "/v2/keys") => post(Self::issue_key),
+            ("GET", "/v2/keys/{key_id}") => get(Self::get_key),
+            ("POST", "/v2/keys/{key_id}/denials") => post(Self::deny_key),
+            ("GET", "/v2/whoami") => get(Self::whoami),
+            ("POST", "/v2/crews") => post(Self::create_crew),
+            ("GET", "/v2/crews") => get(Self::list_crews),
+            ("GET", "/v2/crews/{crew_id}") => get(Self::get_crew),
+            ("POST", "/v2/crews/{crew_id}/update") => post(Self::update_crew),
+            ("POST", "/v2/workareas") => post(Self::create_workarea),
+            ("GET", "/v2/workareas/{workarea_id}") => get(Self::get_workarea),
+            ("GET", "/v2/workareas/{workarea_id}/tree") => get(Self::workarea_tree),
+            ("POST", "/v2/workareas/{workarea_id}/crew") => post(Self::set_workarea_crew),
+            ("GET", "/v2/events") => get(Self::events_tail),
+            ("POST", "/v2/bootstrap/claim") => post(Self::bootstrap_claim),
+            _ => panic!("{method} {path} is in ROUTES with no handler"),
+        }
     }
 
     /// Writes are refused while the fork check has not verified the stored

@@ -803,8 +803,8 @@ Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal i
 journalled and **pending**; it confers nothing and changes no access until a
 *different* dreamer ratifies it (R2 extends to edges). Ratification is not on
 this surface — it is a dreamer(review) verb behind the serve ceremony on the
-[HTTP API](http-api.md). (Rides `POST /v2/claim-edges` /
-`POST /v2/workareas/{id}/edges` — the lab ring.)
+[HTTP API](http-api.md). (Rides the designed `POST /v2/edges`, `kind` `claim` or
+`workarea` — the lab ring.)
 
 **Who may call:** keys with dreamer(propose) effective access. For a
 workarea edge: propose access on at least one endpoint **and** reader access
@@ -1040,7 +1040,7 @@ state, and supersession chains within a subtree. The contract is
 key's read scope; closure computation, path finding and ranking are the
 client's problem. That keeps the server's work bounded and the output
 auditable, at the cost of chattier clients on deep graphs. (Rides the lab
-ring's graph reads — `GET /v2/claim-edges` and
+ring's designed graph reads — `GET /v2/edges` and
 `GET /v2/memories/{id}/lineage`.)
 
 **Who may call:** keys with reader effective access on the scope. `scope` is

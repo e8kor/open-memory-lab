@@ -23,8 +23,10 @@ is a stub that refuses, because the server serves no upload sessions yet.
 Each client has two layers, and only one of them is written by hand:
 
 - **The generated layer** is the output of a pinned generator run over `docs/api/openapi.yaml`.
-  It is committed and never edited, and it carries every operation and schema of both rings,
-  less the one Python generator gap recorded under [the regeneration rule](#the-regeneration-rule).
+  It is committed and never edited, and it carries every operation and schema openapi.yaml
+  declares, which is exactly what the server routes; the designed operations of
+  `openapi-designed.yaml` generate nothing
+  ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9).
 - **The wrapper** is a small hand-written module over the generated layer. It covers what a
   generator cannot know: where the key comes from, how a write's `Idempotency-Key` survives its
   retries, how a listing's cursor is followed, and how a refusal becomes a typed exception.
@@ -94,16 +96,12 @@ after the last retry).
 - A regeneration that breaks a wrapper is fixed in the same change: the TypeScript wrapper is
   type-checked against the regenerated `schema.ts` (`npm run check`), and both wrappers' tests
   run against a real server.
-- **The one generator gap, recorded.** openapi-python-client 0.29.1 names the inline `status`
-  enum of the `Workarea` schema `WorkareaStatus`, which is already the name of the
-  `WorkareaStatus` component schema. It therefore drops `Workarea`, `WorkareaPage` and
-  `WorkareaView` from the generated Python models, and five `/v2` workarea operations parse no
-  typed response. The TypeScript layer is unaffected, and no wrapper verb reads those schemas.
-  The generator's report of the gap is committed as `sdks/python/generator-warnings.txt`, and
-  `--check` fails when the report changes, so a new gap cannot land unnoticed and a closed one
-  shows as a diff. The gap closes when openapi.yaml declares the status ladder's enum once, as a
-  component schema that `Workarea`, `WorkareaView` and `WorkareaStatus` reference: a spec change
-  left to the next change to those schemas.
+- **The generator's warnings, recorded.** The Python generator's report is committed as
+  `sdks/python/generator-warnings.txt`, and `--check` fails when the report changes, so a new
+  gap cannot land unnoticed and a closed one shows as a diff. The report is empty. Its one gap,
+  openapi-python-client 0.29.1 naming the inline `status` enum of `Workarea` `WorkareaStatus`,
+  the name of the status read's schema, and so dropping `Workarea`, `WorkareaPage` and
+  `WorkareaView`, closed when ADR-0039 d9 removed that read and its schema.
 
 ## Tests
 

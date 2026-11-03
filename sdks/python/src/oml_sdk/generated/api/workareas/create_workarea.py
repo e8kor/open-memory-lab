@@ -5,6 +5,7 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
+from ...models.workarea import Workarea
 from ...models.workarea_create import WorkareaCreate
 from ...types import Response
 
@@ -32,7 +33,12 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope:
+) -> ErrorEnvelope | Workarea:
+    if response.status_code == 201:
+        response_201 = Workarea.from_dict(response.json())
+
+        return response_201
+
     if response.status_code == 409:
         response_409 = ErrorEnvelope.from_dict(response.json())
 
@@ -50,7 +56,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | Workarea]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -64,7 +70,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: WorkareaCreate,
     idempotency_key: str,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | Workarea]:
     """Create a child workarea in development.
 
      Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew
@@ -82,7 +88,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | Workarea]
     """
 
     kwargs = _get_kwargs(
@@ -102,7 +108,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: WorkareaCreate,
     idempotency_key: str,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | Workarea | None:
     """Create a child workarea in development.
 
      Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew
@@ -120,7 +126,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | Workarea
     """
 
     return sync_detailed(
@@ -135,7 +141,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: WorkareaCreate,
     idempotency_key: str,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | Workarea]:
     """Create a child workarea in development.
 
      Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew
@@ -153,7 +159,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | Workarea]
     """
 
     kwargs = _get_kwargs(
@@ -171,7 +177,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: WorkareaCreate,
     idempotency_key: str,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | Workarea | None:
     """Create a child workarea in development.
 
      Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew
@@ -189,7 +195,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | Workarea
     """
 
     return (

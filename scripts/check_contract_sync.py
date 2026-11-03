@@ -3,7 +3,10 @@
 
 The API contract is declared on three surfaces that must agree by construction:
 
-  1. docs/api/openapi.yaml       — the ErrorCode enum and the paths section
+  1. docs/api/openapi.yaml       — the ErrorCode enum and the served paths, and
+     docs/api/openapi-designed.yaml — the designed paths and, under
+                                   x-oml-designed-fields, the designed fields of
+                                   served operations (ADR-0039 d9)
   2. docs/api/errors.md          — the per-family code tables and the status-code index
   3. docs/api/http-api.md        — the endpoint surface (tables, bullets, headings)
 
@@ -11,8 +14,15 @@ This script extracts each surface and fails with a diff on any disagreement:
 
   * an error code present in one of {enum, family tables, status index} and not the others
   * a code whose HTTP status differs between its family table row and the status index
-  * a path+method present in openapi.yaml and never documented on http-api.md,
-    or documented on http-api.md and absent from openapi.yaml
+  * a path+method present in either OpenAPI document and never documented on
+    http-api.md, or documented on http-api.md and absent from both
+  * a path+method declared in both OpenAPI documents
+  * an x-oml-designed-fields entry that names no served operation, or a side
+    other than request and response, or a field the served operation's request
+    (body properties and parameters) or 2xx response already declares
+  * a surface-table row on http-api.md whose Contract cell says served for an
+    operation openapi.yaml does not declare, or designed for one
+    openapi-designed.yaml does not declare
 
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
@@ -34,6 +44,10 @@ Parsing rules (kept deliberately dumb and documented):
     segment (`POST /v2/memories/{id}/reassign` · `/demote`).
   * Path placeholders are normalized to {} before comparison, because http-api.md
     writes {id} where openapi.yaml writes {workarea_id}.
+  * A surface table is any table with a Contract column; its cell is served or
+    designed, and it marks every endpoint span of its row.
+  * A $ref is followed within its own document, or into openapi.yaml when it
+    names that file; allOf members contribute their properties.
 
 Dependencies: stdlib + PyYAML.
 Exit status: 0 when all surfaces agree, 1 with a readable diff otherwise.
@@ -54,6 +68,9 @@ ROOT = Path(__file__).resolve().parent.parent
 ERRORS_MD = ROOT / "docs" / "api" / "errors.md"
 HTTP_API_MD = ROOT / "docs" / "api" / "http-api.md"
 OPENAPI_YAML = ROOT / "docs" / "api" / "openapi.yaml"
+DESIGNED_YAML = ROOT / "docs" / "api" / "openapi-designed.yaml"
+DESIGNED_FIELDS = "x-oml-designed-fields"
+CONTRACT_MARKS = {"served", "designed"}
 
 CODE_RE = re.compile(r"`([a-z_]+\.[a-z_]+)`")
 SPAN_RE = re.compile(r"`([^`]+)`")
@@ -205,6 +222,103 @@ def http_api_md_ops(text: str) -> set[tuple[str, str]]:
     return ops
 
 
+def http_api_md_marks(text: str) -> tuple[dict[tuple[str, str], set[str]], list[str]]:
+    """(METHOD, path) -> the Contract marks its surface-table rows give it."""
+    marks: dict[tuple[str, str], set[str]] = {}
+    problems: list[str] = []
+    for table in parse_pipe_tables(text):
+        header = table[0]
+        if "Contract" not in header:
+            continue
+        column = header.index("Contract")
+        for row in table[1:]:
+            mark = row[column].strip("`* ") if column < len(row) else ""
+            if mark not in CONTRACT_MARKS:
+                problems.append(f"surface row with Contract cell {mark!r}, not served or designed: {row[0]}")
+                continue
+            for op in http_api_md_ops(row[0]):
+                marks.setdefault(op, set()).add(mark)
+    return marks, problems
+
+
+def operations_by_id(spec: dict) -> dict[str, dict]:
+    ops: dict[str, dict] = {}
+    for item in spec["paths"].values():
+        if not isinstance(item, dict):
+            continue
+        for method, op in item.items():
+            if method.lower() in OPENAPI_METHODS and isinstance(op, dict) and "operationId" in op:
+                ops[op["operationId"]] = op
+    return ops
+
+
+def resolve(node, docs: dict[str, dict], doc: str):
+    """Follow $ref until a node without one; returns (node, the document it is in)."""
+    seen = set()
+    while isinstance(node, dict) and "$ref" in node:
+        target, _, pointer = node["$ref"].partition("#")
+        doc = target or doc
+        if (doc, pointer) in seen:
+            break
+        seen.add((doc, pointer))
+        node = docs[doc]
+        for part in pointer.strip("/").split("/"):
+            node = node[part]
+    return node, doc
+
+
+def schema_fields(schema, docs: dict[str, dict], doc: str) -> set[str]:
+    """The property names a schema declares, through $ref, allOf, oneOf and anyOf."""
+    schema, doc = resolve(schema, docs, doc)
+    if not isinstance(schema, dict):
+        return set()
+    fields = set(schema.get("properties", {}))
+    for combinator in ("allOf", "oneOf", "anyOf"):
+        for member in schema.get(combinator, []):
+            fields |= schema_fields(member, docs, doc)
+    return fields
+
+
+def served_fields(op: dict, docs: dict[str, dict]) -> dict[str, set[str]]:
+    """The request fields (body properties, parameter names) and 2xx response fields of op."""
+    request: set[str] = set()
+    for parameter in op.get("parameters", []):
+        parameter, _ = resolve(parameter, docs, "openapi.yaml")
+        request.add(parameter["name"])
+    body, _ = resolve(op.get("requestBody", {}), docs, "openapi.yaml")
+    for media in body.get("content", {}).values():
+        request |= schema_fields(media.get("schema", {}), docs, "openapi.yaml")
+    response: set[str] = set()
+    for status, answer in op.get("responses", {}).items():
+        if not str(status).startswith("2"):
+            continue
+        answer, _ = resolve(answer, docs, "openapi.yaml")
+        for media in answer.get("content", {}).values():
+            response |= schema_fields(media.get("schema", {}), docs, "openapi.yaml")
+    return {"request": request, "response": response}
+
+
+def designed_field_problems(spec: dict, designed: dict) -> list[str]:
+    docs = {"openapi.yaml": spec, "openapi-designed.yaml": designed}
+    served = operations_by_id(spec)
+    entries = designed.get(DESIGNED_FIELDS)
+    if not isinstance(entries, dict) or not entries:
+        return [f"openapi-designed.yaml declares no {DESIGNED_FIELDS} map"]
+    problems: list[str] = []
+    for operation_id, sides in entries.items():
+        if operation_id not in served:
+            problems.append(f"{operation_id}: names no operation openapi.yaml serves")
+            continue
+        fields = served_fields(served[operation_id], docs)
+        for side, declared in (sides or {}).items():
+            if side not in fields:
+                problems.append(f"{operation_id}.{side}: a side other than request and response")
+                continue
+            for field in sorted(set(declared or {}) & fields[side]):
+                problems.append(f"{operation_id}.{side}.{field}: designed and also served")
+    return problems
+
+
 def format_ops(ops: set[tuple[str, str]]) -> list[str]:
     return [f"{method} {path}" for method, path in sorted(ops, key=lambda t: (t[1], t[0]))]
 
@@ -215,13 +329,19 @@ def main() -> int:
     errors_text = ERRORS_MD.read_text(encoding="utf-8")
     http_text = HTTP_API_MD.read_text(encoding="utf-8")
     spec = yaml.safe_load(OPENAPI_YAML.read_text(encoding="utf-8"))
+    designed = yaml.safe_load(DESIGNED_YAML.read_text(encoding="utf-8"))
 
     family_codes, family_problems = errors_md_family_codes(errors_text)
     index_codes, index_problems = errors_md_status_index(errors_text)
     enum_codes = openapi_error_codes(spec)
-    spec_ops = openapi_ops(spec)
+    served_ops = openapi_ops(spec)
+    designed_ops = openapi_ops(designed)
+    spec_ops = served_ops | designed_ops
     doc_ops = http_api_md_ops(http_text)
+    marks, mark_problems = http_api_md_marks(http_text)
 
+    if mark_problems:
+        failures.append(("http-api.md surface tables: parse problems", mark_problems))
     if family_problems:
         failures.append(("errors.md family tables: parse problems", family_problems))
     if index_problems:
@@ -233,7 +353,9 @@ def main() -> int:
         ("errors.md family-table codes", len(family_codes)),
         ("errors.md status-index codes", len(index_codes)),
         ("openapi.yaml ErrorCode enum", len(enum_codes)),
-        ("openapi.yaml path+method ops", len(spec_ops)),
+        ("openapi.yaml path+method ops", len(served_ops)),
+        ("openapi-designed.yaml path+method ops", len(designed_ops)),
+        ("http-api.md Contract-marked ops", len(marks)),
         ("http-api.md documented ops", len(doc_ops)),
     ]:
         if size < 10:
@@ -270,16 +392,37 @@ def main() -> int:
     if status_lines:
         failures.append(("HTTP status disagreement between family tables and status index", status_lines))
 
+    in_both = served_ops & designed_ops
+    if in_both:
+        failures.append(
+            ("paths declared in both openapi.yaml and openapi-designed.yaml", format_ops(in_both))
+        )
     only_spec = spec_ops - doc_ops
     only_docs = doc_ops - spec_ops
     if only_spec:
         failures.append(
-            ("paths in openapi.yaml never documented on http-api.md", format_ops(only_spec))
+            ("paths in the OpenAPI documents never documented on http-api.md", format_ops(only_spec))
         )
     if only_docs:
         failures.append(
-            ("paths documented on http-api.md but absent from openapi.yaml", format_ops(only_docs))
+            ("paths documented on http-api.md but absent from both OpenAPI documents",
+             format_ops(only_docs))
         )
+
+    field_problems = designed_field_problems(spec, designed)
+    if field_problems:
+        failures.append((f"{DESIGNED_FIELDS} disagrees with the served operations", field_problems))
+
+    mark_lines = []
+    for op, op_marks in sorted(marks.items(), key=lambda t: (t[0][1], t[0][0])):
+        want = {"served"} if op in served_ops else {"designed"} if op in designed_ops else set()
+        if want and op_marks != want:
+            mark_lines.append(
+                f"{op[0]} {op[1]}: http-api.md marks it {sorted(op_marks)}, "
+                f"the OpenAPI documents declare it {sorted(want)[0]}"
+            )
+    if mark_lines:
+        failures.append(("http-api.md Contract marks disagree with the OpenAPI documents", mark_lines))
 
     if failures:
         print("contract-sync check FAILED\n")
@@ -292,7 +435,8 @@ def main() -> int:
 
     print("contract-sync check passed")
     print(f"  error codes agreeing on all three surfaces: {len(enum_set)}")
-    print(f"  path+method operations agreeing: {len(spec_ops)}")
+    print(f"  path+method operations agreeing: {len(spec_ops)} "
+          f"({len(served_ops)} served, {len(designed_ops)} designed)")
     return 0
 
 

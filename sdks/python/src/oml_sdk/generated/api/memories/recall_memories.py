@@ -87,7 +87,8 @@ def sync_detailed(
             answers. A derived path is neither, and is refused (request.validation).
         body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
             — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
-            are refused (request.validation).
+            are refused (request.validation), and so are the designed vocabulary filter's terms and
+            expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,7 +131,8 @@ def sync(
             answers. A derived path is neither, and is refused (request.validation).
         body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
             — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
-            are refused (request.validation).
+            are refused (request.validation), and so are the designed vocabulary filter's terms and
+            expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,7 +170,8 @@ async def asyncio_detailed(
             answers. A derived path is neither, and is refused (request.validation).
         body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
             — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
-            are refused (request.validation).
+            are refused (request.validation), and so are the designed vocabulary filter's terms and
+            expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -209,7 +212,8 @@ async def asyncio(
             answers. A derived path is neither, and is refused (request.validation).
         body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
             — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
-            are refused (request.validation).
+            are refused (request.validation), and so are the designed vocabulary filter's terms and
+            expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

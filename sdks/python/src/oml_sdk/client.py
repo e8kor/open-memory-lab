@@ -21,22 +21,22 @@ import httpx
 from .errors import ApiError, ConfigError, NotBuiltError, TransportError, error_from_response
 from .generated.api.memories import (
     get_memory,
-    propose_supersession,
+    list_memories,
     recall_memories,
-    search_memories,
     submit_memory,
+    supersede_memory,
 )
 from .generated.api.review import post_verdict, review_next
 from .generated.client import Client
 from .generated.models import (
+    ListMemoriesKind,
+    ListMemoriesState,
     Memory,
     MemoryPage,
     MemorySummary,
     RecallRequest,
     RecallRequestKindsItem,
     RecallResponse,
-    SearchMemoriesKind,
-    SearchMemoriesState,
     Serve,
     SubmitAccepted,
     SubmitRequest,
@@ -276,12 +276,12 @@ class OmlClient:
     ) -> MemoryPage:
         """One page of `GET /v1/memories`, newest first, with its `next_cursor`."""
         return self._send(
-            lambda: search_memories.sync_detailed(
+            lambda: list_memories.sync_detailed(
                 client=self._api,
                 own=_opt(own),
                 claim_key=_opt(claim_key),
-                state=SearchMemoriesState(state) if state is not None else UNSET,
-                kind=SearchMemoriesKind(kind) if kind is not None else UNSET,
+                state=ListMemoriesState(state) if state is not None else UNSET,
+                kind=ListMemoriesKind(kind) if kind is not None else UNSET,
                 workarea_id=_opt(workarea_id),
                 since=_opt(since),
                 until=_opt(until),
@@ -331,7 +331,7 @@ class OmlClient:
         )
         return self._write(
             idempotency_key,
-            lambda key: propose_supersession.sync_detailed(
+            lambda key: supersede_memory.sync_detailed(
                 artifact_id,
                 client=self._api,
                 body=request,
