@@ -10,7 +10,7 @@ use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::{
-    EventDraft, EventTime, HeldBy, KeySet, LadderRefusal, MemoryKind, MemoryStatus, Role,
+    EventDraft, EventTime, FrozenOp, HeldBy, KeySet, LadderRefusal, MemoryKind, MemoryStatus, Role,
     Sha256Hash, SignedEnvelope, WorkareaStatus, event_types, next_envelope, sha256_digest_string,
     sign, verify_chain,
 };
@@ -6469,4 +6469,410 @@ async fn a_one_admin_tenant_cannot_freeze_alone() {
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
     let node = store.workarea(boot.tenant_id, crew).await.expect("read");
     assert_eq!(node.expect("node").status, WorkareaStatus::Development);
+}
+
+// -- freeze: a validated area refuses by admission policy, never by grant
+// resolution (ADR-0009 d2, d4, d5) ----------------------------------------
+
+/// Moves `node` to `validated` through the real verbs: the admin proposes
+/// each rung and `ratifier`, a second identity with dreamer access on the
+/// node, ratifies it.
+async fn freeze(app: &TestApp, admin: &str, ratifier: &str, node: Uuid) {
+    for rung in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+        let proposal = app
+            .propose_transition(admin, node.into(), rung)
+            .await
+            .expect("a forward proposal");
+        app.ratify_transition(ratifier, node.into(), proposal.transition_id)
+            .await
+            .expect("a second identity ratifies");
+    }
+}
+
+/// Asserts `err` is `workarea.frozen` on `node` for `op`.
+fn assert_frozen(err: &AppError, node: Uuid, op: FrozenOp) {
+    assert!(
+        matches!(
+            err,
+            AppError::WorkareaFrozen { workarea_id, op: o } if *workarea_id == node && *o == op
+        ),
+        "{err:?}"
+    );
+}
+
+/// A writer key holding writer and reader on the root reaches the crew area
+/// by inheritance, a second writer holds them on the crew itself with the
+/// crew as its default, and each submits with and without the header, the
+/// scan's veto marker included: every one is `workarea.frozen`, before the
+/// scan, and nothing is journalled or queued (ADR-0009 d5;
+/// workareas.md refusal matrix, new claim write).
+#[tokio::test]
+async fn a_submission_into_a_validated_workarea_is_frozen_for_every_holder_of_write_access_and_journals_nothing()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let on_crew = agent(&app, admin, "crew/agent-7", crew).await;
+    let on_root = issue_with(
+        &app,
+        admin,
+        Role::Writer,
+        "rooted",
+        vec![
+            grant(boot.root_workarea_id, Role::Writer),
+            grant(boot.root_workarea_id, Role::Reader),
+        ],
+    )
+    .await;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let outbox = store.outbox_len(boot.tenant_id);
+
+    let attempts = [
+        (&on_crew, submit_req("f1", "the canary drains first")),
+        (
+            &on_crew,
+            submit_to("f2", "the canary drains first", by_name("crew")),
+        ),
+        (
+            &on_crew,
+            submit_into("f3", "-----BEGIN PRIVATE KEY-----", crew),
+        ),
+        (&on_root, submit_into("f4", "the canary drains first", crew)),
+        (
+            &on_root,
+            submit_to("f5", "-----BEGIN PRIVATE KEY-----", by_name("crew")),
+        ),
+    ];
+    for (key, req) in &attempts {
+        let err = app.submit_memory(&key.value, req).await.unwrap_err();
+        assert_frozen(&err, crew, FrozenOp::Write);
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    assert_eq!(store.outbox_len(boot.tenant_id), outbox);
+    assert!(
+        app.review_next(&dora.value)
+            .await
+            .expect("review")
+            .is_none()
+    );
+}
+
+/// Effective access is consulted before status: a key the area is outside
+/// of is `access.not_found`, one that only reads it is
+/// `access.grant_refused`, and a reader key is `access.verb_ceiling`, as
+/// they would be on an open area (workareas.md refusal matrix preamble).
+#[tokio::test]
+async fn a_key_without_access_to_a_validated_workarea_still_gets_its_access_refusal_first() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let elsewhere = workarea(&app, admin, "elsewhere", boot.root_workarea_id).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let outsider = agent(&app, admin, "outsider", elsewhere).await;
+    let only_reads = issue_with(
+        &app,
+        admin,
+        Role::Writer,
+        "only-reads",
+        vec![grant(elsewhere, Role::Writer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .submit_memory(&outsider.value, &submit_into("a1", "x", crew))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let err = app
+        .submit_memory(&only_reads.value, &submit_into("a2", "x", crew))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::GrantRefused { workarea_id, needed_role: Role::Writer } if workarea_id == crew
+        ),
+        "{err:?}"
+    );
+    let err = app
+        .submit_memory(&reader.value, &submit_into("a3", "x", crew))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A supersession, a retirement included, of a promoted tip in an area
+/// validated since is `workarea.frozen` at step 5's last check, whether the
+/// author or a dreamer proposing an edit sends it, and journals nothing;
+/// the target-dependent refusals before it still answer first
+/// (roles-and-keys.md supersede, step 5; ADR-0009 d5).
+#[tokio::test]
+async fn a_supersede_whose_target_lies_in_a_validated_workarea_is_frozen() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let open = workarea(&app, admin, "open", boot.root_workarea_id).await;
+    let writer = agent(&app, admin, "crew/agent-7", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let editor = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "eddie",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let target = promoted(
+        &app,
+        &writer.value,
+        &dora.value,
+        &submit_req("s1", "the canary drains first"),
+    )
+    .await;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for (key, req) in [
+        (
+            &writer,
+            supersede_req("s2", target, "the canary drains last"),
+        ),
+        (&writer, retire_req("s3", target, "no canary any more")),
+        (
+            &editor,
+            supersede_req("s4", target, "the canary drains twice"),
+        ),
+    ] {
+        let err = app.supersede(&key.value, &req).await.unwrap_err();
+        assert_frozen(&err, crew, FrozenOp::Write);
+    }
+
+    // An `X-OML-Workarea` other than the target's is answered before freeze.
+    let err = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                workarea_id: Some(open.into()),
+                ..supersede_req("s5", target, "x")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::WorkareaNotTarget { .. }), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A row held when its area is validated cannot be approved: the approval
+/// is `workarea.frozen` before its verdict is sealed, nothing is journalled,
+/// and the row stays held, visible to its author (ADR-0009 d5; workareas.md
+/// refusal matrix, promotion).
+#[tokio::test]
+async fn an_approval_of_a_held_row_in_a_workarea_validated_after_submission_is_frozen_and_the_row_stays_held()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "crew/agent-7", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let id = app
+        .submit_memory(&writer.value, &submit_req("h1", "the canary drains first"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let outbox = store.outbox_len(boot.tenant_id);
+
+    let err = app
+        .post_verdict(&dora.value, id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert_frozen(&err, crew, FrozenOp::Promote);
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    assert_eq!(store.outbox_len(boot.tenant_id), outbox);
+    let row = store
+        .memory(boot.tenant_id, id)
+        .await
+        .expect("read")
+        .expect("the row");
+    assert_eq!(row.status, MemoryStatus::Held);
+    let own = app.get_memory(&writer.value, id).await.expect("own row");
+    assert_eq!(own.memory.status, MemoryStatus::Held);
+}
+
+/// No child is created under a validated node, by id or by name, and
+/// nothing is journalled; a child under a committed node is still created
+/// (ADR-0009 d4; workareas.md child-status rule).
+#[tokio::test]
+async fn creating_a_child_under_a_validated_workarea_is_frozen() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let committed = workarea(&app, admin, "committed", boot.root_workarea_id).await;
+    let proposal = app
+        .propose_transition(admin, committed.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let ratifier = issue(&app, admin, Role::Dreamer, "rita", committed).await;
+    app.ratify_transition(&ratifier.value, committed.into(), proposal.transition_id)
+        .await
+        .expect("ratified");
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for parent in [Reference::from(crew), by_name("crew")] {
+        let err = app
+            .create_workarea(admin, &name("late-child"), Some(parent), None)
+            .await
+            .unwrap_err();
+        assert_frozen(&err, crew, FrozenOp::CreateChild);
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    workarea(&app, admin, "child", committed).await;
+}
+
+/// The crew-metadata update is one of the three mutations a validated area
+/// admits: the workarea is pointed at a crew record, and that record's
+/// charter is corrected, each journalled (ADR-0009 d5; workareas.md crew
+/// records).
+#[tokio::test]
+async fn a_validated_workareas_crew_record_can_still_be_updated() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let record = metals_crew(&app, admin).await;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let pointed = app
+        .set_workarea_crew(admin, crew.into(), by_name("metals-crew"))
+        .await
+        .expect("a frozen area's crew is corrected");
+    assert_eq!(pointed.crew_id, Some(record.crew_id));
+    assert_eq!(pointed.status, WorkareaStatus::Validated);
+    let updated = app
+        .update_crew(
+            admin,
+            by_name("metals-crew"),
+            &CrewUpdate {
+                charter_uri: Some("https://crews.example.com/metals/v2.md".to_owned()),
+                external_manager: None,
+            },
+        )
+        .await
+        .expect("the record stays correctable");
+    let info = app
+        .workarea_info(admin, Some(crew.into()))
+        .await
+        .expect("read");
+    assert_eq!(info.crew, Some(updated));
+    let types: Vec<String> = journal(&store, boot.tenant_id).await[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            event_types::WORKAREA_CREW_UPDATED,
+            event_types::CREW_UPDATED
+        ]
+    );
+}
+
+/// Freezing is not archival: the recall and the get of a promoted claim
+/// answer the same after the area is validated as before (workareas.md,
+/// frozen is not read-only-dead).
+#[tokio::test]
+async fn a_validated_workarea_still_serves_recall_and_get_of_its_promoted_claims() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "crew/agent-7", crew).await;
+    let rhea = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let id = promoted(
+        &app,
+        &writer.value,
+        &dora.value,
+        &submit_req("r1", "the canary drains first"),
+    )
+    .await;
+    let read = || async {
+        let mut answers = Vec::new();
+        for key in [&writer, &rhea] {
+            let got = app.get_memory(&key.value, id).await.expect("get");
+            let hits = hit_ids(&app, &key.value, "canary").await;
+            answers.push((got.memory, hits));
+        }
+        answers
+    };
+    let open = read().await;
+    assert!(open.iter().all(|(_, hits)| hits == &vec![id]));
+
+    freeze(&app, admin, &dora.value, crew).await;
+    assert_eq!(read().await, open);
+}
+
+/// Freezing journals only its transitions: no grant is issued, edited or
+/// denied, and every key's permission epoch stays where it was
+/// (ADR-0009 d2; workareas.md permission epoch).
+#[tokio::test]
+async fn freezing_changes_no_grant_and_no_permission_epoch() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "crew/agent-7", crew).await;
+    let dora = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dora",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let access = || async {
+        let mut seen = Vec::new();
+        for key in [&writer, &dora] {
+            let detail = app.key(admin, key.key_id.into()).await.expect("key read");
+            let epoch = app
+                .workarea_info(&key.value, Some(crew.into()))
+                .await
+                .expect("a readable node")
+                .permission_epoch;
+            seen.push((detail.access, epoch));
+        }
+        seen
+    };
+    let before = access().await;
+    let seq = journal(&store, boot.tenant_id).await.len();
+
+    freeze(&app, admin, &dora.value, crew).await;
+    assert_eq!(access().await, before);
+    let types: Vec<String> = journal(&store, boot.tenant_id).await[seq..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert!(
+        types
+            .iter()
+            .all(|t| t == event_types::WORKAREA_STATUS_PROPOSED
+                || t == event_types::WORKAREA_STATUS_TRANSITION),
+        "{types:?}"
+    );
 }
