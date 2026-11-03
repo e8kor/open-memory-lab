@@ -290,7 +290,7 @@ pub fn check_live_classification(
 // reading: an edge binds versions, but hierarchy and replacement are
 // relations between terms, as the CURIE-keyed closure table records them,
 // so a cycle is one over CURIEs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TermEdge {
     pub label: OmlLabel,
     pub from: Curie,
