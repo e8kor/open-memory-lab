@@ -320,3 +320,149 @@ async fn an_authorize_request_writes_no_authorization_row() {
     assert!(!request.redirect_uri_sent);
     assert_eq!(store.authorization_count(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// The document cache's order (ADR-0031 d5): a copy inside its Cache-Control
+// lifetime is served with no fetch; past it a fetch is made, and a failed or
+// busy fetch falls back to a copy kept under 24 hours; past 24 hours nothing
+// is served. A fresh app's one clock reading is `T0`, so each copy below is
+// cached at an exact age.
+// ---------------------------------------------------------------------------
+
+/// The first clock reading of a fresh app, the `now` of its first request.
+const T0: &str = "2026-10-29T12:00:00.000000Z";
+const DAY_SECONDS: i64 = 24 * 60 * 60;
+
+/// `T0` less `seconds` and `micros`.
+fn before_t0(seconds: i64, micros: i64) -> EventTime {
+    let t0 = EventTime::parse(T0).expect("a time");
+    EventTime::from_unix_micros(t0.unix_micros() - seconds * 1_000_000 - micros)
+        .expect("a time before T0")
+}
+
+/// A cached copy distinct from what a fetch serves: its name tells a page
+/// served from the cache from one served from a fetch.
+fn cached_document() -> ClientDescription {
+    let body = format!(
+        r#"{{"client_id":"{DOC_URL}","client_name":"Cached Claude","redirect_uris":["{CLAUDE_CALLBACK}"]}}"#
+    );
+    ClientDescription {
+        client_id: DOC_URL.to_owned(),
+        client_name: "Cached Claude".to_owned(),
+        redirect_uris: vec![CLAUDE_CALLBACK.to_owned()],
+        metadata_digest: Sha256Hash::digest(body.as_bytes()),
+    }
+}
+
+/// A store holding the cached copy fetched at `fetched_at` with a
+/// `max_age`-second lifetime, its last use the fetch.
+async fn cached_at(fetched_at: &EventTime, max_age: u64) -> MemStore {
+    let store = MemStore::new();
+    store
+        .upsert_cimd(cached_document(), fetched_at, max_age)
+        .await
+        .expect("a cached copy");
+    store
+}
+
+/// The client name on the page a valid request renders.
+async fn page_name(app: &TestApp, docs: &MemDocuments) -> String {
+    match outcome(app, docs, params()).await {
+        AuthorizeOutcome::Page(page) => page.client_name,
+        other => panic!("a valid request renders the page, not {other:?}"),
+    }
+}
+
+async fn last_used(store: &MemStore) -> Option<EventTime> {
+    store
+        .oauth_client(DOC_URL)
+        .await
+        .expect("read")
+        .expect("the copy is cached")
+        .last_used_at
+}
+
+#[tokio::test]
+async fn a_document_cached_within_its_cache_control_lifetime_is_served_without_a_fetch() {
+    // One microsecond inside an hour's lifetime.
+    let fetched_at = before_t0(3_600, -1);
+    let store = cached_at(&fetched_at, 3_600).await;
+    let app = app(store.clone());
+    let docs = documents();
+    assert_eq!(last_used(&store).await, Some(fetched_at));
+
+    assert_eq!(page_name(&app, &docs).await, "Cached Claude");
+    assert_eq!(docs.fetches(), 0);
+    // The use is touched for the cache's eviction order.
+    assert_eq!(
+        last_used(&store).await,
+        Some(EventTime::parse(T0).expect("a time"))
+    );
+}
+
+#[tokio::test]
+async fn a_document_at_its_cache_control_lifetime_is_fetched_again_and_the_fetch_replaces_it() {
+    // Exactly an hour old under an hour's lifetime: no longer fresh.
+    let store = cached_at(&before_t0(3_600, 0), 3_600).await;
+    let app = app(store.clone());
+    let docs = documents();
+
+    assert_eq!(page_name(&app, &docs).await, "Claude");
+    assert_eq!(docs.fetches(), 1);
+    let row = store
+        .oauth_client(DOC_URL)
+        .await
+        .expect("read")
+        .expect("the fetch is cached");
+    assert_eq!(row.client_name, "Claude");
+    assert_eq!(row.metadata_digest, Sha256Hash::digest(&document()));
+    let t0 = EventTime::parse(T0).expect("a time");
+    assert_eq!(row.fetched_at, Some(t0.clone()));
+    assert_eq!(row.last_used_at, Some(t0));
+}
+
+#[tokio::test]
+async fn a_document_past_its_lifetime_but_within_24_hours_is_served_when_the_fetch_fails_or_is_busy()
+ {
+    for failure in [DocumentFetchFailure::Failed, DocumentFetchFailure::Busy] {
+        // One microsecond short of 24 hours, its hour's lifetime long past.
+        let fetched_at = before_t0(DAY_SECONDS, -1);
+        let store = cached_at(&fetched_at, 3_600).await;
+        let app = app(store.clone());
+        let docs = MemDocuments::new();
+        docs.serve(DOC_URL, Err(failure));
+
+        assert_eq!(page_name(&app, &docs).await, "Cached Claude", "{failure:?}");
+        assert_eq!(docs.fetches(), 1, "the stale copy is refetched first");
+        assert_eq!(
+            last_used(&store).await,
+            Some(EventTime::parse(T0).expect("a time")),
+            "{failure:?}"
+        );
+        // The copy served is kept as it was, its fetch unchanged.
+        let row = store.oauth_client(DOC_URL).await.expect("read");
+        assert_eq!(row.expect("kept").fetched_at, Some(fetched_at));
+    }
+}
+
+#[tokio::test]
+async fn a_document_past_24_hours_is_not_served_and_a_failed_fetch_is_client_invalid() {
+    for (failure, refused) in [
+        (DocumentFetchFailure::Failed, ClientInvalid::Fetch),
+        (DocumentFetchFailure::Busy, ClientInvalid::FetchBusy),
+    ] {
+        // Exactly 24 hours old, under a lifetime of a day: kept no longer.
+        let store = cached_at(&before_t0(DAY_SECONDS, 0), 86_400).await;
+        let app = app(store.clone());
+        let docs = MemDocuments::new();
+        docs.serve(DOC_URL, Err(failure));
+
+        assert_eq!(
+            outcome(&app, &docs, params()).await,
+            AuthorizeOutcome::PageRefusal(Refusal::ClientInvalid(refused))
+        );
+        assert_eq!(docs.fetches(), 1);
+        // A refused request does not touch the copy it would not serve.
+        assert_eq!(last_used(&store).await, Some(before_t0(DAY_SECONDS, 0)));
+    }
+}
