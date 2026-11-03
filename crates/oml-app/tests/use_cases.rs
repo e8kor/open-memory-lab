@@ -7790,6 +7790,417 @@ async fn a_refresh_token_never_resolves_as_an_access_credential() {
     }
 }
 
+/// An app over `store` whose deployment sets `oauth.issuer`, and a handle
+/// on its clock that moves its time forward.
+fn oauth_app_with_clock(store: MemStore) -> (TestApp, FixedClock) {
+    let clock = FixedClock::new();
+    let app = App::new(
+        store,
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+    .with_oauth_issuer(Issuer::parse(ISSUER).expect("a public origin"));
+    (app, clock)
+}
+
+/// `key.revoked` of `key_id`, sealed onto `tenant`'s chain as a fixture.
+async fn revoke_key(store: &MemStore, tenant: Uuid, key_id: Uuid) {
+    seal_onto(
+        store,
+        tenant,
+        event_types::KEY_REVOKED,
+        "2026-10-29T12:01:00.000000Z",
+        json!({ "key_id": key_id.to_string() }),
+        MetadataFold::KeyRevoked { key_id },
+    )
+    .await;
+}
+
+/// Whether `token` resolves to no caller.
+async fn unauthorized(app: &TestApp, token: &Token) -> bool {
+    matches!(
+        app.resolve_access_token(token.as_str()).await,
+        Err(AppError::Unauthorized)
+    )
+}
+
+/// Each event's type, in chain order from `from`.
+fn types_from(events: &[SignedEnvelope], from: usize) -> Vec<&str> {
+    events[from..]
+        .iter()
+        .map(|e| e.envelope.event_type.as_str())
+        .collect()
+}
+
+/// An access token lives its hour: the last microsecond of it resolves,
+/// and the token presented at its expiry is refused (roles-and-keys.md
+/// connections; ADR-0031 d11).
+#[tokio::test]
+async fn an_access_token_presented_after_its_hour_is_unauthorized() {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    clock.advance(tokens.expires_in - 1);
+    app.resolve_access_token(tokens.access_token.as_str())
+        .await
+        .expect("within its hour the token resolves");
+    clock.advance(1);
+
+    assert!(unauthorized(&app, &tokens.access_token).await);
+}
+
+/// A connection's access token resolves to nothing once its key's
+/// `key.revoked` commits, the connection's own state untouched
+/// (roles-and-keys.md connections; ADR-0031 d11).
+#[tokio::test]
+async fn after_its_keys_key_revoked_a_connections_access_token_is_unauthorized() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    revoke_key(&store, boot.tenant_id, issued.key_id).await;
+
+    assert!(unauthorized(&app, &tokens.access_token).await);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Open);
+}
+
+/// A connection is bound to `<issuer>/mcp` at Connect: under another
+/// `oauth.issuer` its access token resolves to nothing, and with the
+/// origin set back the same token resolves again (roles-and-keys.md
+/// connections, live; ADR-0031 d1, d11).
+#[tokio::test]
+async fn an_access_token_under_a_moved_issuer_is_unauthorized_and_resolves_once_it_is_set_back() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+    let moved = app_over(store.clone())
+        .with_oauth_issuer(Issuer::parse("https://memory.example.org").expect("an origin"));
+
+    assert!(unauthorized(&moved, &tokens.access_token).await);
+
+    app.resolve_access_token(tokens.access_token.as_str())
+        .await
+        .expect("the origin set back resolves the token");
+}
+
+/// An admin's revocation of the connection ends its access token at once
+/// (roles-and-keys.md connections; ADR-0031 d11).
+#[tokio::test]
+async fn after_an_admin_revokes_the_connection_its_access_token_is_unauthorized() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connected(&app, admin, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+
+    app.revoke_connection(admin, issued.key_id.into(), connection.connection_id, None)
+        .await
+        .expect("an admin revokes the open connection");
+
+    assert!(unauthorized(&app, &tokens.access_token).await);
+}
+
+/// Two tenants' connections each resolve to their own tenant's connector
+/// key, whatever tenant the token's digest is found under
+/// (roles-and-keys.md connections; ADR-0031 d10, d11).
+#[tokio::test]
+async fn each_tenants_access_token_resolves_to_its_own_tenants_key() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (acme, acme_crew) = tenant(&app).await;
+    let (acme_key, acme_code) = connected(&app, &acme.admin_key.value, acme_crew).await;
+    let acme_tokens = app
+        .exchange(exchange_form(&acme_code))
+        .await
+        .expect("acme's exchange");
+    let globex = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("globex"),
+            admin_key_name: name("globex-admin"),
+            admin_principal: "gina-admin".to_owned(),
+        })
+        .await
+        .expect("a second tenant");
+    let lab = workarea(
+        &app,
+        &globex.admin_key.value,
+        "lab",
+        globex.root_workarea_id,
+    )
+    .await;
+    let (globex_key, globex_code) = connected(&app, &globex.admin_key.value, lab).await;
+    let globex_tokens = app
+        .exchange(exchange_form(&globex_code))
+        .await
+        .expect("globex's exchange");
+
+    for (tokens, tenant_id, key_id) in [
+        (&acme_tokens, acme.tenant_id, acme_key.key_id),
+        (&globex_tokens, globex.tenant_id, globex_key.key_id),
+    ] {
+        let caller = app
+            .resolve_access_token(tokens.access_token.as_str())
+            .await
+            .expect("each token resolves");
+        assert_eq!(
+            (caller.key().tenant_id, caller.key().key_id),
+            (tenant_id, key_id)
+        );
+    }
+}
+
+/// A key revoked after Connect ends its authorized connection at the
+/// exchange: `invalid_grant` with the reason `key_ended`, no
+/// `connection.opened`, and the code stays unredeemed (roles-and-keys.md
+/// connections; ADR-0031 d10, d11).
+#[tokio::test]
+async fn a_code_whose_key_was_revoked_after_connect_is_key_ended_and_opens_nothing() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    revoke_key(&store, boot.tenant_id, issued.key_id).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::KeyEnded),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// A newer connect code minted after Connect voids the earlier code, so
+/// the earlier authorization code is `invalid_grant` with the reason
+/// `code_voided` and opens nothing (roles-and-keys.md connections;
+/// ADR-0031 d8, d10).
+#[tokio::test]
+async fn a_newer_code_minted_after_connect_makes_the_earlier_authorization_code_code_voided() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connected(&app, admin, crew).await;
+    app.mint_connect_code(admin, issued.key_id.into())
+        .await
+        .expect("a newer code");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::CodeVoided),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// An authorization code lives 60 seconds from Connect: presented at its
+/// expiry it is `invalid_grant` with the reason `expired`, and it stays
+/// unredeemed (roles-and-keys.md connections; ADR-0031 d9, d10).
+#[tokio::test]
+async fn an_authorization_code_presented_sixty_seconds_after_connect_is_expired_and_stays_unredeemed()
+ {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    clock.advance(60);
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::Expired),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// A `key.revoked` that commits after the exchange read the key live and
+/// before its `connection.opened` is refused by the opening's fold under
+/// the chain lock; the exchange judges the code once more on a fresh read
+/// and answers `invalid_grant` with the reason `key_ended`, so the journal
+/// gains the `key.revoked` alone (roles-and-keys.md connections; ADR-0031
+/// d10, d11).
+#[tokio::test]
+async fn a_key_revoked_between_the_exchanges_read_and_its_commit_is_key_ended_and_opens_nothing() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let racing = store.clone();
+    let tenant_id = boot.tenant_id;
+    let key_id = issued.key_id;
+    store.before_next_head_read(async move { revoke_key(&racing, tenant_id, key_id).await });
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::KeyEnded),
+        "{err:?}"
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(types_from(&events, before), [event_types::KEY_REVOKED]);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// Two presentations of one code by its verifier's holder race: the one
+/// whose `connection.opened` commits first opens the connection, and the
+/// one the fold then refuses is judged by the reuse rule on its fresh
+/// read, `invalid_grant` with the reason `reused`, revoking the
+/// connection with `code_reuse` (roles-and-keys.md connections; ADR-0031
+/// d10, d12).
+#[tokio::test]
+async fn an_exchange_that_loses_the_race_for_its_code_is_judged_reused_and_revokes_the_connection()
+{
+    let store = MemStore::new();
+    let app = std::sync::Arc::new(oauth_app_over(store.clone()));
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let winner = std::sync::Arc::clone(&app);
+    let form = exchange_form(&code);
+    store.before_next_head_read(async move {
+        winner.exchange(form).await.expect("the winning exchange");
+    });
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::Reused),
+        "{err:?}"
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(
+        types_from(&events, before),
+        [
+            event_types::CONNECTION_OPENED,
+            event_types::CONNECTION_REVOKED
+        ]
+    );
+    assert_eq!(
+        events.last().expect("an event").envelope.payload["cause"],
+        json!("code_reuse")
+    );
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(
+        connection.state,
+        ConnectionState::Revoked(RevokedCause::CodeReuse)
+    );
+}
+
+/// A code whose 60 seconds end after the exchange read it and before its
+/// commit is refused by the fold at the commit's time, and the fresh read
+/// answers `invalid_grant` with the reason `expired`, opening nothing
+/// (roles-and-keys.md connections; ADR-0031 d10).
+#[tokio::test]
+async fn a_code_that_expires_between_the_exchanges_read_and_its_commit_is_expired() {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let later = clock.clone();
+    store.before_next_head_read(async move { later.advance(60) });
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::Expired),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// Refuses the next `times` openings of `connection_id`, each armed at the
+/// head read before its commit.
+fn refuse_openings(store: &MemStore, connection_id: Uuid, times: u32) {
+    if times == 0 {
+        return;
+    }
+    let handle = store.clone();
+    store.before_next_head_read(async move {
+        handle.refuse_next_commit_of(
+            event_types::CONNECTION_OPENED,
+            StoreError::ConnectionNotOpenable { connection_id },
+        );
+        refuse_openings(&handle, connection_id, times - 1);
+    });
+}
+
+/// An opening the fold refuses once is judged again on a fresh read and,
+/// still redeemable, opens; one refused on that second try too answers
+/// `invalid_grant` with the reason `unknown` and opens nothing
+/// (roles-and-keys.md connections; ADR-0031 d10).
+#[tokio::test]
+async fn an_opening_refused_once_opens_on_its_fresh_read_and_one_refused_twice_is_unknown() {
+    for (times, opens) in [(1, true), (2, false)] {
+        let store = MemStore::new();
+        let app = oauth_app_over(store.clone());
+        let (boot, crew) = tenant(&app).await;
+        let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+        let authorized = only_connection(&store, boot.tenant_id, issued.key_id).await;
+        let before = journal(&store, boot.tenant_id).await.len();
+        refuse_openings(&store, authorized.connection_id, times);
+
+        let answer = app.exchange(exchange_form(&code)).await;
+
+        let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+        let events = journal(&store, boot.tenant_id).await;
+        if opens {
+            answer.expect("the second try opens");
+            assert_eq!(connection.state, ConnectionState::Open);
+            assert_eq!(
+                types_from(&events, before),
+                [event_types::CONNECTION_OPENED]
+            );
+        } else {
+            let err = answer.unwrap_err();
+            assert_eq!(
+                code_invalid(&err),
+                Some(AuthorizationCodeInvalid::Unknown),
+                "{err:?}"
+            );
+            assert_eq!(connection.state, ConnectionState::Authorized);
+            assert_eq!(events.len(), before);
+        }
+    }
+}
+
 /// A token request that sends client authentication is
 /// `oauth.client_invalid`, by the scheme it used, before any lookup
 /// (http-api.md `POST /oauth/token`; ADR-0031 d5).

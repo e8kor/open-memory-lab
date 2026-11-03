@@ -165,6 +165,18 @@ pub struct MemStore {
     partitions: Arc<Mutex<Vec<Uuid>>>,
     /// The next partition creation's refusal, then forgotten.
     refuse_partition: Arc<Mutex<Option<StoreError>>>,
+    /// What runs before the next chain-head read answers, then forgotten.
+    before_head_read: Arc<Mutex<Option<Interleaved>>>,
+}
+
+/// Work a test lands between a use case's reads and its commit: run once,
+/// by [`MemStore::before_next_head_read`].
+pub struct Interleaved(std::pin::Pin<Box<dyn Future<Output = ()> + Send>>);
+
+impl std::fmt::Debug for Interleaved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Interleaved")
+    }
 }
 
 impl MemStore {
@@ -193,6 +205,15 @@ impl MemStore {
     /// compare-and-set, armed on any handle mid-test.
     pub fn refuse_next_commit_of(&self, event_type: &'static str, error: StoreError) {
         *self.refuse_next.lock().expect("refusal lock") = Some((event_type, error));
+    }
+
+    /// Runs `work` before the next chain-head read answers, once: a use
+    /// case reads the head just before it seals its commit, so `work`
+    /// lands after the use case's other reads and before its commit, as a
+    /// concurrent request's commit can. `work` may drive another use case
+    /// on this store; its own head reads find nothing armed.
+    pub fn before_next_head_read(&self, work: impl Future<Output = ()> + Send + 'static) {
+        *self.before_head_read.lock().expect("interleave lock") = Some(Interleaved(Box::pin(work)));
     }
 
     /// Refuses the next `create_tenant_partitions` with `error`, creating
@@ -1266,6 +1287,14 @@ impl JournalStore for MemStore {
     }
 
     async fn chain_head(&self, tenant_id: Uuid) -> Result<Option<ChainHead>, StoreError> {
+        let interleaved = self
+            .before_head_read
+            .lock()
+            .expect("interleave lock")
+            .take();
+        if let Some(Interleaved(work)) = interleaved {
+            work.await;
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };
@@ -2524,16 +2553,25 @@ impl HandleSealer for PlainSealer {
 // Clock and id generator
 // ---------------------------------------------------------------------------
 
-/// Deterministic clock: a fixed date, one microsecond per call.
-#[derive(Debug, Default)]
+/// Deterministic clock: a fixed date from noon, one microsecond per call.
+/// A clone is another handle on the same clock, so a test that hands one
+/// to an `App` can move that app's time forward with the other.
+#[derive(Debug, Default, Clone)]
 pub struct FixedClock {
-    ticks: AtomicU64,
+    ticks: Arc<AtomicU64>,
 }
 
 impl FixedClock {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Moves the clock `secs` seconds forward, on every handle: an expiry
+    /// reached without waiting for it. The clock reads within the fixed
+    /// day, so it stops short of its midnight.
+    pub fn advance(&self, secs: u64) {
+        self.ticks.fetch_add(secs * 1_000_000, Ordering::SeqCst);
     }
 }
 
@@ -2544,8 +2582,11 @@ impl Clock for FixedClock {
         let secs_total = n / 1_000_000;
         let secs = secs_total % 60;
         let mins = (secs_total / 60) % 60;
-        EventTime::parse(&format!("2026-10-29T12:{mins:02}:{secs:02}.{micros:06}Z"))
-            .expect("the fixed clock emits the fixed-width form")
+        let hours = 12 + secs_total / 3_600;
+        EventTime::parse(&format!(
+            "2026-10-29T{hours:02}:{mins:02}:{secs:02}.{micros:06}Z"
+        ))
+        .expect("the fixed clock emits the fixed-width form within its day")
     }
 }
 
