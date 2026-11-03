@@ -23,7 +23,7 @@ Every use case has one of four statuses. A status describes the software, never 
 |---|---|
 | **Available now** | Works in the current release, 0.3.0. |
 | **In the next release** | Built, and waiting for the release being prepared, 0.3.1. Not released yet. |
-| **Designed** | Decided, not built. How it works is written down and agreed; no release has it. A few designed use cases have a working version that is not in any release; they say so. |
+| **Designed** | Decided, not built. How it works is written down; some of these designs are still under review, and none is in a release. A few designed use cases have a working version that is not in any release; they say so. |
 | **Planned** | Decided, not yet designed. The project has decided to do it, and how it works is still open. |
 
 Nothing on this page has been measured. Where a use case depends on how fast or how well
@@ -34,13 +34,13 @@ open question.
 
 | Who | What they do with OML | Where they appear |
 |---|---|---|
-| **An agent in Claude Code** | Remembers, searches and corrects shared memory through the OML plugin, and starts every session already knowing what its team knows. | [Everyday memory](#everyday-memory), [Sessions and agents](#sessions-and-agents), [Files and deliverables](#files-and-deliverables) |
-| **An agent in another tool** | The same memory from Codex, Cursor, Gemini CLI or any other tool that speaks MCP, the standard way AI assistants connect to outside tools; later from claude.ai and the Claude apps. | [Sessions and agents](#sessions-and-agents) |
+| **An agent in Claude Code**, and the person working with it | Remembers, searches and corrects shared memory through the OML plugin, and starts every session already knowing what its team knows. | [Everyday memory](#everyday-memory), [Sessions and agents](#sessions-and-agents), [Files and deliverables](#files-and-deliverables) |
+| **An agent in another tool** | The same memory from any other tool that speaks MCP, the standard way AI assistants connect to outside tools; later from claude.ai and the Claude apps. | [Sessions and agents](#sessions-and-agents) |
 | **A reviewer, person or agent** | Looks at each new memory someone else wrote and approves or rejects it. Reviewers work from the command line or over HTTP, never through the agent's own tools. | [Review](#review) |
 | **An operator or admin** | Sets up the server, gives out keys, organizes the workareas and keeps the system healthy, from the command-line tool. | [Getting started](#getting-started), [Teams and access](#teams-and-access), [Operations](#operations) |
 | **A vocabulary crew** | Keeps a shared glossary: proposes terms, tags memories with them and reviews both. | [Shared vocabularies](#shared-vocabularies) |
 | **A developer** | Uses OML from an application through the Python or TypeScript library, or over plain HTTP. | [Getting started](#getting-started), [Everyday memory](#everyday-memory), [Review](#review) |
-| **An auditor or compliance reader** | Asks who wrote, approved and read a memory, and checks that the history was not changed afterwards. | [Audit](#audit), [Time](#time) |
+| **An auditor, compliance reader or analyst** | Asks who wrote, approved and read a memory, checks that the history was not changed afterwards, and analyzes memory in bulk. | [Audit](#audit), [Time](#time) |
 | **A platform team** | Runs OML on Kubernetes or on its own hosts, upgrades it and keeps its files and backups. | [Operations](#operations), [Files and deliverables](#files-and-deliverables) |
 
 ## A day with OML
@@ -67,8 +67,9 @@ it. The next item is the price conclusion; one of the memories behind it is a we
 reject it with a reason: "use this week's figures". The reviewer is never shown their own
 writes.
 
-**Afternoon.** The agent checks its own memories and sees one approved and one rejected, with
-the reason. It writes a corrected conclusion from this week's figures. The developer notices
+**Afternoon.** The agent checks its own memories and sees one approved and one rejected. OML
+does not show the agent the reviewer's reason, so the reviewer tells the developer, who asks the
+agent for a corrected conclusion from this week's figures. The developer also notices
 that last week's note about the copper supplier is now wrong and asks the agent to correct it;
 the agent writes a new version, and until a reviewer approves it, everyone keeps seeing the old
 one.
@@ -136,21 +137,27 @@ in-progress workarea where teammates see each other's unreviewed work at once.
 
 ### Enter the server and key once, kept in the keychain
 
-**Planned** · an agent in Claude Code
+**Designed** · an agent in Claude Code
 
 - **Goal:** set up the plugin without editing a shell profile.
 - **How it plays out:** Claude Code asks for the server address and the key when the plugin is
-  enabled, and keeps the key in the system keychain. The environment still works as a fallback.
+  enabled, and keeps the key in the system keychain. An operator who issued the key to a private
+  file can hand that file to Claude Code from a shell instead, without the key appearing on
+  screen. The plugin's tools then use only what Claude Code stored; the start-of-session context
+  still falls back to the environment.
 - **What they see:** one prompt at install, and no key in any settings file.
 
 ### Install the command-line tool from a verified download
 
-**In the next release** · anyone who runs the `oml` command
+**Available now** on 64-bit Intel and AMD Linux · macOS, Windows and ARM Linux **in the next
+release** · anyone who runs the `oml` command
 
-- **Goal:** install the `oml` tool on Linux, macOS or Windows from a signed release archive.
+- **Goal:** install the `oml` tool from a signed release archive.
 - **How it plays out:** download the archive for the platform, check its signature, extract it
-  and put `oml` on the path. On Windows the session hook needs Git Bash.
-- **What they see:** one signed archive per platform on the releases page.
+  and put `oml` on the path. Today's one archive holds the tool beside the server; the next
+  release gives the tool an archive of its own per platform. On Windows the session hook needs
+  Git Bash.
+- **What they see:** a signed archive on the releases page.
 - **How it works:** [CLI reference](../cli/reference.md#installing-oml-and-what-differs-on-windows).
 
 ### Call OML from any language
@@ -166,12 +173,14 @@ in-progress workarea where teammates see each other's unreviewed work at once.
 
 ### One obvious call for each task
 
-**Planned** · every developer and agent
+**Designed** · every developer and agent
 
 - **Goal:** a smaller client surface where each task has one obvious call, its common case
   needs the fewest inputs, and the server works out what it can.
 - **How it plays out:** the agent's tools, the libraries and the command line are simplified
-  together in a coming release. Existing users migrate once, with each change listed.
+  together in a coming release: the agent gets one tool to save, one to read and one to see its
+  workarea. Existing users migrate once, with each change listed, and the old tool names keep
+  working for one release.
 - **What they see:** fewer tools to learn, and no invented labels to supply.
 - **How it works:** [use-case call map](../engineering/use-case-call-map.md), the input to that
   design.
@@ -230,7 +239,8 @@ in-progress workarea where teammates see each other's unreviewed work at once.
 **Available now** · an agent
 
 - **Goal:** open one memory it has a reference to.
-- **What they see:** the memory, its kind, its workarea, its sources and where it stands.
+- **What they see:** the memory, what sort of memory it is, its workarea, its sources and where it
+  stands.
 - **How it works:** [MCP plugin](../api/mcp-plugin.md#oml_get).
 
 ### Correct a memory
@@ -263,7 +273,8 @@ in-progress workarea where teammates see each other's unreviewed work at once.
 - **Goal:** find out what happened to its waiting memories.
 - **How it plays out:** the agent lists its own memories, or follows the stream of recorded
   events it may see.
-- **What they see:** each memory's new state, with a rejection's reason.
+- **What they see:** each memory's new state. The reviewer's reason for a rejection is not shown
+  to the agent.
 - **How it works:** [MCP plugin](../api/mcp-plugin.md#oml_events_tail).
 
 ### Check where it works and what it may do
@@ -284,6 +295,16 @@ in-progress workarea where teammates see each other's unreviewed work at once.
 - **How it plays out:** the agent proposes the link; like a memory, it counts only once someone
   else approves it.
 - **How it works:** [HTTP API](../api/http-api.md#claim-edges).
+
+### List what a workarea holds
+
+**Available now** for a developer · **Designed** for an agent
+
+- **Goal:** page through a workarea's approved memories without a search, newest first, by kind
+  or by label.
+- **How it plays out:** a developer lists them over HTTP or through the libraries. The agent's
+  tools list only its own memories today; listing the workarea's is part of the simpler tool set.
+- **How it works:** [HTTP API](../api/http-api.md).
 
 ### Save many memories at once
 
@@ -412,6 +433,16 @@ in-progress workarea where teammates see each other's unreviewed work at once.
 - **How it works:** [CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation),
   [roles and keys](../architecture/roles-and-keys.md).
 
+### Let an agent write without reading its colleagues' work
+
+**Available now** · an admin
+
+- **Goal:** for a crew whose writers must not read each other's approved work, issue a key that
+  saves into the workarea and cannot search it.
+- **How it plays out:** the admin issues the key with the write-only option. By default an agent's
+  key both saves and searches. A write-only agent still sees its own memories, in every state.
+- **How it works:** [CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation).
+
 ### Look up a key
 
 **Available now** · an admin
@@ -467,7 +498,7 @@ in-progress workarea where teammates see each other's unreviewed work at once.
 **Designed** · an admin
 
 - **Goal:** move the command-line tool between servers and keys by name. Today it takes options,
-  environment variables or the one credentials file the first claim writes.
+  environment variables or the one credentials file written when the first admin key is claimed.
 
 ### A workarea grows up
 
@@ -542,7 +573,7 @@ How it works: [ontologies](../architecture/ontologies.md).
 
 ### Allow reads once, keep asking on writes
 
-**Available now** · a Claude Code user
+**Available now** · the person working with an agent in Claude Code
 
 - **Goal:** stop Claude Code asking before every search, and keep it asking before every save.
 - **How it works:** [the plugin README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md).
@@ -566,10 +597,11 @@ How it works: [ontologies](../architecture/ontologies.md).
 
 **Available now** · an agent in another tool
 
-- **Goal:** use the same memory from Codex, Cursor, Gemini CLI or any MCP client, with the
-  agent's key.
+- **Goal:** use the same memory from any tool that connects to MCP servers over HTTP and can send
+  the agent's key with each request.
 - **What they see:** the same memory tools as in Claude Code. The session-start context is a
-  Claude Code feature and is not offered elsewhere.
+  Claude Code feature and is not offered elsewhere. No tool other than Claude Code has been
+  checked with OML yet.
 - **How it works:** [MCP plugin](../api/mcp-plugin.md#transport-streamable-http-stateless).
 
 ### Connect claude.ai and the Claude apps with a one-time code
@@ -628,8 +660,8 @@ Every use case here is **designed**.
 ### Choose where files are kept
 
 - **Who:** a platform team.
-- **Goal:** keep files on local disk by default, and move them to cloud object storage by changing
-  one setting.
+- **Goal:** keep files on local disk by default, and move them to cloud object storage: copy them
+  with one command while the server is stopped, then change one setting.
 
 ## Time
 
@@ -666,7 +698,8 @@ Every use case here is **designed**.
 - **Goal:** set an approved team rule ("never", "must" or "should"), optionally checked by
   machine, that applies to every agent in a workarea and below.
 - **How it plays out:** the rule is saved and approved like a memory. Each session and helper
-  agent loads the rules at its start, in a frame of their own. A tool call that breaks a checked
+  agent loads the rules at its start, kept apart from the rest of its context. A tool call that
+  breaks a checked
   rule is denied, or the user is asked, before it runs. The admin decides per key whether it
   receives the rules of its own workarea only or of every workarea above it too. Tools with no
   hooks get the rules as a section of their instructions file. A change freeze is a rule that
@@ -679,7 +712,7 @@ Every use case here is **designed**.
 **Available now** · an operator
 
 - **Goal:** know whether the deployment is healthy and what to do next.
-- **What they see:** each health signal with a verdict and the next step. A fuller set of
+- **What they see:** each health signal, whether it is healthy, and the next step. A fuller set of
   signals, and a runbook for each named condition, is **designed**.
 - **How it works:** [CLI reference](../cli/reference.md#oml-status-and-oml-doctor-the-named-signals),
   [runbooks](../operations/runbooks.md).
@@ -704,7 +737,8 @@ Every use case here is **designed**.
 
 ### Install or upgrade on one host
 
-**In the next release** · an operator
+**Available now** on 64-bit Intel and AMD Linux · ARM Linux and a server-only archive **in the
+next release** · an operator
 
 - **Goal:** install or upgrade the server on one host from a signed archive.
 - **How it works:** [deployment](../operations/deployment.md#the-server-archive).
@@ -713,10 +747,11 @@ Every use case here is **designed**.
 
 **In the next release** · an operator
 
-- **Goal:** run the server under a database role that owns nothing it serves from, and upgrade an
-  existing single-role database to that split once.
-- **What they see:** a server that refuses to start, with a named reason, until the split is in
-  place.
+- **Goal:** run the server under a database account that owns none of the tables it reads and
+  writes, with a second account that owns them and upgrades them; and move an existing
+  installation that uses one account to the two once.
+- **What they see:** a server that refuses to start, with a named reason, until the two accounts
+  are in place.
 - **How it works:** [deployment](../operations/deployment.md).
 
 ### Apply settings and see what is in effect
@@ -745,8 +780,9 @@ Every use case here is **designed**.
 
 **Designed** · a platform team
 
-- **Goal:** a production cluster with read replicas, a single writer at a time, the analytics
-  writer and the background checkers, on a managed database and object storage; back up,
+- **Goal:** a production cluster where several servers answer reads and one at a time accepts
+  writes, beside the services that fill the analytics store and keep checking the system, on a
+  managed database and cloud object storage; back up,
   restore and recover from disaster without bringing erased content back; rotate the encryption
   keys and respond to a signing-key compromise; move from one host to Kubernetes without losing
   history; and monitor every part through metrics, logs and alerts that never carry memory
@@ -803,7 +839,7 @@ Every use case here is **designed**.
 - **Goal:** suspend an organization's writes and erase its content, in one recorded ceremony.
 - **How it works:** [runbooks](../operations/runbooks.md#tenant-offboarding).
 
-### Analyze memory in a data lake
+### Analyze memory in an analytics store
 
 **Designed** · an auditor, an analyst
 

@@ -37,8 +37,8 @@ answer it. [Use cases](product/use-cases.md), on the client tier, gives every us
 and user, with its goal, its story, what its user sees and its status, and a day of an agent and
 a reviewer. The [use-case call map](engineering/use-case-call-map.md), on the engineering tier,
 declares the `UC-` ids, maps each use case to the calls it needs today, derives the minimal
-client call set, lists the cut, merge and default candidates, and states which proposals of the
-ADR-0039 draft, the v0.3.2 API rewrite, it supports or contradicts.
+client call set, lists the cut, merge and default candidates, and states which decisions of the
+proposed ADR-0039, the v0.3.2 API rewrite, it supports or contradicts.
 
 - **Roadmap:** no row opens or closes.
 - **No surface change:** `info.version` stays `0.3.0-design`.
