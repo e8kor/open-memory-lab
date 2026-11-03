@@ -107,3 +107,22 @@ def test_a_response_without_the_envelope_is_an_api_error_without_a_code():
     error = error_from_response(502, b"<html>bad gateway</html>", {})
     assert type(error) is ApiError
     assert (error.code, error.status, error.retryable) == (None, 502, False)
+
+
+def test_a_renamed_field_refusal_is_a_request_error_carrying_details_renamed_to():
+    body = json.dumps(
+        {
+            "error": {
+                "code": "request.validation",
+                "message": "scope is renamed workarea: send workarea",
+                "rule": "r",
+                "details": {"field": "scope", "renamed_to": "workarea"},
+                "retryable": False,
+            },
+            "request_id": "req_1",
+        }
+    ).encode()
+    error = error_from_response(400, body, {})
+    assert type(error) is RequestError
+    assert error.code == "request.validation"
+    assert error.details == {"field": "scope", "renamed_to": "workarea"}

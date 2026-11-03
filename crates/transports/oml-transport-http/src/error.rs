@@ -79,6 +79,17 @@ impl ApiError {
         )
     }
 
+    /// A field or header v0.4.0 renamed: `request.validation` naming the
+    /// spelling sent in `details.field` and the one to send in
+    /// `details.renamed_to`; no code is added for it (errors.md
+    /// `request.validation`; ADR-0039 d11).
+    pub fn renamed(field: &str, renamed_to: &str) -> Self {
+        Self::validation(format!(
+            "{field} is renamed {renamed_to}: send {renamed_to}"
+        ))
+        .with_details(json!({ "field": field, "renamed_to": renamed_to }))
+    }
+
     pub fn idempotency_key_required() -> Self {
         Self::new(
             StatusCode::BAD_REQUEST,
@@ -432,5 +443,35 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::Chain(e) => ApiError::internal(e.to_string()),
         AppError::ChainVerify(e) => ApiError::internal(e.to_string()),
         AppError::Jcs(e) => ApiError::internal(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A field or header v0.4.0 renamed is refused with the code every other
+    /// malformed request gets, naming the spelling to send instead; no code
+    /// is added for it (ADR-0039 d11).
+    #[test]
+    fn a_renamed_field_refusal_is_request_validation_naming_the_new_spelling() {
+        let refusal = ApiError::renamed("include_own_held", "include_unreviewed");
+        assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
+        assert_eq!(refusal.code, "request.validation");
+        assert_eq!(refusal.rule, ApiError::validation("").rule);
+        assert!(!refusal.retryable);
+        assert_eq!(
+            refusal.details,
+            Some(json!({ "field": "include_own_held", "renamed_to": "include_unreviewed" }))
+        );
+        assert!(
+            refusal.message.contains("include_unreviewed"),
+            "{}",
+            refusal.message
+        );
+        assert_eq!(
+            refusal.error_object()["details"]["renamed_to"],
+            "include_unreviewed"
+        );
     }
 }

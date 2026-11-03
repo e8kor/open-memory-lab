@@ -747,6 +747,116 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
     drop_db(&db).await;
 }
 
+/// One `tools/call` to `/mcp`; the JSON-RPC message and the response's
+/// `X-Request-Id`.
+async fn call_tool_traced(
+    router: &Router,
+    token: &str,
+    id: u64,
+    name: &str,
+    args: Value,
+) -> (Value, String) {
+    let request = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+                   "params": {"name": name, "arguments": args}})
+            .to_string(),
+        ))
+        .expect("request builds");
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("infallible router");
+    assert_eq!(response.status(), StatusCode::OK);
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .expect("every response carries X-Request-Id")
+        .to_owned();
+    let bytes = to_bytes(response.into_body(), 1 << 22)
+        .await
+        .expect("body collects");
+    let body: Value = serde_json::from_slice(&bytes).expect("responses are JSON");
+    (body, request_id)
+}
+
+#[tokio::test]
+async fn a_failing_tool_answers_is_error_with_the_envelope_in_structured_content_and_text() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+
+    // A refusal the ring answers (learn without lineage) and one the facade
+    // answers before any ring call (an argument outside the input schema)
+    // are the one errors.md envelope, request_id included (ADR-0039 d11).
+    for (id, args, code) in [
+        (
+            1,
+            json!({"claim_key": "k", "text": "t", "derives_from": [], "idempotency_key": "e-1"}),
+            "submission.lineage_required",
+        ),
+        (
+            2,
+            json!({"claim_key": "k", "text": "t", "idempotency_key": "e-2", "tenant": "other"}),
+            "request.validation",
+        ),
+    ] {
+        let (body, request_id) = call_tool_traced(&router, &writer, id, "oml_learn", args).await;
+        // A tool's refusal is a result, never a JSON-RPC error.
+        assert!(body.get("error").is_none(), "{body}");
+        let result = &body["result"];
+        assert_eq!(result["isError"], true, "{body}");
+        let envelope = &result["structuredContent"];
+        let keys: Vec<&str> = envelope
+            .as_object()
+            .expect("the envelope is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["error", "request_id"], "{body}");
+        assert_eq!(envelope["request_id"], request_id.as_str(), "{body}");
+        assert_eq!(envelope["error"]["code"], code, "{body}");
+        for field in ["message", "rule"] {
+            assert!(envelope["error"][field].is_string(), "{body}");
+        }
+        assert!(envelope["error"]["retryable"].is_boolean(), "{body}");
+        let content = result["content"].as_array().expect("content");
+        assert_eq!(content.len(), 1, "{body}");
+        assert_eq!(content[0]["type"], "text", "{body}");
+        let text: Value = serde_json::from_str(content[0]["text"].as_str().expect("text"))
+            .expect("the text content is the envelope as JSON");
+        assert_eq!(&text, envelope, "{body}");
+    }
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn a_tool_that_is_not_served_answers_json_rpc_32602() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+
+    // An unknown name and a catalog tool not built yet are protocol faults:
+    // a JSON-RPC error, no tool result (ADR-0039 d11).
+    for (id, name) in (1..).zip(["oml_promote", "oml_graph", "not_a_tool"]) {
+        let (body, _) = call_tool_traced(&router, &writer, id, name, json!({})).await;
+        assert!(body.get("result").is_none(), "{body}");
+        assert_eq!(body["error"]["code"], -32602, "{body}");
+        assert!(body["error"]["message"].is_string(), "{body}");
+    }
+
+    drop_db(&db).await;
+}
+
 #[tokio::test]
 async fn tools_list_serves_exactly_the_eight_built_tools() {
     let Some((router, db)) = fresh_router().await else {

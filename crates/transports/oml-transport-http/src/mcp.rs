@@ -262,7 +262,7 @@ where
             "tools/list" => rpc_result(&id, &json!({ "tools": served_catalog() })),
             "tools/call" => match serde_json::from_value::<ToolCall>(request.params) {
                 Err(_) => rpc_error(&id, INVALID_PARAMS, "tools/call takes {name, arguments}"),
-                Ok(call) => Self::call_tool(&st, &token, &id, call).await,
+                Ok(call) => Self::call_tool(&st, &token, &id, &rid, call).await,
             },
             other => rpc_error(&id, METHOD_NOT_FOUND, &format!("method not found: {other}")),
         };
@@ -280,7 +280,16 @@ where
         Ok(token)
     }
 
-    async fn call_tool(st: &Self, token: &str, id: &Value, call: ToolCall) -> Response {
+    /// One `tools/call`. A tool that is not served is a protocol fault,
+    /// JSON-RPC -32602; a served tool's refusal is a tool result (ADR-0039
+    /// d11).
+    async fn call_tool(
+        st: &Self,
+        token: &str,
+        id: &Value,
+        request_id: &str,
+        call: ToolCall,
+    ) -> Response {
         let name = call.name.as_str();
         let args = Value::Object(call.arguments);
         let outcome = match name {
@@ -311,18 +320,7 @@ where
                 );
             }
         };
-        let (structured, is_error) = match outcome {
-            Ok(value) => (value, false),
-            Err(refusal) => (refusal, true),
-        };
-        rpc_result(
-            id,
-            &json!({
-                "content": [{ "type": "text", "text": structured.to_string() }],
-                "structuredContent": structured,
-                "isError": is_error,
-            }),
-        )
+        rpc_result(id, &tool_result(outcome, request_id))
     }
 
     /// `oml_remember` / `oml_learn`: one `POST /v1/memories`.
@@ -668,8 +666,36 @@ fn parse_args<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, Value> {
     })
 }
 
-/// A typed refusal as the tool result's structured content: the same body
-/// the HTTP API answers with (errors.md envelope).
+/// A tool's `tools/call` result: its output, or its refusal as the errors.md
+/// envelope stamped with this `/mcp` response's request id, carried both as
+/// `structuredContent` and as the one text content, with `isError` set on a
+/// refusal (errors.md "The envelope"; ADR-0039 d11).
+fn tool_result(outcome: Result<Value, Value>, request_id: &str) -> Value {
+    let (structured, is_error) = match outcome {
+        Ok(value) => (value, false),
+        Err(mut envelope) => {
+            // A refusal the ring handler returned as an `ApiError`, or the
+            // facade raised, carries no request id yet; whatever it carries,
+            // the envelope mirrors the X-Request-Id of the response it
+            // arrives in.
+            if let Some(obj) = envelope.as_object_mut() {
+                obj.insert(
+                    "request_id".to_owned(),
+                    Value::String(request_id.to_owned()),
+                );
+            }
+            (envelope, true)
+        }
+    };
+    json!({
+        "content": [{ "type": "text", "text": structured.to_string() }],
+        "structuredContent": structured,
+        "isError": is_error,
+    })
+}
+
+/// A typed refusal as the envelope's `error` object; [`tool_result`] adds
+/// the request id (errors.md envelope).
 fn refusal(error: ApiError) -> Value {
     json!({ "error": error.error_object() })
 }
@@ -730,4 +756,43 @@ fn tail_item(event: &Value) -> Value {
         "subject": subject,
         "workarea": payload["workarea_id"],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pure half of `a_failing_tool_answers_is_error_with_the_envelope_
+    /// in_structured_content_and_text` (mcp_facade.rs), which needs the
+    /// role pair: a refusal is the envelope with this response's request id,
+    /// as structured content and as the text, and a success is not an error
+    /// (ADR-0039 d11).
+    #[test]
+    fn a_refused_tool_result_is_the_envelope_as_structured_content_and_text() {
+        let refused = tool_result(
+            Err(refusal(ApiError::renamed("scope", "workarea"))),
+            "req_1",
+        );
+        assert_eq!(refused["isError"], true);
+        let envelope = &refused["structuredContent"];
+        assert_eq!(
+            envelope,
+            &json!({
+                "error": ApiError::renamed("scope", "workarea").error_object(),
+                "request_id": "req_1",
+            })
+        );
+        let text: Value = serde_json::from_str(
+            refused["content"][0]["text"]
+                .as_str()
+                .expect("the text content"),
+        )
+        .expect("the text is JSON");
+        assert_eq!(&text, envelope);
+        assert_eq!(refused["content"][0]["type"], "text");
+
+        let served = tool_result(Ok(json!({ "hits": [] })), "req_2");
+        assert_eq!(served["isError"], false);
+        assert_eq!(served["structuredContent"], json!({ "hits": [] }));
+    }
 }

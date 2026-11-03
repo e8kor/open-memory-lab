@@ -159,23 +159,39 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
   ([workareas](../architecture/workareas.md#effective-access-union-of-attenuated-grants-then-deny-wins)) —
   never from the role name alone. A writer key recalls only where it also
   holds reader-scope grants.
-- **Errors** are the typed, fail-closed taxonomy of the HTTP API, surfaced as
-  MCP tool results with `isError: true` and the typed error object as
-  structured content. Every error names the rule that refused the call. The
-  taxonomy — spellings, retryability, HTTP status mapping including the 429
-  quota family — is declared in [errors.md](errors.md); the examples below
-  use its codes, and a retryable refusal carries a `Retry-After` header in
-  seconds. One shared example, the per-replica-approximated quota
-  limit (D6, [FR-8](../product/roadmap.md)):
+- **Errors** are the typed, fail-closed taxonomy of the HTTP API, one shape
+  on every surface ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+  d11). A served tool that refuses answers a JSON-RPC *result* with
+  `isError: true`, carrying the [errors.md envelope](errors.md#the-envelope)
+  — `{error: {code, message, rule, details?, retryable}, request_id}` — both
+  as `structuredContent` and, serialized, as its one text content, so a
+  client that reads only text sees the same refusal. `request_id` mirrors the
+  `X-Request-Id` of the `/mcp` response. A JSON-RPC *error* is a protocol
+  fault only: a malformed message, an unknown method, `tools/call` params
+  that are not `{name, arguments}`, and -32602 for a tool the server does not
+  serve, whether unknown or in the catalog but not built. Every error names
+  the rule that refused the call. The taxonomy — spellings, retryability,
+  HTTP status mapping including the 429 quota family — is declared in
+  [errors.md](errors.md); the examples below use its codes, and a retryable
+  refusal carries a `Retry-After` header in seconds. A field sent under a
+  spelling v0.4.0 renamed is `request.validation` with `details.field` and
+  `details.renamed_to`; no code is added for it. One shared example, the
+  per-replica-approximated quota limit (D6, [FR-8](../product/roadmap.md)),
+  as the `result` of a `tools/call`:
 
 ```json
 {
-  "error": {
-    "code": "limit.quota",
-    "rule": "tenant quota (journalled grant attribute; enforced per replica at limit/N)",
-    "message": "write quota exhausted for this key's tenant",
-    "retryable": true
-  }
+  "content": [{"type": "text", "text": "{\"error\":{\"code\":\"limit.quota\",…},\"request_id\":\"req_01J…\"}"}],
+  "structuredContent": {
+    "error": {
+      "code": "limit.quota",
+      "rule": "tenant quota (journalled grant attribute; enforced per replica at limit/N)",
+      "message": "write quota exhausted for this key's tenant",
+      "retryable": true
+    },
+    "request_id": "req_01J…"
+  },
+  "isError": true
 }
 ```
 
@@ -351,7 +367,8 @@ an idempotency-key reuse with a different request; a banned author or source
     "rule": "status ladder: a validated workarea refuses new writes (D8)",
     "message": "workarea fbbb41c5… is validated; writes are refused. Demote, erasure and crew-metadata update are its only admissible mutations, none on this surface.",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
@@ -490,7 +507,8 @@ Example:
     "rule": "effective access (D7); unknown and out-of-scope are indistinguishable",
     "message": "no readable workarea 821e1387… for this key",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
@@ -564,7 +582,8 @@ pass-through fields as on [`oml_remember`](#oml_remember). Example:
     "rule": "lineage targets must be readable by the submitting key (fail closed)",
     "message": "derives_from[1] names no artifact readable by this key",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
@@ -719,7 +738,8 @@ of the supersede rule. Example:
     "message": "art_01JB2XF2R7M9… is no longer the tip of supplier-quote-am-7741",
     "details": { "current_tip": { "artifact_id": "art_01JB2Z3E5G7J9L2N4Q6S8UWA1C", "version": 3 } },
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
@@ -793,7 +813,8 @@ incomplete or mismatched session from `oml_remember`. Example:
     "rule": "a session records its expected digest; bytes that do not match never bind (D3)",
     "message": "session ups_01JB2XD9… received bytes with sha256 1c44…, expected 9f2c…; session is terminal, open a new one",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
@@ -858,7 +879,8 @@ the closed set for workarea edges. Example:
     "rule": "edge proposal requires dreamer(propose) on ≥1 endpoint and reader on both (D7)",
     "message": "endpoint 'to' names no workarea readable by this key",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
@@ -953,7 +975,8 @@ the decision trail belongs to the evidence export, an admin surface.
     "rule": "operator never writes, reads or reviews content (D9)",
     "message": "operator keys have no own-work view",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
@@ -1249,7 +1272,8 @@ from one that does not exist. Example:
     "rule": "CURIE resolution fails closed within the key's effective read scope (D7)",
     "message": "no readable term proc:supplier-quote for this key",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 

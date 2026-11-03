@@ -11,6 +11,7 @@ import {
   FAMILIES,
   NotBuiltError,
   OmlClient,
+  RequestError,
   SubmissionError,
   errorFromResponse,
 } from "../src/index.ts";
@@ -71,6 +72,23 @@ test("a family the client has never seen lands in ApiError", () => {
   const error = errorFromResponse(409, JSON.parse(envelope("brand.new")), new Headers());
   assert.equal(error.constructor, ApiError);
   assert.equal(error.code, "brand.new");
+});
+
+test("a renamed field refusal is a RequestError carrying details.renamed_to", () => {
+  const body = {
+    error: {
+      code: "request.validation",
+      message: "scope is renamed workarea: send workarea",
+      rule: "r",
+      details: { field: "scope", renamed_to: "workarea" },
+      retryable: false,
+    },
+    request_id: "req_1",
+  };
+  const error = errorFromResponse(400, body, new Headers());
+  assert.equal(error.constructor, RequestError);
+  assert.equal(error.code, "request.validation");
+  assert.deepEqual(error.details, { field: "scope", renamed_to: "workarea" });
 });
 
 test("a response without the envelope is an ApiError without a code", () => {
