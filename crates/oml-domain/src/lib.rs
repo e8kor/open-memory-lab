@@ -10,7 +10,9 @@
 //! d2, d14, d15); `budget` holds the budget token, the budget cut and the
 //! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
 //! classification of a reference as an id or a name, and the naming of rows
-//! that predate names (ADR-0026 d2, d3, d11).
+//! that predate names (ADR-0026 d2, d3, d11); `ladder` holds the workarea
+//! status ladder, its refusal reasons, the ratifier's independence and the
+//! frozen area's closed list of mutations (ADR-0009 d1, d3, d4, d5).
 
 #![forbid(unsafe_code)]
 
@@ -20,6 +22,7 @@ pub mod chain;
 pub mod envelope;
 pub mod jcs;
 pub mod keys;
+pub mod ladder;
 pub mod model;
 pub mod name;
 
@@ -35,6 +38,10 @@ pub use jcs::{JcsError, canonical_bytes};
 pub use keys::{
     RotationVerifyError, cross_sign_rotation, key_fingerprint, rotation_message,
     verify_rotation_cross_sig,
+};
+pub use ladder::{
+    FrozenOp, LadderRefusal, WorkareaStatus, frozen_refuses, propose_check, ratifier_is_proposer,
+    ratify_check, transition_preconditions,
 };
 pub use model::{
     HeldBy, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError,
