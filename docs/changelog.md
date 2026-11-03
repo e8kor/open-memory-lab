@@ -36,6 +36,46 @@ oml-admin plugins as an offline marketplace archive and as a marketplace pinned 
 agent kit of MCP configurations for other agent tools, signed and summed with the binaries
 ([release artifacts](engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
 
+### 2026-11-03 — The API rewritten for v0.3.2, and the plugin configured in Claude Code (ADR-0039, ADR-0040, proposed)
+
+[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-3-2.md), proposed on 2026-11-03, records the
+maintainer's choice that day to rewrite the API while OML is pre-release instead of layering on it,
+to ship the rewrite as v0.3.2, and the maintainer's answers to its open questions and to six
+findings of the use-case call map. It decides the three MCP tools `oml_write`, `oml_read` and
+`oml_workarea` in place of the eight served ones, with their field rules and annotations; the
+events tail off MCP and kept on HTTP, the SDKs and a new `oml events`; no `oml_attach` tool, and
+`oml_graph` as a lineage mode of `oml_read`; a `claim_key` the server derives from the authoring
+key and the text when it is omitted, beside a required `idempotency_key`; `kind` defaulting to
+`memory`; one `workarea` field in place of the `X-OML-Workarea` header, and one
+`include_unreviewed` flag in place of `include_own_held`, which ADR-0030 adopts; a verdict's
+`serve_id` defaulting to the reviewer's one open item; openapi.yaml holding only the routed
+operations, with the 45 designed ones in an annex; the mapping from every served tool, route,
+CLI verb and SDK method to its successor; one error shape; the old MCP tool names and CLI verbs
+callable but hidden through v0.3.x and removed in v0.4.0, with no HTTP or SDK aliases; every
+client started from `OML_URL` and `OML_API_KEY` alone, the CLI's `oml login <url>` storing that
+pair owner-only, flag before environment before file, and a new `GET /v2/whoami` deriving the
+tenant, role, key name and default workarea; `oml bootstrap claim --token-stdin` in place of the
+built `--token`; the breaking changes and their migration; and the build plan. It amends ADR-0014
+(d2), ADR-0022 (d2, d4, d6), ADR-0025 (d4, d12, d13), ADR-0028 (d1) and ADR-0029 (d2, d6, d8).
+
+[ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md), proposed the same day, records the
+maintainer's choice to configure the plugin in Claude Code: a `url` option and a sensitive
+`api_key` option kept in the keychain, the same pair as every other client; `.mcp.json` reading
+`${user_config.*}` and nothing from the environment; the hooks reading `CLAUDE_PLUGIN_OPTION_*`
+before `OML_URL` and `OML_API_KEY`; the key file piped to `claude plugin configure
+--values-stdin`; and Claude Code 2.1.285 as the minimum version. It amends ADR-0028 (d1) and
+ADR-0029 (d4). The records bind nothing before acceptance, and the amended records' Status lines
+gain their back-pointers then.
+
+- **Opened:** FR-65, FR-66 and FR-67 on the [roadmap](product/roadmap.md), marked proposed;
+  FR-46 to FR-64 are used on other branches.
+- **No surface change yet:** openapi.yaml, mcp-tools.json, http-api.md and errors.md keep the
+  v0.3.0 contract until ADR-0039's build changes them together; `info.version` stays
+  `0.3.0-design`, and the build moves it to `0.3.2-design`.
+- **Pages touched:** the two records, their [register](adr/index.md) rows, `mkdocs.yml`,
+  `llms.txt`, the roadmap and this page.
+- **Not built.**
+
 ### 2026-11-03 — The lead serves as a role that owns nothing (implementation)
 
 An implementation milestone; no decision changes. The code now builds d10's steps 2 to 4 of the
