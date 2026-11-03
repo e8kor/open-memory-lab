@@ -199,6 +199,9 @@ pub enum AuthorizationExpired {
     /// The confirmation's code was voided by a newer code or a revoked
     /// connection of its key (ADR-0031 d8).
     CodeVoided,
+    /// The confirmation's handle names no request row: Connect or Cancel
+    /// took it, or it lapsed and was removed (ADR-0031 d9 step 3).
+    NoRequest,
 }
 
 /// Why an authorization code was not redeemed (errors.md,

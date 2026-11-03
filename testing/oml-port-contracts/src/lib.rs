@@ -4635,6 +4635,23 @@ pub async fn key_revoked_voids_the_keys_unredeemed_codes<S: ConnectionStore>(sto
     );
 }
 
+/// A tenant's name reads back as its genesis named it, under that tenant,
+/// and a tenant the store does not hold reads no name (http-api.md "The
+/// authorization page"; ADR-0031 d9 step 2; ADR-0026 d1).
+pub async fn a_tenants_name_reads_back_under_that_tenant<S: ConnectionStore>(store: &S) {
+    let mut rig = ChainRig::new(349);
+    rig.seed_chain(store, 0).await;
+    assert_eq!(
+        store.tenant_name(rig.tenant_id).await,
+        Ok(Some(rig.tenant_name.clone()))
+    );
+    assert_eq!(
+        store.tenant_name(Uuid::from_u128(0xBAD)).await,
+        Ok(None),
+        "a tenant the store does not hold has no name"
+    );
+}
+
 /// A key's connections are listed in every state, by creation and ties by
 /// id, and no other key's connection and nothing of another tenant is
 /// listed (roles-and-keys.md connections; ADR-0031 d11).
@@ -6343,6 +6360,7 @@ where
     connection_opened_revokes_the_keys_earlier_open_connection_as_replaced(&new_store().await)
         .await;
     a_keys_connections_are_listed_in_every_state_and_no_other_keys(&new_store().await).await;
+    a_tenants_name_reads_back_under_that_tenant(&new_store().await).await;
     connection_opened_for_a_revoked_key_is_refused_and_commits_nothing(&new_store().await).await;
     connection_opened_for_a_voided_code_is_refused_and_commits_nothing(&new_store().await).await;
     connection_opened_for_an_expired_authorization_code_is_refused_and_commits_nothing(

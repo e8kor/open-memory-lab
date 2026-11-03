@@ -350,6 +350,102 @@ pub enum ConnectOutcome {
     CodeVoided,
 }
 
+/// A granted workarea as the confirmation names it: by its name, with the
+/// grant's role (ADR-0031 d9 step 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmationGrant {
+    pub workarea_id: Uuid,
+    pub workarea: Name,
+    pub role: Role,
+}
+
+/// What the confirmation shows a correct code's holder before the
+/// connection opens (http-api.md "The authorization page"; ADR-0031 d9
+/// step 2): the tenant by the name the operator gave it, the key's name,
+/// principal and role, every granted workarea with its grant's role, and
+/// the workareas each verb-kind sentence names, from the key's effective
+/// access at each granted workarea. The page builds its sentences from
+/// these; "Everything it writes is held…" follows from a non-empty
+/// `writes_in` or `proposes_in`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmationView {
+    /// The confirmation form's 256-bit handle, in base62; the store holds
+    /// only its SHA-256.
+    pub handle: String,
+    pub tenant_name: Name,
+    /// `None` only for a key issued before names, which the lead names
+    /// before it serves (ADR-0026 d11).
+    pub key_name: Option<Name>,
+    pub principal: String,
+    pub role: Role,
+    /// In grant order.
+    pub grants: Vec<ConfirmationGrant>,
+    /// Granted workareas where writer is effective: "Claude can remember
+    /// and learn as this agent in …".
+    pub writes_in: Vec<Name>,
+    /// Granted workareas where reader is effective: "Claude can recall and
+    /// read as this agent in …".
+    pub reads_in: Vec<Name>,
+    /// Granted workareas where dreamer is effective, its propose class:
+    /// "Claude can propose edits and edges as this agent in …".
+    pub proposes_in: Vec<Name>,
+    /// Granted workareas whose tenant policy permits `self_signed` rows.
+    /// No journalled tenant policy permits them in this build, so it is
+    /// always empty here.
+    pub self_signed_in: Vec<Name>,
+}
+
+/// What a code entry on the authorization page answers (http-api.md
+/// `POST /oauth/authorize` step 2; ADR-0031 d8, d9 step 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeEntryOutcome {
+    /// A correct code of a live key: spent, its request's row written.
+    Confirmation(Box<ConfirmationView>),
+    /// Any other entry — unknown, malformed, expired, voided, spent, or a
+    /// revoked or expired key's code alike: the form again,
+    /// `400 oauth.connect_code_invalid`, under a new sealed handle carrying
+    /// one attempt fewer.
+    WrongCode { handle: String, attempts_left: u8 },
+    /// The fifth wrong entry: the request ends, redirected to
+    /// `redirect_uri` with `error` ([`Refusal::authorize_error`],
+    /// `access_denied`), the `state` echoed and `iss`.
+    Denied {
+        error: Refusal,
+        redirect_uri: String,
+        state: Option<String>,
+        iss: String,
+    },
+}
+
+/// The confirmation's two buttons (`action=connect|cancel`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmAction {
+    Connect,
+    Cancel,
+}
+
+/// What a confirmation answers: a `303` to the request's redirect URI
+/// (http-api.md `POST /oauth/authorize` step 3; ADR-0031 d9 step 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmOutcome {
+    /// Connect: the connection is `authorized`; the redirect carries the
+    /// single-use authorization code, alive 60 seconds, the `state`
+    /// verbatim and `iss`. The code appears here and nowhere else.
+    Connected {
+        redirect_uri: String,
+        code: String,
+        state: Option<String>,
+        iss: String,
+    },
+    /// Cancel: the redirect carries `error=access_denied`, the `state` and
+    /// `iss`.
+    Cancelled {
+        redirect_uri: String,
+        state: Option<String>,
+        iss: String,
+    },
+}
+
 /// A row a pre-tenant lookup found by a digest, with the tenant whose
 /// `oml.tenant_id` everything after it runs under (postgres-schema.md
 /// "connections (ADR-0031)"; ADR-0031 d8, d10).

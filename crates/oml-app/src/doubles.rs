@@ -2042,6 +2042,15 @@ impl ConnectionStore for MemStore {
         Ok(report)
     }
 
+    async fn tenant_name(&self, tenant_id: Uuid) -> Result<Option<Name>, StoreError> {
+        Ok(self
+            .tenant_names
+            .lock()
+            .expect("tenant names lock")
+            .get(&tenant_id)
+            .cloned())
+    }
+
     async fn spend_code(
         &self,
         tenant_id: Uuid,

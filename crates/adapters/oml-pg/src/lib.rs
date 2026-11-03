@@ -3391,6 +3391,21 @@ impl ConnectionStore for PgStore {
         })
     }
 
+    async fn tenant_name(&self, tenant_id: Uuid) -> Result<Option<Name>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query("SELECT name FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(match row {
+            Some(row) => stored_name(&row, "name")?,
+            None => None,
+        })
+    }
+
     async fn spend_code(
         &self,
         tenant_id: Uuid,

@@ -701,6 +701,16 @@ pub trait ConnectionStore: JournalStore {
         code_hash: &Sha256Hash,
     ) -> impl Future<Output = Result<Option<TenantRow<ConnectCodeRecord>>, StoreError>> + Send;
 
+    /// The tenant's name as the operator gave it at `POST /v2/tenants`,
+    /// which no tenant admin can set, under that tenant: what the
+    /// authorization page's confirmation names the key's tenant by; `None`
+    /// for a tenant it does not hold or one not yet named (http-api.md "The
+    /// authorization page"; ADR-0031 d9 step 2; ADR-0026 d1).
+    fn tenant_name(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Name>, StoreError>> + Send;
+
     /// Spends the code by its first correct entry, `redeemed_at` = `at`, in
     /// one conditional update that matches only a code still unredeemed,
     /// unvoided and unexpired at `at`, so of two racing correct entries

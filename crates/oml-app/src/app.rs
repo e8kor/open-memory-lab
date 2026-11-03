@@ -7,6 +7,7 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -23,11 +24,12 @@ use oml_domain::name::{
     assign_names, unresolved_value,
 };
 use oml_domain::oauth::{
-    ATTEMPTS_PER_PAGE, AUTHORIZATION_REQUEST_SECONDS, AuthorizationRequest, AuthorizeBounds,
-    ClientId, ClientInvalid, ConnectCode as CodeSymbols, ConnectRefused, ConnectionState,
-    DOCUMENT_KEPT_SECONDS, Issuer, PkceRequired, Refusal, RequestClientKind, RevokedCause, SCOPE,
-    Validation, check_authorize_bounds, check_pkce_method, check_resource, classify_client_id,
-    select_redirect, validate_document,
+    ATTEMPTS_PER_PAGE, AUTHORIZATION_REQUEST_SECONDS, AuthorizationExpired, AuthorizationRequest,
+    AuthorizeBounds, ClientId, ClientInvalid, CodeRow, ConnectCode as CodeSymbols, ConnectRefused,
+    ConnectionState, DOCUMENT_KEPT_SECONDS, Issuer, KeyState, PkceRequired, Refusal,
+    RequestClientKind, RevokedCause, SCOPE, Validation, after_wrong_entry, check_authorize_bounds,
+    check_code_entry, check_confirmation, check_pkce_method, check_resource, classify_client_id,
+    open_request, select_redirect, validate_document,
 };
 use oml_domain::{
     ChainHead, Envelope, EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role,
@@ -43,15 +45,17 @@ use crate::ports::{
     TailEvent,
 };
 use crate::types::{
-    AppError, AssignedNames, AuthorizeOutcome, AuthorizePage, AuthorizeParams, BootstrapRequest,
-    BootstrapResult, ClientDescription, ClientKind, ConnectCode, ConnectCodeIssued,
-    ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
-    CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey, KeyAccess,
-    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage,
-    MemoryRecord, NamingRefusal, OAuthClientRecord, PROVIDER_TENANT, RecallHit, RecallRequest,
-    RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome,
-    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode, TreePage, UnnamedRows,
-    Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
+    BootstrapRequest, BootstrapResult, ClientDescription, ClientKind, CodeEntryOutcome,
+    ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode,
+    ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord,
+    CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
+    GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey, KeyAccess, KeyDetail, KeyRecord,
+    ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage, MemoryRecord,
+    NamingRefusal, OAuthClientRecord, PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult,
+    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeReceipt,
+    SupersedeRequest, TailPage, TailedEvent, TreeNode, TreePage, UnnamedRows, Verdict,
+    VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -86,6 +90,10 @@ pub const ACCESS_TOKEN_TTL_SECS: i64 = 3_600;
 /// built (configuration.md; FR-22; ADR-0031 d10).
 pub const REFRESH_TOKEN_TTL_SECS: i64 = 30 * 86_400;
 
+/// An authorization code lives 60 seconds from Connect, a design constant
+/// and not a setting (ADR-0031 d9 step 3).
+pub const AUTHORIZATION_CODE_TTL_SECS: i64 = 60;
+
 /// The application, generic over its driven ports.
 pub struct App<J, S, C, I, Sc> {
     journal: J,
@@ -96,6 +104,9 @@ pub struct App<J, S, C, I, Sc> {
     /// `oauth.issuer`, the public origin; `None` where the deployment sets
     /// none, and then no connect code is minted (ADR-0031 d1).
     oauth_issuer: Option<Issuer>,
+    /// Wrong connect-code entries since the process started, deployment
+    /// wide and never per tenant, for doctor (ADR-0031 d8, d14).
+    connect_code_failures: AtomicU64,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -564,6 +575,7 @@ where
             ids,
             scanner,
             oauth_issuer: None,
+            connect_code_failures: AtomicU64::new(0),
         }
     }
 
@@ -575,6 +587,15 @@ where
             oauth_issuer: Some(issuer),
             ..self
         }
+    }
+
+    /// Wrong connect-code entries on the authorization page since this
+    /// process started, across every tenant: the count doctor shows, since
+    /// the guessing bound is the code's entropy and not a throttle
+    /// (ADR-0031 d8, d14).
+    #[must_use]
+    pub fn connect_code_failures(&self) -> u64 {
+        self.connect_code_failures.load(Ordering::Relaxed)
     }
 
     // -- internals ----------------------------------------------------------
@@ -3466,6 +3487,265 @@ where
             attempts_left: request.attempts_left,
             expires_at: request.expires_at,
         }))
+    }
+
+    /// `POST /oauth/authorize` with `handle` and `connect_code` (http-api.md;
+    /// ADR-0031 d8, d9 step 2). The sealed handle must name a live request,
+    /// else `oauth.authorization_expired` on the page. The entry is decoded
+    /// by Crockford's rule, found by its digest before any tenant is known,
+    /// checked against its key's state as `/mcp` reads it, and spent by one
+    /// conditional update. A correct code writes the request's row under a
+    /// fresh 256-bit handle, of which the store keeps only the SHA-256, and
+    /// answers the confirmation. Every other entry answers one refusal, with
+    /// one attempt fewer under a new sealed handle, and the fifth ends the
+    /// request with `access_denied`; each counts one deployment-wide failure.
+    /// It journals nothing. Without `oauth.issuer` the endpoint does not
+    /// exist (`access.not_found`).
+    pub async fn enter_code(
+        &self,
+        handle: &str,
+        entry: &str,
+        sealer: &dyn HandleSealer,
+    ) -> Result<CodeEntryOutcome, AppError> {
+        let issuer = self.oauth_issuer.as_ref().ok_or(AppError::NotFound)?;
+        let now = self.clock.now();
+        let request = open_request(sealer.open(handle).as_deref(), &now)?;
+        let Some((tenant_id, code, key)) = self.spend_entry(entry, &now).await? else {
+            self.connect_code_failures.fetch_add(1, Ordering::Relaxed);
+            return Ok(match after_wrong_entry(request.attempts_left) {
+                Ok(attempts_left) => CodeEntryOutcome::WrongCode {
+                    handle: sealer.seal(
+                        &AuthorizationRequest {
+                            attempts_left,
+                            ..request
+                        }
+                        .encode(),
+                    ),
+                    attempts_left,
+                },
+                Err(error) => CodeEntryOutcome::Denied {
+                    error,
+                    redirect_uri: request.redirect_uri,
+                    state: request.state,
+                    iss: issuer.as_str().to_owned(),
+                },
+            });
+        };
+        let confirmation = base62_43(&self.ids.new_secret());
+        let view = self
+            .confirmation_view(tenant_id, &key, confirmation.clone())
+            .await?;
+        self.journal
+            .authorization_insert(AuthorizationRecord {
+                authorization_id: self.ids.new_id(),
+                handle_hash: Sha256Hash::digest(confirmation.as_bytes()),
+                client_id: request.client_id,
+                client_kind: match request.kind {
+                    RequestClientKind::Document => ClientKind::Cimd,
+                    RequestClientKind::Registered => ClientKind::Dcr,
+                },
+                metadata_digest: request.metadata_digest,
+                redirect_uri: request.redirect_uri,
+                redirect_uri_sent: request.redirect_uri_sent,
+                code_challenge: request.code_challenge,
+                state: request.state,
+                expires_at: request.expires_at,
+                code_id: code.code_id,
+                code_tenant_id: tenant_id,
+                key_id: key.key_id,
+            })
+            .await?;
+        Ok(CodeEntryOutcome::Confirmation(Box::new(view)))
+    }
+
+    /// A code entry spent: the code's tenant, row and key, or `None` for
+    /// every entry that is not a correct code of a live key — malformed,
+    /// unknown, expired, voided, spent, a revoked key's, or one a racing
+    /// entry spent first (ADR-0031 d8). Keys carry no expiry in this build
+    /// (`key.issued.expiry` is null), so a key is active or revoked.
+    async fn spend_entry(
+        &self,
+        entry: &str,
+        now: &EventTime,
+    ) -> Result<Option<(Uuid, ConnectCodeRecord, KeyRecord)>, AppError> {
+        let Ok(symbols) = CodeSymbols::parse(entry) else {
+            return Ok(None);
+        };
+        let Some(found) = self
+            .journal
+            .code_by_hash(&Sha256Hash(symbols.digest()))
+            .await?
+        else {
+            return Ok(None);
+        };
+        let key = self
+            .journal
+            .key(found.tenant_id, found.row.key_id)
+            .await?
+            .filter(|key| key.revoked_at.is_none());
+        let row = CodeRow {
+            redeemed: found.row.redeemed_at.is_some(),
+            voided: found.row.voided_seq.is_some(),
+            expired: now.unix_micros() >= found.row.expires_at.unix_micros(),
+            key: if key.is_some() {
+                KeyState::Active
+            } else {
+                KeyState::Revoked
+            },
+        };
+        let Some(key) = key.filter(|_| check_code_entry(Some(&row)).is_ok()) else {
+            return Ok(None);
+        };
+        let spent = self
+            .journal
+            .spend_code(found.tenant_id, found.row.code_id, now)
+            .await?;
+        Ok(spent.then_some((found.tenant_id, found.row, key)))
+    }
+
+    /// What the confirmation shows for `key` (http-api.md "The
+    /// authorization page"; ADR-0031 d9 step 2): its tenant's name, its
+    /// name, principal and role, each granted workarea with the grant's
+    /// role, and for each the roles effective there, which name the
+    /// verb-kind sentences' workareas.
+    async fn confirmation_view(
+        &self,
+        tenant_id: Uuid,
+        key: &KeyRecord,
+        handle: String,
+    ) -> Result<ConfirmationView, AppError> {
+        let inconsistent = |what: String| AppError::Store(StoreError::Backend(what));
+        let tenant_name = self.journal.tenant_name(tenant_id).await?.ok_or_else(|| {
+            inconsistent(format!(
+                "tenant {tenant_id} holds a connect code but no name"
+            ))
+        })?;
+        let access = self
+            .journal
+            .key_access(tenant_id, key.key_id)
+            .await?
+            .ok_or_else(|| inconsistent(format!("key {} has no access row", key.key_id)))?;
+        let grants: Vec<Grant> = access.grants.into_iter().map(|g| g.grant).collect();
+        let denials: Vec<KeyDenial> = access.denials.into_iter().map(|d| d.denial).collect();
+        let mut view = ConfirmationView {
+            handle,
+            tenant_name,
+            key_name: key.name.clone(),
+            principal: key.principal.clone(),
+            role: key.role,
+            grants: Vec::new(),
+            writes_in: Vec::new(),
+            reads_in: Vec::new(),
+            proposes_in: Vec::new(),
+            self_signed_in: Vec::new(),
+        };
+        for grant in &grants {
+            let ancestry = self
+                .journal
+                .workarea_ancestry(tenant_id, grant.node)
+                .await?
+                .filter(|ancestry| !ancestry.is_empty())
+                .ok_or_else(|| inconsistent(format!("granted node {} is not held", grant.node)))?;
+            let workarea = ancestry[0].name.clone();
+            let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workarea_id).collect();
+            let effective = effective_roles(&grants, &denials, &ids);
+            for (role, names) in [
+                (Role::Writer, &mut view.writes_in),
+                (Role::Reader, &mut view.reads_in),
+                (Role::Dreamer, &mut view.proposes_in),
+            ] {
+                if effective.contains(&role) && !names.contains(&workarea) {
+                    names.push(workarea.clone());
+                }
+            }
+            view.grants.push(ConfirmationGrant {
+                workarea_id: grant.node,
+                workarea,
+                role: grant.role,
+            });
+        }
+        Ok(view)
+    }
+
+    /// `POST /oauth/authorize` with `handle` and `action` (http-api.md;
+    /// ADR-0031 d8, d9 step 3). The confirmation's handle must name a
+    /// request row a verified code wrote, within the request's ten
+    /// minutes, whose code is not voided, else `oauth.authorization_expired`
+    /// on the page. Connect, in the store's one transaction, takes the row,
+    /// stamps the client's `connected_at` and creates the connection
+    /// `authorized` with the digest of a 256-bit authorization code alive 60
+    /// seconds, and answers the redirect with that code, the `state` and
+    /// `iss`. Cancel takes the row and answers the redirect with
+    /// `access_denied`. Either way the connect code stays spent, and a
+    /// later confirmation with the handle names no row. It journals nothing.
+    pub async fn confirm(
+        &self,
+        handle: &str,
+        action: ConfirmAction,
+    ) -> Result<ConfirmOutcome, AppError> {
+        let issuer = self.oauth_issuer.as_ref().ok_or(AppError::NotFound)?;
+        let now = self.clock.now();
+        let expired = |reason| AppError::OAuth(Refusal::AuthorizationExpired(reason));
+        let handle_hash = Sha256Hash::digest(handle.as_bytes());
+        let iss = issuer.as_str().to_owned();
+        let lapsed = |row: &AuthorizationRecord| now.unix_micros() >= row.expires_at.unix_micros();
+        match action {
+            ConfirmAction::Cancel => {
+                let row = self
+                    .journal
+                    .take_authorization_by_handle(&handle_hash)
+                    .await?
+                    .ok_or(expired(AuthorizationExpired::NoRequest))?;
+                if lapsed(&row) {
+                    return Err(expired(AuthorizationExpired::Lapsed));
+                }
+                let voided = self
+                    .journal
+                    .connect_codes(row.code_tenant_id, row.key_id)
+                    .await?
+                    .iter()
+                    .find(|c| c.code_id == row.code_id)
+                    .is_none_or(|c| c.voided_seq.is_some());
+                check_confirmation(voided)?;
+                Ok(ConfirmOutcome::Cancelled {
+                    redirect_uri: row.redirect_uri,
+                    state: row.state,
+                    iss,
+                })
+            }
+            ConfirmAction::Connect => {
+                let row = self
+                    .journal
+                    .authorization(&handle_hash)
+                    .await?
+                    .ok_or(expired(AuthorizationExpired::NoRequest))?;
+                if lapsed(&row) {
+                    return Err(expired(AuthorizationExpired::Lapsed));
+                }
+                let code = base62_43(&self.ids.new_secret());
+                let auth_code_expires_at = EventTime::from_unix_micros(
+                    now.unix_micros() + AUTHORIZATION_CODE_TTL_SECS * 1_000_000,
+                )
+                .expect("a minute after a clock reading is a time the fixed-width form writes");
+                let grant = ConnectGrant {
+                    connection_id: self.ids.new_id(),
+                    resource: issuer.resource().to_owned(),
+                    auth_code_hash: Sha256Hash::digest(code.as_bytes()),
+                    auth_code_expires_at,
+                    at: now,
+                };
+                match self.journal.connection_connect(&handle_hash, grant).await? {
+                    ConnectOutcome::Authorized { .. } => Ok(ConfirmOutcome::Connected {
+                        redirect_uri: row.redirect_uri,
+                        code,
+                        state: row.state,
+                        iss,
+                    }),
+                    ConnectOutcome::NoRequest => Err(expired(AuthorizationExpired::NoRequest)),
+                    ConnectOutcome::CodeVoided => Err(expired(AuthorizationExpired::CodeVoided)),
+                }
+            }
+        }
     }
 
     /// The authorize request's client (ADR-0031 d5): a document client's
