@@ -1228,6 +1228,7 @@ dependencies = [
  "oml-transport-http",
  "serde_json",
  "sqlx",
+ "thiserror",
  "tokio",
  "toml",
  "tower",
