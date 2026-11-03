@@ -146,7 +146,8 @@ the two discovery documents and the OAuth endpoints are unauthenticated.
   anchor into the journal ([retrieval.md](../architecture/retrieval.md#the-read-log)).
 
 Bearer keys are the shipped mechanism on every route; `/mcp` also accepts a connection's access
-token, decided, not built ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md),
+token, decided, not built, waiting for the proposed ADR-0039's `/mcp` rewrite
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md),
 [RS-2](../product/roadmap.md)). The role vocabulary and key authorization semantics are owned by
 [roles-and-keys.md](../architecture/roles-and-keys.md).
 
@@ -991,8 +992,15 @@ declared on [roles and keys](../architecture/roles-and-keys.md#connections); the
 boot key `oauth.issuer` ([configuration](../operations/configuration.md)), the public origin, for
 example `https://oml.example.com`; the protected resource is `<issuer>/mcp`. Unset, the documents
 and endpoints below answer `404`, `/mcp` is bearer-only, and a connect code is refused; listing and
-revoking a key's connections on `/v2` are still served. Decided, not built
-([FR-34](../product/roadmap.md)).
+revoking a key's connections on `/v2` are still served. **Built:** the two discovery documents,
+`GET` and `POST /oauth/authorize` with the authorization page, `POST /oauth/token` and
+`POST /oauth/register`, the client document fetch under its caps and allow-list, and the use cases
+beneath them, a connector key's issuance, minting a connect code, and listing and revoking a key's
+connections. **Waiting for the proposed ADR-0039**, which rewrites `/mcp` and the `/v2` routes: `/mcp`
+accepting an access token and the challenge below; the `/v2` connect-code, connections and revoke
+routes, and the `connect_code` member of `POST /v2/keys`, which is not yet read; the CLI's wiring
+to them; the doctor checks `oauth_discovery`, `connect_codes` and `connections`; and the cluster
+lease's issuer. No live claude.ai connection has run ([FR-34](../product/roadmap.md)).
 
 **The challenge.** A `401` from `/mcp` keeps its typed body (`auth.missing` with no header,
 `auth.invalid` for a credential that failed) and carries:

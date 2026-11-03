@@ -29,6 +29,48 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.4.0-design
 
+### 2026-11-04 — Connections by connect code: the tables, the use cases and the `/oauth` routes (implementation)
+
+An implementation milestone; no decision changes. The code now builds the internals and the
+unversioned OAuth surface of the proposed
+[ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md). The record stays proposed: no
+Status line moves, `info.version` stays `0.4.0-design`, no `spec-v0.4` tag is cut, and no package
+version moves until the release.
+
+- **The tables** (d5, d7–d10). Migration `0012_connections.sql` adds `api_keys.credential`,
+  `connect_codes`, `oauth_connections` and `oauth_tokens`, and `0013_oauth_clients.sql` adds
+  `oauth_clients` and `oauth_authorizations`, the provider tenant's deployment-level state
+  ([postgres-schema](data/postgres-schema.md#connections-adr-0031)). `0010` and `0011` are left to
+  other work.
+- **The use cases** (d7, d8, d10–d12). A connector key is issued with a connect code in place of a
+  value; an admin mints a fresh code, lists a key's connections and revokes one; the first
+  exchange opens a connection in one `connection.opened`, each refresh rotates by one conditional
+  update and journals nothing, and a reused refresh token or redeemed code ends the connection in
+  a `connection.revoked`. An access token resolves to exactly its key's caller.
+- **The routes** (d1, d3–d6, d9, d13, d14). With `oauth.issuer` set, the lead serves the two
+  discovery documents, `GET` and `POST /oauth/authorize` with the authorization page,
+  `POST /oauth/token` and `POST /oauth/register`, outside both rings; unset, each answers `404`.
+  The page fetches client ID metadata documents through one capped fetcher, 16 slots, one per host
+  and per address, behind the address allow-list
+  ([HTTP API](api/http-api.md#connections-oauth-for-hosted-mcp-clients)).
+- **The CLI** (d7). `oml keys issue-agent --connect-code` sends `connect_code: true`, refuses
+  `--out`, and prints the connector URL and the code; `POST /v2/keys` does not yet read the member.
+- **The check.** `oml-server-lead`'s `oauth_flow` suite runs the whole flow through the real lead:
+  a registration, the page, the code and Connect, the exchange, a refresh and the replay of the
+  rotated refresh token, which ends the connection, with exactly `connection.code_issued`,
+  `connection.opened` and `connection.revoked` journalled. It runs only where a superuser mints
+  the role pair, CI's `cargo test (Postgres)`, and prints `did not run` elsewhere.
+- **Not built:** what waits for the proposed ADR-0039, which rewrites `/mcp` and the `/v2` routes:
+  `/mcp` accepting an access token and its `401` challenge (d2); the `/v2` connect-code,
+  connections and revoke routes and the CLI's wiring to them, `oml keys connect-code` and
+  `oml keys disconnect` included; the doctor checks `oauth_discovery`, `connect_codes` and
+  `connections`; and the issuer recorded in the cluster lease (d14). FR-34 stays open: no live
+  claude.ai connection has run.
+- **No surface change** beyond the routes the 2026-10-31 entry below declared: no error code or
+  event type is added.
+- **Pages touched:** [HTTP API](api/http-api.md), [roles and keys](architecture/roles-and-keys.md),
+  [Postgres schema](data/postgres-schema.md) and this page.
+
 ### 2026-10-31 — Connections: Claude's hosted apps over OAuth, bound by a one-time connect code (ADR-0031)
 
 The proposed [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md) designs how claude.ai,

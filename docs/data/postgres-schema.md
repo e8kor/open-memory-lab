@@ -524,6 +524,13 @@ constraint (ADR-0034 d12). The keys built this way:
 
 ## connections (ADR-0031)
 
+**Status:** built in `migrations/0012_connections.sql` (`api_keys.credential`, `connect_codes`,
+`oauth_connections`, `oauth_tokens`) and `migrations/0013_oauth_clients.sql` (`oauth_clients`,
+`oauth_authorizations`), and in `oml-pg`'s connection store · its checks run only where a superuser
+mints the suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md),
+[ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8).
+
 Connect codes, connections, their tokens, and the deployment-level state the authorization server
 keeps before a code names a key ([roles and keys](../architecture/roles-and-keys.md#connections),
 [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). No code, token or

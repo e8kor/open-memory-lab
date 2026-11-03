@@ -606,7 +606,14 @@ authorization page — is declared on the
 [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients). A **connection** is one
 OAuth client's standing authority to act as one connector key at `/mcp`; it exists so that
 Claude's hosted apps, which cannot hold a key, can use the [agent plugin](../api/mcp-plugin.md)
-without a key value being pasted anywhere. Decided, not built ([FR-34](../product/roadmap.md)).
+without a key value being pasted anywhere. **Built:** connector keys, connect codes, connections
+and their tokens as this section declares them, in the store and the use cases, with the OAuth
+endpoints and the authorization page over them. **Waiting for the proposed ADR-0039:** a token
+accepted at `/mcp`, the `/v2` connect-code, connections and revoke routes, the CLI's wiring to them
+(`oml keys issue-agent --connect-code` sends `connect_code: true`, which `POST /v2/keys` does not
+yet read, and `oml keys connect-code` and `oml keys disconnect` do not exist), the doctor checks
+`oauth_discovery`, `connect_codes` and `connections`, and the cluster lease's issuer. No live
+claude.ai connection has run ([FR-34](../product/roadmap.md)).
 
 **Connector keys.** A key issued with `connect_code: true` (`oml keys issue-agent …
 --connect-code`, [CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)) is a connector
