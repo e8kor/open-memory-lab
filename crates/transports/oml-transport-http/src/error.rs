@@ -332,6 +332,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "a {} target is superseded on the HTTP API: oml_supersede carries no vocabulary fields",
             kind.as_str()
         )),
+        // A claim-edge label the domain refused, naming the body field
+        // (errors.md request.validation; ADR-0021 d5).
+        AppError::ClaimEdgeLabel { field, reason } => {
+            ApiError::validation(reason.to_string()).with_details(json!({ "field": field.as_str() }))
+        }
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
             "submission.claim_key_conflict",
