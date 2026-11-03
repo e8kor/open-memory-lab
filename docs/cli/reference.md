@@ -2,7 +2,7 @@
 id: cli/reference
 tier: engineering
 status: design draft for review · decided, not built
-answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; oml keys issue-agent and its --out key file; the oml-admin plugin; oml hook session-start, the agent plugin's session context, its variables and its fail-open behaviour
+answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; oml keys issue-agent and its --out key file; the oml-admin plugin; oml hook session-start, the agent plugin's session context, its variables and its fail-open behaviour; how to verify and install the CLI's release archive on each OS, and what differs on Windows
 -->
 
 # CLI reference
@@ -23,6 +23,75 @@ in [roles and keys](../architecture/roles-and-keys.md); nothing on this page wid
 
 This page owns the verb set of decision D14. [sessions.md](sessions.md) shows the same verbs in
 mockup transcripts.
+
+## Installing `oml`, and what differs on Windows
+
+Built, not yet released: no tag has run the release workflow that produces these archives. Each
+release carries the CLI alone as `oml-cli-X.Y.Z-<target>.tar.gz`, `.zip` on Windows, for the
+targets listed under [release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance),
+each with a CycloneDX SBOM and a cosign signature bundle. Verify the archive, then extract it.
+
+Linux, on x86_64 (on arm64, `t=aarch64-unknown-linux-musl`); the binary is static, so it runs on
+any distribution:
+
+```sh
+v=X.Y.Z t=x86_64-unknown-linux-musl          # the release and your target
+base=https://github.com/e8kor/open-memory-lab/releases/download/v$v
+curl -fsSLO "$base/oml-cli-$v-$t.tar.gz" -O "$base/oml-cli-$v-$t.tar.gz.sigstore.json"
+cosign verify-blob \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' \
+  --bundle "oml-cli-$v-$t.tar.gz.sigstore.json" "oml-cli-$v-$t.tar.gz" \
+  && tar -xzf "oml-cli-$v-$t.tar.gz" \
+  && install -D -m 0755 "oml-cli-$v-$t/oml" ~/.local/bin/oml
+```
+
+macOS: the same lines with `t=aarch64-apple-darwin` (Apple silicon) or `t=x86_64-apple-darwin`
+(Intel), with the last line `install -m 0755 "oml-cli-$v-$t/oml" /usr/local/bin/oml`, or any
+directory on your `PATH`.
+
+Windows, in PowerShell:
+
+```powershell
+$v = "X.Y.Z"; $t = "x86_64-pc-windows-msvc"; $n = "oml-cli-$v-$t"
+$base = "https://github.com/e8kor/open-memory-lab/releases/download/v$v"
+Invoke-WebRequest "$base/$n.zip" -OutFile "$n.zip"
+Invoke-WebRequest "$base/$n.zip.sigstore.json" -OutFile "$n.zip.sigstore.json"
+cosign verify-blob `
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com `
+  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' `
+  --bundle "$n.zip.sigstore.json" "$n.zip"
+if ($LASTEXITCODE -eq 0) { Expand-Archive "$n.zip" -DestinationPath . }
+```
+
+Then put `$n\oml.exe` in a directory on your `PATH`. Extract only after `cosign verify-blob`
+exits 0: an archive that does not verify is not a release.
+
+**Owner-only files.** The credentials file and the `--out` key file each hold a key value, so each
+is made owner-only before a byte of it is written. On Linux and macOS the file is mode `0600`, set
+exactly whatever the umask. On Windows it carries a protected DACL with one entry, granting the
+current user full access and inheriting nothing from its directory; the file is opened with no
+sharing, so no other open of it succeeds until the CLI closes it, and the DACL is set before the
+value is written. On any other platform the CLI refuses to write either file. The credentials file
+is `$HOME/.config/oml/credentials`, or `%USERPROFILE%\.config\oml\credentials` on Windows when
+`HOME` is unset; `OML_CLI_CREDENTIALS` overrides both. What only a Windows runner proves: the DACL
+the CLI sets reads back as that one entry, and a second open is refused with a sharing violation.
+`ci.yml` job `cli-matrix` runs those tests on `windows-2025`; no tagged release has shipped them.
+
+**Shell lines.** `oml keys issue-agent` prints `export` lines in POSIX shell. On Windows, run
+them in Git Bash.
+
+**The plugin's hook on Windows.** Claude Code runs a command hook's string in `sh -c` on macOS
+and Linux, in Git Bash on Windows, and in PowerShell when Git Bash is not installed; Git for
+Windows, which provides Git Bash, is optional for Claude Code on native Windows
+([hooks reference](https://code.claude.com/docs/en/hooks), "Exec form and shell form";
+[advanced setup](https://code.claude.com/docs/en/setup), "Set up on Windows"; both fetched
+2026-11-03). The [plugin's SessionStart command](#oml-hook-session-start-session-context-for-the-agent-plugin)
+is POSIX shell, so on Windows it runs as on Linux under Git Bash. Without Git Bash it reaches
+PowerShell, where the guard is not PowerShell syntax: no context is added, and whether Claude Code
+shows a hook error is unverified — no Windows session has run it. A command that is both is a
+change to [ADR-0029](../adr/ADR-0029-session-start-hook.md) d7, which fixes the command's text,
+and is not made here.
 
 ## Conventions
 
@@ -465,7 +534,8 @@ command -v oml >/dev/null 2>&1 || exit 0; oml hook session-start || exit 0
 ```
 
 A user with the plugin and no CLI, or with a CLI older than the verb, sees no hook error and gets
-no context.
+no context. On Windows the command runs as written only under Git Bash
+([what differs on Windows](#installing-oml-and-what-differs-on-windows)).
 
 ## Verbs that do not exist
 
