@@ -1,7 +1,7 @@
 # The `oml` agent plugin
 
-This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds eight
-tools, `oml_remember`, `oml_learn`, `oml_recall`, `oml_get`, `oml_supersede`,
+This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds nine
+tools, `oml_write`, `oml_remember`, `oml_learn`, `oml_recall`, `oml_get`, `oml_supersede`,
 `oml_my_work`, `oml_workarea_info` and `oml_events_tail`, plus a skill that explains when
 to use them. Every write is held until a different identity approves it.
 That is the point of the server, and it means a fact you store is not shared the moment
@@ -168,7 +168,7 @@ read tools to `permissions.allow` in your settings:
 ```
 
 The broader rule, `mcp__plugin_oml_oml`, allows every tool of the plugin, the writes too, and
-costs you the sight of them: Claude then calls `oml_remember`, `oml_learn` and `oml_supersede`,
+costs you the sight of them: Claude then calls `oml_write`, `oml_remember`, `oml_learn` and `oml_supersede`,
 which can propose retiring a claim, without showing you the call, so whatever the session
 chooses to record leaves for the server unseen. What it chooses is shaped by the stored text the
 hook adds at session start, which other writers in the workarea can influence. Every write is
@@ -200,8 +200,8 @@ that documentation does not settle as unverified.
 
 ## What is served today
 
-The catalog in [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares twelve tools.
-This release serves the eight above. The other four are not served yet: `oml_attach`,
+The catalog in [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares thirteen tools.
+This release serves the nine above. The other four are not served yet: `oml_attach`,
 `oml_relate_propose`, `oml_graph` and `oml_vocab` answer with an error saying they are not
 built yet. They arrive with the milestones in the
 [critical path](../../docs/product/critical-path.md).

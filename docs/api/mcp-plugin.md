@@ -27,7 +27,9 @@ The machine-readable form of this catalog is
 every tool's name, description and input schema. It is normative for the
 wire shape in the same relationship [http-api.md](http-api.md) has to
 [openapi.yaml](openapi.yaml): this page and that file describe the same twelve
-tools, and a divergence between them that `_meta.pending_design` does not
+tools, beside [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d3's `oml_write`, which
+the file declares and the server serves ahead of this page's three-tool catalog, as
+`_meta.pending_design` lists, and a divergence between them that `_meta.pending_design` does not
 list is a documentation bug, not an ambiguity to interpret. One ordering rule keeps the two honest while the
 build catches up: `tools/list` serves the subset of that file the server
 builds, so a served tool's entry changes only in the same change as the code

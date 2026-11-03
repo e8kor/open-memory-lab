@@ -1,15 +1,68 @@
 {
   "_meta": {
-    "comment": "Status: design draft for review - decided, not built. This file is the normative machine shape of the MCP tool catalog declared in mcp-plugin.md: the exact tools/list result payload the plugin serves. The prose catalog and this file describe the same twelve tools (ADR-0025 d12); a divergence between them that pending_design does not list is a documentation bug. tools/list serves the subset of this file the server builds; an entry for a tool the server does not serve yet carries its designed shape, and a served tool's entry describes what the build serves and changes only in the same change as the code that serves it, so the server never advertises a field it refuses. pending_design names, per served tool, what mcp-plugin.md decides that the served entry does not carry yet, or a decided refusal its description states that the build does not raise yet. Target MCP specification revision: 2025-06-18 (streamable HTTP transport, run stateless per mcp-plugin.md); the revision the implementation finally pins, and the transport behavior verified against it, are recorded with a fetch date at implementation time.",
+    "comment": "Status: design draft for review - decided, not built. This file is the normative machine shape of the MCP tool catalog declared in mcp-plugin.md: the exact tools/list result payload the plugin serves. The prose catalog and this file describe the same tools (ADR-0025 d12); a divergence between them that pending_design does not list is a documentation bug. tools/list serves the subset of this file the server builds; an entry for a tool the server does not serve yet carries its designed shape, and a served tool's entry describes what the build serves and changes only in the same change as the code that serves it, so the server never advertises a field it refuses. pending_design names, per served tool, what mcp-plugin.md decides that the served entry does not carry yet, or a decided refusal its description states that the build does not raise yet. Target MCP specification revision: 2025-06-18 (streamable HTTP transport, run stateless per mcp-plugin.md); the revision the implementation finally pins, and the transport behavior verified against it, are recorded with a fetch date at implementation time.",
     "spec_revision_targeted": "2025-06-18",
     "catalog_page": "mcp-plugin.md",
     "design_spec_version": "0.3.0-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
+      "oml_write": "ADR-0039 d2, d3, d14: served beside the v0.3.0 tools ahead of the three-tool catalog, which mcp-plugin.md describes with it in the step that retires the v0.3.0 tools from tools/list.",
       "oml_recall": "ADR-0013 d1, d2 and ADR-0025 d9: mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log. The build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet."
     }
   },
   "tools": [
+    {
+      "name": "oml_write",
+      "description": "Store a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned same-call, then reviewed by an identity that did not write it, visible to others only after ratification. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped.",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The claim text, or, with retirement true, why the claim is retired. At most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized text; larger is refused with request.payload_too_large."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "A retry with the same key and an identical request returns the stored response with idempotent_replay true; the same key with a different request is a typed error, never a second write (D13)."
+          },
+          "claim_key": {
+            "type": "string",
+            "description": "Groups the versions of one claim. Omitted, the server derives auto- plus 16 hex digits from the key and the text, and a sent key starting auto- is refused. Refused with replaces: the new version takes its target's."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["memory", "derived_fact", "steering", "term", "term_mapping", "vocab_release"],
+            "default": "memory",
+            "description": "The claim's kind; omitted, memory, or with replaces the target's. With replaces only memory, derived_fact and steering are accepted, within the kind-change rule (docs/architecture/audit-and-lineage.md)."
+          },
+          "derives_from": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Artifact ids this claim derives from, each readable by the key; non-empty, a submission is journalled learn. With replaces the target is included implicitly."
+          },
+          "workarea": {
+            "type": "string",
+            "description": "The workarea, by node id or name. Without replaces, the workarea written in, omitted the key's default. With replaces it must be the target's workarea."
+          },
+          "replaces": {
+            "type": "string",
+            "description": "The artifact id of the claim's current served tip to supersede (submission.tip_conflict otherwise). A target of a vocabulary kind (term, term_mapping, vocab_release) is refused; supersede it on the HTTP API."
+          },
+          "retirement": {
+            "type": "boolean",
+            "default": false,
+            "description": "With replaces, true proposes retiring the claim: once a non-author ratifies, recall stops serving it and every version stays readable. Refused without replaces."
+          },
+          "reason": {
+            "type": "string",
+            "description": "With replaces, the reason for the change. Refused without replaces."
+          }
+        },
+        "required": ["text", "idempotency_key"],
+        "additionalProperties": false
+      }
+    },
     {
       "name": "oml_remember",
       "description": "Submit a memory. Held on arrival: scanned same-call, then reviewed by an identity that did not write it, visible to others only after ratification. Success means accepted for review, never published. Rides POST /v1/memories.",

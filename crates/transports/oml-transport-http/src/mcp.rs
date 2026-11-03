@@ -43,7 +43,8 @@ const ACCEPTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 
 /// The catalog tools whose ring endpoint exists in this slice.
-pub const SERVED_TOOLS: [&str; 8] = [
+pub const SERVED_TOOLS: [&str; 9] = [
+    "oml_write",
     "oml_remember",
     "oml_learn",
     "oml_recall",
@@ -118,6 +119,26 @@ struct RememberArgs {
     simulated_time: Option<String>,
     idempotency_key: String,
 }
+
+/// `oml_write`'s one flat argument set; which fields are present chooses
+/// the endpoint (ADR-0039 d3).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WriteArgs {
+    text: String,
+    idempotency_key: String,
+    claim_key: Option<String>,
+    kind: Option<String>,
+    derives_from: Option<Vec<String>>,
+    workarea: Option<String>,
+    replaces: Option<String>,
+    retirement: Option<bool>,
+    reason: Option<String>,
+}
+
+/// The successor kinds `oml_write` takes with `replaces`: no vocabulary
+/// kind, whose successors carry fields the tool does not (ADR-0039 d3).
+const SUPERSEDE_KINDS: [&str; 3] = ["memory", "derived_fact", "steering"];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -293,6 +314,7 @@ where
         let name = call.name.as_str();
         let args = Value::Object(call.arguments);
         let outcome = match name {
+            "oml_write" => Self::tool_write(st, token, args).await,
             "oml_remember" => Self::tool_submit(st, token, "remember", args).await,
             "oml_learn" => Self::tool_submit(st, token, "learn", args).await,
             "oml_recall" => Self::tool_recall(st, token, args).await,
@@ -321,6 +343,103 @@ where
             }
         };
         rpc_result(id, &tool_result(outcome, request_id))
+    }
+
+    /// `oml_write`: one `POST /v1/memories`, or with `replaces` one
+    /// `POST /v1/memories/{replaces}/supersede`, chosen by the fields
+    /// present. A submission refuses `retirement` and `reason`, and leaves
+    /// the verb, the kind and the claim key to the ring's defaults; a
+    /// supersession refuses `claim_key` and a vocabulary `kind`, and sets
+    /// `refuse_vocabulary_target`, so the ring refuses a vocabulary target
+    /// and a workarea other than the target's. Each refusal is
+    /// `request.validation` naming its field (ADR-0039 d3, ADR-0025 d16).
+    async fn tool_write(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+        let args: WriteArgs = parse_args(args)?;
+        let mut headers = ring_headers(token);
+        insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
+        let mut body = Map::new();
+        body.insert("body".to_owned(), Value::String(args.text));
+        let (mode, response) = if let Some(replaces) = args.replaces {
+            if args.claim_key.is_some() {
+                return Err(field_refusal(
+                    "/claim_key",
+                    "claim_key is refused with replaces: the new version takes its target's claim_key",
+                ));
+            }
+            if let Some(kind) = args.kind.as_deref()
+                && !SUPERSEDE_KINDS.contains(&kind)
+            {
+                return Err(field_refusal(
+                    "/kind",
+                    &format!(
+                        "kind {kind:?} is refused with replaces: oml_write supersedes into one of {SUPERSEDE_KINDS:?}, and a vocabulary kind is superseded on the HTTP API"
+                    ),
+                ));
+            }
+            for (name, value) in [
+                ("workarea", args.workarea.map(Value::from)),
+                ("kind", args.kind.map(Value::from)),
+                ("derives_from", args.derives_from.map(Value::from)),
+                ("retirement", args.retirement.map(Value::from)),
+                ("reason", args.reason.map(Value::from)),
+            ] {
+                if let Some(value) = value {
+                    body.insert(name.to_owned(), value);
+                }
+            }
+            let response = Self::supersede_inner(
+                st,
+                &replaces,
+                &headers,
+                &Bytes::from(Value::Object(body).to_string()),
+                true,
+            )
+            .await;
+            ("supersede", response)
+        } else {
+            for (field, sent) in [
+                ("retirement", args.retirement.is_some()),
+                ("reason", args.reason.is_some()),
+            ] {
+                if sent {
+                    return Err(field_refusal(
+                        &format!("/{field}"),
+                        &format!(
+                            "{field} is refused without replaces: it belongs to a supersession, so send replaces naming the version it changes"
+                        ),
+                    ));
+                }
+            }
+            for (name, value) in [
+                ("claim_key", args.claim_key.map(Value::from)),
+                ("kind", args.kind.map(Value::from)),
+                ("workarea", args.workarea.map(Value::from)),
+                ("derives_from", args.derives_from.map(Value::from)),
+            ] {
+                if let Some(value) = value {
+                    body.insert(name.to_owned(), value);
+                }
+            }
+            let response =
+                Self::submit_inner(st, &headers, &Bytes::from(Value::Object(body).to_string()))
+                    .await;
+            ("submit", response)
+        };
+        let replayed = response
+            .as_ref()
+            .is_ok_and(|r| r.headers().contains_key("idempotency-replay"));
+        let receipt = ring_outcome(response).await?;
+        Ok(json!({
+            "mode": mode,
+            "artifact_id": receipt["artifact_id"],
+            "claim_key": receipt["claim_key"],
+            "version": receipt["version"],
+            "state": receipt["state"],
+            "workarea": receipt["workarea_id"],
+            "retirement": receipt["retirement"],
+            "replaces": receipt["replaces"],
+            "idempotent_replay": replayed,
+        }))
     }
 
     /// `oml_remember` / `oml_learn`: one `POST /v1/memories`.
@@ -699,6 +818,13 @@ fn tool_result(outcome: Result<Value, Value>, request_id: &str) -> Value {
 /// the request id (errors.md envelope).
 fn refusal(error: ApiError) -> Value {
     json!({ "error": error.error_object() })
+}
+
+/// A refusal of one argument: `request.validation` naming it in
+/// `details.field` as its JSON pointer (errors.md `request.validation`;
+/// ADR-0025 d16).
+fn field_refusal(field: &str, message: &str) -> Value {
+    refusal(ApiError::validation(message).with_details(json!({ "field": field })))
 }
 
 /// The ring handler's response, as the success body or the refusal body.

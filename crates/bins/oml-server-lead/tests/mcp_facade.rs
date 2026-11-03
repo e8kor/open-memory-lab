@@ -858,7 +858,7 @@ async fn a_tool_that_is_not_served_answers_json_rpc_32602() {
 }
 
 #[tokio::test]
-async fn tools_list_serves_exactly_the_eight_built_tools() {
+async fn tools_list_serves_exactly_the_nine_built_tools() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -875,6 +875,7 @@ async fn tools_list_serves_exactly_the_eight_built_tools() {
     assert_eq!(
         names,
         [
+            "oml_write",
             "oml_remember",
             "oml_recall",
             "oml_learn",
@@ -1340,6 +1341,419 @@ async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supers
     assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
     assert_eq!(accepted["state"], "held");
     assert_eq!(accepted["replaces"]["artifact_id"], term.as_str());
+
+    drop_db(&db).await;
+}
+
+/// The `oml_write` refusal `result` is: `request.validation` naming
+/// `field` in `details.field` (ADR-0039 d3, ADR-0025 d16).
+fn refused_naming(result: &Value, field: &str) {
+    assert_eq!(result["isError"], true, "{result}");
+    let error = &result["structuredContent"]["error"];
+    assert_eq!(error["code"], "request.validation", "{result}");
+    assert_eq!(error["details"]["field"], field, "{result}");
+}
+
+/// The capture event types the key's events tail journals for
+/// `artifact_id`.
+async fn capture_events(router: &Router, token: &str, artifact_id: &str) -> Vec<String> {
+    let (status, events) = send(
+        router,
+        "GET",
+        "/v2/events?after_seq=0&limit=200",
+        Some(token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    events["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|e| e["payload"]["artifact_id"] == artifact_id)
+        .filter_map(|e| e["event_type"].as_str())
+        .filter(|t| t.starts_with("submission."))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The number of claim versions the key's own-work listing holds.
+async fn own_versions(router: &Router, token: &str) -> usize {
+    let work = call_tool(router, token, 99, "oml_my_work", json!({})).await;
+    work["structuredContent"]["items"]
+        .as_array()
+        .expect("items")
+        .len()
+}
+
+#[tokio::test]
+async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from_is_set() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (agent, _, _, crew) = agent_crew(&router).await;
+
+    // No claim_key and no kind: the server derives the key and the kind is
+    // memory (ADR-0039 d3, d6).
+    let first = call_tool(
+        &router,
+        &agent,
+        1,
+        "oml_write",
+        json!({"text": QUOTE, "idempotency_key": "crew-procure/run-1/step-1"}),
+    )
+    .await;
+    assert_eq!(first["isError"], false, "{first}");
+    let receipt = &first["structuredContent"];
+    let ancestor = receipt["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+    let claim_key = receipt["claim_key"].as_str().expect("claim key").to_owned();
+    assert!(claim_key.starts_with("auto-"), "{receipt}");
+    assert_eq!(
+        receipt,
+        &json!({
+            "mode": "submit",
+            "artifact_id": ancestor,
+            "claim_key": claim_key,
+            "version": 1,
+            "state": "held",
+            "workarea": crew.to_string(),
+            "retirement": false,
+            "replaces": null,
+            "idempotent_replay": false,
+        })
+    );
+    assert_eq!(
+        capture_events(&router, &agent, &ancestor).await,
+        ["submission.remember"]
+    );
+    let got = call_tool(
+        &router,
+        &agent,
+        2,
+        "oml_get",
+        json!({"artifact_id": ancestor}),
+    )
+    .await;
+    assert_eq!(got["structuredContent"]["kind"], "memory", "{got}");
+
+    // derives_from non-empty: the same endpoint journals learn.
+    let derived = call_tool(
+        &router,
+        &agent,
+        3,
+        "oml_write",
+        json!({
+            "text": ALLOY,
+            "claim_key": "supplier-quote-ta-2207",
+            "derives_from": [ancestor],
+            "workarea": "metals-crew",
+            "idempotency_key": "crew-procure/run-1/step-2",
+        }),
+    )
+    .await;
+    assert_eq!(derived["isError"], false, "{derived}");
+    let receipt = &derived["structuredContent"];
+    assert_eq!(receipt["mode"], "submit", "{receipt}");
+    assert_eq!(receipt["claim_key"], "supplier-quote-ta-2207", "{receipt}");
+    assert_eq!(receipt["workarea"], crew.to_string(), "{receipt}");
+    let artifact = receipt["artifact_id"].as_str().expect("artifact id");
+    assert_eq!(
+        capture_events(&router, &agent, artifact).await,
+        ["submission.learn"]
+    );
+    let got = call_tool(
+        &router,
+        &agent,
+        4,
+        "oml_get",
+        json!({"artifact_id": artifact}),
+    )
+    .await;
+    assert_eq!(got["structuredContent"]["derives_from"], json!([ancestor]));
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_write_with_replaces_supersedes_that_version() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, reader, crew) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+
+    // The target's own workarea, by name, is accepted.
+    let proposed = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_write",
+        json!({
+            "replaces": v1,
+            "text": REVISED,
+            "reason": "supplier issued a revised quote",
+            "workarea": "metals-crew",
+            "idempotency_key": "crew-procure/run-2/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(proposed["isError"], false, "{proposed}");
+    let receipt = &proposed["structuredContent"];
+    let v2 = receipt["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+    assert_eq!(
+        receipt,
+        &json!({
+            "mode": "supersede",
+            "artifact_id": v2,
+            "claim_key": CLAIM,
+            "version": 2,
+            "state": "held",
+            "workarea": crew.to_string(),
+            "retirement": false,
+            "replaces": {"artifact_id": v1, "version": 1},
+            "idempotent_replay": false,
+        })
+    );
+    let own = call_tool(&router, &writer, 2, "oml_get", json!({"artifact_id": v2})).await;
+    assert_eq!(own["structuredContent"]["text"], REVISED, "{own}");
+    assert_eq!(own["structuredContent"]["derives_from"], json!([v1]));
+
+    // Held, the target stays the tip until a non-author ratifies.
+    let recall = json!({"query": "aluminium price"});
+    let before = call_tool(&router, &reader, 3, "oml_recall", recall.clone()).await;
+    assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
+    approve_as(&router, &dreamer, "v2").await;
+    let after = call_tool(&router, &reader, 4, "oml_recall", recall).await;
+    assert_eq!(hit_ids(&after), [v2.as_str()], "{after}");
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_write_with_retirement_true_proposes_retiring_the_target() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+    let why = "Retired: quote AM-7741 lapsed on 2026-12-01 and was not renewed.";
+
+    let proposed = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_write",
+        json!({
+            "replaces": v1,
+            "text": why,
+            "retirement": true,
+            "idempotency_key": "crew-procure/run-2/step-1",
+        }),
+    )
+    .await;
+    assert_eq!(proposed["isError"], false, "{proposed}");
+    let receipt = &proposed["structuredContent"];
+    assert_eq!(receipt["mode"], "supersede", "{receipt}");
+    assert_eq!(receipt["retirement"], true, "{receipt}");
+    assert_eq!(receipt["state"], "held", "{receipt}");
+    assert_eq!(
+        receipt["replaces"],
+        json!({"artifact_id": v1, "version": 1})
+    );
+
+    // A proposal until a non-author ratifies; then recall serves none of
+    // the claim (ADR-0025 d11).
+    let recall = json!({"query": "aluminium price"});
+    let before = call_tool(&router, &reader, 2, "oml_recall", recall.clone()).await;
+    assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
+    approve_as(&router, &dreamer, "v2").await;
+    let after = call_tool(&router, &reader, 3, "oml_recall", recall).await;
+    assert_eq!(after["structuredContent"]["hits"], json!([]), "{after}");
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_write_refuses_retirement_without_replaces_naming_retirement() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (agent, _, _, _) = agent_crew(&router).await;
+
+    // retirement and reason belong to a supersession; on a submission each
+    // is refused by name, false included, never dropped.
+    for (id, (field, value)) in (1..).zip([
+        ("retirement", json!(true)),
+        ("retirement", json!(false)),
+        ("reason", json!("supplier issued a revised quote")),
+    ]) {
+        let mut args = json!({"text": QUOTE, "idempotency_key": format!("refused-{id}")});
+        args[field] = value;
+        let refused = call_tool(&router, &agent, id, "oml_write", args).await;
+        refused_naming(&refused, &format!("/{field}"));
+    }
+    assert_eq!(own_versions(&router, &agent).await, 0);
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_write_refuses_claim_key_with_replaces_naming_claim_key() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+
+    // The successor takes its target's claim_key, so a sent one is refused,
+    // even the target's own.
+    for (id, claim_key) in (1..).zip([CLAIM, "supplier-quote-am-7742"]) {
+        let refused = call_tool(
+            &router,
+            &writer,
+            id,
+            "oml_write",
+            json!({
+                "replaces": v1,
+                "claim_key": claim_key,
+                "text": REVISED,
+                "idempotency_key": format!("refused-{id}"),
+            }),
+        )
+        .await;
+        refused_naming(&refused, "/claim_key");
+    }
+    assert_eq!(own_versions(&router, &writer).await, 1);
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_write_refuses_a_workarea_other_than_the_targets_naming_workarea() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+
+    let refused = call_tool(
+        &router,
+        &writer,
+        1,
+        "oml_write",
+        json!({
+            "replaces": v1,
+            "workarea": Uuid::from_u128(0xBEEF),
+            "text": REVISED,
+            "idempotency_key": "refused-1",
+        }),
+    )
+    .await;
+    refused_naming(&refused, "/workarea");
+    assert_eq!(own_versions(&router, &writer).await, 1);
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_write_refuses_a_vocabulary_kind_target() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, _, _) = crew(&router).await;
+    remember_all(
+        &router,
+        &writer,
+        &[(
+            CLAIM,
+            "term",
+            "aluminium: a light silvery-white metal, symbol Al.",
+        )],
+    )
+    .await;
+    approve_as(&router, &dreamer, "term").await;
+    let work = call_tool(&router, &writer, 1, "oml_my_work", json!({})).await;
+    let term = work["structuredContent"]["items"][0]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+
+    // A ratified term is superseded on the HTTP API, never on this tool,
+    // which carries no vocabulary fields (ADR-0021; ADR-0039 d3).
+    let refused = call_tool(
+        &router,
+        &writer,
+        2,
+        "oml_write",
+        json!({"replaces": term, "text": "aluminium: element 13.", "idempotency_key": "term-1"}),
+    )
+    .await;
+    refused_naming(&refused, "/replaces");
+    assert!(
+        refused["structuredContent"]["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("HTTP API")),
+        "{refused}"
+    );
+
+    // Nor does a supersession on this tool take a vocabulary kind: the
+    // kind is refused before the target is read.
+    let refused = call_tool(
+        &router,
+        &writer,
+        3,
+        "oml_write",
+        json!({
+            "replaces": term,
+            "kind": "term",
+            "text": "aluminium: element 13.",
+            "idempotency_key": "term-2",
+        }),
+    )
+    .await;
+    refused_naming(&refused, "/kind");
+    assert_eq!(own_versions(&router, &writer).await, 1);
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn a_repeated_idempotency_key_replays_with_idempotent_replay_true() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+
+    // A submission and a supersession each replay their stored receipt,
+    // flagged, and write nothing a second time (D13).
+    for (id, args) in [
+        (
+            1,
+            json!({"text": ALLOY, "idempotency_key": "crew-procure/run-3/step-1"}),
+        ),
+        (
+            3,
+            json!({"replaces": v1, "text": REVISED, "idempotency_key": "crew-procure/run-3/step-2"}),
+        ),
+    ] {
+        let first = call_tool(&router, &writer, id, "oml_write", args.clone()).await;
+        assert_eq!(first["isError"], false, "{first}");
+        assert_eq!(first["structuredContent"]["idempotent_replay"], false);
+        let mut expected = first["structuredContent"].clone();
+        expected["idempotent_replay"] = json!(true);
+        let replay = call_tool(&router, &writer, id + 1, "oml_write", args).await;
+        assert_eq!(replay["isError"], false, "{replay}");
+        assert_eq!(replay["structuredContent"], expected);
+    }
+    assert_eq!(own_versions(&router, &writer).await, 3);
 
     drop_db(&db).await;
 }

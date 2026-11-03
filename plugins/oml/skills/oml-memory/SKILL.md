@@ -1,6 +1,6 @@
 ---
 name: oml-memory
-description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_remember, oml_learn, oml_recall, oml_get, oml_supersede, oml_my_work, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
+description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_write, oml_remember, oml_learn, oml_recall, oml_get, oml_supersede, oml_my_work, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
 ---
 
 # Working with Open Memory Lab memory
@@ -111,6 +111,15 @@ another version took the tip first, the refusal `submission.tip_conflict` names 
 To retire a claim that no longer holds, pass `retirement: true` with a `text` that says
 why. Once approved, recall stops serving the claim, and every version stays readable with
 `oml_get`.
+
+## One tool for every write
+
+`oml_write` does what `oml_remember`, `oml_learn` and `oml_supersede` do, chosen by the
+arguments you pass. Pass `text` and an `idempotency_key`; leave `claim_key` out and the
+server derives one. Add `derives_from` for a conclusion, and `replaces` with the tip's
+`artifact_id` for a new version, with `retirement: true` to retire it. With `replaces`, do not
+pass `claim_key`. Each argument outside the call's mode is refused naming it in
+`details.field`. The result's `mode` says which write ran.
 
 ## What the tools cannot do
 

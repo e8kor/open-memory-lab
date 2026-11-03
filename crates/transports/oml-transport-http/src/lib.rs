@@ -596,7 +596,7 @@ where
     /// names what it replaces; the target stays the tip until ratification
     /// (http-api.md supersede; ADR-0025 d10, d11). The body is closed: a
     /// field the server does not serve is refused, never dropped (d16).
-    /// `refuse_vocabulary_target` is set by `oml_supersede`, whose input
+    /// `refuse_vocabulary_target` is set by `oml_supersede` and `oml_write`, whose input
     /// carries no vocabulary fields (d12).
     async fn supersede_inner(
         st: &Self,

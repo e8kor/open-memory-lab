@@ -34,6 +34,20 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — `oml_write` takes one flat argument set, and the fields present choose the endpoint (ADR-0039 d3, implementation)
+
+The facade serves `oml_write` beside the eight v0.3.0 tools, declared in `mcp-tools.json` with
+its annotations. `text` and `idempotency_key` are required. Without `replaces` it is one
+`POST /v1/memories`, journalled `submission.learn` when `derives_from` is non-empty, its
+`claim_key` and `kind` left to the server's defaults; with `replaces` it is one
+`…/{replaces}/supersede`, and `retirement: true` proposes retiring the target. A field outside
+the mode is `request.validation` naming it in `details.field`: `retirement` and `reason` without
+`replaces`; `claim_key`, a `kind` other than `memory`, `derived_fact` or `steering`, a `workarea`
+not the target's and a vocabulary-kind target with it. The output is `{mode, artifact_id,
+claim_key, version, state, workarea, retirement, replaces, idempotent_replay}`, `mode` being
+`submit` or `supersede`. The vocabulary-target refusal now carries `details.field: /replaces` on
+`oml_supersede` too. The v0.3.0 tools leave `tools/list` in a later step.
+
 ### 2026-11-04 — The memory routes and the events tail take one `workarea` field, `include_unreviewed` and `include_text`, and serve `text` (ADR-0039 d4, d7, implementation)
 
 `POST /v1/memories`, `…/supersede` and `…/recall` take the body field `workarea`, and

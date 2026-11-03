@@ -345,10 +345,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::TermRetirement => ApiError::validation(
             "a term is never retired: terms deprecate, through a supersession with term_status deprecated",
         ),
+        // Raised only from the agent plugin, whose oml_write names the
+        // target `replaces` (ADR-0039 d3).
         AppError::VocabularyTarget(kind) => ApiError::validation(format!(
-            "a {} target is superseded on the HTTP API: oml_supersede carries no vocabulary fields",
+            "a {} target is superseded on the HTTP API: the plugin's tools carry no vocabulary fields",
             kind.as_str()
-        )),
+        ))
+        .with_details(json!({ "field": "/replaces" })),
         AppError::DerivedClaimKeySent => ApiError::validation(
             "claim_key starts auto-, the prefix of the keys the server derives: omit claim_key to have one derived, or send one with another prefix",
         )
