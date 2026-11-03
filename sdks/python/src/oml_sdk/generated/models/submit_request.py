@@ -27,15 +27,19 @@ class SubmitRequest:
     d16 closes the recall, supersede, key-issuance and grant bodies only.
 
         Attributes:
-            verb (SubmitRequestVerb): learn requires non-empty derives_from — refused with submission.lineage_required
-                otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
-            claim_key (str): Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with
-                a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected
-                or erased releases the key (docs/architecture/audit-and-lineage.md).
-            kind (SubmitRequestKind):
             body (str): Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-
                 normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through
                 attachments.
+            verb (SubmitRequestVerb | Unset): Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039
+                d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required
+                otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
+            claim_key (str | Unset): Groups versions of one claim; one live claim per (tenant, workarea): a new claim
+                collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every
+                version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server
+                derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a
+                conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
+                request.validation, details.field /claim_key (ADR-0039 d6).
+            kind (SubmitRequestKind | Unset):  Default: SubmitRequestKind.MEMORY.
             attachments (list[str] | Unset): At most 64 attachments per memory (http-api.md Limits). Each digest must name a
                 completed upload session owned by this key.
             derives_from (list[str] | Unset): Artifact ids; the declared lineage (omission is undetectable — honesty rule).
@@ -55,10 +59,10 @@ class SubmitRequest:
                 they never ride erasable body bytes.
     """
 
-    verb: SubmitRequestVerb
-    claim_key: str
-    kind: SubmitRequestKind
     body: str
+    verb: SubmitRequestVerb | Unset = UNSET
+    claim_key: str | Unset = UNSET
+    kind: SubmitRequestKind | Unset = SubmitRequestKind.MEMORY
     attachments: list[str] | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     simulation_id: None | str | Unset = UNSET
@@ -70,13 +74,17 @@ class SubmitRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        verb = self.verb.value
+        body = self.body
+
+        verb: str | Unset = UNSET
+        if not isinstance(self.verb, Unset):
+            verb = self.verb.value
 
         claim_key = self.claim_key
 
-        kind = self.kind.value
-
-        body = self.body
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind.value
 
         attachments: list[str] | Unset = UNSET
         if not isinstance(self.attachments, Unset):
@@ -123,12 +131,15 @@ class SubmitRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "verb": verb,
-                "claim_key": claim_key,
-                "kind": kind,
                 "body": body,
             }
         )
+        if verb is not UNSET:
+            field_dict["verb"] = verb
+        if claim_key is not UNSET:
+            field_dict["claim_key"] = claim_key
+        if kind is not UNSET:
+            field_dict["kind"] = kind
         if attachments is not UNSET:
             field_dict["attachments"] = attachments
         if derives_from is not UNSET:
@@ -154,13 +165,23 @@ class SubmitRequest:
         from ..models.submit_request_successors_item import SubmitRequestSuccessorsItem
 
         d = dict(src_dict)
-        verb = SubmitRequestVerb(d.pop("verb"))
-
-        claim_key = d.pop("claim_key")
-
-        kind = SubmitRequestKind(d.pop("kind"))
-
         body = d.pop("body")
+
+        _verb = d.pop("verb", UNSET)
+        verb: SubmitRequestVerb | Unset
+        if isinstance(_verb, Unset):
+            verb = UNSET
+        else:
+            verb = SubmitRequestVerb(_verb)
+
+        claim_key = d.pop("claim_key", UNSET)
+
+        _kind = d.pop("kind", UNSET)
+        kind: SubmitRequestKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = SubmitRequestKind(_kind)
 
         attachments = cast(list[str], d.pop("attachments", UNSET))
 
@@ -220,10 +241,10 @@ class SubmitRequest:
             mapping = SubmitRequestMapping.from_dict(_mapping)
 
         submit_request = cls(
+            body=body,
             verb=verb,
             claim_key=claim_key,
             kind=kind,
-            body=body,
             attachments=attachments,
             derives_from=derives_from,
             simulation_id=simulation_id,

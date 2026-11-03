@@ -48,7 +48,8 @@ use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
     AppError, BootstrapRequest, CrewCreateRequest, CrewRecord, CrewUpdate, GrantRecord,
     GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, RecallRequest, ServedMemory,
-    SubmitRequest, SupersedeRequest, TailedEvent, Verdict, Whoami, WorkareaInfo, WorkareaRecord,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, Whoami, WorkareaInfo,
+    WorkareaRecord,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -276,12 +277,15 @@ where
         let token = bearer(headers)?;
         let idem_key = idempotency_key(headers)?;
         let req: SubmitBody = parse_json(headers, body)?;
-        let kind = parse_kind(&req.kind)?;
-        match req.verb.as_str() {
-            "remember" => {}
+        // kind defaults to memory, and an omitted verb is the app's to
+        // choose from derives_from (ADR-0039 d3).
+        let kind = parse_kind(req.kind.as_deref().unwrap_or("memory"))?;
+        let verb = match req.verb.as_deref() {
+            None => None,
+            Some("remember") => Some(SubmitVerb::Remember),
             // learn asserts a derived claim: lineage is required, never
             // optional (errors.md submission.lineage_required).
-            "learn" if req.derives_from.is_empty() => {
+            Some("learn") if req.derives_from.is_empty() => {
                 return Err(ApiError::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "submission.lineage_required",
@@ -289,13 +293,13 @@ where
                     "verb learn with an empty or omitted derives_from",
                 ));
             }
-            "learn" => {}
-            other => {
+            Some("learn") => Some(SubmitVerb::Learn),
+            Some(other) => {
                 return Err(ApiError::validation(format!(
                     "verb must be remember or learn, not {other:?}"
                 )));
             }
-        }
+        };
         // The limit counts the NFC body, the form capture stores
         // (http-api.md limits; ADR-0025 d6).
         let text = nfc(&req.body);
@@ -309,6 +313,7 @@ where
         let app_req = SubmitRequest {
             idempotency_key: idem_key,
             claim_key: req.claim_key,
+            verb,
             kind,
             body: text,
             workarea_id,
@@ -1366,9 +1371,12 @@ where
 
 #[derive(Deserialize)]
 struct SubmitBody {
-    verb: String,
-    claim_key: String,
-    kind: String,
+    #[serde(default)]
+    verb: Option<String>,
+    #[serde(default)]
+    claim_key: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
     body: String,
     #[serde(default)]
     attachments: Vec<String>,

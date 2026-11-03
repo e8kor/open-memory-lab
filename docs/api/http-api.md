@@ -505,6 +505,15 @@ grants. A key with neither is refused with `request.workarea_unresolved` (422).
 }
 ```
 
+- `body` is the one required field. An omitted `verb` is `learn` when `derives_from` is non-empty
+  and `remember` otherwise, and a sent `verb` is honoured; an omitted `kind` is `memory`
+  ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d3).
+- An omitted `claim_key` is derived by the server: `auto-` plus the first 16 lowercase hex
+  digits of the SHA-256 of the authoring key's id, a zero byte and the NFC body. With the author
+  in the digest, two keys that record one text hold two claims for the reviewer, and
+  `submission.claim_key_conflict` on a derived key tells a writer only about its own rows. A sent
+  `claim_key` starting `auto-` is refused with `request.validation`, `details.field` `/claim_key`
+  ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d6).
 - `verb: "learn"` asserts a derived claim: `derives_from` must be non-empty, and an empty or
   omitted `derives_from` is refused (`submission.lineage_required`) — on every surface that fronts
   this verb, the MCP plugin's `oml_learn` included. A derived conclusion whose author cannot or

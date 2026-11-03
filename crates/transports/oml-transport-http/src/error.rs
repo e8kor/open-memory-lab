@@ -332,6 +332,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "a {} target is superseded on the HTTP API: oml_supersede carries no vocabulary fields",
             kind.as_str()
         )),
+        AppError::DerivedClaimKeySent => ApiError::validation(
+            "claim_key starts auto-, the prefix of the keys the server derives: omit claim_key to have one derived, or send one with another prefix",
+        )
+        .with_details(json!({ "field": "/claim_key" })),
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
             "submission.claim_key_conflict",

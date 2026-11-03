@@ -3,8 +3,8 @@
 
 use ed25519_dalek::SigningKey;
 use oml_domain::{
-    ChainError, EventDraft, EventTime, Sha256Hash, cross_sign_rotation, event_types,
-    key_fingerprint, next_envelope, rotation_message, verify_rotation_cross_sig,
+    ChainError, EventDraft, EventTime, Sha256Hash, cross_sign_rotation, derive_claim_key,
+    event_types, key_fingerprint, next_envelope, rotation_message, verify_rotation_cross_sig,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -24,6 +24,22 @@ fn rotation_message_is_the_ascii_rule() {
             hex::encode(new_key.as_bytes())
         )
     );
+}
+
+#[test]
+fn the_derived_claim_key_is_auto_plus_sixteen_hex_of_author_zero_byte_and_nfc_text() {
+    // ADR-0039 d6: `auto-` plus the first 16 lowercase hex digits of
+    // SHA-256(key id || 0x00 || NFC(text)), the id in its hyphenated
+    // lowercase spelling. The vector was computed outside this crate
+    // (Python hashlib and unicodedata).
+    let author = Uuid::parse_str("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b").unwrap();
+    let nfc = "Caf\u{e9} au lait costs 3 EUR.";
+    let nfd = "Cafe\u{301} au lait costs 3 EUR.";
+    assert_ne!(nfc, nfd);
+    assert_eq!(derive_claim_key(author, nfc), "auto-8e0d50e5a1715b9e");
+    assert_eq!(derive_claim_key(author, nfd), "auto-8e0d50e5a1715b9e");
+    // Another author's key for the same text is another key.
+    assert_eq!(derive_claim_key(Uuid::nil(), nfc), "auto-8004c59f3e3c23a6");
 }
 
 #[test]

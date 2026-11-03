@@ -802,3 +802,207 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
 
     drop_db(&db).await;
 }
+
+/// The key's own id, read from `GET /v2/whoami` (ADR-0039 d15).
+async fn key_id(router: &Router, key: &McpKey) -> uuid::Uuid {
+    let (status, me) = send(router, "GET", "/v2/whoami", Some(&key.token), None, None).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    me["key_id"]
+        .as_str()
+        .and_then(|id| id.parse().ok())
+        .expect("whoami names the key id")
+}
+
+/// One `POST /v1/memories` under `key`.
+async fn submit(router: &Router, key: &McpKey, idem: &str, body: &Value) -> (StatusCode, Value) {
+    send(
+        router,
+        "POST",
+        "/v1/memories",
+        Some(&key.token),
+        Some(idem),
+        Some(body),
+    )
+    .await
+}
+
+/// The event type the key's content tail journals for `artifact_id`'s
+/// capture (ADR-0025 d15).
+async fn capture_event(router: &Router, key: &McpKey, artifact_id: &str) -> String {
+    let (status, events) = send(
+        router,
+        "GET",
+        "/v2/events?after_seq=0&limit=100",
+        Some(&key.token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    let types: Vec<&str> = events["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|e| e["payload"]["artifact_id"] == artifact_id)
+        .filter_map(|e| e["event_type"].as_str())
+        .filter(|t| t.starts_with("submission."))
+        .collect();
+    assert_eq!(types.len(), 1, "one capture event: {events}");
+    types[0].to_owned()
+}
+
+#[tokio::test]
+async fn a_write_without_claim_key_is_stored_under_the_key_derived_from_its_author_and_text() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let Crew { agent, .. } = crew(&router).await;
+    let author = key_id(&router, &agent).await;
+
+    // No claim_key, verb or kind: the server derives the key, kind is
+    // memory and the capture is remember (ADR-0039 d3, d6).
+    let (status, receipt) = submit(&router, &agent, "derive-1", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    let expected = oml_app::domain::derive_claim_key(author, QUOTE);
+    assert_eq!(receipt["claim_key"], expected.as_str(), "{receipt}");
+    assert!(
+        expected.starts_with("auto-") && expected.len() == 21,
+        "{expected}"
+    );
+    let artifact = receipt["artifact_id"].as_str().expect("artifact id");
+    let (status, row) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories/{artifact}"),
+        Some(&agent.token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(row["claim_key"], expected.as_str(), "{row}");
+    assert_eq!(row["kind"], "memory", "{row}");
+    assert_eq!(
+        capture_event(&router, &agent, artifact).await,
+        "submission.remember"
+    );
+
+    // A replay under the same Idempotency-Key answers the stored receipt.
+    let (status, replay) = submit(&router, &agent, "derive-1", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{replay}");
+    assert_eq!(replay["artifact_id"], artifact, "{replay}");
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn a_derived_claim_key_conflict_reveals_no_other_keys_text() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let Crew { agent, other, .. } = crew(&router).await;
+
+    // Two keys record one text: two claims under two derived keys, and the
+    // second writer learns nothing of the first's held row (ADR-0039 d6).
+    let (status, first) = submit(&router, &agent, "same-1", &json!({ "body": FOREIGN })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{first}");
+    let (status, second) = submit(&router, &other, "same-2", &json!({ "body": FOREIGN })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{second}");
+    assert_ne!(first["claim_key"], second["claim_key"]);
+    assert_ne!(first["artifact_id"], second["artifact_id"]);
+
+    // The conflict a derived key can raise is over the writer's own row.
+    let (status, again) = submit(&router, &agent, "same-3", &json!({ "body": FOREIGN })).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+    assert_eq!(
+        again["error"]["code"], "submission.claim_key_conflict",
+        "{again}"
+    );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn an_explicit_claim_key_starting_auto_is_refused_naming_claim_key() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let Crew { agent, .. } = crew(&router).await;
+
+    let (status, refused) = submit(
+        &router,
+        &agent,
+        "auto-explicit",
+        &json!({ "claim_key": "auto-0123456789abcdef", "body": QUOTE }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["code"], "request.validation", "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["field"], "/claim_key",
+        "{refused}"
+    );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn a_write_with_derives_from_and_no_verb_is_journalled_submission_learn() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let Crew { agent, .. } = crew(&router).await;
+
+    let (status, ancestor) = submit(&router, &agent, "anc-1", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{ancestor}");
+    let (status, derived) = submit(
+        &router,
+        &agent,
+        "learn-1",
+        &json!({ "body": ALLOY, "derives_from": [ancestor["artifact_id"]] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{derived}");
+    let artifact = derived["artifact_id"].as_str().expect("artifact id");
+    assert_eq!(
+        capture_event(&router, &agent, artifact).await,
+        "submission.learn"
+    );
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn an_explicit_verb_keeps_its_journal_event() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let Crew { agent, .. } = crew(&router).await;
+
+    let (status, ancestor) = submit(&router, &agent, "anc-2", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{ancestor}");
+    for (idem, verb, text) in [
+        ("verb-remember", "remember", ALLOY),
+        ("verb-learn", "learn", STEERING),
+    ] {
+        let (status, receipt) = submit(
+            &router,
+            &agent,
+            idem,
+            &json!({
+                "verb": verb,
+                "body": text,
+                "derives_from": [ancestor["artifact_id"]],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+        let artifact = receipt["artifact_id"].as_str().expect("artifact id");
+        assert_eq!(
+            capture_event(&router, &agent, artifact).await,
+            format!("submission.{verb}")
+        );
+    }
+
+    drop_db(&db).await;
+}

@@ -1340,14 +1340,17 @@ export interface components {
         /** @description Names no workarea: the target resolves from the key's default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. */
         SubmitRequest: {
             /**
-             * @description learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
+             * @description Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
              * @enum {string}
              */
-            verb: "remember" | "learn";
-            /** @description Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). */
-            claim_key: string;
-            /** @enum {string} */
-            kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
+            verb?: "remember" | "learn";
+            /** @description Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
+            claim_key?: string;
+            /**
+             * @default memory
+             * @enum {string}
+             */
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
             /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through attachments. */
             body: string;
             /** @description At most 64 attachments per memory (http-api.md Limits). Each digest must name a completed upload session owned by this key. */

@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use sha2::{Digest as _, Sha256};
 use unicode_normalization::UnicodeNormalization as _;
 use uuid::Uuid;
 
@@ -151,6 +152,26 @@ pub fn transition(from: MemoryStatus, to: MemoryStatus) -> Result<MemoryStatus, 
 #[must_use]
 pub fn nfc(text: &str) -> String {
     text.nfc().collect()
+}
+
+/// The prefix every server-derived `claim_key` carries; a writer may not
+/// send a key that starts with it (ADR-0039 d6).
+pub const DERIVED_CLAIM_KEY_PREFIX: &str = "auto-";
+
+/// The `claim_key` the server derives when a submission omits one:
+/// `auto-` plus the first 16 lowercase hex digits of the SHA-256 of the
+/// author's key id (its hyphenated lowercase spelling), a zero byte and the
+/// NFC text (ADR-0039 d6). With the author in the digest, two keys that
+/// record one text hold two claims, and a conflict tells a writer only
+/// about its own rows (ADR-0025 d5, FR-31).
+#[must_use]
+pub fn derive_claim_key(author_root_key_id: Uuid, text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(author_root_key_id.to_string().as_bytes());
+    hasher.update([0_u8]);
+    hasher.update(nfc(text).as_bytes());
+    let digest = hex::encode(hasher.finalize());
+    format!("{DERIVED_CLAIM_KEY_PREFIX}{}", &digest[..16])
 }
 
 /// The derivation lineage closure of a row — the author plus every declared

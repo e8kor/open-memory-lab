@@ -37,6 +37,7 @@ pub use keys::{
     verify_rotation_cross_sig,
 };
 pub use model::{
-    HeldBy, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role, TransitionError, VerdictError,
-    check_reviewer, nfc, satisfies_crew_inequality, satisfies_manager_inequality, transition,
+    DERIVED_CLAIM_KEY_PREFIX, HeldBy, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role,
+    TransitionError, VerdictError, check_reviewer, derive_claim_key, nfc,
+    satisfies_crew_inequality, satisfies_manager_inequality, transition,
 };

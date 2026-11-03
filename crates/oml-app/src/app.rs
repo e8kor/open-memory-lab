@@ -23,9 +23,9 @@ use oml_domain::name::{
     assign_names, unresolved_value,
 };
 use oml_domain::{
-    ChainHead, Envelope, EventDraft, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, canonical_bytes, check_reviewer, event_types, next_envelope, nfc,
-    sha256_digest_string, transition,
+    ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, HeldBy, KeySet, MemoryKind,
+    MemoryStatus, Role, Sha256Hash, SignedEnvelope, canonical_bytes, check_reviewer,
+    derive_claim_key, event_types, next_envelope, nfc, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ListingCursor, NameCursor, PathCursor};
@@ -40,8 +40,8 @@ use crate::types::{
     IssuedKey, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
     ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
     RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, Whoami, WorkareaInfo,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, Whoami, WorkareaInfo,
     WorkareaRecord,
 };
 
@@ -198,10 +198,19 @@ fn derived_path(ancestry: &[WorkareaRecord]) -> String {
         .join(".")
 }
 
-fn submit_request_digest(req: &SubmitRequest, workarea_id: Uuid) -> String {
+/// The request digest of a submission, over the claim_key and the verb as
+/// resolved, so an omitted key and its derived spelling are one request
+/// (ADR-0039 d3, d6).
+fn submit_request_digest(
+    req: &SubmitRequest,
+    claim_key: &str,
+    verb: SubmitVerb,
+    workarea_id: Uuid,
+) -> String {
     let doc = json!({
         "body": req.body,
-        "claim_key": req.claim_key,
+        "claim_key": claim_key,
+        "verb": verb.as_str(),
         "kind": req.kind.as_str(),
         "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "workarea_id": workarea_id.to_string(),
@@ -2122,8 +2131,10 @@ where
     /// the scan and the byte count (admission.md capture; ADR-0025 d6);
     /// same-call deterministic scan, whose veto is a refusal that journals
     /// nothing; a new claim's `claim_key` free in the workarea (ADR-0025
-    /// d18); held on arrival as the claim's version 1, idempotency record
-    /// honored (admission.md, http-api.md).
+    /// d18), derived from the author and the text when omitted, and a
+    /// verb defaulted from `derives_from` (ADR-0039 d3, d6); held on arrival
+    /// as the claim's version 1, idempotency record honored (admission.md,
+    /// http-api.md).
     pub async fn submit_memory(
         &self,
         api_key: &str,
@@ -2139,13 +2150,33 @@ where
         self.require_access(&caller, workarea_id, Role::Writer, "submit")
             .await?;
 
+        // An omitted claim_key is derived from the author and the text; the
+        // `auto-` prefix is the server's alone (ADR-0039 d6). The author id
+        // is the key's own id while rotation is unbuilt; once it is, d6 names
+        // the root of the key's `rotated_from` chain, so a rotated key keeps
+        // deriving the keys its predecessor did.
+        let claim_key = match &req.claim_key {
+            Some(sent) if sent.starts_with(DERIVED_CLAIM_KEY_PREFIX) => {
+                return Err(AppError::DerivedClaimKeySent);
+            }
+            Some(sent) => sent.clone(),
+            None => derive_claim_key(key.key_id, &req.body),
+        };
+        // An omitted verb is learn when lineage is declared, remember
+        // otherwise; a sent verb is honoured (ADR-0039 d3).
+        let verb = req.verb.unwrap_or(if req.derives_from.is_empty() {
+            SubmitVerb::Remember
+        } else {
+            SubmitVerb::Learn
+        });
+
         let scope = IdempotencyScope {
             tenant_id: key.tenant_id,
             key_id: key.key_id,
             workarea_id,
             idem_key: req.idempotency_key.clone(),
         };
-        let request_digest = submit_request_digest(req, workarea_id);
+        let request_digest = submit_request_digest(req, &claim_key, verb, workarea_id);
         if let Some(record) = self.journal.idempotency_get(&scope).await? {
             if record.request_digest != request_digest {
                 return Err(AppError::IdempotencyDigestMismatch);
@@ -2199,7 +2230,7 @@ where
         let prev = self.head_event(key.tenant_id).await?;
         if self
             .journal
-            .claim_key_state(key.tenant_id, workarea_id, &req.claim_key)
+            .claim_key_state(key.tenant_id, workarea_id, &claim_key)
             .await?
             .live
         {
@@ -2213,7 +2244,7 @@ where
             memory_id,
             tenant_id: key.tenant_id,
             workarea_id,
-            claim_key: req.claim_key.clone(),
+            claim_key: claim_key.clone(),
             version: 1,
             kind: req.kind,
             body,
@@ -2241,7 +2272,7 @@ where
         let payload = json!({
             "artifact_id": memory_id.to_string(),
             "workarea_id": workarea_id.to_string(),
-            "claim_key": req.claim_key,
+            "claim_key": claim_key,
             "version": memory.version,
             "kind": req.kind.as_str(),
             "plaintext_digest": body_digest,
@@ -2262,7 +2293,10 @@ where
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
-            event_types::SUBMISSION_REMEMBER,
+            match verb {
+                SubmitVerb::Remember => event_types::SUBMISSION_REMEMBER,
+                SubmitVerb::Learn => event_types::SUBMISSION_LEARN,
+            },
             &key.principal,
             Some(key.key_id),
             payload,
@@ -2271,7 +2305,7 @@ where
 
         let receipt = SubmitReceipt {
             memory_id,
-            claim_key: req.claim_key.clone(),
+            claim_key: claim_key.clone(),
             version: memory.version,
             workarea_id,
             state: MemoryStatus::Held.as_str().to_owned(),

@@ -3129,3 +3129,50 @@ async fn the_hook_query_is_the_words_of_the_working_directory_name() {
     }
     crew.lab.stop().await;
 }
+
+/// `oml submit` without `--claim-key` sends no `claim_key`, and its human
+/// layout prints the key the server derived (ADR-0039 d6).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn submit_without_claim_key_sends_none_and_prints_the_servers_key() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-7",
+        "--principal",
+        "crew/agent-7",
+        "--workarea",
+        &wa,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let value = exported_value(&stdout);
+    lab.take_requests();
+
+    let (code, stdout, stderr) = oml_text(
+        &lab.server,
+        &lab.creds,
+        Some(&value),
+        &["submit", "--claim", "The server names this claim."],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let sent: Vec<Seen> = lab
+        .take_requests()
+        .into_iter()
+        .filter(|s| s.method == "POST" && s.path == "/v1/memories")
+        .collect();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let body = sent[0].body.as_object().expect("a JSON object body");
+    assert!(!body.contains_key("claim_key"), "{body:?}");
+    let printed = stdout
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("claim_key : "))
+        .expect("the claim_key line");
+    assert!(
+        printed.starts_with("auto-") && printed.len() == 21,
+        "{stdout}"
+    );
+    lab.stop().await;
+}

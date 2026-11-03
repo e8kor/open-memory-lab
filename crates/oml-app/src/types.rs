@@ -460,10 +460,33 @@ pub struct CrewUpdate {
     pub external_manager: Option<String>,
 }
 
+/// The two submission verbs, each its own journal event (http-api.md
+/// submit; event-catalog.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmitVerb {
+    Remember,
+    Learn,
+}
+
+impl SubmitVerb {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Remember => "remember",
+            Self::Learn => "learn",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SubmitRequest {
     pub idempotency_key: String,
-    pub claim_key: String,
+    /// `None` derives the key from the author and the text; a sent key
+    /// starting `auto-` is refused (ADR-0039 d6).
+    pub claim_key: Option<String>,
+    /// `None` is `learn` when `derives_from` is non-empty and `remember`
+    /// otherwise; a sent verb is honoured (ADR-0039 d3).
+    pub verb: Option<SubmitVerb>,
     pub kind: MemoryKind,
     /// The claim text as sent; capture normalizes it to NFC (admission.md).
     pub body: String,
@@ -896,6 +919,10 @@ pub enum AppError {
         "oml_supersede carries no vocabulary fields, so a {0:?} target is superseded on the HTTP API (mcp-plugin.md oml_supersede; ADR-0025 d12, request.validation)"
     )]
     VocabularyTarget(MemoryKind),
+    #[error(
+        "a sent claim_key starts auto-, the prefix only the server derives (ADR-0039 d6, request.validation)"
+    )]
+    DerivedClaimKeySent,
     #[error(
         "a held, promoted or demoted version holds this claim_key in the workarea (audit-and-lineage.md, submission.claim_key_conflict)"
     )]

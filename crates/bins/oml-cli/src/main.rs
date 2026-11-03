@@ -15,7 +15,6 @@ use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use oml_cli::client::{CallOpts, CliError, Client, encode, segment};
@@ -321,14 +320,16 @@ struct SubmitArgs {
     /// The claim body text.
     #[arg(long)]
     claim: String,
-    /// Claim key; defaults to cli-<sha256 prefix of the body>.
+    /// Claim key; omitted, the server derives `auto-<16 hex>` from the
+    /// key and the text (ADR-0039 d6).
     #[arg(long)]
     claim_key: Option<String>,
     #[arg(long, default_value = "memory")]
     kind: String,
-    /// remember | learn (learn requires --derives-from).
-    #[arg(long, default_value = "remember")]
-    verb: String,
+    /// remember | learn (learn requires --derives-from); omitted, the server
+    /// journals learn when --derives-from is given and remember otherwise.
+    #[arg(long)]
+    verb: Option<String>,
     /// Lineage artifact ids; repeatable.
     #[arg(long = "derives-from")]
     derives_from: Vec<Uuid>,
@@ -782,17 +783,19 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
         Command::Submit(args) => {
             let client = resolve(cli, &stored)?;
-            let claim_key = args.claim_key.clone().unwrap_or_else(|| {
-                let digest = hex::encode(Sha256::digest(args.claim.as_bytes()));
-                format!("cli-{}", &digest[..12])
-            });
-            let body = json!({
-                "verb": args.verb,
-                "claim_key": claim_key,
+            // An omitted claim_key or verb is sent as none, so the server
+            // derives the key and chooses the verb (ADR-0039 d3, d6).
+            let mut body = json!({
                 "kind": args.kind,
                 "body": args.claim,
                 "derives_from": args.derives_from,
             });
+            if let Some(claim_key) = &args.claim_key {
+                body["claim_key"] = json!(claim_key);
+            }
+            if let Some(verb) = &args.verb {
+                body["verb"] = json!(verb);
+            }
             let opts = CallOpts {
                 auth: true,
                 idempotency: true,

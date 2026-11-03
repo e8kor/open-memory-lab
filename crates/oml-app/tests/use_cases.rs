@@ -11,7 +11,8 @@ use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, event_types, next_envelope, sha256_digest_string, sign, verify_chain,
+    SignedEnvelope, derive_claim_key, event_types, next_envelope, sha256_digest_string, sign,
+    verify_chain,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ed25519_dalek::SigningKey;
@@ -19,7 +20,7 @@ use oml_app::ports::{JournalStore as _, StoreError};
 use oml_app::types::{
     AppError, BootstrapRequest, BootstrapResult, CrewCreateRequest, CrewUpdate, GrantRequest,
     IssueKeyRequest, IssuedKey, ListRequest, NamingRefusal, RecallRequest, RecallResult,
-    SubmitRequest, SupersedeRequest, Verdict, VersionRef,
+    SubmitRequest, SubmitVerb, SupersedeRequest, Verdict, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -163,7 +164,8 @@ async fn agent(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> Issue
 fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
         idempotency_key: idem.to_owned(),
-        claim_key: format!("claim-{idem}"),
+        claim_key: Some(format!("claim-{idem}")),
+        verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
         workarea_id: None,
@@ -730,7 +732,7 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
     .await;
     let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let fleet = |idem: &str, workarea: Uuid| SubmitRequest {
-        claim_key: "fleet-order".to_owned(),
+        claim_key: Some("fleet-order".to_owned()),
         ..submit_into(idem, "the fleet follows the canary", workarea)
     };
 
@@ -778,7 +780,7 @@ async fn a_rejected_first_version_releases_its_claim_key() {
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
     let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let fleet = |idem: &str| SubmitRequest {
-        claim_key: "fleet-order".to_owned(),
+        claim_key: Some("fleet-order".to_owned()),
         ..submit_req(idem, "the fleet follows the canary")
     };
 
@@ -1520,7 +1522,7 @@ async fn an_unreadable_derives_from_target_is_not_found() {
         .receipt
         .memory_id;
     let derive = |idem: &str| SubmitRequest {
-        claim_key: format!("derived-{idem}"),
+        claim_key: Some(format!("derived-{idem}")),
         derives_from: vec![held],
         ..submit_req(idem, "a derived fact")
     };
@@ -1577,7 +1579,7 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
         &author.value,
         &dreamer.value,
         &SubmitRequest {
-            claim_key: "fleet-order".to_owned(),
+            claim_key: Some("fleet-order".to_owned()),
             derives_from: vec![held],
             ..submit_req("i2", "the fleet follows the canary")
         },
@@ -5743,4 +5745,104 @@ async fn whoami_returns_the_calling_keys_own_record_and_no_other() {
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
     let err = app.whoami("oml_not_a_real_key").await.unwrap_err();
     assert!(matches!(err, AppError::Unauthorized), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_submission_without_claim_key_is_held_under_the_key_derived_from_its_author_and_text() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let first = agent(&app, admin, "crew/agent-7", crew).await;
+    let second = agent(&app, admin, "crew/agent-7", crew).await;
+    let text = "the canary drains first";
+    let derived = |idem: &str| SubmitRequest {
+        claim_key: None,
+        ..submit_req(idem, text)
+    };
+
+    let receipt = app
+        .submit_memory(&first.value, &derived("d1"))
+        .await
+        .expect("submit")
+        .receipt;
+    assert_eq!(receipt.claim_key, derive_claim_key(first.key_id, text));
+    // Another key's derived key differs, so its claim is a second claim and
+    // no conflict tells it the first key's held text (ADR-0039 d6).
+    let other = app
+        .submit_memory(&second.value, &derived("d2"))
+        .await
+        .expect("a second claim")
+        .receipt;
+    assert_eq!(other.claim_key, derive_claim_key(second.key_id, text));
+    assert_ne!(other.claim_key, receipt.claim_key);
+    let err = app
+        .submit_memory(&first.value, &derived("d3"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ClaimKeyConflict), "{err:?}");
+    let events = journal(&store, boot.tenant_id).await;
+    let capture = &events
+        .iter()
+        .find(|e| e.envelope.payload["artifact_id"] == receipt.memory_id.to_string())
+        .expect("the capture")
+        .envelope;
+    assert_eq!(capture.event_type, event_types::SUBMISSION_REMEMBER);
+    assert_eq!(capture.payload["claim_key"], receipt.claim_key);
+}
+
+#[tokio::test]
+async fn an_explicit_claim_key_starting_auto_is_refused_naming_claim_key() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "crew/agent-7", crew).await;
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("auto-0123456789abcdef".to_owned()),
+                ..submit_req("a1", "a fact")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::DerivedClaimKeySent), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_submission_with_derives_from_and_no_verb_journals_learn_and_an_explicit_verb_keeps_its_event()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "crew/agent-7", crew).await;
+    let ancestor = app
+        .submit_memory(&writer.value, &submit_req("a0", "an ancestor"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    for (idem, verb, expected) in [
+        ("v1", None, event_types::SUBMISSION_LEARN),
+        (
+            "v2",
+            Some(SubmitVerb::Remember),
+            event_types::SUBMISSION_REMEMBER,
+        ),
+        ("v3", Some(SubmitVerb::Learn), event_types::SUBMISSION_LEARN),
+    ] {
+        app.submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                verb,
+                derives_from: vec![ancestor],
+                ..submit_req(idem, &format!("derived {idem}"))
+            },
+        )
+        .await
+        .expect("submit");
+        let events = journal(&store, boot.tenant_id).await;
+        let capture = &events.last().expect("an event").envelope;
+        assert_eq!(capture.event_type, expected, "{idem}");
+    }
 }
