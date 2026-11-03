@@ -13,13 +13,13 @@ export interface paths {
         };
         /**
          * Structured, paginated listing of memory summaries.
-         * @description Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true the listing resolves no workarea, and an X-OML-Workarea header is refused (request.validation). Without own, the listing returns promoted served tips within reader effective access, defaulting to the token workarea's subtree (ADR-0022 d4) — a self_signed version only when the scope node is its own workarea; a retired claim's tip, its retirement version, among them, flagged retirement true; others' held rows are never returned (R3). workarea_id is a subtree filter (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.
+         * @description Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns promoted served tips within reader effective access in the workarea's subtree, defaulting to the key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own workarea; a retired claim's tip, its retirement version, among them, flagged retirement true; others' held rows are never returned (R3). workarea is the subtree read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.
          */
         get: operations["listMemories"];
         put?: never;
         /**
          * Submit a memory (remember or learn); held on arrival, scanned same-call.
-         * @description Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).
+         * @description Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea is the body's workarea, by id or name, honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).
          */
         post: operations["submitMemory"];
         delete?: never;
@@ -39,7 +39,7 @@ export interface paths {
         put?: never;
         /**
          * Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
-         * @description Requires: reader effective access on the subtree. Default scope is the token workarea's subtree — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
          */
         post: operations["recallMemories"];
         delete?: never;
@@ -56,8 +56,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * One memory with body (decrypted on the serving path) and attachment descriptors.
-         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.
+         * One memory with its text (decrypted on the serving path) and attachment descriptors.
+         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.
          */
         get: operations["getMemory"];
         put?: never;
@@ -79,7 +79,7 @@ export interface paths {
         put?: never;
         /**
          * Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the target's workarea (request.validation otherwise); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
+         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
          */
         post: operations["supersedeMemory"];
         delete?: never;
@@ -241,7 +241,7 @@ export interface paths {
         };
         /**
          * The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
-         * @description Requires: reader effective access on workarea_id (access.not_found otherwise); omitted, the key's default workarea, and request.workarea_unresolved for a key with none. Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor's own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key's ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.
+         * @description Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key's default workarea, and request.workarea_unresolved for a key with none. v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor's own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key's ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.
          */
         get: operations["tailEvents"];
         put?: never;
@@ -469,7 +469,7 @@ export interface components {
             /** @description Mirrors the X-Request-Id response header. */
             request_id: string;
         };
-        /** @description Names no workarea: the target resolves from the key's default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9). */
+        /** @description The target is workarea, else the key's default_workarea; neither present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9). */
         SubmitRequest: {
             /**
              * @description Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
@@ -485,6 +485,8 @@ export interface components {
             kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
             /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml). */
             body: string;
+            /** @description The workarea written in, by id or name, honoured only within the key's grants; omitted, the key's default_workarea (ADR-0039 d4, d7). */
+            workarea?: components["schemas"]["WorkareaRef"];
             /** @description Artifact ids; the declared lineage (omission is undetectable — honesty rule). */
             derives_from?: string[];
         };
@@ -566,30 +568,35 @@ export interface components {
             promoted_at: string | null;
         };
         Memory: components["schemas"]["MemorySummary"] & {
-            /** @description Decrypted on the serving path only. */
-            body?: string;
+            /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false. */
+            text?: string;
         };
         MemoryPage: {
             items: components["schemas"]["MemorySummary"][];
             next_cursor: string | null;
         };
-        /** @description Names no workarea: the default scope is the token workarea's subtree — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9). */
+        /** @description The scope is workarea's subtree, else the key's default_workarea's (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text and include_unreviewed in details.renamed_to (ADR-0039 d7). */
         RecallRequest: {
             query: string;
+            /** @description The subtree recalled, by id or name; omitted, the key's default_workarea (ADR-0039 d4). */
+            workarea?: components["schemas"]["WorkareaRef"];
             /** @default 8 */
             k?: number;
             /** @description Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workarea's journalled policy opts them in, they are hits only of a recall that omits kinds. */
             kinds?: ("memory" | "derived_fact")[];
-            /** @default true */
-            include_bodies?: boolean;
+            /**
+             * @description Whether each served item carries its text (ADR-0039 d7).
+             * @default true
+             */
+            include_text?: boolean;
             /**
              * @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held; they count against k and max_tokens. Rules: docs/architecture/retrieval.md.
              * @default false
              */
-            include_own_held?: boolean;
+            include_unreviewed?: boolean;
             /**
              * Format: int64
-             * @description Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest rank prefix that fits. Refused with include_bodies false. Rules: docs/architecture/retrieval.md, Token budgets.
+             * @description Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
              */
             max_tokens?: number;
         };
@@ -633,6 +640,8 @@ export interface components {
         SupersedeRequest: {
             /** @description Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired. */
             body: string;
+            /** @description When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7). */
+            workarea?: components["schemas"]["WorkareaRef"];
             /**
              * @description true proposes retiring the claim, and body states why. Refused with request.validation when the target's kind is term (terms deprecate), or when a kind is sent that differs from the target's.
              * @default false
@@ -845,7 +854,7 @@ export interface components {
             principal?: string;
             /** @description The key's crew record, as key.issued journals it; null when none was named (ADR-0026 d8). */
             crew_id?: string | null;
-            /** @description The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when no X-OML-Workarea is sent (ADR-0022 d4). */
+            /** @description The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4). */
             default_workarea_id: string | null;
             /**
              * @description The issuing admin's attestation; for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2).
@@ -1035,10 +1044,8 @@ export interface components {
         };
     };
     parameters: {
-        /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+        /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
         IdempotencyKey: string;
-        /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-        XOMLWorkarea: components["schemas"]["WorkareaRef"];
         /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
         Limit: number;
         /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
@@ -1062,8 +1069,8 @@ export interface operations {
     listMemories: {
         parameters: {
             query?: {
-                /** @description A subtree filter, by id or name, that must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it. Without own, a node where reader is effective; the listing is the intersection of its subtree with the scope's, and the scope still resolves from the token (request.workarea_unresolved for a key with neither a default nor X-OML-Workarea). */
-                workarea_id?: components["schemas"]["WorkareaRef"];
+                /** @description The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workarea the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workarea (request.workarea_unresolved for a key with neither). */
+                workarea?: components["schemas"]["WorkareaRef"];
                 claim_key?: string;
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
@@ -1075,10 +1082,7 @@ export interface operations {
                 /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
                 cursor?: components["parameters"]["Cursor"];
             };
-            header?: {
-                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-                "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -1140,10 +1144,8 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-                "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
             };
             path?: never;
             cookie?: never;
@@ -1202,10 +1204,7 @@ export interface operations {
     recallMemories: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-                "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -1246,7 +1245,7 @@ export interface operations {
                      *           "held_expires_at": null,
                      *           "created_at": "2026-10-02T09:20:41Z",
                      *           "promoted_at": "2026-10-02T11:05:12Z",
-                     *           "body": "Prefer quotes with an explicit validity date; treat undated quotes as expired."
+                     *           "text": "Prefer quotes with an explicit validity date; treat undated quotes as expired."
                      *         }
                      *       ],
                      *       "hits": [
@@ -1281,7 +1280,7 @@ export interface operations {
                      *             "retirement": false,
                      *             "replaces": null,
                      *             "held_expires_at": null,
-                     *             "body": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
+                     *             "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
                      *           },
                      *           "score": 0.83
                      *         }
@@ -1346,7 +1345,7 @@ export interface operations {
                      *       "retirement": false,
                      *       "replaces": null,
                      *       "held_expires_at": null,
-                     *       "body": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
+                     *       "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
                      *     }
                      */
                     "application/json": components["schemas"]["Memory"];
@@ -1362,10 +1361,8 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-                "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
             };
             path: {
                 artifact_id: components["parameters"]["ArtifactId"];
@@ -1413,7 +1410,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -1599,7 +1596,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -1693,7 +1690,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -1774,7 +1771,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -1822,8 +1819,8 @@ export interface operations {
             query?: {
                 /** @description Resume point: events return in seq ascending order — the journal's order, not created_at descending. Pass back next_after_seq verbatim. */
                 after_seq?: number;
-                /** @description A subtree filter within reader effective access; defaults to the key's default workarea (request.workarea_unresolved when the key has none). */
-                workarea_id?: components["schemas"]["WorkareaRef"];
+                /** @description The subtree tailed, by id or name, within reader effective access; defaults to the key's default workarea (request.workarea_unresolved when the key has none). */
+                workarea?: components["schemas"]["WorkareaRef"];
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
             };
@@ -1877,7 +1874,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -1926,7 +1923,7 @@ export interface operations {
                      *         "held_expires_at": null,
                      *         "created_at": "2026-10-29T16:02:51Z",
                      *         "promoted_at": null,
-                     *         "body": "Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations."
+                     *         "text": "Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations."
                      *       },
                      *       "served_digests": {
                      *         "body": "sha256:1e5a7c3902d8b6f44a0c2e917d3f58b62c90e1a74f6d2b85031c7e9a4b5d6f28",
@@ -1955,7 +1952,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -2003,7 +2000,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -2190,7 +2187,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {

@@ -324,6 +324,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
+        refuse_workarea_header(headers, "/workarea")?;
         let idem_key = idempotency_key(headers)?;
         let req: SubmitBody = parse_json(headers, body)?;
         // kind defaults to memory, and an omitted verb is the app's to
@@ -357,7 +358,7 @@ where
         }
         refuse_attachments(&req.attachments)?;
         refuse_simulation(req.simulation_id.as_ref())?;
-        let workarea_id = workarea_override(headers)?;
+        let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
 
         let app_req = SubmitRequest {
             idempotency_key: idem_key,
@@ -365,7 +366,7 @@ where
             verb,
             kind,
             body: text,
-            workarea_id,
+            workarea,
             derives_from: req.derives_from,
         };
         let outcome = retry_chain(|| st.app.submit_memory(&token, &app_req))
@@ -413,23 +414,17 @@ where
     }
 
     /// `GET /v1/memories`: the own-work listing with `own=true`, else the
-    /// scoped listing, as memory summaries without bodies, newest first
-    /// (http-api.md search; ADR-0025 d13). The own-work listing resolves no
-    /// workarea, so an `X-OML-Workarea` sent with it is refused, not
-    /// ignored.
+    /// scoped listing, as memory summaries without text, newest first
+    /// (http-api.md search; ADR-0025 d13). The query's `workarea` is the
+    /// subtree either reads (ADR-0039 d4, d7).
     async fn list_memories_inner(
         st: &Self,
         params: &[(String, String)],
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
-        let mut req = list_request(params)?;
-        req.scope = workarea_override(headers)?;
-        if req.own && req.scope.is_some() {
-            return Err(ApiError::validation(
-                "X-OML-Workarea is refused with own=true: the own-work listing resolves no workarea",
-            ));
-        }
+        refuse_workarea_header(headers, "workarea")?;
+        let req = list_request(params)?;
         let page = st
             .app
             .list_memories(&token, &req)
@@ -458,17 +453,18 @@ where
 
     /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
     /// workarea, so an `X-OML-Workarea` sent with it is refused, not
-    /// ignored, as on the own-work listing (ADR-0025 d13).
+    /// ignored, and names no successor (ADR-0025 d13, ADR-0039 d7).
     async fn get_memory_inner(
         st: &Self,
         artifact_id: &str,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
-        if workarea_override(headers)?.is_some() {
+        if headers.contains_key(WORKAREA_HEADER) {
             return Err(ApiError::validation(
                 "X-OML-Workarea is refused on get: get resolves no workarea",
-            ));
+            )
+            .with_details(json!({ "field": "X-OML-Workarea" })));
         }
         // Ids are opaque; one that can name no row is absent (access.not_found).
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
@@ -492,9 +488,20 @@ where
     ) -> Result<Response, ApiError> {
         // Read-shaped POST: no Idempotency-Key (http-api.md idempotency).
         let token = bearer(headers)?;
+        refuse_workarea_header(headers, "/workarea")?;
         // The body is closed: a field the server does not serve is refused,
-        // never dropped (ADR-0025 d16).
-        let req: RecallBody = parse_json(headers, body)?;
+        // never dropped (ADR-0025 d16), and a v0.3.0 spelling names its
+        // successor (ADR-0039 d7).
+        let req: RecallBody = parse_json_renamed(headers, body, |body| {
+            refuse_renamed(
+                body,
+                "",
+                &[
+                    ("include_bodies", "include_text"),
+                    ("include_own_held", "include_unreviewed"),
+                ],
+            )
+        })?;
         let k = req.k.unwrap_or(8);
         if !(1..=100).contains(&k) {
             return Err(ApiError::validation("k must be between 1 and 100"));
@@ -523,8 +530,8 @@ where
                 "max_tokens must be an integer between 1 and 2^53 - 1",
             ));
         }
-        let include_bodies = req.include_bodies.unwrap_or(true);
-        let workarea_id = workarea_override(headers)?;
+        let include_text = req.include_text.unwrap_or(true);
+        let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
         let result = st
             .app
             .recall(
@@ -532,10 +539,10 @@ where
                 &RecallRequest {
                     query: req.query.clone(),
                     k,
-                    workarea_id,
+                    workarea,
                     kinds,
-                    include_bodies,
-                    include_own_held: req.include_own_held.unwrap_or(false),
+                    include_text,
+                    include_unreviewed: req.include_unreviewed.unwrap_or(false),
                     max_tokens: req.max_tokens,
                 },
             )
@@ -546,14 +553,14 @@ where
         let steering: Vec<Value> = result
             .steering
             .iter()
-            .map(|m| memory_json(m, include_bodies))
+            .map(|m| memory_json(m, include_text))
             .collect();
         let hits: Vec<Value> = result
             .hits
             .iter()
             .map(|hit| {
                 json!({
-                    "memory": memory_json(&hit.served, include_bodies),
+                    "memory": memory_json(&hit.served, include_text),
                     "score": hit.score,
                 })
             })
@@ -600,6 +607,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
+        refuse_workarea_header(headers, "/workarea")?;
         let idem_key = idempotency_key(headers)?;
         let target_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let req: SupersedeBody = parse_json(headers, body)?;
@@ -632,7 +640,7 @@ where
             retirement: req.retirement,
             derives_from: req.derives_from,
             reason: req.reason,
-            workarea_id: workarea_override(headers)?,
+            workarea: optional_reference("/workarea", req.workarea.as_deref())?,
             refuse_vocabulary_target,
         };
         let outcome = retry_chain(|| st.app.supersede(&token, &app_req))
@@ -1076,6 +1084,10 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
+        refuse_workarea_header(headers, "workarea")?;
+        if params.contains_key("workarea_id") {
+            return Err(ApiError::renamed("workarea_id", "workarea"));
+        }
         let after_seq: u64 = match params.get("after_seq") {
             None => 0,
             Some(s) => s
@@ -1092,11 +1104,10 @@ where
                     ApiError::validation(format!("limit must be between 1 and {PAGE_LIMIT_MAX}"))
                 })?,
         };
-        let workarea_id =
-            optional_reference("workarea_id", params.get("workarea_id").map(String::as_str))?;
+        let workarea = optional_reference("workarea", params.get("workarea").map(String::as_str))?;
         let page = st
             .app
-            .tail_events(&token, workarea_id, after_seq, limit)
+            .tail_events(&token, workarea, after_seq, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // head_seq for measuring lag, next_after_seq to resume from, both
@@ -1425,6 +1436,10 @@ struct SubmitBody {
     #[serde(default)]
     kind: Option<String>,
     body: String,
+    /// The workarea written in, by id or name; omitted, the key's default
+    /// (ADR-0039 d4, d7).
+    #[serde(default)]
+    workarea: Option<String>,
     #[serde(default)]
     attachments: Vec<String>,
     #[serde(default)]
@@ -1444,10 +1459,13 @@ struct SubmitBody {
 #[serde(deny_unknown_fields)]
 struct RecallBody {
     query: String,
+    /// The subtree recalled, by id or name; omitted, the key's default
+    /// workarea (ADR-0039 d4).
+    workarea: Option<String>,
     k: Option<usize>,
     kinds: Option<Vec<String>>,
-    include_bodies: Option<bool>,
-    include_own_held: Option<bool>,
+    include_text: Option<bool>,
+    include_unreviewed: Option<bool>,
     max_tokens: Option<u64>,
     /// Parsed only to be refused while the vocabulary filter is unbuilt
     /// (ADR-0025 d16).
@@ -1462,6 +1480,8 @@ struct RecallBody {
 #[serde(deny_unknown_fields)]
 struct SupersedeBody {
     body: String,
+    /// When sent, the target's workarea, by id or name (ADR-0039 d7).
+    workarea: Option<String>,
     #[serde(default)]
     retirement: bool,
     kind: Option<String>,
@@ -1766,21 +1786,17 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(key.to_owned())
 }
 
-/// `X-OML-Workarea`: the provider ring's explicit per-request target
-/// override (ADR-0022 d4), the node's id or its name, which the app
-/// resolves after step 1 of the refusal order and before the idempotency
-/// record is looked up (ADR-0026 d4); absent, the key's journalled default
-/// resolves in the app. A refusal names the header (errors.md).
-fn workarea_override(headers: &HeaderMap) -> Result<Option<Reference>, ApiError> {
-    const FIELD: &str = "X-OML-Workarea";
-    let Some(value) = headers.get("x-oml-workarea") else {
-        return Ok(None);
-    };
-    let value = value.to_str().map_err(|_| {
-        ApiError::validation(format!("{FIELD} must be visible ASCII"))
-            .with_details(json!({ "field": FIELD }))
-    })?;
-    reference(FIELD, value).map(Some)
+/// ADR-0022 d4's per-request target header, which v0.4.0 removed.
+const WORKAREA_HEADER: &str = "x-oml-workarea";
+
+/// v0.3.0's `X-OML-Workarea` is refused, whatever it holds, naming the
+/// `workarea` field that replaces it on this route: `/workarea` in a body,
+/// `workarea` in a query (ADR-0039 d7, d11).
+fn refuse_workarea_header(headers: &HeaderMap, renamed_to: &str) -> Result<(), ApiError> {
+    if headers.contains_key(WORKAREA_HEADER) {
+        return Err(ApiError::renamed("X-OML-Workarea", renamed_to));
+    }
+    Ok(())
 }
 
 /// A page's `limit`, at most `api.page_limit_max` (openapi.yaml `Limit`).
@@ -2032,13 +2048,12 @@ fn whoami_grant_json(g: &GrantRecord) -> Value {
 
 /// The listing's query parameters (openapi.yaml `searchMemories`): each
 /// at most once, and an unknown one refused rather than ignored, so a
-/// mistyped filter never widens a listing. The scope override is a header,
-/// read by the handler.
+/// mistyped filter never widens a listing; v0.3.0's `workarea_id` names
+/// its successor, `workarea` (ADR-0039 d7).
 fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
     let mut req = ListRequest {
         own: false,
-        scope: None,
-        workarea_id: None,
+        workarea: None,
         state: None,
         kind: None,
         claim_key: None,
@@ -2069,7 +2084,8 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
                     _ => return Err(ApiError::validation("own must be true or false")),
                 };
             }
-            "workarea_id" => req.workarea_id = Some(reference("workarea_id", value)?),
+            "workarea" => req.workarea = Some(reference("workarea", value)?),
+            "workarea_id" => return Err(ApiError::renamed("workarea_id", "workarea")),
             "claim_key" => req.claim_key = Some(value.clone()),
             "state" => req.state = Some(parse_state(value)?),
             "kind" => req.kind = Some(parse_kind(value)?),
@@ -2188,7 +2204,7 @@ where
 /// expiry — are emitted at their fixed PoC values rather than omitted, so
 /// clients see the full shape.
 #[must_use]
-pub fn memory_json(served: &ServedMemory, include_body: bool) -> Value {
+pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     let m = &served.memory;
     let mut value = json!({
         "artifact_id": m.memory_id,
@@ -2219,8 +2235,10 @@ pub fn memory_json(served: &ServedMemory, include_body: bool) -> Value {
         "created_at": m.created_at.as_str(),
         "promoted_at": m.promoted_at.as_ref().map(|at| at.as_str()),
     });
-    if include_body && let Some(obj) = value.as_object_mut() {
-        obj.insert("body".to_owned(), Value::String(m.body.clone()));
+    // The claim's text, `body` in v0.3.0 and still ADR-0004's storage
+    // word (ADR-0039 d7).
+    if include_text && let Some(obj) = value.as_object_mut() {
+        obj.insert("text".to_owned(), Value::String(m.body.clone()));
     }
     value
 }

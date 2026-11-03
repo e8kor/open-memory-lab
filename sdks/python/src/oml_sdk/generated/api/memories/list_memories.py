@@ -14,7 +14,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    workarea_id: str | Unset = UNSET,
+    workarea: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -23,20 +23,16 @@ def _get_kwargs(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
-    if not isinstance(x_oml_workarea, Unset):
-        headers["X-OML-Workarea"] = x_oml_workarea
 
     params: dict[str, Any] = {}
 
-    json_workarea_id: str | Unset
-    if isinstance(workarea_id, Unset):
-        json_workarea_id = UNSET
+    json_workarea: str | Unset
+    if isinstance(workarea, Unset):
+        json_workarea = UNSET
     else:
-        json_workarea_id = workarea_id
-    params["workarea_id"] = json_workarea_id
+        json_workarea = workarea
+    params["workarea"] = json_workarea
 
     params["claim_key"] = claim_key
 
@@ -76,7 +72,6 @@ def _get_kwargs(
         "params": params,
     }
 
-    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -112,7 +107,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    workarea_id: str | Unset = UNSET,
+    workarea: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -121,23 +116,23 @@ def sync_detailed(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | MemoryPage]:
     """Structured, paginated listing of memory summaries.
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
     across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
-    own=true the listing resolves no workarea, and an X-OML-Workarea header is refused
-    (request.validation). Without own, the listing returns promoted served tips within reader effective
-    access, defaulting to the token workarea's subtree (ADR-0022 d4) — a self_signed version only when
-    the scope node is its own workarea; a retired claim's tip, its retirement version, among them,
-    flagged retirement true; others' held rows are never returned (R3). workarea_id is a subtree filter
-    (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound
-    to the calling key and expires under api.cursor_ttl.
+    own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns
+    promoted served tips within reader effective access in the workarea's subtree, defaulting to the
+    key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own
+    workarea; a retired claim's tip, its retirement version, among them, flagged retirement true;
+    others' held rows are never returned (R3). workarea is the subtree read (see the parameter);
+    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in
+    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
+    cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
-        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
             before any check that reads state; an unknown name answers exactly what an unknown id
             answers. A derived path is neither, and is refused (request.validation).
         claim_key (str | Unset):
@@ -148,9 +143,6 @@ def sync_detailed(
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,7 +153,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
         claim_key=claim_key,
         state=state,
         kind=kind,
@@ -170,7 +162,6 @@ def sync_detailed(
         until=until,
         limit=limit,
         cursor=cursor,
-        x_oml_workarea=x_oml_workarea,
     )
 
     response = client.get_httpx_client().request(
@@ -183,7 +174,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    workarea_id: str | Unset = UNSET,
+    workarea: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -192,23 +183,23 @@ def sync(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> ErrorEnvelope | MemoryPage | None:
     """Structured, paginated listing of memory summaries.
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
     across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
-    own=true the listing resolves no workarea, and an X-OML-Workarea header is refused
-    (request.validation). Without own, the listing returns promoted served tips within reader effective
-    access, defaulting to the token workarea's subtree (ADR-0022 d4) — a self_signed version only when
-    the scope node is its own workarea; a retired claim's tip, its retirement version, among them,
-    flagged retirement true; others' held rows are never returned (R3). workarea_id is a subtree filter
-    (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound
-    to the calling key and expires under api.cursor_ttl.
+    own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns
+    promoted served tips within reader effective access in the workarea's subtree, defaulting to the
+    key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own
+    workarea; a retired claim's tip, its retirement version, among them, flagged retirement true;
+    others' held rows are never returned (R3). workarea is the subtree read (see the parameter);
+    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in
+    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
+    cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
-        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
             before any check that reads state; an unknown name answers exactly what an unknown id
             answers. A derived path is neither, and is refused (request.validation).
         claim_key (str | Unset):
@@ -219,9 +210,6 @@ def sync(
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -233,7 +221,7 @@ def sync(
 
     return sync_detailed(
         client=client,
-        workarea_id=workarea_id,
+        workarea=workarea,
         claim_key=claim_key,
         state=state,
         kind=kind,
@@ -242,14 +230,13 @@ def sync(
         until=until,
         limit=limit,
         cursor=cursor,
-        x_oml_workarea=x_oml_workarea,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    workarea_id: str | Unset = UNSET,
+    workarea: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -258,23 +245,23 @@ async def asyncio_detailed(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | MemoryPage]:
     """Structured, paginated listing of memory summaries.
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
     across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
-    own=true the listing resolves no workarea, and an X-OML-Workarea header is refused
-    (request.validation). Without own, the listing returns promoted served tips within reader effective
-    access, defaulting to the token workarea's subtree (ADR-0022 d4) — a self_signed version only when
-    the scope node is its own workarea; a retired claim's tip, its retirement version, among them,
-    flagged retirement true; others' held rows are never returned (R3). workarea_id is a subtree filter
-    (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound
-    to the calling key and expires under api.cursor_ttl.
+    own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns
+    promoted served tips within reader effective access in the workarea's subtree, defaulting to the
+    key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own
+    workarea; a retired claim's tip, its retirement version, among them, flagged retirement true;
+    others' held rows are never returned (R3). workarea is the subtree read (see the parameter);
+    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in
+    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
+    cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
-        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
             before any check that reads state; an unknown name answers exactly what an unknown id
             answers. A derived path is neither, and is refused (request.validation).
         claim_key (str | Unset):
@@ -285,9 +272,6 @@ async def asyncio_detailed(
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -298,7 +282,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
         claim_key=claim_key,
         state=state,
         kind=kind,
@@ -307,7 +291,6 @@ async def asyncio_detailed(
         until=until,
         limit=limit,
         cursor=cursor,
-        x_oml_workarea=x_oml_workarea,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -318,7 +301,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    workarea_id: str | Unset = UNSET,
+    workarea: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -327,23 +310,23 @@ async def asyncio(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> ErrorEnvelope | MemoryPage | None:
     """Structured, paginated listing of memory summaries.
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
     across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
-    own=true the listing resolves no workarea, and an X-OML-Workarea header is refused
-    (request.validation). Without own, the listing returns promoted served tips within reader effective
-    access, defaulting to the token workarea's subtree (ADR-0022 d4) — a self_signed version only when
-    the scope node is its own workarea; a retired claim's tip, its retirement version, among them,
-    flagged retirement true; others' held rows are never returned (R3). workarea_id is a subtree filter
-    (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound
-    to the calling key and expires under api.cursor_ttl.
+    own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns
+    promoted served tips within reader effective access in the workarea's subtree, defaulting to the
+    key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own
+    workarea; a retired claim's tip, its retirement version, among them, flagged retirement true;
+    others' held rows are never returned (R3). workarea is the subtree read (see the parameter);
+    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in
+    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
+    cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
-        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
+        workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
             before any check that reads state; an unknown name answers exactly what an unknown id
             answers. A derived path is neither, and is refused (request.validation).
         claim_key (str | Unset):
@@ -354,9 +337,6 @@ async def asyncio(
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -369,7 +349,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
-            workarea_id=workarea_id,
+            workarea=workarea,
             claim_key=claim_key,
             state=state,
             kind=kind,
@@ -378,6 +358,5 @@ async def asyncio(
             until=until,
             limit=limit,
             cursor=cursor,
-            x_oml_workarea=x_oml_workarea,
         )
     ).parsed

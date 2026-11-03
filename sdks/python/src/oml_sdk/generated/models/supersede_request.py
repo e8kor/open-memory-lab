@@ -20,6 +20,9 @@ class SupersedeRequest:
         Attributes:
             body (str): Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body;
                 larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.
+            workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check that reads
+                state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+                (request.validation).
             retirement (bool | Unset): true proposes retiring the claim, and body states why. Refused with
                 request.validation when the target's kind is term (terms deprecate), or when a kind is sent that differs from
                 the target's. Default: False.
@@ -32,6 +35,7 @@ class SupersedeRequest:
     """
 
     body: str
+    workarea: str | Unset = UNSET
     retirement: bool | Unset = False
     kind: SupersedeRequestKind | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
@@ -39,6 +43,12 @@ class SupersedeRequest:
 
     def to_dict(self) -> dict[str, Any]:
         body = self.body
+
+        workarea: str | Unset
+        if isinstance(self.workarea, Unset):
+            workarea = UNSET
+        else:
+            workarea = self.workarea
 
         retirement = self.retirement
 
@@ -59,6 +69,8 @@ class SupersedeRequest:
                 "body": body,
             }
         )
+        if workarea is not UNSET:
+            field_dict["workarea"] = workarea
         if retirement is not UNSET:
             field_dict["retirement"] = retirement
         if kind is not UNSET:
@@ -75,6 +87,13 @@ class SupersedeRequest:
         d = dict(src_dict)
         body = d.pop("body")
 
+        def _parse_workarea(data: object) -> str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(str | Unset, data)
+
+        workarea = _parse_workarea(d.pop("workarea", UNSET))
+
         retirement = d.pop("retirement", UNSET)
 
         _kind = d.pop("kind", UNSET)
@@ -90,6 +109,7 @@ class SupersedeRequest:
 
         supersede_request = cls(
             body=body,
+            workarea=workarea,
             retirement=retirement,
             kind=kind,
             derives_from=derives_from,

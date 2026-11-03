@@ -59,7 +59,8 @@ class Memory:
             own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows
             the full closure, elided where unreadable.
         attachments (list[AttachmentDescriptor] | Unset):
-        body (str | Unset): Decrypted on the serving path only.
+        text (str | Unset): The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7).
+            Absent from a recall item sent with include_text false.
     """
 
     artifact_id: str
@@ -83,7 +84,7 @@ class Memory:
     plaintext_digest: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     attachments: list[AttachmentDescriptor] | Unset = UNSET
-    body: str | Unset = UNSET
+    text: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -158,7 +159,7 @@ class Memory:
                 attachments_item = attachments_item_data.to_dict()
                 attachments.append(attachments_item)
 
-        body = self.body
+        text = self.text
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -194,8 +195,8 @@ class Memory:
             field_dict["derives_from"] = derives_from
         if attachments is not UNSET:
             field_dict["attachments"] = attachments
-        if body is not UNSET:
-            field_dict["body"] = body
+        if text is not UNSET:
+            field_dict["text"] = text
 
         return field_dict
 
@@ -315,7 +316,7 @@ class Memory:
 
                 attachments.append(attachments_item)
 
-        body = d.pop("body", UNSET)
+        text = d.pop("text", UNSET)
 
         memory = cls(
             artifact_id=artifact_id,
@@ -339,7 +340,7 @@ class Memory:
             plaintext_digest=plaintext_digest,
             derives_from=derives_from,
             attachments=attachments,
-            body=body,
+            text=text,
         )
 
         memory.additional_properties = d

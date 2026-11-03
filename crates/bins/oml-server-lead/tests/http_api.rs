@@ -196,7 +196,12 @@ async fn drop_db(name: &str) {
 struct Call {
     token: Option<String>,
     idem: Option<String>,
+    /// The call's `workarea`: a query parameter on a GET, a body member
+    /// otherwise (ADR-0039 d7).
     workarea: Option<String>,
+    /// Headers sent as they are, beside the authorization and the
+    /// idempotency key.
+    headers: Vec<(String, String)>,
     content_type: Option<String>,
     body: Option<Value>,
 }
@@ -216,6 +221,10 @@ impl Call {
         self.workarea = Some(id.to_owned());
         self
     }
+    fn header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.to_owned(), value.to_owned()));
+        self
+    }
     fn body(mut self, body: Value) -> Self {
         self.body = Some(body);
         self
@@ -232,6 +241,17 @@ async fn send(
     path: &str,
     call: Call,
 ) -> (StatusCode, HeaderMap, Value) {
+    let mut path = path.to_owned();
+    let mut body = call.body.clone();
+    if let Some(workarea) = &call.workarea {
+        if method == "GET" {
+            path.push(if path.contains('?') { '&' } else { '?' });
+            path.push_str("workarea=");
+            path.push_str(&query_encoded(workarea));
+        } else if let Some(object) = body.get_or_insert_with(|| json!({})).as_object_mut() {
+            object.insert("workarea".to_owned(), json!(workarea));
+        }
+    }
     let mut builder = Request::builder().method(method).uri(path);
     if let Some(token) = &call.token {
         builder = builder.header("authorization", format!("Bearer {token}"));
@@ -239,10 +259,10 @@ async fn send(
     if let Some(idem) = &call.idem {
         builder = builder.header("idempotency-key", idem);
     }
-    if let Some(workarea) = &call.workarea {
-        builder = builder.header("x-oml-workarea", workarea);
+    for (name, value) in &call.headers {
+        builder = builder.header(name.as_str(), value.as_str());
     }
-    let body = match &call.body {
+    let body = match &body {
         None => Body::empty(),
         Some(v) => {
             let ct = call
@@ -270,6 +290,20 @@ async fn send(
         serde_json::from_slice(&bytes).expect("responses are JSON")
     };
     (status, headers, value)
+}
+
+/// `value` percent-encoded for a query string: every byte but RFC 3986's
+/// unreserved characters.
+fn query_encoded(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                char::from(b).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 fn error_code(body: &Value) -> &str {
@@ -1095,7 +1129,7 @@ async fn full_happy_path_over_http() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "held");
-    assert_eq!(body["body"], submit_body["body"]);
+    assert_eq!(body["text"], submit_body["body"]);
     assert_eq!(body["tip"], false, "a held version is never the tip");
     let (status, _, body) = send(
         router,
@@ -1514,7 +1548,7 @@ async fn full_happy_path_over_http() {
         json!({ "artifact_id": successor["artifact_id"], "version": 2 })
     );
 
-    // X-OML-Workarea: the explicit per-request override (ADR-0022 d4),
+    // The body's workarea: the explicit per-request target (ADR-0039 d7),
     // honored within the key's grants — a child of the granted node is
     // inside them, the root above it is not (ADR-0025 d1).
     let (status, _, body) = send(
@@ -1551,7 +1585,7 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
 
-    // A malformed override is refused as validation, not guessed.
+    // A malformed workarea is refused as validation, not guessed.
     let (status, _, body) = send(
         router,
         "POST",
@@ -1608,7 +1642,7 @@ async fn workarea_unresolved_is_422() {
     assert_eq!(issued["grants"], json!([]), "{issued}");
     let token = issued["value"].as_str().expect("show-once value");
 
-    // No default, no X-OML-Workarea: refused, never guessed for.
+    // No default, no workarea: refused, never guessed for.
     let submit = json!({
         "verb": "remember", "claim_key": "unresolved", "kind": "memory", "body": "x",
     });
@@ -1622,7 +1656,7 @@ async fn workarea_unresolved_is_422() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_envelope(&body, "request.workarea_unresolved");
 
-    // The override resolves a workarea, which no grant of the key covers.
+    // The workarea resolves, and no grant of the key covers it.
     let (status, _, body) = send(
         router,
         "POST",
@@ -1835,8 +1869,7 @@ async fn agent_on(router: &Router, admin: &str, principal: &str, node: Uuid) -> 
         .to_owned()
 }
 
-/// A submit of the claim `claim_key` under `token`, its `X-OML-Workarea`
-/// header `workarea`.
+/// A submit of the claim `claim_key` under `token` into `workarea`.
 fn submit_into(token: &str, idem: &str, workarea: &str, claim_key: &str) -> Call {
     Call::auth(token).idem(idem).workarea(workarea).body(json!({
         "verb": "remember",
@@ -1862,14 +1895,14 @@ async fn create_crew(router: &Router, admin: &str, name: &str) -> Value {
     crew
 }
 
-/// `X-OML-Workarea` takes the node's id or its name, and a name is replaced
-/// by the id before the idempotency record is looked up: a submit whose
-/// header names the node lands where the same submit by id lands, a retry
-/// that switches the header's spelling replays, and the listing's and the
-/// events tail's `workarea_id` answer one page by name and by id
-/// (http-api.md names and ids, idempotency; ADR-0026 d4).
+/// `workarea` takes the node's id or its name, and a name is replaced by
+/// the id before the idempotency record is looked up: a submit whose
+/// `workarea` names the node lands where the same submit by id lands, and
+/// the listing's and the events tail's `workarea` answer one page by name
+/// and by id (http-api.md names and ids, idempotency; ADR-0026 d4,
+/// ADR-0039 d7).
 #[tokio::test]
-async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
+async fn a_workarea_by_name_and_by_id_targets_the_same_workarea() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -1899,7 +1932,7 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
     assert_eq!(sent_by_id["workarea_id"], by_id.as_str());
 
     // The record's workarea component is the resolved node, so one
-    // Idempotency-Key under either spelling of the header is one request.
+    // Idempotency-Key under either spelling of the workarea is one request.
     let (status, headers, replay) = send(
         router,
         "POST",
@@ -1919,13 +1952,13 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
 
     // The filters answer one page by name and by id.
     let (status, page_by_name) =
-        list(router, Call::auth(&agent), "own=true&workarea_id=q1-2027").await;
+        list(router, Call::auth(&agent), "own=true&workarea=q1-2027").await;
     assert_eq!(status, StatusCode::OK, "{page_by_name}");
     assert_eq!(listed(&page_by_name).len(), 2, "{page_by_name}");
     let (_, page_by_id) = list(
         router,
         Call::auth(&agent),
-        &format!("own=true&workarea_id={by_id}"),
+        &format!("own=true&workarea={by_id}"),
     )
     .await;
     assert_eq!(listed(&page_by_name), listed(&page_by_id));
@@ -1935,7 +1968,7 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
             send(
                 router,
                 "GET",
-                &format!("/v2/events?workarea_id={workarea}"),
+                &format!("/v2/events?workarea={workarea}"),
                 call,
             )
             .await
@@ -1953,14 +1986,15 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
     drop_db(&rig.db_name).await;
 }
 
-/// A derived path is never a reference: it holds `.`, so `X-OML-Workarea:
-/// universe.metals-crew` is neither an id nor a name, and the submit, the
+/// A derived path is never a reference: it holds `.`, so a `workarea` of
+/// `universe.metals-crew` is neither an id nor a name, and the submit, the
 /// recall and the listing that carry it are refused at parse,
-/// `request.validation` with `details.field` the header's name, before any
+/// `request.validation` with `details.field` naming the field, a body
+/// member by its JSON Pointer and a query parameter by its name, before any
 /// check that consults state, so nothing is journalled (errors.md
-/// `details.field`; ADR-0026 d3, d7).
+/// `details.field`; ADR-0026 d3, d7, ADR-0039 d7).
 #[tokio::test]
-async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
+async fn a_path_in_workarea_is_request_validation_naming_the_field() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -1970,11 +2004,12 @@ async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
     let head = head_seq(&rig, tenant).await;
     let path = "universe.metals-crew";
 
-    for (method, uri, call) in [
+    for (method, uri, call, field) in [
         (
             "POST",
             "/v1/memories",
             submit_into(&agent, "path-1", path, "quote-1"),
+            "/workarea",
         ),
         (
             "POST",
@@ -1982,14 +2017,20 @@ async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
             Call::auth(&agent)
                 .workarea(path)
                 .body(json!({ "query": "quote" })),
+            "/workarea",
         ),
-        ("GET", "/v1/memories", Call::auth(&agent).workarea(path)),
+        (
+            "GET",
+            "/v1/memories",
+            Call::auth(&agent).workarea(path),
+            "workarea",
+        ),
     ] {
         let (status, _, refused) = send(router, method, uri, call).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {refused}");
         assert_envelope(&refused, "request.validation");
         assert_eq!(
-            refused["error"]["details"]["field"], "X-OML-Workarea",
+            refused["error"]["details"]["field"], field,
             "{method} {uri}: {refused}"
         );
     }
@@ -2001,8 +2042,8 @@ async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
 /// Every place that names a workarea, crew or key classifies its value at
 /// parse: a derived path, or hex-and-dash text of version 8, which no id
 /// carries, is `request.validation` with `details.field` naming its place as
-/// errors.md spells it — the parameter for a path or query parameter, the
-/// header for a header, a JSON Pointer for a body member — and nothing is
+/// errors.md spells it — the parameter for a path or query parameter, a
+/// JSON Pointer for a body member — and nothing is
 /// journalled (errors.md `details.field`; ADR-0026 d3).
 #[tokio::test]
 async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_its_place() {
@@ -2032,21 +2073,21 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
         ),
         (
             "GET",
-            format!("/v1/memories?workarea_id={path}"),
+            format!("/v1/memories?workarea={path}"),
             Call::auth(&agent),
-            "workarea_id",
+            "workarea",
         ),
         (
             "GET",
-            format!("/v2/events?workarea_id={path}"),
+            format!("/v2/events?workarea={path}"),
             Call::auth(&agent),
-            "workarea_id",
+            "workarea",
         ),
         (
             "POST",
             "/v1/memories".to_owned(),
             submit_into(&agent, "v8", version_8, "quote-8"),
-            "X-OML-Workarea",
+            "/workarea",
         ),
         (
             "POST",
@@ -2163,8 +2204,8 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
 /// Names compare byte for byte and are never case-mapped: with
 /// `metals-crew` a workarea and a crew of the tenant and `root-admin` its
 /// key, `Metals-Crew` and `Root-Admin` are `request.validation` naming their
-/// place wherever they are sent — a header, a path parameter, a reference
-/// body field, a creation's name — and never read as the lowercase name they
+/// place wherever they are sent — a path parameter, a reference body field,
+/// a creation's name — and never read as the lowercase name they
 /// resemble (http-api.md names and ids; errors.md; ADR-0026 d2).
 #[tokio::test]
 async fn an_uppercase_name_is_refused_never_lowercased() {
@@ -2191,7 +2232,7 @@ async fn an_uppercase_name_is_refused_never_lowercased() {
             "POST",
             "/v1/memories",
             submit_into(&agent, "upper-1", "Metals-Crew", "quote-1"),
-            "X-OML-Workarea",
+            "/workarea",
         ),
         (
             "GET",
@@ -3368,7 +3409,7 @@ async fn tailed(router: &Router, key: &str, scope: Option<Uuid>) -> Vec<Value> {
     for _ in 0..100 {
         let mut path = format!("/v2/events?after_seq={after_seq}&limit=5");
         if let Some(scope) = scope {
-            path.push_str(&format!("&workarea_id={scope}"));
+            path.push_str(&format!("&workarea={scope}"));
         }
         let (status, _, page) = send(router, "GET", &path, Call::auth(key)).await;
         assert_eq!(status, StatusCode::OK, "{page}");
@@ -3773,7 +3814,7 @@ async fn a_tail_scope_outside_read_access_is_not_found() {
         let (status, _, body) = send(
             router,
             "GET",
-            &format!("/v2/events?workarea_id={scope}"),
+            &format!("/v2/events?workarea={scope}"),
             Call::auth(&t.reader.value),
         )
         .await;
@@ -3984,7 +4025,7 @@ async fn a_promoted_steering_row_precedes_hits_unranked() {
     for item in recall["steering"].as_array().expect("steering") {
         assert_eq!(item["kind"], "steering", "{item}");
         assert!(item.get("score").is_none(), "steering is unranked: {item}");
-        assert!(item["body"].is_string(), "{item}");
+        assert!(item["text"].is_string(), "{item}");
     }
     let mut served = hit_ids(&recall);
     served.sort_by_key(ToString::to_string);
@@ -4289,7 +4330,7 @@ fn hit_states(recall: &Value) -> Vec<(Value, Value)> {
 }
 
 #[tokio::test]
-async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
+async fn include_unreviewed_shows_the_authors_held_row_to_that_key_only() {
     let Some((rig, admin, crew, agent, _dreamer, reader)) = own_held_rig().await else {
         return;
     };
@@ -4303,7 +4344,7 @@ async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
     )
     .await;
 
-    let query = json!({"query": "aluminium price", "include_own_held": true});
+    let query = json!({"query": "aluminium price", "include_unreviewed": true});
     let recall = recall_ok(router, &agent, query.clone()).await;
     assert_eq!(hit_ids(&recall), vec![json!(row)], "{recall}");
     assert_eq!(hit_states(&recall), vec![(json!("held"), json!(false))]);
@@ -4348,7 +4389,7 @@ async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
     let recall = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_own_held": true}),
+        json!({"query": "canary", "include_unreviewed": true}),
     )
     .await;
     assert_eq!(
@@ -4389,7 +4430,7 @@ async fn own_held_rows_count_against_k_and_the_budget() {
     let with = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "k": 2, "include_own_held": true}),
+        json!({"query": "canary", "k": 2, "include_unreviewed": true}),
     )
     .await;
     assert_eq!(hit_ids(&with), vec![json!(row), json!(two)], "{with}");
@@ -4399,7 +4440,7 @@ async fn own_held_rows_count_against_k_and_the_budget() {
     let filled = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_own_held": true, "max_tokens": tokens(held_text)}),
+        json!({"query": "canary", "include_unreviewed": true, "max_tokens": tokens(held_text)}),
     )
     .await;
     assert_eq!(hit_ids(&filled), vec![json!(row)], "{filled}");
@@ -4453,7 +4494,7 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     let recall = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_own_held": true}),
+        json!({"query": "canary", "include_unreviewed": true}),
     )
     .await;
     assert_eq!(hit_ids(&recall), vec![json!(target)], "{recall}");
@@ -4476,7 +4517,7 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
 }
 
 #[tokio::test]
-async fn include_own_held_never_widens_the_workareas_served() {
+async fn include_unreviewed_never_widens_the_workareas_served() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -4519,7 +4560,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{denial}");
 
-    let query = json!({"query": "canary", "include_own_held": true});
+    let query = json!({"query": "canary", "include_unreviewed": true});
     let (status, recall) = recall_over_http(router, &agent, Some(quotes), query.clone()).await;
     assert_eq!(status, StatusCode::OK, "{recall}");
     assert_eq!(
@@ -4563,7 +4604,7 @@ async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
     let successor = proposal["artifact_id"].clone();
 
-    let query = json!({"query": "canary quote", "include_own_held": true});
+    let query = json!({"query": "canary quote", "include_unreviewed": true});
     let recall = recall_ok(router, &agent, query.clone()).await;
     let hits = recall["hits"].as_array().expect("hits");
     assert_eq!(hits.len(), 2, "never deduplicated: {recall}");
@@ -4700,7 +4741,7 @@ async fn steering_past_the_budget_is_served_whole_with_no_hits_and_truncated() {
     .await;
     assert_eq!(steering_ids(&recall), vec![steering], "{recall}");
     assert_eq!(
-        recall["steering"][0]["body"], "Quote every price in USD/t.",
+        recall["steering"][0]["text"], "Quote every price in USD/t.",
         "served whole"
     );
     assert_eq!(recall["hits"], json!([]), "{recall}");
@@ -4759,9 +4800,9 @@ async fn every_steering_item_and_hit_carries_its_tokens() {
 
     // With and without a budget, with and without bodies.
     for body in [
-        json!({"query": "canary", "include_own_held": true}),
-        json!({"query": "canary", "include_own_held": true, "include_bodies": false}),
-        json!({"query": "canary", "include_own_held": true, "max_tokens": 100}),
+        json!({"query": "canary", "include_unreviewed": true}),
+        json!({"query": "canary", "include_unreviewed": true, "include_text": false}),
+        json!({"query": "canary", "include_unreviewed": true, "max_tokens": 100}),
     ] {
         let recall = recall_ok(router, &agent, body).await;
         let served: Vec<(Value, Value)> = recall["steering"]
@@ -4824,7 +4865,7 @@ async fn a_recall_without_max_tokens_carries_no_budget_object() {
 }
 
 #[tokio::test]
-async fn max_tokens_with_include_bodies_false_is_request_validation() {
+async fn max_tokens_with_include_text_false_is_request_validation() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -4833,13 +4874,13 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
 
     for body in [
-        json!({"query": "canary", "max_tokens": 500, "include_bodies": false}),
+        json!({"query": "canary", "max_tokens": 500, "include_text": false}),
         // max_tokens is an integer ≥ 1 that RFC 8785 digests exactly.
         json!({"query": "canary", "max_tokens": 0}),
         json!({"query": "canary", "max_tokens": 9_007_199_254_740_992_u64}),
         json!({"query": "canary", "max_tokens": -1}),
         json!({"query": "canary", "max_tokens": "500"}),
-        json!({"query": "canary", "include_own_held": "yes"}),
+        json!({"query": "canary", "include_unreviewed": "yes"}),
     ] {
         let (status, refused) = recall_over_http(router, &reader, None, body.clone()).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {refused}");
@@ -4847,7 +4888,7 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
     }
     // Either alone is a recall.
     for body in [
-        json!({"query": "canary", "include_bodies": false}),
+        json!({"query": "canary", "include_text": false}),
         json!({"query": "canary", "max_tokens": 500}),
         json!({"query": "canary", "max_tokens": 9_007_199_254_740_991_u64}),
     ] {
@@ -4858,7 +4899,7 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
 }
 
 #[tokio::test]
-async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
+async fn query_digest_changes_when_max_tokens_or_include_unreviewed_change() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -4871,7 +4912,9 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     };
 
     // Every member is present with its default applied, the scope the
-    // resolved node (retrieval.md, the read log; ADR-0025 d9).
+    // resolved node, include_text and include_unreviewed under their
+    // v0.3.0 member names, so a digest logged before v0.4.0 compares with
+    // one logged after (retrieval.md, the read log; ADR-0025 d9).
     let base = digest(json!({"query": "canary"})).await;
     let canonical = format!(
         "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
@@ -4881,7 +4924,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     assert_eq!(base, json!(sha256_digest_string(canonical.as_bytes())));
     assert_eq!(
         digest(
-            json!({"query": "canary", "k": 8, "include_bodies": true, "include_own_held": false})
+            json!({"query": "canary", "k": 8, "include_text": true, "include_unreviewed": false})
         )
         .await,
         base,
@@ -4895,9 +4938,9 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
         budget
     );
     assert_ne!(
-        digest(json!({"query": "canary", "include_own_held": true})).await,
+        digest(json!({"query": "canary", "include_unreviewed": true})).await,
         base,
-        "include_own_held is digested"
+        "include_unreviewed is digested"
     );
     assert_eq!(
         digest(json!({"query": "canary", "kinds": ["memory", "derived_fact"]})).await,
@@ -4993,7 +5036,7 @@ async fn responses_carry_real_version_kind_tokens_and_workarea_path() {
         tokens(composed),
         "budget tokens of the NFC body"
     );
-    assert_eq!(held["body"], composed);
+    assert_eq!(held["text"], composed);
     assert_eq!(held["retirement"], false);
     assert_eq!(held["replaces"], Value::Null);
     assert_eq!(
@@ -5789,15 +5832,17 @@ async fn own_true_lists_every_state_of_the_keys_own_rows_newest_first() {
     assert_eq!(status, StatusCode::OK, "{page}");
     assert_eq!(listed(&page), vec![second]);
 
-    // The own-work listing resolves no workarea, so the override is refused.
+    // The v0.3.0 header is refused on the own-work listing too, naming the
+    // query's workarea (ADR-0039 d7).
     let (status, body) = list(
         router,
-        Call::auth(&writer).workarea(&crew.to_string()),
+        Call::auth(&writer).header("x-oml-workarea", &crew.to_string()),
         "own=true",
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_envelope(&body, "request.validation");
+    assert_eq!(body["error"]["details"]["renamed_to"], "workarea", "{body}");
 
     drop_db(&rig.db_name).await;
 }
@@ -5854,7 +5899,7 @@ async fn the_own_listing_covers_every_workarea_the_key_wrote_to() {
     let (status, page) = list(
         router,
         Call::auth(&writer),
-        &format!("own=true&workarea_id={alloys}"),
+        &format!("own=true&workarea={alloys}"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -5864,7 +5909,7 @@ async fn the_own_listing_covers_every_workarea_the_key_wrote_to() {
         let (status, body) = list(
             router,
             Call::auth(&writer),
-            &format!("own=true&workarea_id={node}"),
+            &format!("own=true&workarea={node}"),
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -5980,7 +6025,7 @@ async fn a_global_denial_masks_own_rows_in_the_listing() {
     let (status, body) = list(
         router,
         Call::auth(&writer),
-        &format!("own=true&workarea_id={alloys}"),
+        &format!("own=true&workarea={alloys}"),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -6108,15 +6153,7 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
         Vec::<String>::new(),
         "no filter reaches a held row"
     );
-    // workarea_id intersects the scope's subtree; X-OML-Workarea moves it.
-    let (status, page) = list(
-        router,
-        Call::auth(&reader),
-        &format!("workarea_id={quotes}"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    assert_eq!(listed(&page), vec![quote.clone()]);
+    // workarea moves the scope to its subtree (ADR-0039 d7).
     let (status, page) = list(
         router,
         Call::auth(&reader).workarea(&quotes.to_string()),
@@ -6126,15 +6163,10 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
     assert_eq!(status, StatusCode::OK, "{page}");
     assert_eq!(listed(&page), vec![quote]);
     // A node without reader effective access is absent.
-    let (status, body) = list(
-        router,
-        Call::auth(&reader),
-        &format!("workarea_id={alloys}"),
-    )
-    .await;
+    let (status, body) = list(router, Call::auth(&reader), &format!("workarea={alloys}")).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
-    // Without own, a key with neither a default nor the override is refused.
+    // Without own, a key with neither a default nor a workarea is refused.
     let unscoped =
         issue_key_with(router, &admin, "reader", "crew/no-default", json!([])).await["value"]
             .as_str()
@@ -6346,14 +6378,14 @@ async fn a_get_with_x_oml_workarea_is_request_validation() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["artifact_id"], written.as_str());
 
-    // Get resolves no workarea, so the override is refused, not ignored,
-    // even when it names the row's own workarea (http-api.md get;
-    // ADR-0025 d13).
+    // Get resolves no workarea, so the v0.3.0 header is refused, not
+    // ignored, even when it names the row's own workarea (http-api.md get;
+    // ADR-0025 d13, ADR-0039 d7).
     let (status, _, body) = send(
         router,
         "GET",
         &path,
-        Call::auth(&writer).workarea(&crew.to_string()),
+        Call::auth(&writer).header("x-oml-workarea", &crew.to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -6596,7 +6628,7 @@ async fn the_review_serve_of_a_supersession_carries_the_replaced_version() {
     assert_eq!(serve["replaces"]["artifact_id"], first.as_str());
     assert_eq!(serve["replaces"]["version"], 1);
     assert_eq!(serve["replaces"]["tip"], true, "still the tip while held");
-    assert_eq!(serve["replaces"]["body"], "Accra Metals quoted 412 USD/t.");
+    assert_eq!(serve["replaces"]["text"], "Accra Metals quoted 412 USD/t.");
     assert_eq!(
         serve["served_digests"]["replaces"], target["plaintext_digest"],
         "the serve records the replaced version's digest"

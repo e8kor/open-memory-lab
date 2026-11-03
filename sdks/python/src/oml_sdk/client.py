@@ -217,12 +217,13 @@ class OmlClient:
             claim_key=claim_key,
             kind=SubmitRequestKind(kind),
             body=body,
+            workarea=_opt(workarea),
             derives_from=list(derives_from) if derives_from is not None else UNSET,
         )
         return self._write(
             idempotency_key,
             lambda key: submit_memory.sync_detailed(
-                client=self._api, body=request, idempotency_key=key, x_oml_workarea=_opt(workarea)
+                client=self._api, body=request, idempotency_key=key
             ),
         )
 
@@ -232,32 +233,30 @@ class OmlClient:
         *,
         k: int | None = None,
         kinds: Sequence[str] | None = None,
-        include_bodies: bool | None = None,
-        include_own_held: bool | None = None,
+        include_text: bool | None = None,
+        include_unreviewed: bool | None = None,
         max_tokens: int | None = None,
         workarea: str | None = None,
     ) -> RecallResponse:
-        """Ranked recall over promoted rows, and the caller's own held rows
-        with `include_own_held`. Only the fields given are sent: the
-        generated model would send its schema defaults otherwise."""
+        """Ranked recall over promoted rows in `workarea`, else the key's
+        default workarea, and the caller's own held rows with
+        `include_unreviewed`. Only the fields given are sent: the generated
+        model would send its schema defaults otherwise."""
         request = RecallRequest(
             query=query,
+            workarea=_opt(workarea),
             k=_opt(k),
             kinds=[RecallRequestKindsItem(kind) for kind in kinds] if kinds is not None else UNSET,
-            include_bodies=_opt(include_bodies),
-            include_own_held=_opt(include_own_held),
+            include_text=_opt(include_text),
+            include_unreviewed=_opt(include_unreviewed),
             max_tokens=_opt(max_tokens),
-            terms=UNSET,
-            expand_terms=UNSET,
         )
         return self._send(
-            lambda: recall_memories.sync_detailed(
-                client=self._api, body=request, x_oml_workarea=_opt(workarea)
-            )
+            lambda: recall_memories.sync_detailed(client=self._api, body=request)
         ).parsed
 
     def get(self, artifact_id: str) -> Memory:
-        """One memory with its body."""
+        """One memory with its text."""
         return self._send(lambda: get_memory.sync_detailed(artifact_id, client=self._api)).parsed
 
     def list_memories(
@@ -267,14 +266,15 @@ class OmlClient:
         claim_key: str | None = None,
         state: str | None = None,
         kind: str | None = None,
-        workarea_id: str | None = None,
         since: datetime.datetime | None = None,
         until: datetime.datetime | None = None,
         limit: int | None = None,
         cursor: str | None = None,
         workarea: str | None = None,
     ) -> MemoryPage:
-        """One page of `GET /v1/memories`, newest first, with its `next_cursor`."""
+        """One page of `GET /v1/memories`, newest first, with its `next_cursor`;
+        `workarea` is the subtree read: the scope without `own`, else a
+        narrowing of the key's own rows."""
         return self._send(
             lambda: list_memories.sync_detailed(
                 client=self._api,
@@ -282,12 +282,11 @@ class OmlClient:
                 claim_key=_opt(claim_key),
                 state=ListMemoriesState(state) if state is not None else UNSET,
                 kind=ListMemoriesKind(kind) if kind is not None else UNSET,
-                workarea_id=_opt(workarea_id),
+                workarea=_opt(workarea),
                 since=_opt(since),
                 until=_opt(until),
                 limit=_opt(limit),
                 cursor=_opt(cursor),
-                x_oml_workarea=_opt(workarea),
             )
         ).parsed
 
@@ -325,6 +324,7 @@ class OmlClient:
         write; `retirement=True` proposes retiring the claim, `body` saying why."""
         request = SupersedeRequest(
             body=body,
+            workarea=_opt(workarea),
             retirement=_opt(retirement),
             kind=SupersedeRequestKind(kind) if kind is not None else UNSET,
             derives_from=list(derives_from) if derives_from is not None else UNSET,
@@ -336,7 +336,6 @@ class OmlClient:
                 client=self._api,
                 body=request,
                 idempotency_key=key,
-                x_oml_workarea=_opt(workarea),
             ),
         )
 

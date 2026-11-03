@@ -12,7 +12,7 @@ def test_a_remembered_memory_is_held_recalled_by_its_author_alone_and_promoted_b
     assert held.state == "held"
     assert written.replayed is False
 
-    own = agent.recall(marker, include_own_held=True, workarea=review)
+    own = agent.recall(marker, include_unreviewed=True, workarea=review)
     assert [(h.memory.artifact_id, h.memory.state) for h in own.hits] == [
         (held.artifact_id, "held")
     ]

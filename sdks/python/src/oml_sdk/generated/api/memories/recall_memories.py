@@ -7,17 +7,14 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.recall_request import RecallRequest
 from ...models.recall_response import RecallResponse
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
     *,
     body: RecallRequest,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    if not isinstance(x_oml_workarea, Unset):
-        headers["X-OML-Workarea"] = x_oml_workarea
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -70,25 +67,23 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RecallRequest,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | RecallResponse]:
     """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
 
-     Requires: reader effective access on the subtree. Default scope is the token workarea's subtree —
-    the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers
-    request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key.
-    Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in
-    docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation
-    and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+     Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
+    by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
+    request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
+    request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
+    Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
+    declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
+    truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
-        body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
-            — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
-            are refused (request.validation), and so are the designed vocabulary filter's terms and
-            expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
+        body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
+            (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
+            vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
+            d9); v0.3.0's include_bodies and include_own_held are request.validation naming
+            include_text and include_unreviewed in details.renamed_to (ADR-0039 d7).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -100,7 +95,6 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
-        x_oml_workarea=x_oml_workarea,
     )
 
     response = client.get_httpx_client().request(
@@ -114,25 +108,23 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: RecallRequest,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> ErrorEnvelope | RecallResponse | None:
     """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
 
-     Requires: reader effective access on the subtree. Default scope is the token workarea's subtree —
-    the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers
-    request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key.
-    Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in
-    docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation
-    and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+     Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
+    by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
+    request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
+    request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
+    Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
+    declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
+    truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
-        body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
-            — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
-            are refused (request.validation), and so are the designed vocabulary filter's terms and
-            expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
+        body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
+            (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
+            vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
+            d9); v0.3.0's include_bodies and include_own_held are request.validation naming
+            include_text and include_unreviewed in details.renamed_to (ADR-0039 d7).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -145,7 +137,6 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
-        x_oml_workarea=x_oml_workarea,
     ).parsed
 
 
@@ -153,25 +144,23 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RecallRequest,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | RecallResponse]:
     """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
 
-     Requires: reader effective access on the subtree. Default scope is the token workarea's subtree —
-    the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers
-    request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key.
-    Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in
-    docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation
-    and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+     Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
+    by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
+    request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
+    request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
+    Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
+    declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
+    truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
-        body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
-            — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
-            are refused (request.validation), and so are the designed vocabulary filter's terms and
-            expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
+        body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
+            (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
+            vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
+            d9); v0.3.0's include_bodies and include_own_held are request.validation naming
+            include_text and include_unreviewed in details.renamed_to (ADR-0039 d7).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -183,7 +172,6 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
-        x_oml_workarea=x_oml_workarea,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -195,25 +183,23 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: RecallRequest,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> ErrorEnvelope | RecallResponse | None:
     """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
 
-     Requires: reader effective access on the subtree. Default scope is the token workarea's subtree —
-    the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers
-    request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key.
-    Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in
-    docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation
-    and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+     Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
+    by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
+    request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
+    request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
+    Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
+    declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
+    truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
-        body (RecallRequest): Names no workarea: the default scope is the token workarea's subtree
-            — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields
-            are refused (request.validation), and so are the designed vocabulary filter's terms and
-            expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
+        body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
+            (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
+            vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
+            d9); v0.3.0's include_bodies and include_own_held are request.validation naming
+            include_text and include_unreviewed in details.renamed_to (ADR-0039 d7).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -227,6 +213,5 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
-            x_oml_workarea=x_oml_workarea,
         )
     ).parsed

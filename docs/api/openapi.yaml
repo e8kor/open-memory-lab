@@ -22,10 +22,11 @@ info:
     workarea, crew and key administration, whoami, bootstrap and the events tail here, and in the
     designed document the ratification ceremonies, edges, claim administration, simulations,
     exports, settings, tenants and vocabularies — and evolves; it may re-version without ever
-    touching /v1. On the provider ring the target workarea is never named in the request: it
-    resolves from the key's journalled default_workarea, overridden by the X-OML-Workarea header
-    within the key's grants (request.workarea_unresolved when neither is present); /v2 keeps
-    explicit workarea references in paths and bodies. Workareas, crews, keys and tenants are named
+    touching /v1. On the provider ring a request names its workarea in one field, workarea, in the
+    body of a write or a recall and in the query of a listing or the events tail; omitted, it
+    resolves from the key's journalled default_workarea (request.workarea_unresolved when the key
+    has none), and v0.3.0's X-OML-Workarea header is refused naming it (ADR-0039 d4, d7); /v2
+    keeps explicit workarea references in paths and bodies. Workareas, crews, keys and tenants are named
     (ADR-0026): every request field, path parameter, query parameter and header that names one of
     them takes the row's id (RFC 9562 hex-and-dash UUID text, never version 8) or its name (the
     NameRef schema, the reference grammar; creation bodies take Name, the creation grammar),
@@ -69,10 +70,9 @@ paths:
       tags: [memories]
       operationId: submitMemory
       summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
-      description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
+      description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea is the body''s workarea, by id or name, honoured only within the key''s grants, else the key''s default_workarea; request.workarea_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
-        - { $ref: '#/components/parameters/XOMLWorkarea' }
       requestBody:
         required: true
         content:
@@ -115,10 +115,9 @@ paths:
       tags: [memories]
       operationId: listMemories
       summary: Structured, paginated listing of memory summaries.
-      description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true the listing resolves no workarea, and an X-OML-Workarea header is refused (request.validation). Without own, the listing returns promoted served tips within reader effective access, defaulting to the token workarea''s subtree (ADR-0022 d4) — a self_signed version only when the scope node is its own workarea; a retired claim''s tip, its retirement version, among them, flagged retirement true; others'' held rows are never returned (R3). workarea_id is a subtree filter (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
+      description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns promoted served tips within reader effective access in the workarea''s subtree, defaulting to the key''s default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own workarea; a retired claim''s tip, its retirement version, among them, flagged retirement true; others'' held rows are never returned (R3). workarea is the subtree read (see the parameter); v0.3.0''s workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
       parameters:
-        - { $ref: '#/components/parameters/XOMLWorkarea' }
-        - { name: workarea_id, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' }, description: "A subtree filter, by id or name, that must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it. Without own, a node where reader is effective; the listing is the intersection of its subtree with the scope's, and the scope still resolves from the token (request.workarea_unresolved for a key with neither a default nor X-OML-Workarea)." }
+        - { name: workarea, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' }, description: "The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workarea the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workarea (request.workarea_unresolved for a key with neither)." }
         - { name: claim_key, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
         - { name: kind, in: query, schema: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] } }
@@ -171,8 +170,7 @@ paths:
       tags: [memories]
       operationId: recallMemories
       summary: Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
-      description: 'Requires: reader effective access on the subtree. Default scope is the token workarea''s subtree — the key''s default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.'
-      parameters: [{ $ref: '#/components/parameters/XOMLWorkarea' }]
+      description: 'Requires: reader effective access on the subtree. The scope is the subtree of the body''s workarea, by id or name, else of the key''s default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.'
       requestBody:
         required: true
         content:
@@ -204,7 +202,7 @@ paths:
                   held_expires_at: null
                   created_at: '2026-10-02T09:20:41Z'
                   promoted_at: '2026-10-02T11:05:12Z'
-                  body: Prefer quotes with an explicit validity date; treat undated quotes as expired.
+                  text: Prefer quotes with an explicit validity date; treat undated quotes as expired.
                 hits:
                 - memory:
                     artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
@@ -232,7 +230,7 @@ paths:
                     retirement: false
                     replaces: null
                     held_expires_at: null
-                    body: Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.
+                    text: Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.
                   score: 0.83
                 query_digest: sha256:c4a91e0b7d2f6358a1c0e94d72b85f31d6c2e8a90b4f7135c8d0e2a6951b4d7f
               schema: { $ref: '#/components/schemas/RecallResponse' }
@@ -244,8 +242,8 @@ paths:
     get:
       tags: [memories]
       operationId: getMemory
-      summary: One memory with body (decrypted on the serving path) and attachment descriptors.
-      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row''s own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author''s key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.'
+      summary: One memory with its text (decrypted on the serving path) and attachment descriptors.
+      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row''s own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author''s key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.'
       parameters: [{ $ref: '#/components/parameters/ArtifactId' }]
       responses:
         '200':
@@ -280,7 +278,7 @@ paths:
                 retirement: false
                 replaces: null
                 held_expires_at: null
-                body: Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.
+                text: Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.
               schema: { $ref: '#/components/schemas/Memory' }
         '404': { $ref: '#/components/responses/NotFound' }
         '410': { $ref: '#/components/responses/Gone' }
@@ -292,11 +290,10 @@ paths:
       tags: [memories]
       operationId: supersedeMemory
       summary: Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the target''s workarea (request.validation otherwise); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target''s state or the key''s access now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).'
+      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body''s workarea, if sent, must equal the target''s workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target''s state or the key''s access now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).'
       parameters:
         - { $ref: '#/components/parameters/ArtifactId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-        - { $ref: '#/components/parameters/XOMLWorkarea' }
       requestBody:
         required: true
         content:
@@ -623,12 +620,12 @@ paths:
       tags: [events]
       operationId: tailEvents
       summary: The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
-      description: 'Requires: reader effective access on workarea_id (access.not_found otherwise); omitted, the key''s default workarea, and request.workarea_unresolved for a key with none. Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor''s own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key''s ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.'
+      description: 'Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key''s default workarea, and request.workarea_unresolved for a key with none. v0.3.0''s workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor''s own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key''s ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.'
       parameters:
         - { name: after_seq, in: query, schema: { type: integer, minimum: 0, default: 0 },
             description: "Resume point: events return in seq ascending order — the journal's order, not created_at descending. Pass back next_after_seq verbatim." }
-        - { name: workarea_id, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' },
-            description: "A subtree filter within reader effective access; defaults to the key's default workarea (request.workarea_unresolved when the key has none)." }
+        - { name: workarea, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' },
+            description: "The subtree tailed, by id or name, within reader effective access; defaults to the key's default workarea (request.workarea_unresolved when the key has none)." }
         - { $ref: '#/components/parameters/Limit' }
       responses:
         '200':
@@ -709,7 +706,7 @@ paths:
                   held_expires_at: null
                   created_at: '2026-10-29T16:02:51Z'
                   promoted_at: null
-                  body: Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations.
+                  text: Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations.
                 served_digests:
                   body: sha256:1e5a7c3902d8b6f44a0c2e917d3f58b62c90e1a74f6d2b85031c7e9a4b5d6f28
                   attachments: []
@@ -1050,8 +1047,8 @@ components:
       schema: { type: string, maxLength: 256 }
       description: >-
         Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the
-        provider ring the workarea component is the RESOLVED target — the key's default_workarea
-        or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the
+        provider ring the workarea component is the RESOLVED target — the body's workarea, else the
+        key's default_workarea (ADR-0039 d7); for supersede the workarea component is the
         fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede
         rule and before step 2, so a committed supersession always replays, and claimed only after
         step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route,
@@ -1061,20 +1058,6 @@ components:
         committed record is retained for at least 24 hours — the replay-window setting may only
         raise that floor — and after it expires the same key is processed as a fresh request
         (expiry-then-reprocess is documented behavior, not a defect).
-    XOMLWorkarea:
-      name: X-OML-Workarea
-      in: header
-      required: false
-      schema: { $ref: '#/components/schemas/WorkareaRef' }
-      description: >-
-        Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and
-        recall's default scope) is the key's journalled default_workarea; present, it is honored
-        only within the key's grants — plain-passable because it is authorization-checked data,
-        never a secret. A provider-ring submit, recall or non-own listing from a key with neither
-        a default nor this header is refused with 422 request.workarea_unresolved. Get, the
-        own-work listing (own=true) and supersede never answer it: get and own=true resolve no
-        workarea, so this header sent with either is request.validation, and supersede takes the
-        target's workarea, which this header, if sent, must equal.
     Limit:
       name: limit
       in: query
@@ -1333,10 +1316,9 @@ components:
     SubmitRequest:
       type: object
       description: >-
-        Names no workarea: the target resolves from the key's default_workarea or the
-        X-OML-Workarea header (ADR-0022 d4); neither present is refused with
-        request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025 d16
-        closes the recall, supersede, key-issuance and grant bodies only. The designed attachment,
+        The target is workarea, else the key's default_workarea; neither present is refused
+        with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its nested objects,
+        stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment,
         simulation and vocabulary fields are declared under x-oml-designed-fields in
         openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
       required: [body]
@@ -1345,6 +1327,7 @@ components:
         claim_key: { type: string, description: "Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6)." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release], default: memory }
         body: { type: string, description: 'Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml).' }
+        workarea: { $ref: '#/components/schemas/WorkareaRef', description: "The workarea written in, by id or name, honoured only within the key's grants; omitted, the key's default_workarea (ADR-0039 d4, d7)." }
         derives_from:
           type: array
           items: { type: string }
@@ -1421,7 +1404,7 @@ components:
         - { $ref: '#/components/schemas/MemorySummary' }
         - type: object
           properties:
-            body: { type: string, description: Decrypted on the serving path only. }
+            text: { type: string, description: "The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false." }
 
     MemoryPage:
       type: object
@@ -1434,17 +1417,19 @@ components:
       type: object
       additionalProperties: false
       description: >-
-        Names no workarea: the default scope is the token workarea's subtree — the key's
-        default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields are
-        refused (request.validation), and so are the designed vocabulary filter's terms and
-        expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
+        The scope is workarea's subtree, else the key's default_workarea's (ADR-0039 d4). Unknown
+        fields are refused (request.validation), and so are the designed vocabulary filter's terms
+        and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9); v0.3.0's
+        include_bodies and include_own_held are request.validation naming include_text and
+        include_unreviewed in details.renamed_to (ADR-0039 d7).
       required: [query]
       properties:
         query: { type: string }
+        workarea: { $ref: '#/components/schemas/WorkareaRef', description: "The subtree recalled, by id or name; omitted, the key's default_workarea (ADR-0039 d4)." }
         k: { type: integer, minimum: 1, maximum: 100, default: 8 }
         kinds: { type: array, minItems: 1, items: { type: string, enum: [memory, derived_fact] }, description: 'Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workarea''s journalled policy opts them in, they are hits only of a recall that omits kinds.' }
-        include_bodies: { type: boolean, default: true }
-        include_own_held:
+        include_text: { type: boolean, default: true, description: Whether each served item carries its text (ADR-0039 d7). }
+        include_unreviewed:
           type: boolean
           default: false
           description: >-
@@ -1461,7 +1446,7 @@ components:
           description: >-
             Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest
             integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut;
-            hits are the longest rank prefix that fits. Refused with include_bodies false. Rules:
+            hits are the longest rank prefix that fits. Refused with include_text false. Rules:
             docs/architecture/retrieval.md, Token budgets.
 
     RecallResponse:
@@ -1521,6 +1506,7 @@ components:
       required: [body]
       properties:
         body: { type: string, description: 'Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.' }
+        workarea: { $ref: '#/components/schemas/WorkareaRef', description: "When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7)." }
         retirement: { type: boolean, default: false, description: 'true proposes retiring the claim, and body states why. Refused with request.validation when the target''s kind is term (terms deprecate), or when a kind is sent that differs from the target''s.' }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release], description: 'Omitted, the successor takes the target''s kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target''s kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).' }
         derives_from: { type: array, items: { type: string }, description: The superseded target is included implicitly. }
@@ -1770,7 +1756,7 @@ components:
         role: { $ref: '#/components/schemas/Role' }
         principal: { type: string }
         crew_id: { type: [string, 'null'], description: "The key's crew record, as key.issued journals it; null when none was named (ADR-0026 d8)." }
-        default_workarea_id: { type: [string, 'null'], description: "The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when no X-OML-Workarea is sent (ADR-0022 d4)." }
+        default_workarea_id: { type: [string, 'null'], description: "The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4)." }
         held_by: { type: [string, 'null'], enum: [agent, human, service, null], description: "The issuing admin's attestation; for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2)." }
         label: { type: string }
         expiry: { type: [string, 'null'], format: date-time }

@@ -448,7 +448,7 @@ shows it ([FR-33](../product/roadmap.md)).
 
 | Verb | Does |
 |---|---|
-| `oml hook session-start` | Reads the SessionStart JSON object on stdin, sends `GET /v1/memories?own=true&limit=10`, then `POST /v1/memories/recall` with `{"query": <query>, "k": 10, "include_bodies": true, "include_own_held": true, "max_tokens": <budget>}` on the key's default workarea, and prints one SessionStart hook document on stdout. It sends no other request, and exits `0` on every failure below. |
+| `oml hook session-start` | Reads the SessionStart JSON object on stdin, sends `GET /v1/memories?own=true&limit=10`, then `POST /v1/memories/recall` with `{"query": <query>, "k": 10, "include_text": true, "include_unreviewed": true, "max_tokens": <budget>}` on the key's default workarea, and prints one SessionStart hook document on stdout. It sends no other request, and exits `0` on every failure below. |
 
 **Its environment**, and nothing else:
 

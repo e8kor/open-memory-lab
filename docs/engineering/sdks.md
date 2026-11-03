@@ -122,7 +122,7 @@ double. Each suite:
 
 | Test | Proves |
 |---|---|
-| The agent loop | A `remember` is `held`; its author's recall with `include_own_held` returns it `held` and a plain recall does not return it; the dreamer key's `review next` serves it and its `approve` verdict promotes it; a plain recall then returns it `promoted`. |
+| The agent loop | A `remember` is `held`; its author's recall with `include_unreviewed` returns it `held` and a plain recall does not return it; the dreamer key's `review next` serves it and its `approve` verdict promotes it; a plain recall then returns it `promoted`. |
 | Idempotent replay | A write whose response is lost in transit is retried under the same `Idempotency-Key`, answered with `Idempotency-Replay: true`, and leaves one version; a key reused with a different body is an `IdempotencyError` and is not retried; two calls send two keys. |
 | Pagination | Iterating the own-work listing with a page limit of 2 follows `next_cursor` across at least three pages and yields each written row once. |
 | Error mapping | A bad key is an `AuthError` (`auth.invalid`), a writer key asking for review is an `AccessError` (`access.verb_ceiling`), and a `learn` without lineage is a `SubmissionError` (`submission.lineage_required`), each with its `rule`, `message`, `retryable` and `request_id`. Every family errors.md declares has its own class, read from errors.md itself. |

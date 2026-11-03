@@ -68,7 +68,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | Memory]:
-    """One memory with body (decrypted on the serving path) and attachment descriptors.
+    """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
      The calling key may fetch its own rows in any state, with no grant needed (global denials still
     mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions
@@ -78,9 +78,9 @@ def sync_detailed(
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
     its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
-    workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the
-    caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id
-    is null on an own row whose node the key holds no role on.
+    workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
+    lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
+    version, and workarea_id is null on an own row whose node the key holds no role on.
 
     Args:
         artifact_id (str):
@@ -109,7 +109,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | Memory | None:
-    """One memory with body (decrypted on the serving path) and attachment descriptors.
+    """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
      The calling key may fetch its own rows in any state, with no grant needed (global denials still
     mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions
@@ -119,9 +119,9 @@ def sync(
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
     its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
-    workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the
-    caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id
-    is null on an own row whose node the key holds no role on.
+    workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
+    lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
+    version, and workarea_id is null on an own row whose node the key holds no role on.
 
     Args:
         artifact_id (str):
@@ -145,7 +145,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | Memory]:
-    """One memory with body (decrypted on the serving path) and attachment descriptors.
+    """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
      The calling key may fetch its own rows in any state, with no grant needed (global denials still
     mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions
@@ -155,9 +155,9 @@ async def asyncio_detailed(
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
     its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
-    workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the
-    caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id
-    is null on an own row whose node the key holds no role on.
+    workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
+    lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
+    version, and workarea_id is null on an own row whose node the key holds no role on.
 
     Args:
         artifact_id (str):
@@ -184,7 +184,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | Memory | None:
-    """One memory with body (decrypted on the serving path) and attachment descriptors.
+    """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
      The calling key may fetch its own rows in any state, with no grant needed (global denials still
     mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions
@@ -194,9 +194,9 @@ async def asyncio(
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
     its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
-    workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the
-    caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id
-    is null on an own row whose node the key holds no role on.
+    workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
+    lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
+    version, and workarea_id is null on an own row whose node the key holds no role on.
 
     Args:
         artifact_id (str):

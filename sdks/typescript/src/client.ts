@@ -42,7 +42,7 @@ export interface OmlClientOptions {
 export interface WriteOptions {
   /** The Idempotency-Key for this call; a fresh UUIDv4 when omitted. */
   idempotencyKey?: string;
-  /** The X-OML-Workarea override: a node id within the key's grants. */
+  /** The body's `workarea`: a node id or name within the key's grants; omitted, the key's default. */
   workarea?: string;
 }
 
@@ -165,31 +165,25 @@ export class OmlClient {
   #submit(body: SubmitRequest, options: WriteOptions): Promise<Written<SubmitAccepted>> {
     return this.#write(options.idempotencyKey, (key, signal) =>
       this.#api.POST("/v1/memories", {
-        params: {
-          header: {
-            "Idempotency-Key": key,
-            ...(options.workarea ? { "X-OML-Workarea": options.workarea } : {}),
-          },
-        },
-        body,
+        params: { header: { "Idempotency-Key": key } },
+        body: options.workarea ? { ...body, workarea: options.workarea } : body,
         signal,
       }),
     );
   }
 
-  /** Ranked recall over promoted rows, and the caller's own held rows with `include_own_held`; only the fields given are sent. */
+  /** Ranked recall over promoted rows, and the caller's own held rows with `include_unreviewed`; only the fields given are sent. */
   async recall(body: RecallRequest, options: { workarea?: string } = {}): Promise<RecallResponse> {
     const answer = await this.#send((signal) =>
       this.#api.POST("/v1/memories/recall", {
-        params: { header: options.workarea ? { "X-OML-Workarea": options.workarea } : {} },
-        body,
+        body: options.workarea ? { ...body, workarea: options.workarea } : body,
         signal,
       }),
     );
     return answer.data as RecallResponse;
   }
 
-  /** One memory with its body. */
+  /** One memory with its text. */
   async get(artifactId: string): Promise<Memory> {
     const answer = await this.#send((signal) =>
       this.#api.GET("/v1/memories/{artifact_id}", {
@@ -204,10 +198,7 @@ export class OmlClient {
   async listMemories(query: ListQuery = {}, options: { workarea?: string } = {}): Promise<MemoryPage> {
     const answer = await this.#send((signal) =>
       this.#api.GET("/v1/memories", {
-        params: {
-          query,
-          header: options.workarea ? { "X-OML-Workarea": options.workarea } : {},
-        },
+        params: { query: options.workarea ? { ...query, workarea: options.workarea } : query },
         signal,
       }),
     );
@@ -250,12 +241,9 @@ export class OmlClient {
       this.#api.POST("/v1/memories/{artifact_id}/supersede", {
         params: {
           path: { artifact_id: artifactId },
-          header: {
-            "Idempotency-Key": key,
-            ...(options.workarea ? { "X-OML-Workarea": options.workarea } : {}),
-          },
+          header: { "Idempotency-Key": key },
         },
-        body,
+        body: options.workarea ? { ...body, workarea: options.workarea } : body,
         signal,
       }),
     );

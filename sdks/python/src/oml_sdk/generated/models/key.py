@@ -30,7 +30,7 @@ class Key:
         role (Role):
         default_workarea_id (None | str): The key's default workarea; for an issued key, as key.issued journals it — the
             one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance
-            order; ADR-0025 d2). The provider-ring target when no X-OML-Workarea is sent (ADR-0022 d4).
+            order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4).
         held_by (KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None): The issuing admin's attestation;
             for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2).
         principal (str | Unset):

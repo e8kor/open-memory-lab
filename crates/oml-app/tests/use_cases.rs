@@ -168,14 +168,14 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
         verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
-        workarea_id: None,
+        workarea: None,
         derives_from: Vec::new(),
     }
 }
 
 fn submit_into(idem: &str, body: &str, workarea_id: Uuid) -> SubmitRequest {
     SubmitRequest {
-        workarea_id: Some(workarea_id.into()),
+        workarea: Some(workarea_id.into()),
         ..submit_req(idem, body)
     }
 }
@@ -184,10 +184,10 @@ fn recall_req(query: &str) -> RecallRequest {
     RecallRequest {
         query: query.to_owned(),
         k: 10,
-        workarea_id: None,
+        workarea: None,
         kinds: Vec::new(),
-        include_bodies: true,
-        include_own_held: false,
+        include_text: true,
+        include_unreviewed: false,
         max_tokens: None,
     }
 }
@@ -203,7 +203,7 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         retirement: false,
         derives_from: Vec::new(),
         reason: None,
-        workarea_id: None,
+        workarea: None,
         refuse_vocabulary_target: false,
     }
 }
@@ -1132,7 +1132,7 @@ async fn an_x_oml_workarea_outside_the_grants_is_not_found() {
             .recall(
                 &agent.value,
                 &RecallRequest {
-                    workarea_id: Some(node.into()),
+                    workarea: Some(node.into()),
                     ..recall_req("x")
                 },
             )
@@ -1234,7 +1234,7 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
         .recall(
             &reader.value,
             &RecallRequest {
-                workarea_id: Some(quarantine.into()),
+                workarea: Some(quarantine.into()),
                 ..recall_req("canary")
             },
         )
@@ -1634,7 +1634,7 @@ fn hit_ids_of(recall: &RecallResult) -> Vec<Uuid> {
 /// A recall of `query` at `scope`.
 fn recall_at(query: &str, scope: Uuid) -> RecallRequest {
     RecallRequest {
-        workarea_id: Some(scope.into()),
+        workarea: Some(scope.into()),
         ..recall_req(query)
     }
 }
@@ -3593,7 +3593,7 @@ async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
-                workarea_id: Some(boot.root_workarea_id.into()),
+                workarea: Some(boot.root_workarea_id.into()),
                 ..supersede_req("sup-1", first, "revised")
             },
         )
@@ -3603,7 +3603,7 @@ async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
     app.supersede(
         &writer.value,
         &SupersedeRequest {
-            workarea_id: Some(crew.into()),
+            workarea: Some(crew.into()),
             ..supersede_req("sup-2", first, "revised")
         },
     )
@@ -3841,7 +3841,7 @@ fn tokens(text: &str) -> u64 {
 /// A recall of `query` that takes the calling key's own held rows too.
 fn own_held(query: &str) -> RecallRequest {
     RecallRequest {
-        include_own_held: true,
+        include_unreviewed: true,
         ..recall_req(query)
     }
 }
@@ -4138,7 +4138,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
         .recall(
             &author.value,
             &RecallRequest {
-                workarea_id: Some(quotes.into()),
+                workarea: Some(quotes.into()),
                 ..own_held("canary")
             },
         )
@@ -4155,7 +4155,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
             .recall(
                 &author.value,
                 &RecallRequest {
-                    workarea_id: Some(scope.into()),
+                    workarea: Some(scope.into()),
                     ..own_held("canary")
                 },
             )
@@ -4430,7 +4430,7 @@ async fn a_recall_without_max_tokens_carries_no_budget_object() {
 async fn max_tokens_with_include_bodies_false_is_request_validation() {
     let (app, reader, _steering, _hits, _s, _t) = budget_fixture().await;
     let bodiless = RecallRequest {
-        include_bodies: false,
+        include_text: false,
         ..recall_req("canary")
     };
     let err = app
@@ -4480,7 +4480,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     );
     assert_eq!(
         digest(RecallRequest {
-            workarea_id: Some(crew.into()),
+            workarea: Some(crew.into()),
             ..recall_req("canary")
         })
         .await,
@@ -4498,7 +4498,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     );
     assert_ne!(
         digest(RecallRequest {
-            include_bodies: false,
+            include_text: false,
             ..recall_req("canary")
         })
         .await,
@@ -4536,7 +4536,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
 /// A first version of a claim into the workarea `target` names.
 fn submit_to(idem: &str, body: &str, target: Reference) -> SubmitRequest {
     SubmitRequest {
-        workarea_id: Some(target),
+        workarea: Some(target),
         ..submit_req(idem, body)
     }
 }
@@ -4595,7 +4595,7 @@ async fn a_writer_key_submitting_with_its_workareas_name_lands_in_that_workarea(
         .submit_memory(
             &writer.value,
             &SubmitRequest {
-                workarea_id: Some(metals.into()),
+                workarea: Some(metals.into()),
                 ..req.clone()
             },
         )
@@ -4639,7 +4639,7 @@ async fn a_name_the_key_holds_no_grant_on_answers_not_found_with_the_same_body_a
             app.recall(
                 key,
                 &RecallRequest {
-                    workarea_id: Some(target),
+                    workarea: Some(target),
                     ..recall_req("copper")
                 },
             )
@@ -5581,8 +5581,7 @@ async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
             admin,
             &ListRequest {
                 own: false,
-                scope: Some(by_name("crew")),
-                workarea_id: None,
+                workarea: Some(by_name("crew")),
                 state: None,
                 kind: None,
                 claim_key: None,
@@ -5616,7 +5615,7 @@ async fn an_admin_keys_recall_is_refused() {
             .recall(
                 &boot.admin_key.value,
                 &RecallRequest {
-                    workarea_id: scope,
+                    workarea: scope,
                     ..recall_req("anything")
                 },
             )

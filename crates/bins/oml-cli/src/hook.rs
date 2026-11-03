@@ -128,18 +128,11 @@ pub fn session_start(
     let (_, recall) = client
         .post(
             "/v1/memories/recall",
-            &json!({
-                "query": query,
-                "k": COUNT,
-                "include_bodies": true,
-                "include_own_held": true,
-                "max_tokens": budget,
-            }),
+            &recall_body(&query, budget),
             &CallOpts {
                 auth: true,
                 // Read-shaped POST (http-api.md idempotency).
                 idempotency: false,
-                workarea: None,
             },
         )
         .map_err(|e| failed("the recall", e))?;
@@ -167,6 +160,19 @@ pub fn session_start(
         }
     });
     Ok(document.to_string())
+}
+
+/// The recall's request body: the query, the item count and the budget,
+/// with each item's text and the key's own unreviewed rows (ADR-0029 d2, as
+/// ADR-0039 d7 amends it).
+fn recall_body(query: &str, budget: u64) -> Value {
+    json!({
+        "query": query,
+        "k": COUNT,
+        "include_text": true,
+        "include_unreviewed": true,
+        "max_tokens": budget,
+    })
 }
 
 /// What the hook reads of the SessionStart stdin.
@@ -290,7 +296,7 @@ fn render(r: &Rendered<'_>) -> String {
     let steering: Vec<String> = r
         .steering
         .iter()
-        .map(|m| format!("- {}: {}", r.key_of(m), r.text(m, "body")))
+        .map(|m| format!("- {}: {}", r.key_of(m), r.text(m, "text")))
         .collect();
     push_or_none(&mut out, steering, "- none");
 
@@ -325,7 +331,7 @@ fn render(r: &Rendered<'_>) -> String {
                 "- [{}] {}: {}",
                 r.text(m, "state"),
                 r.key_of(m),
-                r.text(m, "body")
+                r.text(m, "text")
             )
         })
         .collect();
@@ -394,5 +400,56 @@ fn describe(e: CliError) -> String {
     match e {
         CliError::Refused { status, code, .. } => format!("the server refused ({status} {code})"),
         CliError::Local(why) | CliError::Unanswered(why) => why,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The recall asks for each item's text and the key's own unreviewed
+    /// rows under their v0.4.0 names, and sends no v0.3.0 spelling, which
+    /// the server refuses (ADR-0039 d7, amending ADR-0029 d2).
+    #[test]
+    fn the_session_start_hook_requests_include_text_and_include_unreviewed() {
+        let body = recall_body("open memory lab", 800);
+        assert_eq!(body["include_text"], true, "{body}");
+        assert_eq!(body["include_unreviewed"], true, "{body}");
+        for old in ["include_bodies", "include_own_held"] {
+            assert!(body.get(old).is_none(), "{old} is sent: {body}");
+        }
+        assert_eq!(body["query"], "open memory lab");
+        assert_eq!(body["max_tokens"], 800);
+        assert_eq!(body["k"], COUNT);
+    }
+
+    /// A recall hit and a steering item print their `text`, the v0.4.0
+    /// name of the claim's text in a response (ADR-0039 d7).
+    #[test]
+    fn the_session_start_context_prints_each_items_text() {
+        let item = json!({
+            "claim_key": "quote-validity",
+            "state": "promoted",
+            "text": "Treat an undated quote as expired.",
+        });
+        let redact = |text: &str| text.to_owned();
+        let context = render(&Rendered {
+            server: "https://oml.example",
+            own: &[],
+            steering: std::slice::from_ref(&item),
+            hits: &[json!({ "memory": item })],
+            budget: &Value::Null,
+            query: "quote",
+            compacted: false,
+            redact: &redact,
+        });
+        assert!(
+            context.contains("- quote-validity: Treat an undated quote as expired."),
+            "{context}"
+        );
+        assert!(
+            context.contains("- [promoted] quote-validity: Treat an undated quote as expired."),
+            "{context}"
+        );
     }
 }

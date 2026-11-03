@@ -48,13 +48,16 @@ both, and `/healthz` and `/readyz` stay unversioned.
   supersede, and the attachment upload/fetch flow. **The covenant:** once
   [FR-21](../product/roadmap.md) declares v1 stable, v1 changes are additive only — no field
   removed, no semantic changed, no status code repurposed; anything that would break a v1 client
-  is, by definition, a v2 capability. A provider-ring request names no workarea: the target
-  resolves from the key's journalled `default_workarea`, with the `X-OML-Workarea` header (a node
-  id or [name](#names-and-ids), honored only within the key's grants — plain-passable because it is
-  authorization-checked data, never a secret) as the explicit override; a submit, recall or non-own listing from a key
-  with neither answers `request.workarea_unresolved` ([errors.md](errors.md)). Get, the own-work
-  listing (`own=true`) and supersede never answer it: get and `own=true` resolve no workarea, and
-  supersede takes the target's workarea.
+  is, by definition, a v2 capability. A provider-ring request names its workarea in one field,
+  `workarea` — a node id or [name](#names-and-ids), honored only within the key's grants — in the
+  body of a submit, supersede or recall and in the query of the listing or the events tail;
+  omitted, the key's journalled `default_workarea` is the target, and a submit, recall or non-own
+  listing from a key with neither answers `request.workarea_unresolved` ([errors.md](errors.md)).
+  Get, the own-work listing (`own=true`) and supersede never answer it: get resolves no
+  workarea, an own-work listing without `workarea` reads every workarea the key wrote in, and
+  supersede takes the target's workarea. v0.3.0's `X-OML-Workarea` header is refused with
+  `request.validation`, `details.field` naming the header and `details.renamed_to` the field
+  ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4, d7).
 - **The lab ring (`/v2`)** is the evolving memory lab: review and ratification ceremonies, claim
   edges, workarea, key and claim administration, bans, simulations, exports, settings, tenants,
   bootstrap, the events tail and vocabularies. It prefers additive change but may re-version to
@@ -206,13 +209,14 @@ or `tenant`, and the v0.3.0 spelling (`parent_id`, `default_workarea_id`, `tenan
 `workarea_node_id`, a deny entry's `subtree_node_id`, a denial's `workarea_node_id`) is refused
 with `request.validation`, `details.field` naming the spelling sent and `details.renamed_to` the
 one to send ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). The provider
-ring's fields keep their v0.3.0 names until d7's renames reach it. A response keeps its v0.3.0
-names: a response field called `workarea_id` always carries the id, and each object of the four
-kinds carries its `name`.
+ring's memory routes and the events tail take `workarea`, and refuse the `X-OML-Workarea` header
+and the `workarea_id` query parameter the same way. A response keeps its v0.3.0 names, but for
+the claim's `text`, which v0.3.0 called `body`: a response field called `workarea_id` always
+carries the id, and each object of the four kinds carries its `name`.
 
 | Kind | Accepted in |
 |---|---|
-| workarea | `X-OML-Workarea`; the `{workarea}` of every `/v2/workareas/{workarea}` route; `workarea_id` on `GET /v1/memories`, `GET /v2/events`, `GET /v2/edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue`, on `POST /v2/review/next` and on `GET /v2/keys/{key}/effective-access`; `parent` on create, `new_parent_id` on re-parent, `from_workarea_id` and `to_workarea_id` on a workarea edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea` and its denies' `workarea`, a denial's `workarea`, and `default_workarea` on issuance |
+| workarea | `workarea` on submit, supersede and recall, and on `GET /v1/memories` and `GET /v2/events`; the `{workarea}` of every `/v2/workareas/{workarea}` route; `workarea_id` on `GET /v2/edges` and `GET /v2/vocab/suggest`; `workarea` on `GET /v2/review/queue`, on `POST /v2/review/next` and on `GET /v2/keys/{key}/effective-access`; `parent` on create, `new_parent_id` on re-parent, `from_workarea_id` and `to_workarea_id` on a workarea edge proposal, `workarea_id` on reassign and tip-override; a grant's `workarea` and its denies' `workarea`, a denial's `workarea`, and `default_workarea` on issuance |
 | crew | the `{crew}` of every `/v2/crews/{crew}` route; `crew` on workarea create, on `POST /v2/workareas/{workarea}/crew` and on issuance |
 | key | the `{key}` of every `/v2/keys/{key}` route; `key_id` in a simulation audience entry |
 | tenant | `tenant` on an operator key's issuance of a tenant's first admin key |
@@ -284,12 +288,12 @@ that namespace holds no key. No agent key therefore ever learns that a name is t
 **Idempotency.** Path parameters and body fields are digested as sent
 ([Idempotency](#idempotency)), so a `/v2` request that names a row in a path or a body and the
 same request by its id are two requests: reusing one `Idempotency-Key` for the other is
-`idempotency.digest_mismatch`. `X-OML-Workarea` is not in the digest, and the provider ring's
-record scope holds the resolved node id, so a `/v1` request whose header names the node and the
-same request whose header carries its id are one request, and the second replays. On `/v1` the
-header is resolved after step 1 of the refusal order and before the record is looked up; an
-unresolved header puts its unresolved value in the scope, so every unknown name has a scope of its
-own, as every unknown id does.
+`idempotency.digest_mismatch`. A `/v1` submit's `workarea` is digested, and its record scoped,
+as the resolved node id, so a submit whose `workarea` names the node and the same submit whose
+`workarea` carries its id are one request, and the second replays. On `/v1` the field is
+resolved after step 1 of the refusal order and before the record is looked up; an unresolved
+`workarea` puts its unresolved value in the scope, so every unknown name has a scope of its own,
+as every unknown id does.
 
 **Paths.** A workarea's derived path is the names from `universe` to the node joined with `.`
 ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)); its last
@@ -354,8 +358,8 @@ and verified by digest at completion, so replaying a part is harmless.
 The semantics are D13's **idempotency record**: `(key_id, workarea, idem_key) → request digest +
 state + stored response`, claimed in its own transaction **before any side effect** (the row lives
 in Postgres; [postgres-schema.md](../data/postgres-schema.md)). On the provider ring the
-workarea component is the **resolved** target — the key's `default_workarea` or the
-`X-OML-Workarea` override (ADR-0022 d4), never a body field. For supersede, and for lab
+workarea component is the **resolved** target — the body's `workarea`, else the key's
+`default_workarea` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). For supersede, and for lab
 endpoints that name no workarea (keys, bans, simulations, exports, settings, tenants), the
 workarea component of the scope is a fixed nil value, so no supersede target's workarea ever
 enters a record ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
@@ -373,9 +377,10 @@ the HTTP method, the route template (`/v1/memories/{artifact_id}/supersede`, say
 parameters by name, and the parsed request body (`null` when there is none). Two requests to
 different targets therefore never share a digest, whatever their bodies. Path parameters and body
 fields are digested as sent, before any [name](#names-and-ids) is resolved, so a request that
-names a row in a path or a body and the same request by its id have different digests. Headers
-are not digested: `X-OML-Workarea` enters the record only through the provider ring's resolved
-workarea component, so the header by name and by id is one request.
+names a row in a path or a body and the same request by its id have different digests. The one
+exception is a `/v1` submit's `workarea`, which enters the digest and the record only as the
+resolved workarea component, so the field by name and by id is one request. Headers are not
+digested.
 
 ```mermaid
 sequenceDiagram
@@ -433,12 +438,12 @@ and is the resume point a consumer stores.
 
 ## The surface
 
-Grouped by ring ([Two rings](#two-rings)). **The provider ring (`/v1`)** — submit, recall, the
-listing without `own` and supersede take the `X-OML-Workarea` override header, which supersede
-accepts only when it names the target's workarea; get and the own-work listing (`own=true`)
-refuse it with `request.validation`. Get, the own-work listing and supersede never answer
-`request.workarea_unresolved`: get and `own=true` resolve no workarea, and supersede takes the
-target's workarea. The reserved `POST /v1/memories:batch` ([FR-12](../product/roadmap.md)) will
+Grouped by ring ([Two rings](#two-rings)). **The provider ring (`/v1`)** — submit, recall,
+supersede and the listing take `workarea`, which supersede accepts only when it names the
+target's workarea, and every one of them, get included, refuses the v0.3.0 `X-OML-Workarea`
+header with `request.validation`. Get, the own-work listing and supersede never answer
+`request.workarea_unresolved`: get resolves no workarea, an own-work listing without `workarea`
+reads every workarea the key wrote in, and supersede takes the target's workarea. The reserved `POST /v1/memories:batch` ([FR-12](../product/roadmap.md)) will
 join this table. The Contract column says where each endpoint is declared: **served** in
 [openapi.yaml](openapi.yaml), routed by the server, or **designed** in
 [openapi-designed.yaml](openapi-designed.yaml), decided and answering 404 until it is built:
@@ -503,10 +508,10 @@ exist (R1, R4).
 
 One endpoint for the two submission verbs; `verb` selects the journal event
 (`submission.remember` / `submission.learn`, [event catalog](../data/event-catalog.md)). The
-request names no workarea — the target resolves from the token
-([Two rings](#two-rings), ADR-0022 d4): the key's journalled `default_workarea`, or the
-`X-OML-Workarea` header as the explicit per-request override, honored only within the key's
-grants. A key with neither is refused with `request.workarea_unresolved` (422).
+target is the body's `workarea`, an id or a name honored only within the key's grants, else the
+key's journalled `default_workarea` ([Two rings](#two-rings);
+[ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). A key with neither is refused
+with `request.workarea_unresolved` (422).
 
 ```json
 {
@@ -514,6 +519,7 @@ grants. A key with neither is refused with `request.workarea_unresolved` (422).
   "claim_key": "deploy-runbook",
   "kind": "memory",
   "body": "The canary stage must drain before …",
+  "workarea": "deploy-crew",
   "attachments": ["sha256:9c1e…"],
   "derives_from": [],
   "simulation_id": null,
@@ -591,18 +597,23 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 ### Recall — `POST /v1/memories/recall`
 
 Ranked retrieval over **promoted** rows in scope: FTS + vector, served from Postgres, never from
-the lake (D12; [retrieval.md](../architecture/retrieval.md)). The request names no workarea: the
-default scope is the **token workarea's subtree** — the key's `default_workarea`, or the
-`X-OML-Workarea` header as the override (within grants; neither present answers
-`request.workarea_unresolved` — there is no tenant-wide fallback). Request: `query`, `k`,
-optional `kinds` filter (hits only), `include_bodies`, and:
+the lake (D12; [retrieval.md](../architecture/retrieval.md)). The scope is the subtree of the
+body's `workarea`, an id or a name within the key's grants, else of the key's `default_workarea`;
+neither answers `request.workarea_unresolved`, and there is no tenant-wide fallback
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4). Request: `query`, `workarea`,
+`k`, optional `kinds` filter (hits only), `include_text` (default `true`, each item's `text`),
+and:
 
-- `include_own_held` (default `false`) — the calling key's own held rows that match join the
+- `include_unreviewed` (default `false`) — the calling key's own held rows that match join the
   hits, ranked in the same order with `state: held`
   ([retrieval.md — own held rows in recall](../architecture/retrieval.md#own-held-rows-in-recall)).
 - `max_tokens` — a budget in budget tokens; steering is never cut, and the hits served are the
-  longest rank prefix that fits. Refused with `include_bodies: false`
+  longest rank prefix that fits. Refused with `include_text: false`
   ([retrieval.md — token budgets](../architecture/retrieval.md#token-budgets)).
+
+v0.3.0's `include_bodies` and `include_own_held` are refused with `request.validation`, naming
+`/include_text` and `/include_unreviewed` in `details.renamed_to`
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7).
 
 The body refuses unknown fields (`request.validation`), and so does an empty `kinds` or `terms`
 array: an absent filter narrows nothing, and a sent one names at least one value. Two optional
@@ -626,8 +637,8 @@ ADR-0021). Response separates what is ranked from what is not:
 
 ```json
 {
-  "steering": [ {"artifact_id": "…", "kind": "steering", "tokens": 120, "body": "…"} ],
-  "hits": [ {"memory": {"artifact_id": "…", "claim_key": "…", "version": 4, "tip": true, "state": "promoted", "tokens": 300, "body": "…"}, "score": 0.83} ],
+  "steering": [ {"artifact_id": "…", "kind": "steering", "tokens": 120, "text": "…"} ],
+  "hits": [ {"memory": {"artifact_id": "…", "claim_key": "…", "version": 4, "tip": true, "state": "promoted", "tokens": 300, "text": "…"}, "score": 0.83} ],
   "budget": {"max_tokens": 500, "counter": "oml-tc/1", "steering_tokens": 120, "used_tokens": 420,
              "truncated": true, "hits_omitted": 2, "next_hit_tokens": 250},
   "query_digest": "sha256:…"
@@ -644,30 +655,31 @@ unmeasured — [FR-4](../product/roadmap.md).
 
 ### Search — `GET /v1/memories`
 
-Structured listing, paginated. Filters: `workarea_id` (a subtree filter), `claim_key`, `state`,
-`kind`, `since`, `until`, `own`. Returns memory summaries (no bodies), each carrying `tokens`,
+Structured listing, paginated. Parameters: `workarea` (the subtree read), `claim_key`, `state`,
+`kind`, `since`, `until`, `own`. Returns memory summaries (no text), each carrying `tokens`,
 `retirement`, `replaces` and `held_expires_at`. With `own=true` the listing is the **own-work
 status** read: any tenant role except operator lists every row the calling key authored
 ([own](../architecture/roles-and-keys.md#own)), in every state — held, promoted, demoted,
 rejected — across all workareas minus its globally denied subtrees, with no grant needed; an
-operator key answers `access.verb_ceiling`. It resolves no workarea, and an `X-OML-Workarea`
-header sent with `own=true` is `request.validation`. An own row
+operator key answers `access.verb_ceiling`. Without `workarea` it reads every workarea the key
+wrote in. An own row
 on a node where the key holds no role carries `workarea_id` and `workarea_path` as null
-([naming a node](../architecture/roles-and-keys.md#own)). Without `own`, scope defaults to the
-token workarea's subtree, with `X-OML-Workarea` as the override, and the listing returns promoted
+([naming a node](../architecture/roles-and-keys.md#own)). Without `own`, the scope is
+`workarea`'s subtree, defaulting to the key's `default_workarea`, and the listing returns promoted
 served tips within reader effective access only — a `self_signed` version only when the scope
 node is its own workarea ([retrieval](../architecture/retrieval.md#the-rule-postgres-serves-the-lake-never-does)):
 held rows belonging to others are never returned, whatever the filter says (R3).
 
-`workarea_id` must name a node the key may be told about, else `access.not_found`,
-indistinguishable from a node that does not exist, so the filter never confirms that a node
+`workarea` must name a node the key may be told about, else `access.not_found`,
+indistinguishable from a node that does not exist, so the parameter never confirms that a node
 exists ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d13). With `own=true` that
 is a node the key holds some role on, under the
-[naming rule](../architecture/roles-and-keys.md#own), and the filter narrows the listing to the
-key's rows in that node's subtree, whatever the key holds below it. Without `own` it is a node
-where reader is effective, and the listing is the intersection of its subtree with the scope's:
-the scope still resolves from the token, so a key with neither a default workarea nor the header
-answers `request.workarea_unresolved` whatever `workarea_id` says.
+[naming rule](../architecture/roles-and-keys.md#own), and it narrows the listing to the key's
+rows in that node's subtree, whatever the key holds below it. Without `own` it is the scope, a
+node where reader is effective, and a key with neither a default workarea nor `workarea` answers
+`request.workarea_unresolved`. One field replaces v0.3.0's two: the `X-OML-Workarea` header and
+the `workarea_id` query parameter are each `request.validation` naming `workarea` in
+`details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4, d7).
 
 A retired claim's served tip is its retirement version,
 so the listing includes it, flagged `retirement: true`; recall, by contrast, serves nothing of a
@@ -678,7 +690,7 @@ re-applies the filters ([Pagination](#pagination)). On every listing, as on get 
 
 ### Get — `GET /v1/memories/{artifact_id}`
 
-One memory with its body (decrypted on the serving path only), its `tokens` and attachment
+One memory with its `text` (decrypted on the serving path only), its `tokens` and attachment
 descriptors. The calling key may fetch its own rows in any state, with no grant needed (global
 denials still mask, [own](../architecture/roles-and-keys.md#own)); anyone else needs reader
 effective access on the row's workarea and sees promoted versions only — superseded versions and
@@ -691,7 +703,7 @@ version immediately before its erasure: its author's key set, or, when the versi
 then, a key with reader effective access on its workarea. Readability is checked first, and
 every other key gets `access.not_found`, so the erasure of another author's held version tells
 no one it existed ([errors](errors.md)). Get resolves no workarea, so an `X-OML-Workarea`
-header sent with it is `request.validation`. An own row on a node where the key holds no role
+header sent with it is `request.validation`, naming the header and no successor. An own row on a node where the key holds no role
 carries `workarea_id` and `workarea_path` as null
 ([naming a node](../architecture/roles-and-keys.md#own)).
 
@@ -730,8 +742,9 @@ cannot be superseded ([RS-17](../product/roadmap.md)).
 The tip moves only at ratification, by compare-and-set;
 [audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)
 owns the tip, version-ordinal, competing-successor, kind-change, retirement and retired-claim
-rules. The scope is the target's workarea: an `X-OML-Workarea` that differs from it is
-`request.validation`. Every refusal that depends on the target — that header, the tip, the kind
+rules. The scope is the target's workarea: a body `workarea` that differs from it is
+`request.validation`, `details.field` `/workarea`. Every refusal that depends on the target — that
+field, the tip, the kind
 and retirement checks, `workarea.frozen` — is answered only after the target is known to be
 readable, in the order step 5 of the supersede rule fixes, so none of them tells a caller that an
 unreadable target exists. `Idempotency-Key` is required and honoured, scoped to the key with a
@@ -875,11 +888,13 @@ successors for one-hop self-healing) — are declared in [errors.md](errors.md).
 
 ## Events tail
 
-`GET /v2/events?after_seq=<n>&limit=<m>&workarea_id=<node>` — the per-tenant journal, served as
+`GET /v2/events?after_seq=<n>&limit=<m>&workarea=<node>` — the per-tenant journal, served as
 the [event catalog](../data/event-catalog.md)'s envelopes with **digest-only payloads** (D1: no
-body plaintext ever rides a journal event). Requires reader effective access on `workarea_id`,
-else `access.not_found`; omitted, `workarea_id` is the key's default workarea, and a key with none
-answers `request.workarea_unresolved`. The tail filters to that subtree within reader effective
+body plaintext ever rides a journal event). Requires reader effective access on `workarea`,
+else `access.not_found`; omitted, `workarea` is the key's default workarea, and a key with none
+answers `request.workarea_unresolved`. v0.3.0's `workarea_id` parameter and `X-OML-Workarea`
+header are `request.validation` naming `workarea`
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). The tail filters to that subtree within reader effective
 access, and events outside it are **omitted**, so a scoped tail has gaps by design.
 
 This page is the single declaration site for which events a key sees

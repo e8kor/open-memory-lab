@@ -8,7 +8,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.submit_accepted import SubmitAccepted
 from ...models.supersede_request import SupersedeRequest
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
@@ -16,13 +16,9 @@ def _get_kwargs(
     *,
     body: SupersedeRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Idempotency-Key"] = idempotency_key
-
-    if not isinstance(x_oml_workarea, Unset):
-        headers["X-OML-Workarea"] = x_oml_workarea
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -79,7 +75,6 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SupersedeRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Propose a replacement version, or with retirement true propose retiring the claim; a new attributed
     submission, held like any write.
@@ -89,21 +84,20 @@ def sync_detailed(
     The target must be the current served tip: submission.tip_conflict, with details.current_tip when
     the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
     ordinal, competing-successor, retirement and retired-claim rules are declared in
-    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the
-    target's workarea (request.validation otherwise); that check, the tip, the kind and retirement
-    checks and workarea.frozen are answered only after the target is known readable, in the order of
-    step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record
-    is looked up after step 1 of that rule and before step 2, so a committed supersession replays its
-    stored response whatever the target's state or the key's access now, and it is claimed only after
-    step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and
-    vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
+    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
+    the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
+    Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that
+    check, the tip, the kind and retirement checks and workarea.frozen are answered only after the
+    target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
+    the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
+    a committed supersession replays its stored response whatever the target's state or the key's access
+    now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The
+    designed attachment, simulation and vocabulary fields of a successor are declared in openapi-
+    designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
         idempotency_key (str):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
         body (SupersedeRequest): Unknown fields are refused (request.validation; ADR-0025 d16).
             The designed successor fields — attachments, simulation_id, simulated_time, mapping and
             the term fields — are declared under x-oml-designed-fields in openapi-designed.yaml, and
@@ -122,7 +116,6 @@ def sync_detailed(
         artifact_id=artifact_id,
         body=body,
         idempotency_key=idempotency_key,
-        x_oml_workarea=x_oml_workarea,
     )
 
     response = client.get_httpx_client().request(
@@ -138,7 +131,6 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SupersedeRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Propose a replacement version, or with retirement true propose retiring the claim; a new attributed
     submission, held like any write.
@@ -148,21 +140,20 @@ def sync(
     The target must be the current served tip: submission.tip_conflict, with details.current_tip when
     the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
     ordinal, competing-successor, retirement and retired-claim rules are declared in
-    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the
-    target's workarea (request.validation otherwise); that check, the tip, the kind and retirement
-    checks and workarea.frozen are answered only after the target is known readable, in the order of
-    step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record
-    is looked up after step 1 of that rule and before step 2, so a committed supersession replays its
-    stored response whatever the target's state or the key's access now, and it is claimed only after
-    step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and
-    vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
+    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
+    the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
+    Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that
+    check, the tip, the kind and retirement checks and workarea.frozen are answered only after the
+    target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
+    the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
+    a committed supersession replays its stored response whatever the target's state or the key's access
+    now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The
+    designed attachment, simulation and vocabulary fields of a successor are declared in openapi-
+    designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
         idempotency_key (str):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
         body (SupersedeRequest): Unknown fields are refused (request.validation; ADR-0025 d16).
             The designed successor fields — attachments, simulation_id, simulated_time, mapping and
             the term fields — are declared under x-oml-designed-fields in openapi-designed.yaml, and
@@ -182,7 +173,6 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
-        x_oml_workarea=x_oml_workarea,
     ).parsed
 
 
@@ -192,7 +182,6 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SupersedeRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Propose a replacement version, or with retirement true propose retiring the claim; a new attributed
     submission, held like any write.
@@ -202,21 +191,20 @@ async def asyncio_detailed(
     The target must be the current served tip: submission.tip_conflict, with details.current_tip when
     the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
     ordinal, competing-successor, retirement and retired-claim rules are declared in
-    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the
-    target's workarea (request.validation otherwise); that check, the tip, the kind and retirement
-    checks and workarea.frozen are answered only after the target is known readable, in the order of
-    step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record
-    is looked up after step 1 of that rule and before step 2, so a committed supersession replays its
-    stored response whatever the target's state or the key's access now, and it is claimed only after
-    step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and
-    vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
+    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
+    the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
+    Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that
+    check, the tip, the kind and retirement checks and workarea.frozen are answered only after the
+    target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
+    the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
+    a committed supersession replays its stored response whatever the target's state or the key's access
+    now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The
+    designed attachment, simulation and vocabulary fields of a successor are declared in openapi-
+    designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
         idempotency_key (str):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
         body (SupersedeRequest): Unknown fields are refused (request.validation; ADR-0025 d16).
             The designed successor fields — attachments, simulation_id, simulated_time, mapping and
             the term fields — are declared under x-oml-designed-fields in openapi-designed.yaml, and
@@ -235,7 +223,6 @@ async def asyncio_detailed(
         artifact_id=artifact_id,
         body=body,
         idempotency_key=idempotency_key,
-        x_oml_workarea=x_oml_workarea,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -249,7 +236,6 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SupersedeRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Propose a replacement version, or with retirement true propose retiring the claim; a new attributed
     submission, held like any write.
@@ -259,21 +245,20 @@ async def asyncio(
     The target must be the current served tip: submission.tip_conflict, with details.current_tip when
     the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
     ordinal, competing-successor, retirement and retired-claim rules are declared in
-    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the
-    target's workarea (request.validation otherwise); that check, the tip, the kind and retirement
-    checks and workarea.frozen are answered only after the target is known readable, in the order of
-    step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record
-    is looked up after step 1 of that rule and before step 2, so a committed supersession replays its
-    stored response whatever the target's state or the key's access now, and it is claimed only after
-    step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and
-    vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
+    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
+    the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
+    Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that
+    check, the tip, the kind and retirement checks and workarea.frozen are answered only after the
+    target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
+    the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
+    a committed supersession replays its stored response whatever the target's state or the key's access
+    now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The
+    designed attachment, simulation and vocabulary fields of a successor are declared in openapi-
+    designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
         idempotency_key (str):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
         body (SupersedeRequest): Unknown fields are refused (request.validation; ADR-0025 d16).
             The designed successor fields — attachments, simulation_id, simulated_time, mapping and
             the term fields — are declared under x-oml-designed-fields in openapi-designed.yaml, and
@@ -294,6 +279,5 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
-            x_oml_workarea=x_oml_workarea,
         )
     ).parsed

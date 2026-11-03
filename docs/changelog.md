@@ -34,6 +34,30 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The memory routes and the events tail take one `workarea` field, `include_unreviewed` and `include_text`, and serve `text` (ADR-0039 d4, d7, implementation)
+
+`POST /v1/memories`, `…/supersede` and `…/recall` take the body field `workarea`, and
+`GET /v1/memories` and `GET /v2/events` the query parameter `workarea`, each an id or a name.
+Omitted, recall and the scoped listing read the key's default workarea and the own-work listing
+every workarea the key wrote in. Recall takes `include_unreviewed`, reaching the key's own held
+rows and defaulting to `false`, and `include_text`; a served claim carries `text` where v0.3.0
+said `body`, on get, recall, the listings and the review serve. The request field `body` and the
+serve's `served_digests.body` keep their names.
+
+- **Breaks, each with its migration:** the `X-OML-Workarea` header is `request.validation` with
+  `details.renamed_to` `/workarea` on a body route and `workarea` on a query route, and on get,
+  which names no workarea, `details.field` alone: send the field. The listing's and the events
+  tail's `workarea_id` is refused naming `workarea`; on the scoped listing it was a filter inside
+  the scope, and the one field now is the scope. Recall's `include_own_held` and
+  `include_bodies` are refused naming `include_unreviewed` and `include_text`. Read `text`.
+- The recall `query_digest` keeps its members' v0.3.0 names, so read-log digests compare across
+  the rename ([retrieval](architecture/retrieval.md#the-read-log)).
+- The CLI's `submit --workarea` and `recall --workarea` send the field, and `oml hook
+  session-start` sends `include_text` and `include_unreviewed` and reads `text`, amending
+  ADR-0029 d2. The v0.3.0 MCP tools keep their arguments until `oml_read` and `oml_write` replace
+  them; the facade sends their `workarea`, `scope` and `include_own_held` as the ring's new
+  fields. The SDKs are regenerated.
+
 ### 2026-11-03 — The key and workarea routes take v0.4.0's request spellings and refuse v0.3.0's by name (ADR-0039 d7, admin half, implementation)
 
 `POST /v2/keys` takes `default_workarea`, `tenant`, each grant's `workarea` and each deny entry's

@@ -991,8 +991,8 @@ async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_eve
     assert_eq!(item["workarea"], crew.to_string());
     assert_eq!(item["derives_from"], json!([]));
     assert_eq!(item["attachments"], json!([]));
-    // The item is what the ring's get answers, `body` named `text` and
-    // `workarea_id` named `workarea`.
+    // The item is what the ring's get answers, `workarea_id` named
+    // `workarea`.
     let (status, ring) = send(
         &router,
         "GET",
@@ -1005,7 +1005,6 @@ async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_eve
     assert_eq!(status, StatusCode::OK, "{ring}");
     for name in fields(item) {
         let from = match name {
-            "text" => "body",
             "workarea" => "workarea_id",
             other => other,
         };
@@ -1346,7 +1345,8 @@ async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supers
 }
 
 /// `oml_remember`'s `workarea` takes the node's name as well as its id: the
-/// facade passes it through as `X-OML-Workarea` and the server resolves it,
+/// facade passes it through as the body's `workarea` and the server
+/// resolves it,
 /// so a remember naming `metals-crew` is captured there and the own-work
 /// listing under that name lists it, while a derived path is refused as
 /// `request.validation` naming the HTTP field the argument maps to; the
@@ -1407,7 +1407,7 @@ async fn oml_remember_with_a_workarea_name_submits_into_it() {
     assert_eq!(refused["isError"], true, "{refused}");
     let error = &refused["structuredContent"]["error"];
     assert_eq!(error["code"], "request.validation", "{refused}");
-    assert_eq!(error["details"]["field"], "X-OML-Workarea", "{refused}");
+    assert_eq!(error["details"]["field"], "/workarea", "{refused}");
 
     // The served entry describes what the build serves: the id or the
     // name, and no path (ADR-0025 d12).

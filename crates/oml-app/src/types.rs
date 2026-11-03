@@ -490,9 +490,9 @@ pub struct SubmitRequest {
     pub kind: MemoryKind,
     /// The claim text as sent; capture normalizes it to NFC (admission.md).
     pub body: String,
-    /// `X-OML-Workarea`, by id or name; `None` resolves to the key's
-    /// default workarea (http-api.md, ADR-0022 d4; ADR-0026 d4).
-    pub workarea_id: Option<Reference>,
+    /// The body's `workarea`, by id or name; `None` resolves to the key's
+    /// default workarea (http-api.md; ADR-0026 d4, ADR-0039 d7).
+    pub workarea: Option<Reference>,
     pub derives_from: Vec<Uuid>,
 }
 
@@ -538,21 +538,23 @@ pub const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedF
 pub struct RecallRequest {
     pub query: String,
     pub k: usize,
-    /// The scope node, by id or name; `None` resolves to the key's default
-    /// workarea, and a key with neither is refused — there is no tenant-wide
-    /// fallback (ADR-0025 d1; ADR-0026 d4).
-    pub workarea_id: Option<Reference>,
+    /// The body's `workarea`, the scope node, by id or name; `None`
+    /// resolves to the key's default workarea, and a key with neither is
+    /// refused — there is no tenant-wide fallback (ADR-0025 d1; ADR-0026
+    /// d4, ADR-0039 d4).
+    pub workarea: Option<Reference>,
     /// The hit kinds the request admits; empty when it sent no filter. It
     /// narrows the hits only, never the steering (retrieval.md, the
     /// recall-ordering contract; ADR-0025 d8).
     pub kinds: Vec<MemoryKind>,
-    /// Whether the served rows carry their bodies; a budget counts bodies,
-    /// so `max_tokens` without them is refused (retrieval.md token budgets;
-    /// ADR-0025 d7).
-    pub include_bodies: bool,
-    /// The calling key's own held rows join the ranked hits, flagged by
-    /// state (retrieval.md, own held rows in recall; ADR-0025 d4).
-    pub include_own_held: bool,
+    /// `include_text`: whether the served rows carry their text; a budget
+    /// counts text, so `max_tokens` without it is refused (retrieval.md
+    /// token budgets; ADR-0025 d7, ADR-0039 d7).
+    pub include_text: bool,
+    /// `include_unreviewed`: the calling key's own held rows join the
+    /// ranked hits, flagged by state (retrieval.md, own held rows in recall;
+    /// ADR-0025 d4, ADR-0039 d4).
+    pub include_unreviewed: bool,
     /// The budget in budget tokens under counter `oml-tc/1`; `None` is no
     /// budget (retrieval.md token budgets; ADR-0025 d7).
     pub max_tokens: Option<u64>,
@@ -663,15 +665,14 @@ pub struct ListingPosition {
 /// ADR-0025 d13).
 #[derive(Debug, Clone)]
 pub struct ListRequest {
-    /// `own=true`: the own-work listing, which resolves no workarea, so it
-    /// reads no `scope` (the transport refuses an `X-OML-Workarea` sent
-    /// with it).
+    /// `own=true`: the own-work listing, every row the key wrote.
     pub own: bool,
-    /// The scoped listing's scope node, by id or name; `None` resolves to
-    /// the key's default workarea, and a key with neither is refused.
-    pub scope: Option<Reference>,
-    /// The `workarea_id` subtree filter, by id or name.
-    pub workarea_id: Option<Reference>,
+    /// The query's `workarea`, by id or name, the subtree the listing reads
+    /// (ADR-0039 d4, d7). On the scoped listing `None` resolves to the
+    /// key's default workarea, and a key with neither is refused; on the
+    /// own-work listing it narrows the key's rows to that subtree, and
+    /// `None` lists every workarea the key wrote in.
+    pub workarea: Option<Reference>,
     pub state: Option<MemoryStatus>,
     pub kind: Option<MemoryKind>,
     pub claim_key: Option<String>,
@@ -770,9 +771,9 @@ pub struct SupersedeRequest {
     pub derives_from: Vec<Uuid>,
     /// Digested with the request, never journalled.
     pub reason: Option<String>,
-    /// `X-OML-Workarea`, by id or name: when sent, it must be the target's
-    /// workarea.
-    pub workarea_id: Option<Reference>,
+    /// The body's `workarea`, by id or name: when sent, it must be the
+    /// target's workarea (ADR-0039 d7).
+    pub workarea: Option<Reference>,
     /// Set by `oml_supersede`, which carries no vocabulary fields: a target
     /// of a vocabulary kind is refused, and superseded on the HTTP API
     /// instead (mcp-plugin.md `oml_supersede`; ADR-0025 d12).
@@ -877,7 +878,7 @@ pub enum AppError {
     )]
     WorkareaUnresolved,
     #[error(
-        "max_tokens counts bodies that include_bodies false would not send (retrieval.md token budgets, request.validation)"
+        "max_tokens counts text that include_text false would not send (retrieval.md token budgets, request.validation)"
     )]
     BudgetWithoutBodies,
     #[error(
@@ -899,9 +900,9 @@ pub enum AppError {
         "the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)"
     )]
     TipConflict { current_tip: Option<VersionRef> },
-    /// The header as the request spelled it.
+    /// The `workarea` as the request spelled it.
     #[error(
-        "X-OML-Workarea names {workarea}, not the target's workarea: a supersession is captured in its target's (http-api.md supersede, request.validation)"
+        "workarea names {workarea}, not the target's workarea: a supersession is captured in its target's (http-api.md supersede, request.validation)"
     )]
     WorkareaNotTarget { workarea: Reference },
     #[error(

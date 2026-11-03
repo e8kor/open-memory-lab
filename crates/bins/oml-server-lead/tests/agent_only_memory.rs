@@ -186,7 +186,24 @@ async fn send(
     idem: Option<&str>,
     body: Option<&Value>,
 ) -> (StatusCode, Value) {
+    send_with(router, method, path, token, idem, body, &[]).await
+}
+
+/// [`send`] with `extra` headers beside the authorization and the
+/// idempotency key.
+async fn send_with(
+    router: &Router,
+    method: &str,
+    path: &str,
+    token: Option<&str>,
+    idem: Option<&str>,
+    body: Option<&Value>,
+    extra: &[(&str, &str)],
+) -> (StatusCode, Value) {
     let mut builder = Request::builder().method(method).uri(path);
+    for (name, value) in extra {
+        builder = builder.header(*name, *value);
+    }
     if let Some(token) = token {
         builder = builder.header("authorization", format!("Bearer {token}"));
     }
@@ -280,6 +297,8 @@ struct Crew {
     /// The reviewer, on the review ring only.
     dreamer: String,
     workarea: String,
+    /// The tenant's first admin key, from the bootstrap claim.
+    admin: String,
 }
 
 /// Bootstrap, one crew workarea, two one-key agents of one principal and a
@@ -356,6 +375,7 @@ async fn crew(router: &Router) -> Crew {
         other: McpKey::new(router, &other),
         dreamer,
         workarea,
+        admin,
     }
 }
 
@@ -1005,4 +1025,404 @@ async fn an_explicit_verb_keeps_its_journal_event() {
     }
 
     drop_db(&db).await;
+}
+
+// ---------------------------------------------------------------------------
+// One workarea field on the memory routes (ADR-0039 d4, d7). These run over
+// the in-memory doubles, so they need no role pair: what they prove is the
+// transport's and the app's, not the store's.
+// ---------------------------------------------------------------------------
+
+/// The lead's router over in-memory doubles, its bootstrap open under
+/// [`ENROLLMENT`].
+fn doubles_router() -> Router {
+    use oml_app::App;
+    use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+    let store = MemStore::new();
+    let app = App::new(
+        store.clone(),
+        MemSigner::new([7; 32]),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let ping: oml_transport_http::DbPing = std::sync::Arc::new(|| Box::pin(async { true }));
+    oml_transport_http::ApiState::new(
+        std::sync::Arc::new(app),
+        store,
+        ping,
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .into_router()
+}
+
+/// A child of the crew workarea, `child`, and a writer key, `scoped`, with
+/// writer and reader grants on the crew workarea and `child` as its default
+/// workarea, so a read that defaults reads `child` alone (ADR-0039 d4).
+async fn scoped_key(router: &Router, crew: &Crew) -> (McpKey, String) {
+    let (status, child) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Some(&crew.admin),
+        Some("wa-child"),
+        Some(&json!({"parent": crew.workarea, "name": "metals-child"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{child}");
+    let child = child["id"].as_str().expect("child id").to_owned();
+    let grants: Vec<Value> = ["writer", "reader"]
+        .into_iter()
+        .map(|role| json!({"workarea": crew.workarea, "role": role}))
+        .collect();
+    let (status, key) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Some(&crew.admin),
+        Some("issue-scoped"),
+        Some(&json!({
+            "role": "writer",
+            "name": "issue-scoped",
+            "principal": "crew/agent-9",
+            "grants": grants,
+            "default_workarea": child,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{key}");
+    assert_eq!(key["default_workarea_id"], child.as_str(), "{key}");
+    let value = key["value"].as_str().expect("show-once value");
+    (McpKey::new(router, value), child)
+}
+
+/// The refusal of a v0.3.0 spelling: `request.validation` naming what was
+/// sent and what to send (ADR-0039 d7, d11).
+fn assert_renamed(status: StatusCode, body: &Value, field: &str, renamed_to: &str) {
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "request.validation", "{body}");
+    assert_eq!(body["error"]["details"]["field"], field, "{body}");
+    assert_eq!(body["error"]["details"]["renamed_to"], renamed_to, "{body}");
+}
+
+/// The artifact ids of a recall's hits.
+fn hit_ids(recall: &Value) -> BTreeSet<String> {
+    recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|hit| id(&hit["memory"]))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_x_oml_workarea_header_is_refused_naming_workarea() {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+    let token = crew.agent.token.as_str();
+    let header = [("x-oml-workarea", crew.workarea.as_str())];
+
+    let (status, written) = submit(&router, &crew.agent, "hdr-0", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{written}");
+    let target = id(&written);
+
+    // A body route names the field by its JSON pointer, a query route by
+    // its parameter name; the header itself is named by its name.
+    for (method, path, idem, body, renamed_to) in [
+        (
+            "POST",
+            "/v1/memories".to_owned(),
+            Some("hdr-1"),
+            Some(json!({ "body": ALLOY })),
+            "/workarea",
+        ),
+        (
+            "POST",
+            format!("/v1/memories/{target}/supersede"),
+            Some("hdr-2"),
+            Some(json!({ "body": QUOTE_REVISED })),
+            "/workarea",
+        ),
+        (
+            "POST",
+            "/v1/memories/recall".to_owned(),
+            None,
+            Some(json!({ "query": QUERY })),
+            "/workarea",
+        ),
+        ("GET", "/v1/memories".to_owned(), None, None, "workarea"),
+        (
+            "GET",
+            "/v1/memories?own=true".to_owned(),
+            None,
+            None,
+            "workarea",
+        ),
+        ("GET", "/v2/events".to_owned(), None, None, "workarea"),
+    ] {
+        let (status, refused) = send_with(
+            &router,
+            method,
+            &path,
+            Some(token),
+            idem,
+            body.as_ref(),
+            &header,
+        )
+        .await;
+        assert_renamed(status, &refused, "X-OML-Workarea", renamed_to);
+    }
+
+    // The same target in the field is honoured.
+    let (status, accepted) = submit(
+        &router,
+        &crew.agent,
+        "hdr-3",
+        &json!({ "body": ALLOY, "workarea": crew.workarea }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    assert_eq!(
+        accepted["workarea_id"],
+        crew.workarea.as_str(),
+        "{accepted}"
+    );
+}
+
+#[tokio::test]
+async fn a_listing_naming_workarea_id_is_refused_naming_workarea() {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+    let token = crew.agent.token.as_str();
+    for path in [
+        format!("/v1/memories?workarea_id={}", crew.workarea),
+        format!("/v1/memories?own=true&workarea_id={}", crew.workarea),
+        format!("/v2/events?workarea_id={}", crew.workarea),
+    ] {
+        let (status, refused) = send(&router, "GET", &path, Some(token), None, None).await;
+        assert_renamed(status, &refused, "workarea_id", "workarea");
+    }
+    for path in [
+        format!("/v1/memories?workarea={}", crew.workarea),
+        format!("/v1/memories?own=true&workarea={}", crew.workarea),
+        format!("/v2/events?workarea={}", crew.workarea),
+    ] {
+        let (status, page) = send(&router, "GET", &path, Some(token), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+    }
+}
+
+#[tokio::test]
+async fn recall_without_workarea_reads_the_keys_default_workarea() {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+    let (scoped, child) = scoped_key(&router, &crew).await;
+
+    // One claim in the key's default workarea, the child, by omission, and
+    // one in its parent, by the field.
+    let (status, in_child) = submit(&router, &scoped, "dflt-1", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{in_child}");
+    assert_eq!(in_child["workarea_id"], child.as_str(), "{in_child}");
+    let (status, in_parent) = submit(
+        &router,
+        &scoped,
+        "dflt-2",
+        &json!({ "body": ALLOY, "workarea": crew.workarea }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{in_parent}");
+    assert_eq!(
+        in_parent["workarea_id"],
+        crew.workarea.as_str(),
+        "{in_parent}"
+    );
+    approve(
+        &router,
+        &crew.dreamer,
+        &[&id(&in_child), &id(&in_parent)],
+        "dflt",
+    )
+    .await;
+
+    let recall = |body: Value| {
+        let router = router.clone();
+        let token = scoped.token.clone();
+        async move {
+            let (status, recall) = send(
+                &router,
+                "POST",
+                "/v1/memories/recall",
+                Some(&token),
+                None,
+                Some(&body),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{recall}");
+            hit_ids(&recall)
+        }
+    };
+    assert_eq!(
+        recall(json!({ "query": QUERY })).await,
+        set([id(&in_child)]),
+        "an omitted workarea reads the key's default, the child"
+    );
+    assert_eq!(
+        recall(json!({ "query": QUERY, "workarea": crew.workarea })).await,
+        set([id(&in_child), id(&in_parent)]),
+        "a named workarea reads its subtree"
+    );
+
+    // The scoped listing defaults the same way.
+    let (status, page) = send(
+        &router,
+        "GET",
+        "/v1/memories",
+        Some(&scoped.token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(set(ids(&page["items"])), set([id(&in_child)]), "{page}");
+}
+
+#[tokio::test]
+async fn the_own_work_listing_without_workarea_lists_everything_the_key_wrote() {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+    let (scoped, child) = scoped_key(&router, &crew).await;
+
+    let (status, in_child) = submit(&router, &scoped, "own-1", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{in_child}");
+    let (status, in_parent) = submit(
+        &router,
+        &scoped,
+        "own-2",
+        &json!({ "body": ALLOY, "workarea": crew.workarea }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{in_parent}");
+    // Another key's row is never own (R3).
+    let (status, foreign) =
+        submit(&router, &crew.agent, "own-3", &json!({ "body": FOREIGN })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{foreign}");
+
+    let list = |path: String| {
+        let router = router.clone();
+        let token = scoped.token.clone();
+        async move {
+            let (status, page) = send(&router, "GET", &path, Some(&token), None, None).await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            set(ids(&page["items"]))
+        }
+    };
+    assert_eq!(
+        list("/v1/memories?own=true".to_owned()).await,
+        set([id(&in_child), id(&in_parent)]),
+        "the own-work listing reads every workarea the key wrote in"
+    );
+    assert_eq!(
+        list(format!("/v1/memories?own=true&workarea={child}")).await,
+        set([id(&in_child)]),
+        "a named workarea narrows it to that subtree"
+    );
+}
+
+#[tokio::test]
+async fn include_unreviewed_returns_the_keys_own_held_rows_and_no_other_keys() {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+
+    let (status, own) = submit(&router, &crew.agent, "unrev-1", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{own}");
+    let (status, foreign) =
+        submit(&router, &crew.other, "unrev-2", &json!({ "body": FOREIGN })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{foreign}");
+
+    let recall = |body: Value| {
+        let router = router.clone();
+        let token = crew.agent.token.clone();
+        async move {
+            send(
+                &router,
+                "POST",
+                "/v1/memories/recall",
+                Some(&token),
+                None,
+                Some(&body),
+            )
+            .await
+        }
+    };
+    let (status, held) = recall(json!({ "query": QUERY, "include_unreviewed": true })).await;
+    assert_eq!(status, StatusCode::OK, "{held}");
+    assert_eq!(hit_ids(&held), set([id(&own)]), "{held}");
+    assert_eq!(held["hits"][0]["memory"]["state"], "held", "{held}");
+
+    // The default is false: nothing is promoted yet, so nothing is served.
+    let (status, none) = recall(json!({ "query": QUERY })).await;
+    assert_eq!(status, StatusCode::OK, "{none}");
+    assert!(hit_ids(&none).is_empty(), "{none}");
+
+    // The v0.3.0 spellings are refused naming their successors.
+    let (status, refused) = recall(json!({ "query": QUERY, "include_own_held": true })).await;
+    assert_renamed(status, &refused, "/include_own_held", "/include_unreviewed");
+    let (status, refused) = recall(json!({ "query": QUERY, "include_bodies": true })).await;
+    assert_renamed(status, &refused, "/include_bodies", "/include_text");
+}
+
+#[tokio::test]
+async fn a_memory_response_carries_text_and_no_body() {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+    let token = crew.agent.token.as_str();
+
+    let (status, written) = submit(&router, &crew.agent, "text-1", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{written}");
+    let artifact = id(&written);
+
+    let (status, row) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories/{artifact}"),
+        Some(token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(row["text"], QUOTE, "{row}");
+    assert!(row.get("body").is_none(), "{row}");
+
+    let (status, recall) = send(
+        &router,
+        "POST",
+        "/v1/memories/recall",
+        Some(token),
+        None,
+        Some(&json!({ "query": QUERY, "include_unreviewed": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    let memory = &recall["hits"][0]["memory"];
+    assert_eq!(memory["text"], QUOTE, "{recall}");
+    assert!(memory.get("body").is_none(), "{recall}");
+
+    // include_text false serves the item without its text.
+    let (status, bare) = send(
+        &router,
+        "POST",
+        "/v1/memories/recall",
+        Some(token),
+        None,
+        Some(&json!({ "query": QUERY, "include_unreviewed": true, "include_text": false })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{bare}");
+    let memory = &bare["hits"][0]["memory"];
+    assert!(
+        memory.get("text").is_none() && memory.get("body").is_none(),
+        "{bare}"
+    );
 }

@@ -205,7 +205,10 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
   `workarea`, `scope`, `workarea_id`, and a workarea edge's `from` and `to` —
   takes the node's id or its [name](http-api.md#names-and-ids)
   ([ADR-0026](../adr/ADR-0026-names-are-keys.md)). The facade passes the value
-  through and the server resolves it, so a name the key may not see answers
+  through as the ring's `workarea` field
+  ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7), whose
+  JSON Pointer, `/workarea`, a refusal's `details.field` names, and the server
+  resolves it, so a name the key may not see answers
   `access.not_found` exactly as its id would. A derived path is neither, and
   is refused with `request.validation`.
 - **Pagination** is cursor-based everywhere a list can grow; the client holds
@@ -240,7 +243,7 @@ steering items and hits, `oml_get`, and `oml_my_work`'s items — so the three
 are interchangeable to an agent
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d12). Every field
 comes from the ring's `MemorySummary` and `Memory`
-([openapi.yaml](openapi.yaml)); the facade renames `body` to `text` and adds
+([openapi.yaml](openapi.yaml)), whose `text` it keeps, and the facade adds
 nothing else.
 
 | Field | Meaning |
@@ -406,6 +409,10 @@ with the key's effective read access. Subtree scoping rides the derived-path
 filter column of the serving indexes
 ([retrieval](../architecture/retrieval.md#the-serving-tier)); hybrid
 FTS + vector is the only search mode. `k` is at most 100, as on the ring.
+The tool keeps its v0.3.0 argument names until `oml_read` replaces it:
+`scope` rides the ring's `workarea` and `include_own_held` its
+`include_unreviewed` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d7).
 
 - `include_own_held` — **optional**, default `false`: the calling key's own
   held rows that match join the hits, ranked in the same order and flagged
@@ -499,7 +506,7 @@ never merged. Every item is a [claim item](#the-claim-item) with `text` and
 quality and latency are unmeasured — [FR-4](../product/roadmap.md).
 
 **Refusals** — scope outside the key's read access (same error as a
-nonexistent node, fail closed); `max_tokens` with `include_bodies: false` on
+nonexistent node, fail closed); `max_tokens` with `include_text: false` on
 the ring, or any field the schema does not declare (`request.validation`).
 Example:
 

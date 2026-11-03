@@ -20,8 +20,8 @@ with OmlClient() as oml:
     print(written.value.state)          # held: invisible to other keys until a reviewer's verdict
     print(written.idempotency_key)      # the key every retry of this call sent
 
-    for hit in oml.recall("canary stage", include_own_held=True).hits:
-        print(hit.memory.state, hit.memory.body)
+    for hit in oml.recall("canary stage", include_unreviewed=True).hits:
+        print(hit.memory.state, hit.memory.text)
 
     for row in oml.iter_memories(own=True, limit=50):   # follows next_cursor to the end
         print(row.artifact_id, row.state)

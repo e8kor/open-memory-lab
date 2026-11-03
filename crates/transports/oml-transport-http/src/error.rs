@@ -85,8 +85,9 @@ impl ApiError {
     /// (`/include_own_held`) and a header by its name, the convention of
     /// every other `details.field`; no code is added for it (errors.md
     /// `request.validation`; ADR-0039 d11). The key and workarea routes
-    /// call it for ADR-0039 d7's admin renames; the provider ring's renames
-    /// are not built yet.
+    /// call it for ADR-0039 d7's admin renames, and the memory routes and
+    /// the events tail for its workarea and recall renames; the MCP
+    /// arguments' renames are not built yet.
     pub fn renamed(field: &str, renamed_to: &str) -> Self {
         Self::validation(format!(
             "{field} is renamed {renamed_to}: send {renamed_to}"
@@ -292,12 +293,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "default_workarea_id {workarea} is covered by no grant of the key"
         )),
         AppError::BudgetWithoutBodies => ApiError::validation(
-            "max_tokens is refused with include_bodies false: a budget counts bodies that would not be sent",
+            "max_tokens is refused with include_text false: a budget counts text that would not be sent",
         ),
         AppError::WorkareaUnresolved => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "request.workarea_unresolved",
-            "The target workarea comes from the token (ADR-0022 d4); a key with neither a default nor the X-OML-Workarea header is refused, never guessed for.",
+            "The target workarea comes from the token (ADR-0022 d4); a key with neither a default nor a workarea field is refused, never guessed for (ADR-0039 d7).",
             "the key has no default_workarea and the request names none",
         ),
         AppError::AfterSeqBeyondHead {
@@ -333,8 +334,9 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             }
         }
         AppError::WorkareaNotTarget { workarea } => ApiError::validation(format!(
-            "X-OML-Workarea names {workarea}, but a supersession is captured in its target's workarea"
-        )),
+            "workarea names {workarea}, but a supersession is captured in its target's workarea"
+        ))
+        .with_details(json!({ "field": "/workarea" })),
         AppError::KindChangeRefused { target, sent } => ApiError::validation(format!(
             "a {} target admits no {} successor: a kind changes only within its class, and a retirement keeps the target's",
             target.as_str(),

@@ -80,7 +80,7 @@ describe("the agent loop", live, () => {
     assert.equal(held.state, "held");
     assert.equal(written.replayed, false);
 
-    const own = await agent.recall({ query: word, include_own_held: true }, { workarea });
+    const own = await agent.recall({ query: word, include_unreviewed: true }, { workarea });
     assert.deepEqual(
       own.hits.map((hit) => [hit.memory.artifact_id, hit.memory.state]),
       [[held.artifact_id, "held"]],
@@ -243,9 +243,9 @@ describe("error mapping", live, () => {
     );
   });
 
-  test("a budget without bodies is a RequestError", async () => {
+  test("a budget without text is a RequestError", async () => {
     await assert.rejects(
-      agent.recall({ query: "anything", max_tokens: 100, include_bodies: false }),
+      agent.recall({ query: "anything", max_tokens: 100, include_text: false }),
       (error: unknown) => error instanceof RequestError && error.code === "request.validation",
     );
   });

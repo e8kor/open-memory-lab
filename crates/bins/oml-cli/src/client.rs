@@ -48,8 +48,6 @@ pub struct CallOpts {
     /// Mint and send an `Idempotency-Key` (required on every write,
     /// http-api.md idempotency table).
     pub idempotency: bool,
-    /// The `X-OML-Workarea` per-request override (ADR-0022 d4).
-    pub workarea: Option<String>,
 }
 
 pub struct Client {
@@ -136,9 +134,6 @@ impl Client {
         }
         if opts.idempotency {
             request = request.set("Idempotency-Key", &new_idempotency_key());
-        }
-        if let Some(wa) = &opts.workarea {
-            request = request.set("X-OML-Workarea", wa);
         }
         finish(request.send_json(body.clone()))
     }

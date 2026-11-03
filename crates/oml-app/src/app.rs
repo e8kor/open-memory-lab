@@ -253,8 +253,8 @@ fn recall_query_digest(query: &str, req: &RecallRequest, scope: Uuid) -> Result<
         "query": query,
         "k": req.k,
         "kinds": kinds,
-        "include_bodies": req.include_bodies,
-        "include_own_held": req.include_own_held,
+        "include_bodies": req.include_text,
+        "include_own_held": req.include_unreviewed,
         "max_tokens": req.max_tokens,
         "terms": [],
         "expand_terms": "none",
@@ -2026,9 +2026,11 @@ where
                     verb: "list",
                 });
             }
-            // A filter names only a node the naming rule names to the key.
+            // The workarea narrows the key's rows to a subtree, and names
+            // only a node the naming rule names to the key; omitted, every
+            // workarea the key wrote in (ADR-0039 d4).
             let filter = self
-                .resolve_opt(key, NamedKind::Workarea, req.workarea_id.as_ref())
+                .resolve_opt(key, NamedKind::Workarea, req.workarea.as_ref())
                 .await?;
             let subtree = match filter {
                 None => None,
@@ -2051,21 +2053,12 @@ where
             (scope, subtree)
         } else {
             require_admissible(key, Role::Reader, "list")?;
-            let scope = self.target_workarea(key, req.scope.as_ref()).await?;
-            let filter = self
-                .resolve_opt(key, NamedKind::Workarea, req.workarea_id.as_ref())
-                .await?;
+            // One workarea, the scope, defaulting to the key's own
+            // (ADR-0039 d4).
+            let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
             self.require_access(&caller, scope, Role::Reader, "list")
                 .await?;
-            let mut nodes = self.nodes_with(&caller, scope, Role::Reader).await?;
-            if let Some(node) = filter {
-                let ancestry = self.ancestry(tenant_id, node).await?;
-                if !caller.effective(&ancestry).contains(&Role::Reader) {
-                    return Err(AppError::NotFound);
-                }
-                let within = subtree_ids(node).await?;
-                nodes.retain(|n| within.contains(n));
-            }
+            let nodes = self.nodes_with(&caller, scope, Role::Reader).await?;
             (ListingScope::Tips { nodes }, None)
         };
         let now = self.clock.now();
@@ -2143,10 +2136,10 @@ where
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Writer, "submit")?;
-        // The header, by id or name, resolves after step 1 and before the
-        // record is looked up, so either spelling is one request (ADR-0026
-        // d4).
-        let workarea_id = self.target_workarea(key, req.workarea_id.as_ref()).await?;
+        // The body's workarea, by id or name, resolves after step 1 and
+        // before the record is looked up, so either spelling is one request
+        // (ADR-0026 d4).
+        let workarea_id = self.target_workarea(key, req.workarea.as_ref()).await?;
         self.require_access(&caller, workarea_id, Role::Writer, "submit")
             .await?;
 
@@ -2560,7 +2553,7 @@ where
     /// follow, over subtree(scope) ∩ the nodes where reader is effective, of
     /// the kinds the request admits, score descending then `artifact_id`
     /// ascending (retrieval.md, the recall-ordering contract; ADR-0025 d8).
-    /// With `include_own_held` the calling key's own held rows join the hit
+    /// With `include_unreviewed` the calling key's own held rows join the hit
     /// candidates under that one order, flagged by state (d4). The merged
     /// candidates are cut to `k`, then by `max_tokens` — steering never cut
     /// and spent first, the hits the longest rank prefix that fits (d7) —
@@ -2575,13 +2568,13 @@ where
         // A budget counts bodies, so it is refused with bodies off before
         // anything is read, as the request's other shape refusals are
         // (retrieval.md token budgets).
-        if req.max_tokens.is_some() && !req.include_bodies {
+        if req.max_tokens.is_some() && !req.include_text {
             return Err(AppError::BudgetWithoutBodies);
         }
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "recall")?;
-        let scope = self.target_workarea(key, req.workarea_id.as_ref()).await?;
+        let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
         self.require_access(&caller, scope, Role::Reader, "recall")
             .await?;
         // The query is its NFC text, searched and digested alike (ADR-0025
@@ -2622,7 +2615,7 @@ where
             .journal
             .recall_fts(key.tenant_id, &readable, &query, &kinds, req.k)
             .await?;
-        if req.include_own_held {
+        if req.include_unreviewed {
             // The own key set is the calling key alone until rotation is
             // built (roles-and-keys.md#own); the readable set already
             // excludes the key's global denials.
@@ -2683,7 +2676,7 @@ where
             // (d3).
             let admitted = match m.status {
                 MemoryStatus::Promoted => m.is_tip,
-                MemoryStatus::Held => req.include_own_held && m.author_key_id == key.key_id,
+                MemoryStatus::Held => req.include_unreviewed && m.author_key_id == key.key_id,
                 _ => false,
             };
             if admitted
@@ -2769,9 +2762,10 @@ where
                 verb: "supersede",
             });
         }
-        // The header, by id or name, resolves after step 1 (ADR-0026 d4).
+        // The body's workarea, by id or name, resolves after step 1
+        // (ADR-0026 d4).
         let header = self
-            .resolve_opt(key, NamedKind::Workarea, req.workarea_id.as_ref())
+            .resolve_opt(key, NamedKind::Workarea, req.workarea.as_ref())
             .await?;
 
         // The record is looked up between steps 1 and 2 and replays its
@@ -2823,7 +2817,7 @@ where
         // target is the served tip, the kind stays in its class and a
         // retirement keeps the target's kind and never retires a term, and
         // on oml_supersede the target is of no vocabulary kind (ADR-0025 d12).
-        if let (Some(workarea_id), Some(sent)) = (header, &req.workarea_id)
+        if let (Some(workarea_id), Some(sent)) = (header, &req.workarea)
             && workarea_id != target.workarea_id
         {
             return Err(AppError::WorkareaNotTarget {
@@ -3043,7 +3037,7 @@ where
 
     /// The events tail (http-api.md#events-tail, the single declaration
     /// site; ADR-0025 d15): reader on the scope by the refusal order — the
-    /// named `workarea_id`, else the key's default, else
+    /// node the query's `workarea` names, else the key's default, else
     /// `request.workarea_unresolved` — then one bounded scan of at most
     /// `limit` raw events from `after_seq + 1`. An event stays only where
     /// the per-family rule ([`tail_visible`]) shows it to this key within
@@ -3056,14 +3050,14 @@ where
     pub async fn tail_events(
         &self,
         api_key: &str,
-        workarea_id: Option<Reference>,
+        workarea: Option<Reference>,
         after_seq: u64,
         limit: usize,
     ) -> Result<TailPage, AppError> {
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "events_tail")?;
-        let scope = self.target_workarea(key, workarea_id.as_ref()).await?;
+        let scope = self.target_workarea(key, workarea.as_ref()).await?;
         self.require_access(&caller, scope, Role::Reader, "events_tail")
             .await?;
         let scan = self

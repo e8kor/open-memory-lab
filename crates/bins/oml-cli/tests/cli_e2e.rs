@@ -2134,8 +2134,8 @@ async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_w
         json!({
             "query": "accra metals",
             "k": 10,
-            "include_bodies": true,
-            "include_own_held": true,
+            "include_text": true,
+            "include_unreviewed": true,
             "max_tokens": 800,
         })
     );

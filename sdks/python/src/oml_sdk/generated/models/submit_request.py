@@ -15,11 +15,10 @@ T = TypeVar("T", bound="SubmitRequest")
 
 @_attrs_define
 class SubmitRequest:
-    """Names no workarea: the target resolves from the key's default_workarea or the X-OML-Workarea header (ADR-0022 d4);
-    neither present is refused with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-    d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and
-    vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its
-    v0.3.0 code (ADR-0039 d9).
+    """The target is workarea, else the key's default_workarea; neither present is refused with request.workarea_unresolved
+    (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-
+    issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-
+    designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
 
         Attributes:
             body (str): Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-
@@ -35,6 +34,9 @@ class SubmitRequest:
                 conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
                 request.validation, details.field /claim_key (ADR-0039 d6).
             kind (SubmitRequestKind | Unset):  Default: SubmitRequestKind.MEMORY.
+            workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check that reads
+                state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+                (request.validation).
             derives_from (list[str] | Unset): Artifact ids; the declared lineage (omission is undetectable — honesty rule).
     """
 
@@ -42,6 +44,7 @@ class SubmitRequest:
     verb: SubmitRequestVerb | Unset = UNSET
     claim_key: str | Unset = UNSET
     kind: SubmitRequestKind | Unset = SubmitRequestKind.MEMORY
+    workarea: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -57,6 +60,12 @@ class SubmitRequest:
         kind: str | Unset = UNSET
         if not isinstance(self.kind, Unset):
             kind = self.kind.value
+
+        workarea: str | Unset
+        if isinstance(self.workarea, Unset):
+            workarea = UNSET
+        else:
+            workarea = self.workarea
 
         derives_from: list[str] | Unset = UNSET
         if not isinstance(self.derives_from, Unset):
@@ -75,6 +84,8 @@ class SubmitRequest:
             field_dict["claim_key"] = claim_key
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if workarea is not UNSET:
+            field_dict["workarea"] = workarea
         if derives_from is not UNSET:
             field_dict["derives_from"] = derives_from
 
@@ -101,6 +112,13 @@ class SubmitRequest:
         else:
             kind = SubmitRequestKind(_kind)
 
+        def _parse_workarea(data: object) -> str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(str | Unset, data)
+
+        workarea = _parse_workarea(d.pop("workarea", UNSET))
+
         derives_from = cast(list[str], d.pop("derives_from", UNSET))
 
         submit_request = cls(
@@ -108,6 +126,7 @@ class SubmitRequest:
             verb=verb,
             claim_key=claim_key,
             kind=kind,
+            workarea=workarea,
             derives_from=derives_from,
         )
 

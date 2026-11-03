@@ -328,9 +328,6 @@ where
         let args: RememberArgs = parse_args(args)?;
         let mut headers = ring_headers(token);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
-        if let Some(workarea) = &args.workarea {
-            insert_header(&mut headers, "x-oml-workarea", workarea)?;
-        }
         let mut body = json!({
             "verb": verb,
             "claim_key": args.claim_key,
@@ -340,6 +337,9 @@ where
             "derives_from": args.derives_from,
         });
         if let Some(obj) = body.as_object_mut() {
+            if let Some(workarea) = args.workarea {
+                obj.insert("workarea".to_owned(), Value::String(workarea));
+            }
             if let Some(sim) = args.simulation_id {
                 obj.insert("simulation_id".to_owned(), Value::String(sim));
             }
@@ -363,22 +363,22 @@ where
         }))
     }
 
-    /// `oml_recall`: one `POST /v1/memories/recall`. `include_own_held`,
-    /// `max_tokens` and `k` pass through only when sent, so the ring applies
+    /// `oml_recall`: one `POST /v1/memories/recall`. `scope` is the ring's
+    /// `workarea` and `include_own_held` its `include_unreviewed` (ADR-0039
+    /// d7); they, `max_tokens` and `k` pass through only when sent, so the
+    /// ring applies
     /// its defaults, its range checks and its query digest to exactly what
     /// the agent asked (retrieval.md own held rows and token budgets;
     /// ADR-0025 d4, d7, d9, d12).
     async fn tool_recall(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
         let args: RecallArgs = parse_args(args)?;
-        let mut headers = ring_headers(token);
-        if let Some(scope) = &args.scope {
-            insert_header(&mut headers, "x-oml-workarea", scope)?;
-        }
+        let headers = ring_headers(token);
         let mut body = Map::new();
         body.insert("query".to_owned(), Value::String(args.query));
         for (name, value) in [
+            ("workarea", args.scope.map(Value::from)),
             ("k", args.k.map(Value::from)),
-            ("include_own_held", args.include_own_held.map(Value::from)),
+            ("include_unreviewed", args.include_own_held.map(Value::from)),
             ("max_tokens", args.max_tokens.map(Value::from)),
         ] {
             if let Some(value) = value {
@@ -423,7 +423,7 @@ where
                 .await?;
         let mut item = claim_item(&memory);
         for (from, to) in [
-            ("body", "text"),
+            ("text", "text"),
             ("derives_from", "derives_from"),
             ("attachments", "attachments"),
         ] {
@@ -482,7 +482,8 @@ where
     }
 
     /// `oml_my_work`: one `GET /v1/memories?own=true`, the own-work
-    /// listing. `workarea` is the ring's `workarea_id` subtree filter, and
+    /// listing. `workarea` is the ring's `workarea`, narrowing it to a
+    /// subtree, and
     /// `state`, `claim_key`, `limit` and the client-held `cursor` pass
     /// through; each item is the claim item without `text`, plus
     /// `held_expires_at` (mcp-plugin.md `oml_my_work`; ADR-0025 d12, d13).
@@ -490,7 +491,7 @@ where
         let args: MyWorkArgs = parse_args(args)?;
         let mut params = vec![("own".to_owned(), "true".to_owned())];
         for (name, value) in [
-            ("workarea_id", args.workarea),
+            ("workarea", args.workarea),
             ("claim_key", args.claim_key),
             ("state", args.state),
             ("limit", args.limit.map(|l| l.to_string())),
@@ -558,7 +559,7 @@ where
     }
 
     /// `oml_events_tail`: one `GET /v2/events`. `scope` is the ring's
-    /// `workarea_id`; omitted, the app fills it from the key record with the
+    /// `workarea`; omitted, the app fills it from the key record with the
     /// journalled default, as the ring does. An omitted `after_seq` is 0, as
     /// on the ring. The page is projected to `{events, head_seq,
     /// next_after_seq, idle}`, idle once the resume point has reached the
@@ -570,7 +571,7 @@ where
             args.after_seq.unwrap_or(0).to_string(),
         )]);
         if let Some(scope) = args.scope {
-            params.insert("workarea_id".to_owned(), scope);
+            params.insert("workarea".to_owned(), scope);
         }
         if let Some(limit) = args.limit {
             params.insert("limit".to_owned(), limit.to_string());
@@ -624,12 +625,12 @@ fn claim_item(m: &Value) -> Map<String, Value> {
     .collect()
 }
 
-/// A ring `Memory` as an `oml_recall` item: the claim item plus its `body`
-/// as `text`, and a hit's `score`; a steering item has none (mcp-plugin.md,
+/// A ring `Memory` as an `oml_recall` item: the claim item plus its
+/// `text`, and a hit's `score`; a steering item has none (mcp-plugin.md,
 /// the claim item; ADR-0025 d12).
 fn recall_item(m: &Value, score: Option<&Value>) -> Value {
     let mut item = claim_item(m);
-    item.insert("text".to_owned(), m["body"].clone());
+    item.insert("text".to_owned(), m["text"].clone());
     if let Some(score) = score {
         item.insert("score".to_owned(), score.clone());
     }

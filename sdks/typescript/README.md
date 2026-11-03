@@ -24,8 +24,8 @@ const written = await oml.remember({
 console.log(written.value.state); // held: invisible to other keys until a reviewer's verdict
 console.log(written.idempotencyKey); // the key every retry of this call sent
 
-const { hits } = await oml.recall({ query: "canary stage", include_own_held: true });
-for (const hit of hits) console.log(hit.memory.state, hit.memory.body);
+const { hits } = await oml.recall({ query: "canary stage", include_unreviewed: true });
+for (const hit of hits) console.log(hit.memory.state, hit.memory.text);
 
 for await (const row of oml.memories({ own: true, limit: 50 })) {
   console.log(row.artifact_id, row.state); // follows next_cursor to the end

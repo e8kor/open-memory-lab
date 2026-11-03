@@ -333,7 +333,8 @@ struct SubmitArgs {
     /// Lineage artifact ids; repeatable.
     #[arg(long = "derives-from")]
     derives_from: Vec<Uuid>,
-    /// X-OML-Workarea override (workarea id or name).
+    /// The workarea, by id or name, sent as the body's workarea; omitted,
+    /// the key's default workarea.
     #[arg(long)]
     workarea: Option<String>,
 }
@@ -366,7 +367,8 @@ struct RecallArgs {
     query: String,
     #[arg(long, default_value_t = 8)]
     k: usize,
-    /// X-OML-Workarea override (workarea id or name).
+    /// The workarea, by id or name, sent as the body's workarea; omitted,
+    /// the key's default workarea.
     #[arg(long)]
     workarea: Option<String>,
 }
@@ -503,7 +505,6 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 &CallOpts {
                     auth: false,
                     idempotency: true,
-                    workarea: None,
                 },
             )?;
             let path = creds::store(&Credentials {
@@ -796,12 +797,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(verb) = &args.verb {
                 body["verb"] = json!(verb);
             }
-            let opts = CallOpts {
-                auth: true,
-                idempotency: true,
-                workarea: args.workarea.clone(),
-            };
-            let (_, response) = client.post("/v1/memories", &body, &opts)?;
+            if let Some(workarea) = &args.workarea {
+                body["workarea"] = json!(workarea);
+            }
+            let (_, response) = client.post("/v1/memories", &body, &write_opts())?;
             if cli.json {
                 print_json(&response);
             } else {
@@ -847,7 +846,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("  claim_key {}", field(item, "claim_key"));
                 println!(
                     "  body      | {}",
-                    field(item, "body").replace('\n', "\n            | ")
+                    field(item, "text").replace('\n', "\n            | ")
                 );
                 println!();
                 println!(
@@ -897,13 +896,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             let opts = CallOpts {
                 auth: true,
                 idempotency: false, // read-shaped POST (http-api.md idempotency)
-                workarea: args.workarea.clone(),
             };
-            let (_, response) = client.post(
-                "/v1/memories/recall",
-                &json!({ "query": args.query, "k": args.k, "include_bodies": true }),
-                &opts,
-            )?;
+            let mut body = json!({ "query": args.query, "k": args.k, "include_text": true });
+            if let Some(workarea) = &args.workarea {
+                body["workarea"] = json!(workarea);
+            }
+            let (_, response) = client.post("/v1/memories/recall", &body, &opts)?;
             if cli.json {
                 print_json(&response);
             } else {
@@ -922,7 +920,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         field(memory, "claim_key"),
                         field(memory, "state")
                     );
-                    println!("    | {}", field(memory, "body").replace('\n', "\n    | "));
+                    println!("    | {}", field(memory, "text").replace('\n', "\n    | "));
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -997,7 +995,6 @@ fn write_opts() -> CallOpts {
     CallOpts {
         auth: true,
         idempotency: true,
-        workarea: None,
     }
 }
 

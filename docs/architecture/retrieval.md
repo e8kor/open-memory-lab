@@ -36,7 +36,7 @@ partition strategy), not a solved problem.
 Reads return **promoted rows only**, within the key's effective access
 ([workareas.md](workareas.md)). Held rows are visible solely to their author —
 the calling key ([own](roles-and-keys.md#own)) — through own-work status, get,
-and recall with `include_own_held` ([own held rows in
+and recall with `include_unreviewed` ([own held rows in
 recall](#own-held-rows-in-recall)); demoted and erased rows are not served. This
 is R3 made operational: the gate changed visibility, and the read path is where
 that visibility is enforced.
@@ -45,7 +45,7 @@ that visibility is enforced.
 ([workareas.md](workareas.md)) — are served only to reads whose scope node is
 their own workarea: a recall, its steering segment or a listing scoped
 anywhere else, at an ancestor or at a descendant, never returns them, and an
-events tail shows their events only when its `workarea_id` is that workarea
+events tail shows their events only when its `workarea` is that workarea
 ([events tail](../api/http-api.md#events-tail)). Get resolves no workarea and
 takes a row's own workarea as its implicit scope, so a non-own `self_signed`
 version is readable by id by a key with reader effective access on its own
@@ -254,8 +254,9 @@ wire.
 
 ## Own held rows in recall
 
-A recall with `include_own_held: true`
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d4) also takes
+A recall with `include_unreviewed: true`, v0.3.0's `include_own_held`
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d4;
+[ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4) also takes
 as hit candidates the calling key's [own](roles-and-keys.md#own) rows that
 are:
 
@@ -275,7 +276,7 @@ and the [token budget](#token-budgets) exactly like promoted hits. A held
 successor carries `replaces`; the promoted tip it would replace stays among
 the hits until ratification, and the two are never deduplicated. Own held
 steering and own held retirement versions never enter recall — neither is in
-force — and own-work status and get reach them. `include_own_held` defaults to
+force — and own-work status and get reach them. `include_unreviewed` defaults to
 `false`, which is exactly the prior behaviour; no other key's result changes,
 and the recall ceiling stays reader on the scope, so a writer-only key reads
 its held rows through own-work status and get.
@@ -373,8 +374,8 @@ serializes an integer exactly only below 2⁵³
 ([chain format](../data/chain-format.md#the-signed-fields)), so a larger value
 is refused with `request.validation` rather than digested lossily. Absent,
 there is no budget and the response carries no `budget` object. `max_tokens`
-together with `include_bodies: false` is refused with `request.validation`:
-counting bodies that are not sent gives the caller a meaningless budget.
+together with `include_text: false` is refused with `request.validation`:
+counting text that is not sent gives the caller a meaningless budget.
 
 **The cut.** Over the steering counts S, the `k`-capped ranked hit counts H
 (own held rows included when asked) and the budget M:
@@ -443,7 +444,7 @@ and its reads follow one routing policy
 ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d9):
 
 - **Own-held reads route to the lead and the primary.** A read of the caller's
-  own held rows — a recall with `include_own_held: true` among them — and any
+  own held rows — a recall with `include_unreviewed: true` among them — and any
   submit-then-get sequence, is served from the primary:
   read-your-writes on an agent's own work is the one place staleness visibly
   breaks an agent's loop, and held rows are author-only anyway, so one routing
@@ -467,15 +468,17 @@ served after the `k` and [budget](#token-budgets) cuts — own held ids included
 since an author reading its own rows is still a read — never the candidate list
 before the cuts. `query_digest` is SHA-256 over the RFC 8785 JSON of an object
 whose members, listed below, are always present, with defaults applied before
-digesting:
+digesting. Two members keep their v0.3.0 names when the request fields they digest are renamed,
+so a digest logged before v0.4.0 and one logged after compare
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7):
 
 | Member | Value digested |
 |---|---|
 | `query` | the NFC-normalized string |
 | `k` | the integer, default 8 applied |
 | `kinds` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
-| `include_bodies` | the boolean, default `true` applied |
-| `include_own_held` | the boolean, default `false` applied |
+| `include_bodies` | the request's `include_text`, default `true` applied |
+| `include_own_held` | the request's `include_unreviewed`, default `false` applied |
 | `max_tokens` | the integer, `null` when absent |
 | `terms` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
 | `expand_terms` | the string, default `"none"` applied |

@@ -251,7 +251,7 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
        the refusal order; a readable target another key authored answers `access.author_only`;
     4. a dreamer key needs dreamer and reader on the target's workarea, resolved by the refusal
        order, whoever authored the target, its own ratified edits included (edit-as-proposal);
-    5. only then the refusals that depend on the target, in this order: an `X-OML-Workarea`
+    5. only then the refusals that depend on the target, in this order: a sent `workarea`
        equal to the target's workarea, else `request.validation`; the target is the current
        served tip, else `submission.tip_conflict`; the kind and retirement checks, and on
        `oml_supersede` the vocabulary-kind check, else `request.validation`
@@ -288,7 +288,7 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
 A row is the caller's **own** when its authoring key (`memories.author_key_id`) is the calling
 key; once rotation is built, own also covers a key in the caller's journalled `rotated_from`
 chain. Principal equality never makes a row own. This definition governs get of held or rejected
-versions, recall with `include_own_held` ([retrieval](retrieval.md#own-held-rows-in-recall)), the
+versions, recall with `include_unreviewed` ([retrieval](retrieval.md#own-held-rows-in-recall)), the
 own-work listing, and the `access.author_only` check on supersession, which reads it on the
 target version. Wherever a store enforces own, it compares against the caller's whole key set —
 the calling key and its journalled `rotated_from` chain — never against one key id
@@ -300,7 +300,7 @@ denial covering the row's workarea still masks the row — deny-wins, as everywh
 the calling key is in that simulation's audience; outside it the row is absent
 (`access.not_found`), like any fenced row
 ([the simulation read predicate](retrieval.md#the-simulation-read-predicate)). Both conditions
-hold on get, the own-work listing, `include_own_held` and the
+hold on get, the own-work listing, `include_unreviewed` and the
 [events tail's](../api/http-api.md#events-tail) author clause. R2 is unaffected: a reviewer is
 still excluded by both key id and principal
 ([lineage-closure exclusion](#the-dreamer-split)).
@@ -311,7 +311,7 @@ reassignment can move it there. A response names a claim's node to a key only wh
 `workarea_id` and `workarea_path` of a get or a listing item, a claim-subject workarea id
 (`workarea_id`, `from_workarea_id`, `to_workarea_id`) in an
 [events-tail](../api/http-api.md#events-tail) payload, and `workarea` and `workarea_path` on the
-[agent plugin](../api/mcp-plugin.md#the-claim-item); a listing's `workarea_id` filter accepts only
+[agent plugin](../api/mcp-plugin.md#the-claim-item); a listing's `workarea` accepts only
 a node the rule names to the key ([Search](../api/http-api.md#search-get-v1memories)). A key never
 learns the id of a node it holds nothing on, except the ancestors of a node it can read, whose ids
 (`parent_id`) and names (path segments) the [workarea read](../api/http-api.md#workareas) and every

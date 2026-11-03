@@ -7,20 +7,16 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.submit_accepted import SubmitAccepted
 from ...models.submit_request import SubmitRequest
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
     *,
     body: SubmitRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Idempotency-Key"] = idempotency_key
-
-    if not isinstance(x_oml_workarea, Unset):
-        headers["X-OML-Workarea"] = x_oml_workarea
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -84,29 +80,26 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SubmitRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
      Requires: writer effective access on the resolved workarea; every derives_from ancestor must be
     readable by the key — promoted within its reader effective access, or its own row in any state —
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workarea resolves from the token (default_workarea,
-    or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals
-    submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused
-    (submission.lineage_required).
+    attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
+    honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
+    with neither, and an X-OML-Workarea header is request.validation naming /workarea in
+    details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with
+    an empty or omitted derives_from is refused (submission.lineage_required).
 
     Args:
         idempotency_key (str):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
-        body (SubmitRequest): Names no workarea: the target resolves from the key's
-            default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
-            with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-            d16 closes the recall, supersede, key-issuance and grant bodies only. The designed
-            attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in
-            openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
+        body (SubmitRequest): The target is workarea, else the key's default_workarea; neither
+            present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its
+            nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and
+            grant bodies only. The designed attachment, simulation and vocabulary fields are declared
+            under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0
+            code (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,7 +112,6 @@ def sync_detailed(
     kwargs = _get_kwargs(
         body=body,
         idempotency_key=idempotency_key,
-        x_oml_workarea=x_oml_workarea,
     )
 
     response = client.get_httpx_client().request(
@@ -134,29 +126,26 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SubmitRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
      Requires: writer effective access on the resolved workarea; every derives_from ancestor must be
     readable by the key — promoted within its reader effective access, or its own row in any state —
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workarea resolves from the token (default_workarea,
-    or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals
-    submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused
-    (submission.lineage_required).
+    attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
+    honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
+    with neither, and an X-OML-Workarea header is request.validation naming /workarea in
+    details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with
+    an empty or omitted derives_from is refused (submission.lineage_required).
 
     Args:
         idempotency_key (str):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
-        body (SubmitRequest): Names no workarea: the target resolves from the key's
-            default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
-            with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-            d16 closes the recall, supersede, key-issuance and grant bodies only. The designed
-            attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in
-            openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
+        body (SubmitRequest): The target is workarea, else the key's default_workarea; neither
+            present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its
+            nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and
+            grant bodies only. The designed attachment, simulation and vocabulary fields are declared
+            under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0
+            code (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,7 +159,6 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
-        x_oml_workarea=x_oml_workarea,
     ).parsed
 
 
@@ -179,29 +167,26 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SubmitRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
      Requires: writer effective access on the resolved workarea; every derives_from ancestor must be
     readable by the key — promoted within its reader effective access, or its own row in any state —
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workarea resolves from the token (default_workarea,
-    or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals
-    submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused
-    (submission.lineage_required).
+    attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
+    honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
+    with neither, and an X-OML-Workarea header is request.validation naming /workarea in
+    details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with
+    an empty or omitted derives_from is refused (submission.lineage_required).
 
     Args:
         idempotency_key (str):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
-        body (SubmitRequest): Names no workarea: the target resolves from the key's
-            default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
-            with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-            d16 closes the recall, supersede, key-issuance and grant bodies only. The designed
-            attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in
-            openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
+        body (SubmitRequest): The target is workarea, else the key's default_workarea; neither
+            present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its
+            nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and
+            grant bodies only. The designed attachment, simulation and vocabulary fields are declared
+            under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0
+            code (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,7 +199,6 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         body=body,
         idempotency_key=idempotency_key,
-        x_oml_workarea=x_oml_workarea,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -227,29 +211,26 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SubmitRequest,
     idempotency_key: str,
-    x_oml_workarea: str | Unset = UNSET,
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
      Requires: writer effective access on the resolved workarea; every derives_from ancestor must be
     readable by the key — promoted within its reader effective access, or its own row in any state —
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workarea resolves from the token (default_workarea,
-    or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals
-    submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused
-    (submission.lineage_required).
+    attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
+    honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
+    with neither, and an X-OML-Workarea header is request.validation naming /workarea in
+    details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with
+    an empty or omitted derives_from is refused (submission.lineage_required).
 
     Args:
         idempotency_key (str):
-        x_oml_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
-        body (SubmitRequest): Names no workarea: the target resolves from the key's
-            default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused
-            with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025
-            d16 closes the recall, supersede, key-issuance and grant bodies only. The designed
-            attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in
-            openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
+        body (SubmitRequest): The target is workarea, else the key's default_workarea; neither
+            present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its
+            nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and
+            grant bodies only. The designed attachment, simulation and vocabulary fields are declared
+            under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0
+            code (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -264,6 +245,5 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
-            x_oml_workarea=x_oml_workarea,
         )
     ).parsed

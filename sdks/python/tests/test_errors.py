@@ -85,9 +85,9 @@ def test_a_memory_the_key_cannot_see_is_access_not_found(agent):
     assert (caught.value.code, caught.value.status) == ("access.not_found", 404)
 
 
-def test_a_budget_without_bodies_is_a_request_error(agent):
+def test_a_budget_without_text_is_a_request_error(agent):
     with pytest.raises(RequestError) as caught:
-        agent.recall("anything", max_tokens=100, include_bodies=False)
+        agent.recall("anything", max_tokens=100, include_text=False)
     assert caught.value.code == "request.validation"
 
 

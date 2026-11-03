@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -13,36 +13,47 @@ T = TypeVar("T", bound="RecallRequest")
 
 @_attrs_define
 class RecallRequest:
-    """Names no workarea: the default scope is the token workarea's subtree — the key's default_workarea, or the X-OML-
-    Workarea override (ADR-0022 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary
-    filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9).
+    """The scope is workarea's subtree, else the key's default_workarea's (ADR-0039 d4). Unknown fields are refused
+    (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-
+    designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text
+    and include_unreviewed in details.renamed_to (ADR-0039 d7).
 
         Attributes:
             query (str):
+            workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check that reads
+                state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+                (request.validation).
             k (int | Unset):  Default: 8.
             kinds (list[RecallRequestKindsItem] | Unset): Filters hits only; an empty array is refused (request.validation),
                 so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the
                 vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary
                 workarea's journalled policy opts them in, they are hits only of a recall that omits kinds.
-            include_bodies (bool | Unset):  Default: True.
-            include_own_held (bool | Unset): When true, the calling key's own held rows (kind memory or derived_fact, never
-                steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter
-                when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held; they
-                count against k and max_tokens. Rules: docs/architecture/retrieval.md. Default: False.
+            include_text (bool | Unset): Whether each served item carries its text (ADR-0039 d7). Default: True.
+            include_unreviewed (bool | Unset): When true, the calling key's own held rows (kind memory or derived_fact,
+                never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds
+                filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held;
+                they count against k and max_tokens. Rules: docs/architecture/retrieval.md. Default: False.
             max_tokens (int | Unset): Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest
                 integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest
-                rank prefix that fits. Refused with include_bodies false. Rules: docs/architecture/retrieval.md, Token budgets.
+                rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
     """
 
     query: str
+    workarea: str | Unset = UNSET
     k: int | Unset = 8
     kinds: list[RecallRequestKindsItem] | Unset = UNSET
-    include_bodies: bool | Unset = True
-    include_own_held: bool | Unset = False
+    include_text: bool | Unset = True
+    include_unreviewed: bool | Unset = False
     max_tokens: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
+
+        workarea: str | Unset
+        if isinstance(self.workarea, Unset):
+            workarea = UNSET
+        else:
+            workarea = self.workarea
 
         k = self.k
 
@@ -53,9 +64,9 @@ class RecallRequest:
                 kinds_item = kinds_item_data.value
                 kinds.append(kinds_item)
 
-        include_bodies = self.include_bodies
+        include_text = self.include_text
 
-        include_own_held = self.include_own_held
+        include_unreviewed = self.include_unreviewed
 
         max_tokens = self.max_tokens
 
@@ -66,14 +77,16 @@ class RecallRequest:
                 "query": query,
             }
         )
+        if workarea is not UNSET:
+            field_dict["workarea"] = workarea
         if k is not UNSET:
             field_dict["k"] = k
         if kinds is not UNSET:
             field_dict["kinds"] = kinds
-        if include_bodies is not UNSET:
-            field_dict["include_bodies"] = include_bodies
-        if include_own_held is not UNSET:
-            field_dict["include_own_held"] = include_own_held
+        if include_text is not UNSET:
+            field_dict["include_text"] = include_text
+        if include_unreviewed is not UNSET:
+            field_dict["include_unreviewed"] = include_unreviewed
         if max_tokens is not UNSET:
             field_dict["max_tokens"] = max_tokens
 
@@ -83,6 +96,13 @@ class RecallRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         query = d.pop("query")
+
+        def _parse_workarea(data: object) -> str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(str | Unset, data)
+
+        workarea = _parse_workarea(d.pop("workarea", UNSET))
 
         k = d.pop("k", UNSET)
 
@@ -95,18 +115,19 @@ class RecallRequest:
 
                 kinds.append(kinds_item)
 
-        include_bodies = d.pop("include_bodies", UNSET)
+        include_text = d.pop("include_text", UNSET)
 
-        include_own_held = d.pop("include_own_held", UNSET)
+        include_unreviewed = d.pop("include_unreviewed", UNSET)
 
         max_tokens = d.pop("max_tokens", UNSET)
 
         recall_request = cls(
             query=query,
+            workarea=workarea,
             k=k,
             kinds=kinds,
-            include_bodies=include_bodies,
-            include_own_held=include_own_held,
+            include_text=include_text,
+            include_unreviewed=include_unreviewed,
             max_tokens=max_tokens,
         )
 
