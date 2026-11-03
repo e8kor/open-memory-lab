@@ -33,7 +33,8 @@ use uuid::Uuid;
 
 /// The committed migrations, embedded at build time. The migrations are
 /// normative in bytes (postgres-schema.md "Migrations"); the server/bootstrap
-/// calls [`PgStore::migrate`] (or runs this migrator) before serving.
+/// calls [`PgStore::migrate`] (or runs this migrator, as the owner with
+/// `oml.serving_role` set) before serving.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations");
 
 const FORK_CHECK_PAGE: usize = 1024;
@@ -79,9 +80,35 @@ impl PgStore {
     }
 
     /// Applies any pending committed migrations (forward-only,
-    /// postgres-schema.md "Migrations").
-    pub async fn migrate(&self) -> Result<(), sqlx::migrate::MigrateError> {
-        MIGRATOR.run(&self.pool).await
+    /// postgres-schema.md "Migrations") as the owner role at `owner_url`
+    /// (ADR-0034 d2, d3, d4). The owner pool sets `oml.serving_role` on
+    /// every connection to this store's login, its pool's `current_user`, so
+    /// each table's migration grants that role the DML the adapter's
+    /// statements use (postgres-schema.md "Privileges"); no role name is
+    /// read from configuration (d2). The owner pool is closed before this
+    /// returns. A migration that grants, run without the setting, fails at
+    /// `current_setting` (`42704`).
+    pub async fn migrate(&self, owner_url: &str) -> Result<(), sqlx::migrate::MigrateError> {
+        let serving: String = sqlx::query_scalar("SELECT current_user::text")
+            .fetch_one(&self.pool)
+            .await?;
+        let owner = PgPoolOptions::new()
+            .max_connections(1)
+            .after_connect(move |conn, _meta| {
+                let serving = serving.clone();
+                Box::pin(async move {
+                    sqlx::query("SELECT set_config('oml.serving_role', $1, false)")
+                        .bind(serving)
+                        .execute(conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .connect(owner_url)
+            .await?;
+        let applied = MIGRATOR.run(&owner).await;
+        owner.close().await;
+        applied
     }
 
     /// The startup fork check (ADR-0002 d7): pages the stored events and

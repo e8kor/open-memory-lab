@@ -780,6 +780,51 @@ sets the wrong tenant GUC becomes a cross-tenant read. That risk and its mitigat
 code path sets the GUC; the STRIDE model treats hostile co-tenants) are owned by
 [security](../architecture/security.md).
 
+## Privileges
+
+**Status:** built in `migrations/0007_role_split.sql` · its checks run only where a superuser
+mints the suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8); the lead's
+owner URL and startup refusals (d4, d5) are decided, not built.
+
+Two roles reach a database: the **owner**, which owns the database and every object the
+migrations create and runs every migration, and the **serving role**, which owns nothing and
+holds only the DML the adapter's statements use (ADR-0034 d2, d3). Each table's migration grants
+the serving role its row below, naming the grantee through the setting `oml.serving_role`, which
+the lead sets on every owner connection to its serving URL's `current_user`; a granting migration
+run without it fails at `current_setting` (`42704`). A table a later migration adds refuses the
+serving role until that migration grants its row here, under the sync rule.
+
+| Table | `SELECT` | `INSERT` | `UPDATE` | `DELETE` | Sequence |
+|---|---|---|---|---|---|
+| `tenants` | ✓ | ✓ | ✓ | | |
+| `workareas` | ✓ | ✓ | ✓ | | |
+| `api_keys` | ✓ | ✓ | ✓ | | |
+| `journal` | ✓ | ✓ | | | |
+| `journal_chain_head` | ✓ | ✓ | ✓ | | |
+| `outbox` | | ✓ | | | `USAGE` on `outbox_seq_seq` |
+| `memories` | ✓ | ✓ | ✓ | | |
+| `review_queue` | ✓ | ✓ | ✓ | ✓ | |
+| `idempotency` | ✓ | ✓ | | | |
+| `grants` | ✓ | ✓ | | | |
+| `key_denials` | ✓ | ✓ | ✓ | | |
+| `crews` | ✓ | ✓ | ✓ | | |
+| `_sqlx_migrations` | | | | | |
+
+- **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
+  privilege (`42501`) before the guard trigger runs (ADR-0002 d4).
+- **`review_queue`** is the one table a statement deletes from, at a verdict.
+- **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the
+  `bigserial` sequence.
+- **No table** grants `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`, whole-table operations
+  row security does not bind.
+- **`_sqlx_migrations`** is the one table without row-level security: sqlx's record of which
+  migrations ran holds no tenant data and no `tenant_id` to key a policy on. Its fence is
+  privilege: 0007 revokes every privilege on it from `PUBLIC` and the serving role holds none
+  (ADR-0034 d6).
+- **`public`**: 0007 revokes `CREATE` from `PUBLIC`, so only the owner creates there; the serving
+  role keeps `PUBLIC`'s `CONNECT` and `USAGE`.
+
 ## Folds of the journal vs operational tables
 
 Two kinds of table live in this schema, and the distinction decides what reconciliation

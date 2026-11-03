@@ -11,9 +11,15 @@
 //! names, and a PoC database keeps every row and event (ADR-0026 d1, d2, d6,
 //! d7, d11).
 //!
-//! Each law runs against a throwaway database (`oml_test_<pid>_<n>`) created
-//! through `DATABASE_URL` (the role needs CREATEDB), migrated by the embedded
-//! migrator, and dropped best-effort afterwards.
+//! Each law runs against a throwaway database (`oml_test_<pid>_<n>_<tag>`)
+//! owned by the owner of a role pair minted for it alone, migrated by the
+//! embedded migrator through the owner login with `oml.serving_role` set,
+//! asserted over the serving login, and dropped with its roles best-effort
+//! afterwards (ADR-0034 d8). Minting takes a superuser at `DATABASE_URL`; a
+//! role that is not one prints `did not run: <role> cannot create roles` and
+//! the law returns, except under `OML_TEST_REQUIRE_SPLIT=1`, where it fails.
+//! The serving role's privilege laws sit beside the journal guard law, which
+//! runs as the owner (ADR-0034 d3, d6).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -47,42 +53,128 @@ fn base_url() -> String {
         .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
 }
 
-fn db_url(name: &str) -> String {
+/// The password of every minted test role; the roles live only as long as
+/// their throwaway database.
+const PAIR_PASSWORD: &str = "oml_test_pair";
+
+/// `db` at `DATABASE_URL`'s host, logged in as `role`.
+fn role_url(db: &str, role: &str) -> String {
     let base = base_url();
-    let (prefix, _) = base
-        .rsplit_once('/')
+    let (scheme, rest) = base
+        .split_once("://")
+        .expect("DATABASE_URL is a postgres:// URL");
+    let (_, host_path) = rest.rsplit_once('@').expect("DATABASE_URL names its user");
+    let (host, _) = host_path
+        .split_once('/')
         .expect("DATABASE_URL names a database path");
-    format!("{prefix}/{name}")
+    format!("{scheme}://{role}:{PAIR_PASSWORD}@{host}/{db}")
+}
+
+/// `db` through the owner login of its role pair (ADR-0034 d2, d8).
+fn owner_url(db: &str) -> String {
+    role_url(db, &format!("{db}_owner"))
+}
+
+/// `db` through the serving login of its role pair (ADR-0034 d2, d8).
+fn serving_url(db: &str) -> String {
+    role_url(db, &format!("{db}_serving"))
+}
+
+/// Whether this run can mint the owner/serving role pair every law runs
+/// through (ADR-0034 d8). Minting takes a superuser; when `DATABASE_URL`'s
+/// role is not one, as the maintainer's local `oml` (CREATEDB alone) is not,
+/// this prints `did not run: <role> cannot create roles` and the law
+/// returns, and under `OML_TEST_REQUIRE_SPLIT=1`, which CI sets, the same
+/// condition fails it, so no run passes vacuously.
+async fn splits() -> bool {
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
+    let (role, mints): (String, bool) = sqlx::query_as(
+        "SELECT current_user::text, rolsuper FROM pg_roles WHERE rolname = current_user",
+    )
+    .fetch_one(&mut admin)
+    .await
+    .expect("role attributes");
+    if mints {
+        return true;
+    }
+    assert!(
+        std::env::var("OML_TEST_REQUIRE_SPLIT").as_deref() != Ok("1"),
+        "{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
+    );
+    println!("did not run: {role} cannot create roles");
+    false
 }
 
 static DB_N: AtomicU64 = AtomicU64::new(0);
 
-/// A throwaway database with no migration applied; its name.
+/// Eight hex digits of the clock, so a name a crashed earlier run left
+/// behind on the cluster under the same pid and counter is not reused.
+fn run_tag() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .subsec_nanos();
+    format!("{nanos:08x}")
+}
+
+/// A throwaway database with no migration applied, owned by the owner of a
+/// role pair minted for it alone (`<name>_owner`, `<name>_serving`, `LOGIN`
+/// and no other attribute; ADR-0034 d2, d8); its name.
 async fn fresh_database(created: &Mutex<Vec<String>>) -> String {
     let name = format!(
-        "oml_test_{}_{}",
+        "oml_test_{}_{}_{}",
         std::process::id(),
-        DB_N.fetch_add(1, Ordering::SeqCst)
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
     );
     let mut admin = PgConnection::connect(&base_url())
         .await
         .expect("admin connect");
+    for role in ["owner", "serving"] {
+        admin
+            .execute(format!("CREATE ROLE {name}_{role} LOGIN PASSWORD '{PAIR_PASSWORD}'").as_str())
+            .await
+            .expect("mint the role pair");
+    }
     admin
-        .execute(format!("CREATE DATABASE {name}").as_str())
+        .execute(format!("CREATE DATABASE {name} OWNER {name}_owner").as_str())
         .await
         .expect("create throwaway database");
     created.lock().expect("names lock").push(name.clone());
     name
 }
 
+/// A store over the serving login of a fresh database, migrated through its
+/// owner login with `oml.serving_role` set (ADR-0034 d4, d8).
 async fn fresh_store(created: &Mutex<Vec<String>>) -> PgStore {
     let name = fresh_database(created).await;
-    let store = PgStore::connect(&db_url(&name)).await.expect("connect");
-    store.migrate().await.expect("embedded migrations apply");
+    let store = PgStore::connect(&serving_url(&name))
+        .await
+        .expect("connect");
+    store
+        .migrate(&owner_url(&name))
+        .await
+        .expect("embedded migrations apply");
     store
 }
 
-/// Best-effort cleanup; WITH (FORCE) evicts any pool connection still open.
+/// A connection to `store`'s database through its owner login, for what
+/// only the owner may do: DDL, `ANALYZE`, `_sqlx_migrations`, the journal
+/// guard law (ADR-0034 d8).
+async fn owner_conn(store: &PgStore) -> PgConnection {
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("database name");
+    PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect")
+}
+
+/// Best-effort cleanup; WITH (FORCE) evicts any pool connection still open,
+/// and the role pair goes with its database.
 async fn drop_dbs(created: &Mutex<Vec<String>>) {
     let names: Vec<String> = created.lock().expect("names lock").drain(..).collect();
     if let Ok(mut admin) = PgConnection::connect(&base_url()).await {
@@ -90,6 +182,11 @@ async fn drop_dbs(created: &Mutex<Vec<String>>) {
             let _ = admin
                 .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
                 .await;
+            for role in ["serving", "owner"] {
+                let _ = admin
+                    .execute(format!("DROP ROLE IF EXISTS {name}_{role}").as_str())
+                    .await;
+            }
         }
     }
 }
@@ -100,6 +197,9 @@ async fn drop_dbs(created: &Mutex<Vec<String>>) {
 
 #[tokio::test]
 async fn journal_store_contract_suite() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     run_journal_store_suite(|| fresh_store(&created)).await;
     drop_dbs(&created).await;
@@ -152,6 +252,9 @@ const COMMITS_PER_TASK: u64 = 20;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_commits_serialize_per_tenant() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let store = Arc::new(fresh_store(&created).await);
     let tenant_id = Uuid::from_u128(0xCAFE);
@@ -223,8 +326,13 @@ async fn concurrent_commits_serialize_per_tenant() {
     drop_dbs(&created).await;
 }
 
+/// ADR-0002 d4's guard law runs as the owner, the one login privileges let
+/// reach the guard trigger (ADR-0034 d8).
 #[tokio::test]
 async fn journal_refuses_update_and_delete() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
     let mut rig = ChainRig::new(90);
@@ -232,7 +340,8 @@ async fn journal_refuses_update_and_delete() {
 
     // ADR-0002 d4: append-only by mechanism — the guard trigger fires even
     // for the table owner inside a correctly tenant-scoped transaction.
-    let mut tx = store.pool().begin().await.expect("begin");
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
     sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
         .bind(rig.tenant_id.to_string())
         .execute(&mut *tx)
@@ -246,7 +355,7 @@ async fn journal_refuses_update_and_delete() {
     assert!(err.to_string().contains("append-only"), "got: {err}");
     drop(tx); // aborted transaction rolls back
 
-    let mut tx = store.pool().begin().await.expect("begin");
+    let mut tx = owner.begin().await.expect("begin");
     sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
         .bind(rig.tenant_id.to_string())
         .execute(&mut *tx)
@@ -259,7 +368,276 @@ async fn journal_refuses_update_and_delete() {
         .expect_err("DELETE on journal is refused");
     assert!(err.to_string().contains("append-only"), "got: {err}");
     drop(tx);
+    drop(owner);
     drop_dbs(&created).await;
+}
+
+/// The SQLSTATE a refused statement carried, or a panic naming what was
+/// expected to be refused.
+fn refused_code(result: Result<sqlx::postgres::PgQueryResult, sqlx::Error>, what: &str) -> String {
+    let err = result.expect_err(what);
+    err.as_database_error()
+        .and_then(|d| d.code())
+        .map(|c| c.into_owned())
+        .unwrap_or_else(|| panic!("{what}: not a database error: {err}"))
+}
+
+/// 0007 grants `journal` SELECT and INSERT alone, so the serving role's
+/// UPDATE and DELETE fail on privilege before the guard trigger runs
+/// (ADR-0034 d3, d8; ADR-0002 d4).
+#[tokio::test]
+async fn the_serving_role_is_refused_update_and_delete_on_journal_by_privilege_first() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(89);
+    rig.seed_chain(&store, 1).await;
+
+    for statement in [
+        "UPDATE journal SET principal = 'tampered' WHERE tenant_id = $1",
+        "DELETE FROM journal WHERE tenant_id = $1",
+    ] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(rig.tenant_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        let result = sqlx::query(statement)
+            .bind(rig.tenant_id)
+            .execute(&mut *tx)
+            .await;
+        assert_eq!(
+            refused_code(result, statement),
+            "42501",
+            "{statement} is refused by privilege, not by the trigger"
+        );
+        drop(tx);
+    }
+    drop_dbs(&created).await;
+}
+
+/// The tenants' marker words, one lexeme each under the `simple`
+/// configuration `memories_claim_fts` indexes.
+const LEXEME_A: &str = "quokkaalpha";
+const LEXEME_B: &str = "quokkabravo";
+
+/// `pg_stats` rows of the `public` schema whose text names `needle`, as
+/// `conn` reads them with tenant `tenant` set.
+async fn stats_naming(conn: &mut PgConnection, tenant: Uuid, needle: &str) -> Vec<String> {
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT s.tablename::text || '.' || s.attname::text FROM pg_stats s \
+         WHERE s.schemaname = 'public' AND strpos(s::text, $1) > 0 ORDER BY 1",
+    )
+    .bind(needle)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("pg_stats read");
+    tx.rollback().await.expect("rollback");
+    rows
+}
+
+/// FORCE does not filter the owner's `pg_stats` view of the cross-tenant
+/// index (spike 3 S3.1); the split keeps that view from the serving role,
+/// which sees nothing of tenant B under tenant A, while the owner's view,
+/// the control, shows B's lexemes (ADR-0034 d1, d8).
+#[tokio::test]
+async fn the_serving_role_sees_nothing_of_another_tenant_in_a_tenant_tables_pg_stats_while_the_owners_view_shows_tenant_bs_lexemes()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut tenants = Vec::new();
+    for (seed, lexeme) in [(87_u64, LEXEME_A), (88, LEXEME_B)] {
+        let mut rig = ChainRig::new(seed);
+        rig.seed_chain(&store, 0).await;
+        let wa = Uuid::from_u128(0xB000 + u128::from(seed));
+        rig.create_workarea(&store, workarea_record(rig.tenant_id, wa, None, "universe"))
+            .await;
+        for n in 0..4_u128 {
+            let memory = held_memory(
+                rig.tenant_id,
+                wa,
+                Uuid::from_u128((u128::from(seed) << 16) | n),
+                "stats",
+                Uuid::from_u128(0xD000 + u128::from(seed)),
+                &format!("{lexeme} runbook step {n}"),
+            );
+            rig.commit(
+                &store,
+                event_types::SUBMISSION_REMEMBER,
+                json!({ "artifact_id": memory.memory_id.to_string() }),
+                MetadataFold::MemoryHeld {
+                    memory,
+                    enqueue: false,
+                },
+                None,
+            )
+            .await
+            .expect("hold");
+        }
+        tenants.push(rig.tenant_id);
+    }
+    let (a, _b) = (tenants[0], tenants[1]);
+    let mut owner = owner_conn(&store).await;
+    owner.execute("ANALYZE").await.expect("the owner analyses");
+
+    let mut serving = store.pool().acquire().await.expect("serving connection");
+    assert_eq!(
+        stats_naming(&mut serving, a, LEXEME_B).await,
+        Vec::<String>::new(),
+        "the serving role, set to tenant A, sees no pg_stats row naming tenant B"
+    );
+    drop(serving);
+    let shown = stats_naming(&mut owner, a, LEXEME_B).await;
+    assert!(
+        !shown.is_empty(),
+        "control: the owner, set to tenant A, reads tenant B's lexemes in pg_stats"
+    );
+    drop(owner);
+    drop_dbs(&created).await;
+}
+
+/// The serving role owns nothing and creates nothing, and a table whose
+/// migration grants it nothing refuses it: each of these fails on
+/// privilege (ADR-0034 d2, d3, d8).
+#[tokio::test]
+async fn the_serving_role_cannot_alter_drop_or_create_a_table_lift_force_truncate_a_table_or_select_or_insert_on_a_table_whose_migration_grants_nothing()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut owner = owner_conn(&store).await;
+    owner
+        .execute("CREATE TABLE ungranted (id int)")
+        .await
+        .expect("the owner creates a table no migration grants");
+    drop(owner);
+
+    for statement in [
+        "ALTER TABLE memories ADD COLUMN intruder int",
+        "DROP TABLE memories",
+        "CREATE TABLE intruder (id int)",
+        "ALTER TABLE memories NO FORCE ROW LEVEL SECURITY",
+        "TRUNCATE review_queue",
+        "TRUNCATE memories",
+        "SELECT * FROM ungranted",
+        "INSERT INTO ungranted (id) VALUES (1)",
+    ] {
+        let result = sqlx::query(statement).execute(store.pool()).await;
+        assert_eq!(
+            refused_code(result, statement),
+            "42501",
+            "the serving role is refused {statement}"
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+/// `_sqlx_migrations` is the one table without row-level security, and its
+/// fence is privilege: 0007 revokes every privilege on it from PUBLIC and
+/// grants the serving role none (ADR-0034 d6).
+#[tokio::test]
+async fn the_serving_role_holds_no_privilege_on_sqlx_migrations() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let held: Vec<String> = sqlx::query_scalar(
+        "SELECT p FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', \
+         'REFERENCES', 'TRIGGER', 'MAINTAIN']) AS p \
+         WHERE has_table_privilege(current_user, '_sqlx_migrations', p)",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("privilege read");
+    assert_eq!(
+        held,
+        Vec::<String>::new(),
+        "no privilege on _sqlx_migrations"
+    );
+    let result = sqlx::query("SELECT version FROM _sqlx_migrations")
+        .execute(store.pool())
+        .await;
+    assert_eq!(
+        refused_code(result, "a serving read of _sqlx_migrations"),
+        "42501"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The migration whose grants name `oml.serving_role` fails at
+/// `current_setting` (`42704`) on a connection that never set it, and
+/// applies once it is set (ADR-0034 d3). It needs no role pair: the
+/// connecting role creates the database and is its owner, so this law
+/// runs wherever `DATABASE_URL`'s role has CREATEDB.
+#[tokio::test]
+async fn a_granting_migration_run_without_oml_serving_role_fails_at_current_setting_42704() {
+    let name = format!(
+        "oml_test_{}_{}_{}",
+        std::process::id(),
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
+    );
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
+    admin
+        .execute(format!("CREATE DATABASE {name}").as_str())
+        .await
+        .expect("create throwaway database");
+    let base = base_url();
+    let (prefix, _) = base
+        .rsplit_once('/')
+        .expect("DATABASE_URL names a database path");
+    let mut conn = PgConnection::connect(&format!("{prefix}/{name}"))
+        .await
+        .expect("connect");
+
+    let err = MIGRATOR
+        .run(&mut conn)
+        .await
+        .expect_err("a granting migration without oml.serving_role is refused");
+    let refused = match &err {
+        sqlx::migrate::MigrateError::ExecuteMigration(e, version) => (
+            *version,
+            e.as_database_error()
+                .and_then(|d| d.code())
+                .map(|c| c.into_owned()),
+        ),
+        other => panic!("not a migration's refusal: {other}"),
+    };
+    assert_eq!(
+        refused,
+        (7, Some("42704".to_owned())),
+        "0007 fails at current_setting: {err}"
+    );
+
+    sqlx::query("SELECT set_config('oml.serving_role', current_user, false)")
+        .execute(&mut conn)
+        .await
+        .expect("set the serving role");
+    MIGRATOR
+        .run(&mut conn)
+        .await
+        .expect("control: with oml.serving_role set, the migrations apply");
+    drop(conn);
+    let _ = admin
+        .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
+        .await;
 }
 
 /// Rows of `grants` and `key_denials` this session sees with `oml.tenant_id`
@@ -304,6 +682,9 @@ async fn visible_access_rows(store: &PgStore, tenant: Option<Uuid>) -> (i64, i64
 /// (postgres-schema.md row-level security; security.md).
 #[tokio::test]
 async fn grants_of_another_tenant_are_invisible_under_rls() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
     let mut a = ChainRig::new(92);
@@ -382,6 +763,9 @@ async fn grants_of_another_tenant_are_invisible_under_rls() {
 
 #[tokio::test]
 async fn fork_check_verifies_and_detects() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
     let mut rig = ChainRig::new(91);
@@ -439,7 +823,7 @@ async fn poc_schema(created: &Mutex<Vec<String>>) -> (String, PgConnection) {
 /// later one; its name and a connection to it for seeding rows.
 async fn schema_through(created: &Mutex<Vec<String>>, version: i64) -> (String, PgConnection) {
     let name = fresh_database(created).await;
-    let mut conn = PgConnection::connect(&db_url(&name))
+    let mut conn = PgConnection::connect(&owner_url(&name))
         .await
         .expect("connect");
     conn.ensure_migrations_table()
@@ -547,6 +931,9 @@ async fn poc_memory(
 /// (ADR-0025 d6, d10).
 #[tokio::test]
 async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_served_tip() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let (name, mut conn) = poc_schema(&created).await;
 
@@ -699,8 +1086,13 @@ async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_serve
     tx.commit().await.expect("commit the PoC rows");
     drop(conn);
 
-    let store = PgStore::connect(&db_url(&name)).await.expect("connect");
-    store.migrate().await.expect("0005 applies over PoC rows");
+    let store = PgStore::connect(&serving_url(&name))
+        .await
+        .expect("connect");
+    store
+        .migrate(&owner_url(&name))
+        .await
+        .expect("0005 applies over PoC rows");
     let read = |id| {
         let store = store.clone();
         async move {
@@ -797,6 +1189,9 @@ async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_serve
 /// name and migrates nothing (ADR-0025 d18).
 #[tokio::test]
 async fn a_poc_held_first_version_beside_a_live_one_refuses_the_migration_by_name() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     for first in ["promoted", "held"] {
         let (name, mut conn) = poc_schema(&created).await;
@@ -851,9 +1246,11 @@ async fn a_poc_held_first_version_beside_a_live_one_refuses_the_migration_by_nam
         tx.commit().await.expect("commit the PoC rows");
         drop(conn);
 
-        let store = PgStore::connect(&db_url(&name)).await.expect("connect");
+        let store = PgStore::connect(&serving_url(&name))
+            .await
+            .expect("connect");
         let err = store
-            .migrate()
+            .migrate(&owner_url(&name))
             .await
             .expect_err("a held first version beside a live one is refused");
         assert!(
@@ -863,7 +1260,7 @@ async fn a_poc_held_first_version_beside_a_live_one_refuses_the_migration_by_nam
         );
         let applied: Option<i64> =
             sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE version = 5")
-                .fetch_optional(store.pool())
+                .fetch_optional(&mut owner_conn(&store).await)
                 .await
                 .expect("migration ledger read");
         assert_eq!(applied, None, "0005 migrates nothing it refuses");
@@ -878,6 +1275,9 @@ async fn a_poc_held_first_version_beside_a_live_one_refuses_the_migration_by_nam
 /// supersession chains; ADR-0025 d10, d18).
 #[tokio::test]
 async fn a_poc_claim_captured_after_a_rejected_first_version_migrates_as_a_fresh_version_one() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let (name, mut conn) = poc_schema(&created).await;
     let tenant = Uuid::from_u128(0xA520);
@@ -946,8 +1346,13 @@ async fn a_poc_claim_captured_after_a_rejected_first_version_migrates_as_a_fresh
     tx.commit().await.expect("commit the PoC rows");
     drop(conn);
 
-    let store = PgStore::connect(&db_url(&name)).await.expect("connect");
-    store.migrate().await.expect("0005 applies over PoC rows");
+    let store = PgStore::connect(&serving_url(&name))
+        .await
+        .expect("connect");
+    store
+        .migrate(&owner_url(&name))
+        .await
+        .expect("0005 applies over PoC rows");
     let read = |id| {
         let store = store.clone();
         async move {
@@ -984,6 +1389,9 @@ async fn a_poc_claim_captured_after_a_rejected_first_version_migrates_as_a_fresh
 /// (postgres-schema.md `memories_served_tip`).
 #[tokio::test]
 async fn the_served_tip_index_refuses_a_second_tip() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
     let mut rig = ChainRig::new(95);
@@ -1068,6 +1476,9 @@ async fn the_served_tip_index_refuses_a_second_tip() {
 /// it (postgres-schema.md names and tenants; ADR-0026 d2).
 #[tokio::test]
 async fn the_oml_name_domain_admits_the_reference_grammar_and_nothing_else() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
     let longest = format!("a{}", "b".repeat(62));
@@ -1119,6 +1530,9 @@ async fn the_oml_name_domain_admits_the_reference_grammar_and_nothing_else() {
 /// (postgres-schema.md `api_keys`; ADR-0026 d1).
 #[tokio::test]
 async fn two_operator_keys_cannot_share_a_name_though_their_tenant_is_null() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
     let mut rig = ChainRig::new(96);
@@ -1132,7 +1546,8 @@ async fn two_operator_keys_cannot_share_a_name_though_their_tenant_is_null() {
     // Provider-level rows are the operator path's, which is not built; the
     // owner writes them here by lifting FORCE inside a transaction that
     // rolls back (postgres-schema.md row-level security).
-    let mut tx = store.pool().begin().await.expect("begin");
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
     sqlx::query("ALTER TABLE api_keys NO FORCE ROW LEVEL SECURITY")
         .execute(&mut *tx)
         .await
@@ -1173,6 +1588,9 @@ async fn two_operator_keys_cannot_share_a_name_though_their_tenant_is_null() {
 /// and "The migration that adds names"; ADR-0026 d5, d6).
 #[tokio::test]
 async fn the_schema_refuses_a_non_root_workarea_named_universe() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let (db, mut conn) = schema_through(&created, 5).await;
     let (poc, poc_root) = (Uuid::from_u128(0xA960), Uuid::from_u128(0xB960));
@@ -1188,8 +1606,11 @@ async fn the_schema_refuses_a_non_root_workarea_named_universe() {
     .await
     .expect("PoC root");
     tx.commit().await.expect("commit the PoC rows");
-    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
-    store.migrate().await.expect("0006 applies over PoC rows");
+    let store = PgStore::connect(&serving_url(&db)).await.expect("connect");
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0006 applies over PoC rows");
 
     let mut rig = ChainRig::new(97);
     rig.seed_chain(&store, 0).await;
@@ -1250,6 +1671,9 @@ async fn the_schema_refuses_a_non_root_workarea_named_universe() {
 /// `universe` down (postgres-schema.md `workareas`; ADR-0026 d7).
 #[tokio::test]
 async fn a_workarea_is_stored_with_the_path_its_names_derive() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
     let mut rig = ChainRig::new(98);
@@ -1357,6 +1781,9 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
 /// workarea that has no name yet (postgres-schema.md names and tenants).
 #[tokio::test]
 async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let (db, mut conn) = schema_through(&created, 5).await;
     let (tenant, twin) = (Uuid::from_u128(0xA600), Uuid::from_u128(0xA601));
@@ -1630,9 +2057,9 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
         poc_rows(&mut conn, tenant, false).await,
         poc_rows(&mut conn, twin, false).await,
     ];
-    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(&db)).await.expect("connect");
     store
-        .migrate()
+        .migrate(&owner_url(&db))
         .await
         .expect("0006 applies over the PoC's names");
     let after = [
@@ -1694,6 +2121,9 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
 /// "Rows created before names").
 #[tokio::test]
 async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_are_not() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let (db, mut conn) = schema_through(&created, 5).await;
     let poc = Uuid::from_u128(0xA700);
@@ -1728,8 +2158,11 @@ async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_a
     .await
     .expect("PoC key");
     tx.commit().await.expect("commit the PoC rows");
-    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
-    store.migrate().await.expect("0006 applies over PoC rows");
+    let store = PgStore::connect(&serving_url(&db)).await.expect("connect");
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0006 applies over PoC rows");
 
     let mut rig = ChainRig::new(97);
     rig.seed_chain(&store, 0).await;
@@ -1780,6 +2213,9 @@ async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_a
 /// journals nothing (http-api.md rows created before names; ADR-0026 d11).
 #[tokio::test]
 async fn the_naming_fills_the_names_crews_and_paths_of_a_migrated_poc_database_once() {
+    if !splits().await {
+        return;
+    }
     let created = Mutex::new(Vec::new());
     let (db, mut conn) = schema_through(&created, 5).await;
     let tenant = Uuid::from_u128(0xA900);
@@ -1909,8 +2345,8 @@ async fn the_naming_fills_the_names_crews_and_paths_of_a_migrated_poc_database_o
         .expect("key row");
     }
     tx.commit().await.expect("commit the PoC rows");
-    let store = PgStore::connect(&db_url(&db)).await.expect("connect");
-    store.migrate().await.expect("0006 applies");
+    let store = PgStore::connect(&serving_url(&db)).await.expect("connect");
+    store.migrate(&owner_url(&db)).await.expect("0006 applies");
 
     let app = App::new(
         store.clone(),

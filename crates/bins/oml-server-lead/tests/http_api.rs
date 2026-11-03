@@ -43,12 +43,89 @@ fn base_url() -> String {
         .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
 }
 
-fn db_url(name: &str) -> String {
+/// The password of every minted test role; the roles live only as long as
+/// their throwaway database.
+const PAIR_PASSWORD: &str = "oml_test_pair";
+
+/// `db` at `DATABASE_URL`'s host, logged in as `role`.
+fn role_url(db: &str, role: &str) -> String {
     let base = base_url();
-    let (prefix, _) = base
-        .rsplit_once('/')
+    let (scheme, rest) = base
+        .split_once("://")
+        .expect("DATABASE_URL is a postgres:// URL");
+    let (_, host_path) = rest.rsplit_once('@').expect("DATABASE_URL names its user");
+    let (host, _) = host_path
+        .split_once('/')
         .expect("DATABASE_URL names a database path");
-    format!("{prefix}/{name}")
+    format!("{scheme}://{role}:{PAIR_PASSWORD}@{host}/{db}")
+}
+
+/// `db` through the owner login of its role pair (ADR-0034 d2, d8).
+fn owner_url(db: &str) -> String {
+    role_url(db, &format!("{db}_owner"))
+}
+
+/// `db` through the serving login of its role pair (ADR-0034 d2, d8).
+fn serving_url(db: &str) -> String {
+    role_url(db, &format!("{db}_serving"))
+}
+
+/// Eight hex digits of the clock, so a name a crashed earlier run left
+/// behind on the cluster under the same pid and counter is not reused.
+fn run_tag() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .subsec_nanos();
+    format!("{nanos:08x}")
+}
+
+/// Mints `db`'s owner/serving role pair, `LOGIN` and no other attribute,
+/// and creates `db` owned by the owner (ADR-0034 d2, d8); `false`, with
+/// `did not run: <role> cannot create roles` printed, when `DATABASE_URL`'s
+/// role is not the superuser minting takes, as the maintainer's local `oml`
+/// (CREATEDB alone) is not. Under `OML_TEST_REQUIRE_SPLIT=1`, which CI sets,
+/// the same condition fails the test, so no run passes vacuously.
+async fn mint_database(db: &str) -> bool {
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
+    let (role, mints): (String, bool) = sqlx::query_as(
+        "SELECT current_user::text, rolsuper FROM pg_roles WHERE rolname = current_user",
+    )
+    .fetch_one(&mut admin)
+    .await
+    .expect("role attributes");
+    if !mints {
+        assert!(
+            std::env::var("OML_TEST_REQUIRE_SPLIT").as_deref() != Ok("1"),
+            "{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
+        );
+        println!("did not run: {role} cannot create roles");
+        return false;
+    }
+    for role in ["owner", "serving"] {
+        admin
+            .execute(format!("CREATE ROLE {db}_{role} LOGIN PASSWORD '{PAIR_PASSWORD}'").as_str())
+            .await
+            .expect("mint the role pair");
+    }
+    admin
+        .execute(format!("CREATE DATABASE {db} OWNER {db}_owner").as_str())
+        .await
+        .expect("create throwaway database");
+    true
+}
+
+/// A store over `db`'s serving login, migrated through its owner login with
+/// `oml.serving_role` set (ADR-0034 d4, d8).
+async fn serving_store(db: &str) -> PgStore {
+    let store = PgStore::connect(&serving_url(db)).await.expect("connect");
+    store
+        .migrate(&owner_url(db))
+        .await
+        .expect("embedded migrations apply");
+    store
 }
 
 static DB_N: AtomicU64 = AtomicU64::new(0);
@@ -60,27 +137,24 @@ struct Rig {
     db_name: String,
 }
 
-/// A throwaway database with no migration applied; its name.
-async fn fresh_database() -> String {
+/// A throwaway database with no migration applied, owned by the owner of a
+/// role pair minted for it alone; its name, or `None` when this run cannot
+/// mint (ADR-0034 d8).
+async fn fresh_database() -> Option<String> {
     let db_name = format!(
-        "oml_test_http_{}_{}",
+        "oml_test_http_{}_{}_{}",
         std::process::id(),
-        DB_N.fetch_add(1, Ordering::SeqCst)
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
     );
-    let mut admin = PgConnection::connect(&base_url())
-        .await
-        .expect("admin connect");
-    admin
-        .execute(format!("CREATE DATABASE {db_name}").as_str())
-        .await
-        .expect("create throwaway database");
-    db_name
+    mint_database(&db_name).await.then_some(db_name)
 }
 
-async fn fresh_rig() -> Rig {
-    let db_name = fresh_database().await;
-    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
-    store.migrate().await.expect("embedded migrations apply");
+/// The lead's router over a fresh database's serving login, or `None` when
+/// this run cannot mint the role pair (ADR-0034 d8).
+async fn fresh_rig() -> Option<Rig> {
+    let db_name = fresh_database().await?;
+    let store = serving_store(&db_name).await;
     let signing = SigningKey::from_bytes(&OsIds.new_secret());
     let router = lead_state(
         &store,
@@ -90,12 +164,12 @@ async fn fresh_rig() -> Rig {
         Some(ENROLLMENT.to_owned()),
     )
     .into_router();
-    Rig {
+    Some(Rig {
         router,
         store,
         signing,
         db_name,
-    }
+    })
 }
 
 async fn drop_db(name: &str) {
@@ -103,6 +177,11 @@ async fn drop_db(name: &str) {
         let _ = admin
             .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
             .await;
+        for role in ["serving", "owner"] {
+            let _ = admin
+                .execute(format!("DROP ROLE IF EXISTS {name}_{role}").as_str())
+                .await;
+        }
     }
 }
 
@@ -299,7 +378,9 @@ async fn create_workarea(router: &Router, admin: &str, parent: Uuid, name: &str)
 
 #[tokio::test]
 async fn health_readyz_and_fork_refusal() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
 
     let (status, headers, body) = send(&rig.router, "GET", "/healthz", Call::default()).await;
     assert_eq!(status, StatusCode::OK);
@@ -359,9 +440,9 @@ async fn health_readyz_and_fork_refusal() {
 /// A database at the PoC schema (0001–0005) holding one PoC tenant and its
 /// `root` workarea, then migrated by this build, so that both rows predate
 /// names (ADR-0026 d11): (database name, store, the root's id).
-async fn poc_store() -> (String, PgStore, Uuid) {
-    let db_name = fresh_database().await;
-    let mut conn = PgConnection::connect(&db_url(&db_name))
+async fn poc_store() -> Option<(String, PgStore, Uuid)> {
+    let db_name = fresh_database().await?;
+    let mut conn = PgConnection::connect(&owner_url(&db_name))
         .await
         .expect("connect");
     conn.ensure_migrations_table()
@@ -394,12 +475,14 @@ async fn poc_store() -> (String, PgStore, Uuid) {
     .await
     .expect("PoC root");
     tx.commit().await.expect("commit the PoC rows");
-    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(&db_name))
+        .await
+        .expect("connect");
     store
-        .migrate()
+        .migrate(&owner_url(&db_name))
         .await
         .expect("0006 applies over the PoC's rows");
-    (db_name, store, root)
+    Some((db_name, store, root))
 }
 
 /// A lead whose store holds rows that predate names, left unnamed by its
@@ -411,7 +494,9 @@ async fn poc_store() -> (String, PgStore, Uuid) {
 /// before names").
 #[tokio::test]
 async fn a_lead_over_rows_that_predate_names_is_not_ready_and_serves_no_request() {
-    let (db_name, store, root) = poc_store().await;
+    let Some((db_name, store, root)) = poc_store().await else {
+        return;
+    };
     let tenants = enumerate_tenants(store.pool()).await.expect("tenants");
     let failure = startup_names_check(&store, &tenants)
         .await
@@ -487,7 +572,9 @@ async fn a_lead_over_rows_that_predate_names_is_not_ready_and_serves_no_request(
 /// and `/readyz` reports `names_assigned` ok.
 #[tokio::test]
 async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let crew = create_workarea(router, &admin, root, "metals-crew").await;
@@ -510,9 +597,9 @@ async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped(
 async fn poc_chains_store(
     signing: &SigningKey,
     tenants: &[(Uuid, Uuid, &str)],
-) -> (String, PgStore) {
-    let db_name = fresh_database().await;
-    let mut conn = PgConnection::connect(&db_url(&db_name))
+) -> Option<(String, PgStore)> {
+    let db_name = fresh_database().await?;
+    let mut conn = PgConnection::connect(&owner_url(&db_name))
         .await
         .expect("connect");
     conn.ensure_migrations_table()
@@ -634,12 +721,14 @@ async fn poc_chains_store(
         .expect("PoC admin key");
         tx.commit().await.expect("commit the PoC rows");
     }
-    let store = PgStore::connect(&db_url(&db_name)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(&db_name))
+        .await
+        .expect("connect");
     store
-        .migrate()
+        .migrate(&owner_url(&db_name))
         .await
         .expect("0006 applies over the PoC's rows");
-    (db_name, store)
+    Some((db_name, store))
 }
 
 /// How many `system.names_assigned` the tenant's chain journals, and its
@@ -670,7 +759,9 @@ async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_seco
         (Uuid::from_u128(0xA810), Uuid::from_u128(0xB810), "oml"),
         (Uuid::from_u128(0xA811), Uuid::from_u128(0xB811), "acme"),
     ];
-    let (db_name, store) = poc_chains_store(&signing, &tenants).await;
+    let Some((db_name, store)) = poc_chains_store(&signing, &tenants).await else {
+        return;
+    };
     for &(tenant, _, _) in &tenants {
         assert_eq!(
             names_assigned_on(&store, tenant).await,
@@ -734,7 +825,9 @@ async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_seco
 async fn a_start_whose_fork_check_fails_names_nothing_and_serves_no_request() {
     let signing = SigningKey::from_bytes(&OsIds.new_secret());
     let tenants = [(Uuid::from_u128(0xA820), Uuid::from_u128(0xB820), "oml")];
-    let (db_name, store) = poc_chains_store(&signing, &tenants).await;
+    let Some((db_name, store)) = poc_chains_store(&signing, &tenants).await else {
+        return;
+    };
     let foreign = SigningKey::from_bytes(&OsIds.new_secret());
     let started = start_lead(&store, foreign)
         .await
@@ -753,7 +846,9 @@ async fn a_start_whose_fork_check_fails_names_nothing_and_serves_no_request() {
 
 #[tokio::test]
 async fn auth_and_media_refusals() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let id = Uuid::from_u128(1);
 
     let (status, _, body) = send(
@@ -799,7 +894,9 @@ async fn auth_and_media_refusals() {
 
 #[tokio::test]
 async fn full_happy_path_over_http() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
 
     // Wrong token first: the ceremony refuses without consuming.
@@ -1493,7 +1590,9 @@ async fn full_happy_path_over_http() {
 
 #[tokio::test]
 async fn workarea_unresolved_is_422() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
 
@@ -1547,7 +1646,9 @@ async fn workarea_unresolved_is_422() {
 #[tokio::test]
 async fn a_workarea_name_the_creation_grammar_refuses_is_request_validation_and_a_taken_one_is_name_taken()
  {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let head = head_seq(&rig, tenant).await;
@@ -1596,7 +1697,9 @@ async fn a_workarea_name_the_creation_grammar_refuses_is_request_validation_and_
 /// `name.taken`; ADR-0026 d5).
 #[tokio::test]
 async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_consumes_no_token() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let claim = |token: &str| {
         Call::default().body(json!({
@@ -1717,7 +1820,9 @@ async fn create_crew(router: &Router, admin: &str, name: &str) -> Value {
 /// (http-api.md names and ids, idempotency; ADR-0026 d4).
 #[tokio::test]
 async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
@@ -1806,7 +1911,9 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
 /// `details.field`; ADR-0026 d3, d7).
 #[tokio::test]
 async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
@@ -1849,7 +1956,9 @@ async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
 /// journalled (errors.md `details.field`; ADR-0026 d3).
 #[tokio::test]
 async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_its_place() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
@@ -2014,7 +2123,9 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
 /// resemble (http-api.md names and ids; errors.md; ADR-0026 d2).
 #[tokio::test]
 async fn an_uppercase_name_is_refused_never_lowercased() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
@@ -2089,7 +2200,9 @@ async fn an_uppercase_name_is_refused_never_lowercased() {
 /// ADR-0026 d4, d8, d9).
 #[tokio::test]
 async fn get_v2_keys_by_name_answers_the_key() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
@@ -2256,7 +2369,9 @@ async fn revoke_in_the_store(rig: &Rig, tenant: Uuid, revoker: &Value, key_id: U
 /// d4, d10).
 #[tokio::test]
 async fn get_v2_keys_by_name_answers_a_revoked_key_with_its_revoked_at() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let issued = issue_key_with(
@@ -2309,7 +2424,9 @@ async fn get_v2_keys_by_name_answers_a_revoked_key_with_its_revoked_at() {
 /// (http-api.md crews; errors.md `name.taken`; ADR-0026 d1, d5, d8).
 #[tokio::test]
 async fn post_v2_crews_twice_with_one_name_answers_409_name_taken() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, _crew_workarea) = crew_tenant(router).await;
     let (status, _, created) = send(
@@ -2366,7 +2483,9 @@ async fn post_v2_crews_twice_with_one_name_answers_409_name_taken() {
 /// reaches any of them (http-api.md crews; ADR-0026 d8).
 #[tokio::test]
 async fn the_crew_routes_read_update_and_list_crew_records_by_id_or_name_for_admin_keys_only() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let agent = agent_on(router, &admin, "crew/agent-7", crew).await;
@@ -2495,7 +2614,9 @@ async fn the_crew_routes_read_update_and_list_crew_records_by_id_or_name_for_adm
 /// d8).
 #[tokio::test]
 async fn post_v2_workareas_crew_points_a_workarea_at_a_crew_record_by_name() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
@@ -2562,7 +2683,9 @@ async fn post_v2_workareas_crew_points_a_workarea_at_a_crew_record_by_name() {
 /// permission matrix, footnote 6; http-api.md workareas; ADR-0026 d15).
 #[tokio::test]
 async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_empty() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let metals = create_workarea(router, &admin, root, "metals-crew").await;
@@ -2640,7 +2763,9 @@ async fn head_seq(rig: &Rig, tenant: Uuid) -> u64 {
 
 #[tokio::test]
 async fn the_issuance_response_echoes_stored_grant_ids_and_epochs() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
 
@@ -2700,7 +2825,9 @@ async fn the_issuance_response_echoes_stored_grant_ids_and_epochs() {
 
 #[tokio::test]
 async fn a_deny_mask_on_issuance_is_stored_never_dropped() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let sealed = create_workarea(router, &admin, crew, "sealed").await;
@@ -2758,7 +2885,9 @@ async fn a_deny_mask_on_issuance_is_stored_never_dropped() {
 
 #[tokio::test]
 async fn an_unknown_issuance_field_is_request_validation() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let head = head_seq(&rig, tenant).await;
@@ -2796,7 +2925,9 @@ async fn an_unknown_issuance_field_is_request_validation() {
 /// `name.taken` (roles-and-keys.md issuance order; ADR-0026 d5, d9).
 #[tokio::test]
 async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_journals_nothing() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let head = head_seq(&rig, tenant).await;
@@ -2871,7 +3002,9 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
 
 #[tokio::test]
 async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let head = head_seq(&rig, tenant).await;
@@ -2902,7 +3035,9 @@ async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
 
 #[tokio::test]
 async fn access_refusals_carry_their_recovery_details() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let quotes = create_workarea(router, &admin, crew, "quotes").await;
@@ -3000,7 +3135,9 @@ async fn access_refusals_carry_their_recovery_details() {
 
 #[tokio::test]
 async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subtree_away() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let issued = issue_key_with(
@@ -3121,8 +3258,8 @@ async fn tail_key(
     TailKey { value, key_id }
 }
 
-async fn tail_rig() -> TailRig {
-    let rig = fresh_rig().await;
+async fn tail_rig() -> Option<TailRig> {
+    let rig = fresh_rig().await?;
     let router = &rig.router;
     let (admin, tenant, root) = bootstrap(router).await;
     let crew = create_workarea(router, &admin, root, "metals-crew").await;
@@ -3170,7 +3307,7 @@ async fn tail_rig() -> TailRig {
         on_crew(&["reader"]),
     )
     .await;
-    TailRig {
+    Some(TailRig {
         rig,
         admin,
         tenant,
@@ -3180,7 +3317,7 @@ async fn tail_rig() -> TailRig {
         twin,
         dreamer,
         reader,
-    }
+    })
 }
 
 /// Every item of `key`'s events tail from the beginning, at `scope` when one
@@ -3245,7 +3382,9 @@ fn shared_events(events: &[Value]) -> Vec<Value> {
 
 #[tokio::test]
 async fn the_tail_never_shows_another_keys_submission() {
-    let t = tail_rig().await;
+    let Some(t) = tail_rig().await else {
+        return;
+    };
     let router = &t.rig.router;
     let mine = remember(
         router,
@@ -3286,7 +3425,9 @@ async fn the_tail_never_shows_another_keys_submission() {
 
 #[tokio::test]
 async fn an_author_sees_its_own_submission_in_the_tail() {
-    let t = tail_rig().await;
+    let Some(t) = tail_rig().await else {
+        return;
+    };
     let router = &t.rig.router;
     let text = "Accra Metals quoted 412 USD/t for Q1-2027 delivery.";
     let mine = remember(router, &t.agent.value, "am-7741", text, None).await;
@@ -3313,7 +3454,9 @@ async fn an_author_sees_its_own_submission_in_the_tail() {
 
 #[tokio::test]
 async fn lifecycle_promote_is_visible_to_readers_of_the_workarea() {
-    let t = tail_rig().await;
+    let Some(t) = tail_rig().await else {
+        return;
+    };
     let router = &t.rig.router;
     let ledger = create_workarea(router, &t.admin, t.root, "ledger").await;
     let outsider = tail_key(
@@ -3364,7 +3507,9 @@ async fn lifecycle_promote_is_visible_to_readers_of_the_workarea() {
 
 #[tokio::test]
 async fn the_tail_never_shows_review_or_key_administration_events() {
-    let t = tail_rig().await;
+    let Some(t) = tail_rig().await else {
+        return;
+    };
     let router = &t.rig.router;
     remember(
         router,
@@ -3436,7 +3581,9 @@ async fn the_tail_never_shows_review_or_key_administration_events() {
 
 #[tokio::test]
 async fn two_keys_with_equal_access_tail_the_same_events_in_the_same_order() {
-    let t = tail_rig().await;
+    let Some(t) = tail_rig().await else {
+        return;
+    };
     let router = &t.rig.router;
     let first = remember(
         router,
@@ -3491,7 +3638,9 @@ async fn two_keys_with_equal_access_tail_the_same_events_in_the_same_order() {
 
 #[tokio::test]
 async fn a_filtered_page_advances_next_after_seq() {
-    let t = tail_rig().await;
+    let Some(t) = tail_rig().await else {
+        return;
+    };
     let router = &t.rig.router;
     let start = head_seq(&t.rig, t.tenant).await;
     // Six events no tail shows: three keys, a key.issued and a
@@ -3540,7 +3689,9 @@ async fn a_filtered_page_advances_next_after_seq() {
 
 #[tokio::test]
 async fn an_after_seq_beyond_head_is_request_validation() {
-    let t = tail_rig().await;
+    let Some(t) = tail_rig().await else {
+        return;
+    };
     let router = &t.rig.router;
     let head = head_seq(&t.rig, t.tenant).await;
     let (status, _, body) = send(
@@ -3567,7 +3718,9 @@ async fn an_after_seq_beyond_head_is_request_validation() {
 
 #[tokio::test]
 async fn a_tail_scope_outside_read_access_is_not_found() {
-    let t = tail_rig().await;
+    let Some(t) = tail_rig().await else {
+        return;
+    };
     let router = &t.rig.router;
     let quotes = create_workarea(router, &t.admin, t.crew, "quotes").await;
     let ledger = create_workarea(router, &t.admin, t.root, "ledger").await;
@@ -3738,18 +3891,20 @@ fn hit_ids(recall: &Value) -> Vec<Value> {
 
 /// A crew, its child `quotes`, and a writer and a dreamer on the crew:
 /// (rig, admin, crew, quotes, writer, dreamer).
-async fn steering_rig() -> (Rig, String, Uuid, Uuid, String, String) {
-    let rig = fresh_rig().await;
+async fn steering_rig() -> Option<(Rig, String, Uuid, Uuid, String, String)> {
+    let rig = fresh_rig().await?;
     let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
     let quotes = create_workarea(&rig.router, &admin, crew, "quotes").await;
     let writer = issue_key(&rig.router, &admin, "writer", "crew/agent-7", crew).await;
     let dreamer = issue_key(&rig.router, &admin, "dreamer", "crew/reviewer-3", crew).await;
-    (rig, admin, crew, quotes, writer, dreamer)
+    Some((rig, admin, crew, quotes, writer, dreamer))
 }
 
 #[tokio::test]
 async fn a_promoted_steering_row_precedes_hits_unranked() {
-    let (rig, admin, crew, _quotes, writer, dreamer) = steering_rig().await;
+    let Some((rig, admin, crew, _quotes, writer, dreamer)) = steering_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
     let promote = |row| promote_over_http(router, &writer, &dreamer, crew, row);
@@ -3824,7 +3979,9 @@ async fn a_promoted_steering_row_precedes_hits_unranked() {
 
 #[tokio::test]
 async fn ancestor_steering_applies_to_a_child_scope() {
-    let (rig, admin, crew, quotes, writer, dreamer) = steering_rig().await;
+    let Some((rig, admin, crew, quotes, writer, dreamer)) = steering_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
 
@@ -3858,7 +4015,9 @@ async fn ancestor_steering_applies_to_a_child_scope() {
 
 #[tokio::test]
 async fn child_steering_does_not_apply_to_the_parent() {
-    let (rig, admin, crew, quotes, writer, dreamer) = steering_rig().await;
+    let Some((rig, admin, crew, quotes, writer, dreamer)) = steering_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
     promote_over_http(
@@ -3900,7 +4059,9 @@ async fn child_steering_does_not_apply_to_the_parent() {
 
 #[tokio::test]
 async fn steering_on_an_unreadable_ancestor_is_not_served() {
-    let (rig, admin, crew, quotes, writer, dreamer) = steering_rig().await;
+    let Some((rig, admin, crew, quotes, writer, dreamer)) = steering_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let standing = promote_over_http(
         router,
@@ -3929,7 +4090,9 @@ async fn steering_on_an_unreadable_ancestor_is_not_served() {
 
 #[tokio::test]
 async fn kinds_filters_hits_only() {
-    let (rig, admin, crew, _quotes, writer, dreamer) = steering_rig().await;
+    let Some((rig, admin, crew, _quotes, writer, dreamer)) = steering_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
     let promote = |row| promote_over_http(router, &writer, &dreamer, crew, row);
@@ -3992,7 +4155,9 @@ async fn kinds_filters_hits_only() {
 
 #[tokio::test]
 async fn an_unknown_recall_field_is_request_validation() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
@@ -4016,7 +4181,9 @@ async fn an_unknown_recall_field_is_request_validation() {
 
 #[tokio::test]
 async fn terms_on_recall_is_refused_by_name_until_built() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
@@ -4057,11 +4224,11 @@ fn tokens(text: &str) -> u64 {
 
 /// A crew and its supersession keys: (rig, admin, crew, agent, dreamer,
 /// reader), the agent a writer key holding writer and reader.
-async fn own_held_rig() -> (Rig, String, Uuid, String, String, String) {
-    let rig = fresh_rig().await;
+async fn own_held_rig() -> Option<(Rig, String, Uuid, String, String, String)> {
+    let rig = fresh_rig().await?;
     let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
     let (agent, dreamer, reader) = supersession_keys(&rig.router, &admin, crew).await;
-    (rig, admin, crew, agent, dreamer, reader)
+    Some((rig, admin, crew, agent, dreamer, reader))
 }
 
 /// One recall over HTTP at the key's default scope, answered 200.
@@ -4083,7 +4250,9 @@ fn hit_states(recall: &Value) -> Vec<(Value, Value)> {
 
 #[tokio::test]
 async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
-    let (rig, admin, crew, agent, _dreamer, reader) = own_held_rig().await;
+    let Some((rig, admin, crew, agent, _dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let row = remember(
         router,
@@ -4127,7 +4296,9 @@ async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
 
 #[tokio::test]
 async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
-    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let Some((rig, _admin, _crew, agent, dreamer, _reader)) = own_held_rig().await else {
+        return;
+    };
     let router = &rig.router;
     // ts_rank grows with the occurrences of the one query term.
     let best = promoted_over_http(router, &agent, &dreamer, "p1", "canary canary canary").await;
@@ -4166,7 +4337,9 @@ async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
 
 #[tokio::test]
 async fn own_held_rows_count_against_k_and_the_budget() {
-    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let Some((rig, _admin, _crew, agent, dreamer, _reader)) = own_held_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (two_text, held_text) = ("canary canary", "canary canary canary");
     let two = promoted_over_http(router, &agent, &dreamer, "p1", two_text).await;
@@ -4208,7 +4381,9 @@ async fn own_held_rows_count_against_k_and_the_budget() {
 
 #[tokio::test]
 async fn own_held_steering_and_retirement_rows_never_enter_recall() {
-    let (rig, _admin, _crew, agent, dreamer, _reader) = own_held_rig().await;
+    let Some((rig, _admin, _crew, agent, dreamer, _reader)) = own_held_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let target = promoted_over_http(router, &agent, &dreamer, "claim", "the canary claim").await;
     let (status, _, steering) = send(
@@ -4262,7 +4437,9 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
 
 #[tokio::test]
 async fn include_own_held_never_widens_the_workareas_served() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let quotes = create_workarea(router, &admin, crew, "quotes").await;
@@ -4322,7 +4499,9 @@ async fn include_own_held_never_widens_the_workareas_served() {
 
 #[tokio::test]
 async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
-    let (rig, _admin, _crew, agent, dreamer, reader) = own_held_rig().await;
+    let Some((rig, _admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let target = promoted_over_http(
         router,
@@ -4381,8 +4560,8 @@ async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
 /// rank by their `canary` count, 3, 2 and 1, the second the largest body:
 /// (rig, reader, steering id, hit ids in rank order, steering tokens, hit
 /// tokens in rank order).
-async fn budget_rig() -> (Rig, String, Value, Vec<Value>, u64, Vec<u64>) {
-    let (rig, _admin, crew, agent, dreamer, reader) = own_held_rig().await;
+async fn budget_rig() -> Option<(Rig, String, Value, Vec<Value>, u64, Vec<u64>)> {
+    let (rig, _admin, crew, agent, dreamer, reader) = own_held_rig().await?;
     let steering_text = "Quote every price in USD/t.";
     let texts = [
         "canary canary canary",
@@ -4412,12 +4591,14 @@ async fn budget_rig() -> (Rig, String, Value, Vec<Value>, u64, Vec<u64>) {
         );
     }
     let counts = texts.iter().map(|t| tokens(t)).collect();
-    (rig, reader, steering, hits, tokens(steering_text), counts)
+    Some((rig, reader, steering, hits, tokens(steering_text), counts))
 }
 
 #[tokio::test]
 async fn max_tokens_keeps_the_longest_rank_prefix_and_reports_the_budget() {
-    let (rig, reader, steering, hits, s, t) = budget_rig().await;
+    let Some((rig, reader, steering, hits, s, t)) = budget_rig().await else {
+        return;
+    };
     let router = &rig.router;
     assert!(t[1] > t[2], "the third hit fits where the second does not");
 
@@ -4468,7 +4649,9 @@ async fn max_tokens_keeps_the_longest_rank_prefix_and_reports_the_budget() {
 
 #[tokio::test]
 async fn steering_past_the_budget_is_served_whole_with_no_hits_and_truncated() {
-    let (rig, reader, steering, _hits, s, t) = budget_rig().await;
+    let Some((rig, reader, steering, _hits, s, t)) = budget_rig().await else {
+        return;
+    };
     let recall = recall_ok(
         &rig.router,
         &reader,
@@ -4499,7 +4682,9 @@ async fn steering_past_the_budget_is_served_whole_with_no_hits_and_truncated() {
 
 #[tokio::test]
 async fn every_steering_item_and_hit_carries_its_tokens() {
-    let (rig, _admin, crew, agent, dreamer, _reader) = own_held_rig().await;
+    let Some((rig, _admin, crew, agent, dreamer, _reader)) = own_held_rig().await else {
+        return;
+    };
     let router = &rig.router;
     // Each text is sent decomposed; its count is its NFC text's, which here
     // is one budget token fewer (retrieval.md token budgets; ADR-0025 d6).
@@ -4566,7 +4751,9 @@ async fn every_steering_item_and_hit_carries_its_tokens() {
 
 #[tokio::test]
 async fn the_same_budgeted_recall_answers_identically_twice() {
-    let (rig, reader, _steering, hits, s, t) = budget_rig().await;
+    let Some((rig, reader, _steering, hits, s, t)) = budget_rig().await else {
+        return;
+    };
     let body = json!({"query": "canary", "max_tokens": s + t[0] + t[2]});
     let first = recall_ok(&rig.router, &reader, body.clone()).await;
     let second = recall_ok(&rig.router, &reader, body).await;
@@ -4579,7 +4766,9 @@ async fn the_same_budgeted_recall_answers_identically_twice() {
 
 #[tokio::test]
 async fn a_recall_without_max_tokens_carries_no_budget_object() {
-    let (rig, reader, _steering, hits, _s, _t) = budget_rig().await;
+    let Some((rig, reader, _steering, hits, _s, _t)) = budget_rig().await else {
+        return;
+    };
     let recall = recall_ok(&rig.router, &reader, json!({"query": "canary"})).await;
     assert!(recall.get("budget").is_none(), "{recall}");
     assert_eq!(hit_ids(&recall), hits, "nothing is cut: {recall}");
@@ -4596,7 +4785,9 @@ async fn a_recall_without_max_tokens_carries_no_budget_object() {
 
 #[tokio::test]
 async fn max_tokens_with_include_bodies_false_is_request_validation() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
@@ -4628,7 +4819,9 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
 
 #[tokio::test]
 async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
@@ -4681,7 +4874,9 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
 
 #[tokio::test]
 async fn responses_carry_real_version_kind_tokens_and_workarea_path() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let quotes = create_workarea(router, &admin, crew, "quotes").await;
@@ -4845,7 +5040,9 @@ async fn responses_carry_real_version_kind_tokens_and_workarea_path() {
 
 #[tokio::test]
 async fn the_body_limit_counts_the_nfc_text() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
@@ -4878,7 +5075,9 @@ async fn the_body_limit_counts_the_nfc_text() {
 /// router composes.
 #[tokio::test]
 async fn crew_given_at_create_is_persisted_and_returned() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let (status, _, crew_record) = send(
@@ -4998,7 +5197,9 @@ async fn crew_given_at_create_is_persisted_and_returned() {
 /// workareas; ADR-0026 d8).
 #[tokio::test]
 async fn a_workarea_created_without_crew_answers_crew_null() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
 
@@ -5071,7 +5272,9 @@ fn tree_paths(page: &Value) -> Vec<&str> {
 /// pagination; ADR-0026 d4, d8, d15).
 #[tokio::test]
 async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_page_by_page() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let (status, _, crew) = send(
@@ -5221,7 +5424,9 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
 /// workareas; roles-and-keys.md refusal order; ADR-0026 d15).
 #[tokio::test]
 async fn get_v2_workareas_tree_under_a_reader_key_omits_the_nodes_outside_its_read_access() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, _root) = bootstrap(router).await;
     let metals = create_named_workarea(router, &admin, "universe", "metals", None).await;
@@ -5287,7 +5492,9 @@ async fn get_v2_workareas_tree_under_a_reader_key_omits_the_nodes_outside_its_re
 /// d4).
 #[tokio::test]
 async fn a_workarea_on_review_next_is_refused_by_name_until_the_filter_is_built() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
@@ -5330,7 +5537,9 @@ async fn a_workarea_on_review_next_is_refused_by_name_until_the_filter_is_built(
 
 #[tokio::test]
 async fn an_unreadable_workarea_is_not_found() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
@@ -5479,7 +5688,9 @@ async fn key_with(
 
 #[tokio::test]
 async fn own_true_lists_every_state_of_the_keys_own_rows_newest_first() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     // A writer-only key: the own-work listing needs no reader grant.
@@ -5553,7 +5764,9 @@ async fn own_true_lists_every_state_of_the_keys_own_rows_newest_first() {
 
 #[tokio::test]
 async fn the_own_listing_covers_every_workarea_the_key_wrote_to() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let crew = create_workarea(router, &admin, root, "metals-crew").await;
@@ -5623,7 +5836,9 @@ async fn the_own_listing_covers_every_workarea_the_key_wrote_to() {
 
 #[tokio::test]
 async fn the_own_listing_never_shows_another_keys_row() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     // Two keys of one principal: principal equality never makes a row own.
@@ -5671,7 +5886,9 @@ async fn the_own_listing_never_shows_another_keys_row() {
 
 #[tokio::test]
 async fn a_global_denial_masks_own_rows_in_the_listing() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let crew = create_workarea(router, &admin, root, "metals-crew").await;
@@ -5734,7 +5951,9 @@ async fn a_global_denial_masks_own_rows_in_the_listing() {
 
 #[tokio::test]
 async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let crew = create_workarea(router, &admin, root, "metals-crew").await;
@@ -5890,7 +6109,9 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
 
 #[tokio::test]
 async fn a_cursor_from_another_key_or_expired_is_request_validation() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let grants = json!([{ "workarea_node_id": crew, "role": "writer" }]);
@@ -5976,14 +6197,17 @@ async fn a_cursor_from_another_key_or_expired_is_request_validation() {
 }
 
 /// A provider-level operator key (tenant_id NULL), returned by value. No
-/// admin issues one, so the fixture writes the row as the table's owner
-/// would, with row-level security off for that one insert.
+/// admin issues one, so the fixture writes the row through the table
+/// owner's login, with row-level security off for that one insert
+/// (ADR-0034 d8: only the owner alters a table).
 async fn provider_operator_key(rig: &Rig) -> String {
     let operator = format!("oml_{}", "0".repeat(42) + "1");
     let hash = sha256_digest_string(operator.as_bytes());
-    let mut conn = rig.store.pool().acquire().await.expect("connection");
+    let mut conn = PgConnection::connect(&owner_url(&rig.db_name))
+        .await
+        .expect("owner connection");
     sqlx::query("ALTER TABLE api_keys NO FORCE ROW LEVEL SECURITY")
-        .execute(&mut *conn)
+        .execute(&mut conn)
         .await
         .expect("lift force");
     sqlx::query(
@@ -5991,11 +6215,11 @@ async fn provider_operator_key(rig: &Rig) -> String {
          VALUES (NULL, decode($1, 'hex'), 'operator', 'provider/operator-1', 'human', 0)",
     )
     .bind(hash.trim_start_matches("sha256:"))
-    .execute(&mut *conn)
+    .execute(&mut conn)
     .await
     .expect("provider-level operator key");
     sqlx::query("ALTER TABLE api_keys FORCE ROW LEVEL SECURITY")
-        .execute(&mut *conn)
+        .execute(&mut conn)
         .await
         .expect("restore force");
     drop(conn);
@@ -6004,7 +6228,9 @@ async fn provider_operator_key(rig: &Rig) -> String {
 
 #[tokio::test]
 async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     bootstrap(router).await;
     let operator = provider_operator_key(&rig).await;
@@ -6022,7 +6248,9 @@ async fn an_operator_key_is_refused_own_work_with_verb_ceiling() {
 
 #[tokio::test]
 async fn an_operator_key_is_refused_get_with_verb_ceiling() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
@@ -6057,7 +6285,9 @@ async fn an_operator_key_is_refused_get_with_verb_ceiling() {
 
 #[tokio::test]
 async fn a_get_with_x_oml_workarea_is_request_validation() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
@@ -6094,7 +6324,9 @@ async fn a_get_with_x_oml_workarea_is_request_validation() {
 
 #[tokio::test]
 async fn claim_key_filter_lists_one_claims_versions() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let writer = issue_key_with(
@@ -6275,7 +6507,9 @@ async fn recalled(router: &Router, key: &str, query: &str) -> Vec<String> {
 
 #[tokio::test]
 async fn the_review_serve_of_a_supersession_carries_the_replaced_version() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     let (writer, dreamer, _reader) = supersession_keys(router, &admin, crew).await;
@@ -6336,7 +6570,9 @@ async fn the_review_serve_of_a_supersession_carries_the_replaced_version() {
 
 #[tokio::test]
 async fn a_ratified_retirement_over_http_leaves_recall_and_journals_lifecycle_supersede() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let (writer, dreamer, reader) = supersession_keys(router, &admin, crew).await;
@@ -6400,7 +6636,9 @@ async fn a_ratified_retirement_over_http_leaves_recall_and_journals_lifecycle_su
 
 #[tokio::test]
 async fn an_approval_whose_target_lost_the_tip_is_tip_conflict_and_journals_nothing() {
-    let rig = fresh_rig().await;
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let (writer, dreamer, _reader) = supersession_keys(router, &admin, crew).await;

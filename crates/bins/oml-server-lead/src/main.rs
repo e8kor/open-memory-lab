@@ -40,8 +40,10 @@ async fn run() -> Result<(), String> {
     let store = PgStore::connect(&config.postgres_url)
         .await
         .map_err(|e| format!("postgres connect: {e}"))?;
+    // ADR-0034 d10 step 2 lands d4's postgres.owner_url; until then the one
+    // URL migrates as its own owner and 0007 grants that same login.
     store
-        .migrate()
+        .migrate(&config.postgres_url)
         .await
         .map_err(|e| format!("migrate on boot: {e}"))?;
     tracing::info!("migrations applied");
