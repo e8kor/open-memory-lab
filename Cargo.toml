@@ -64,6 +64,17 @@ unicode-normalization = "0.1"
 # serde feature: idempotency-stored responses serialize ids (oml-app); the
 # domain stays deterministic — no v4 feature (workspace-plan.md).
 uuid = { version = "1.18", features = ["serde"] }
+# The CLI's owner-only files on Windows (oml-cli src/owner_only.rs): std sets
+# no DACL, so the Win32 security calls come from Microsoft's bindings, the
+# version already in the graph through tokio, mio and clap's anstyle-query.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 
 [workspace.lints.rust]
 warnings = "deny"

@@ -57,7 +57,7 @@ pub struct KeyFile {
 }
 
 impl KeyFile {
-    /// Creates `path` with mode 0600, refusing a path that exists, is not
+    /// Creates `path` owner-only ([`crate::owner_only`]), refusing a path that exists, is not
     /// UTF-8, or holds a quote or a newline (the printed line reads the file
     /// back inside single quotes, so either would make it unsafe to run).
     ///
@@ -85,11 +85,7 @@ impl KeyFile {
         }
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
+        crate::owner_only::open_options(&mut options);
         let file = options.open(&path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 format!(
@@ -101,22 +97,16 @@ impl KeyFile {
             }
         })?;
         let key_file = Self { path, shown, file };
-        // The umask can only narrow the creation mode; set it exactly.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            if let Err(e) = key_file
-                .file
-                .set_permissions(std::fs::Permissions::from_mode(0o600))
-            {
-                let shown = key_file.shown.clone();
-                // The refusal is the chmod failure; a leftover empty file
-                // would only be reported, never retried.
-                let _ = key_file.discard();
-                return Err(format!(
-                    "cannot make {shown} owner-only: {e}; nothing was sent"
-                ));
-            }
+        // The umask can only narrow the creation mode, and on Windows the
+        // file was created with the DACL it inherited: set it exactly.
+        if let Err(e) = crate::owner_only::restrict(&key_file.file) {
+            let shown = key_file.shown.clone();
+            // The refusal is the restriction's failure; a leftover empty
+            // file would only be reported, never retried.
+            let _ = key_file.discard();
+            return Err(format!(
+                "cannot make {shown} owner-only: {e}; nothing was sent"
+            ));
         }
         Ok(key_file)
     }
@@ -156,5 +146,77 @@ impl KeyFile {
         drop(self.file);
         std::fs::remove_file(&self.path)
             .map_err(|e| format!("the empty key file {} was not removed: {e}", self.shown))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::KeyFile;
+
+    /// An empty directory of this test's own, under the OS temp directory.
+    fn scratch(test: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("oml-cli-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        dir
+    }
+
+    #[test]
+    fn a_key_file_is_owner_only_before_its_value_is_written() {
+        let dir = scratch("key-file-owner-only");
+        let path = dir.join("crew-agent-7");
+        let key_file = KeyFile::create(&path).expect("created");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&path)
+                .expect("exists")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "owner-only while still empty");
+        }
+        #[cfg(windows)]
+        assert_eq!(
+            crate::owner_only::dacl_of(&path).expect("its DACL reads back"),
+            crate::owner_only::Dacl::owner_only(),
+            "one protected entry, the current user's, while still empty"
+        );
+        key_file.write_value("oml_value").expect("written");
+        let text = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(text, "oml_value\n");
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
+    #[test]
+    fn a_key_file_never_overwrites_a_file_that_exists() {
+        let dir = scratch("key-file-exists");
+        let path = dir.join("taken");
+        std::fs::write(&path, "kept\n").expect("an existing file");
+        let refusal = KeyFile::create(&path).expect_err("refused");
+        assert!(refusal.contains("already exists"), "{refusal}");
+        let text = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(text, "kept\n", "the existing file is untouched");
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn no_other_open_of_a_key_file_succeeds_while_the_cli_holds_it() {
+        let dir = scratch("key-file-unshared");
+        let path = dir.join("crew-agent-7");
+        let key_file = KeyFile::create(&path).expect("created");
+        let refused = std::fs::File::open(&path).expect_err("a second open is refused");
+        assert_eq!(
+            refused.raw_os_error(),
+            Some(
+                i32::try_from(windows_sys::Win32::Foundation::ERROR_SHARING_VIOLATION)
+                    .expect("fits")
+            ),
+            "{refused}"
+        );
+        key_file.discard().expect("discarded");
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
     }
 }
