@@ -173,9 +173,12 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
   the rule that refused the call. The taxonomy — spellings, retryability,
   HTTP status mapping including the 429 quota family — is declared in
   [errors.md](errors.md); the examples below use its codes, and a retryable
-  refusal carries a `Retry-After` header in seconds. A field sent under a
-  spelling v0.4.0 renamed is `request.validation` with `details.field` and
-  `details.renamed_to`; no code is added for it. One shared example, the
+  refusal carries a `Retry-After` header in seconds. Designed, with
+  [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7's renames
+  and not yet served: a field sent under a spelling v0.4.0 renamed is
+  `request.validation` with `details.field` and `details.renamed_to`; no
+  code is added for it. Until then the v0.3.0 argument names are the served
+  ones. One shared example, the
   per-replica-approximated quota limit (D6, [FR-8](../product/roadmap.md)),
   as the `result` of a `tools/call`:
 

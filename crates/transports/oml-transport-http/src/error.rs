@@ -81,8 +81,11 @@ impl ApiError {
 
     /// A field or header v0.4.0 renamed: `request.validation` naming the
     /// spelling sent in `details.field` and the one to send in
-    /// `details.renamed_to`; no code is added for it (errors.md
-    /// `request.validation`; ADR-0039 d11).
+    /// `details.renamed_to`, a body field as its JSON pointer
+    /// (`/include_own_held`) and a header by its name, the convention of
+    /// every other `details.field`; no code is added for it (errors.md
+    /// `request.validation`; ADR-0039 d11). Designed: no route calls it
+    /// until ADR-0039 d7's renames are built.
     pub fn renamed(field: &str, renamed_to: &str) -> Self {
         Self::validation(format!(
             "{field} is renamed {renamed_to}: send {renamed_to}"
@@ -451,18 +454,18 @@ mod tests {
     use super::*;
 
     /// A field or header v0.4.0 renamed is refused with the code every other
-    /// malformed request gets, naming the spelling to send instead; no code
-    /// is added for it (ADR-0039 d11).
+    /// malformed request gets, naming a body field by its JSON pointer and
+    /// the spelling to send instead; no code is added for it (ADR-0039 d11).
     #[test]
     fn a_renamed_field_refusal_is_request_validation_naming_the_new_spelling() {
-        let refusal = ApiError::renamed("include_own_held", "include_unreviewed");
+        let refusal = ApiError::renamed("/include_own_held", "/include_unreviewed");
         assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
         assert_eq!(refusal.code, "request.validation");
         assert_eq!(refusal.rule, ApiError::validation("").rule);
         assert!(!refusal.retryable);
         assert_eq!(
             refusal.details,
-            Some(json!({ "field": "include_own_held", "renamed_to": "include_unreviewed" }))
+            Some(json!({ "field": "/include_own_held", "renamed_to": "/include_unreviewed" }))
         );
         assert!(
             refusal.message.contains("include_unreviewed"),
@@ -471,7 +474,7 @@ mod tests {
         );
         assert_eq!(
             refusal.error_object()["details"]["renamed_to"],
-            "include_unreviewed"
+            "/include_unreviewed"
         );
     }
 }

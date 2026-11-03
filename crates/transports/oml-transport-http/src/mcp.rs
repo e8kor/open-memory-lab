@@ -770,7 +770,7 @@ mod tests {
     #[test]
     fn a_refused_tool_result_is_the_envelope_as_structured_content_and_text() {
         let refused = tool_result(
-            Err(refusal(ApiError::renamed("scope", "workarea"))),
+            Err(refusal(ApiError::renamed("/scope", "/workarea"))),
             "req_1",
         );
         assert_eq!(refused["isError"], true);
@@ -778,7 +778,7 @@ mod tests {
         assert_eq!(
             envelope,
             &json!({
-                "error": ApiError::renamed("scope", "workarea").error_object(),
+                "error": ApiError::renamed("/scope", "/workarea").error_object(),
                 "request_id": "req_1",
             })
         );
