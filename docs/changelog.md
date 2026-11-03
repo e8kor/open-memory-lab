@@ -31,7 +31,8 @@ implementation milestone where it changes what the repository holds.
 
 Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
 records. `info.version` stays `0.3.0-design` until that record's build step 1 moves it to
-`0.4.0-design`; entries land here as the build does.
+`0.4.0-design`; entries land here as the build does. ADR-0031's own move to `0.4.0-design` is
+the same bump, so it lands in this section rather than a second one.
 
 ### 2026-11-03 — The API rewrite and the plugin setup retargeted to v0.4.0 (ADR-0039, ADR-0040, proposed)
 

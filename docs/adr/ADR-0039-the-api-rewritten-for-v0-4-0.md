@@ -280,7 +280,9 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
       else, to the owner-only credentials file. It replaces the designed `oml context add`, `oml
       doctor` replaces `oml context show`, and a second server is a second file through
       `OML_CLI_CREDENTIALS`. `bootstrap claim` writes the same two fields; a v0.3.0 file's
-      `server` and `key` are read through v0.4.x and its other fields ignored.
+      `server` and `key` are read through v0.4.x and its other fields ignored. **That window
+      follows d12's reading, which the maintainer has not decided**; under the other reading
+      v0.4.0 reads only `url` and `api_key`.
     - **`GET /v2/whoami` derives the rest**, since no served read does: `getKey` is admin-only and
       needs the key's own reference, and `getWorkarea` names no tenant, role or key. Any live key
       calls it for itself and gets `{key_id, name, role, principal, held_by, tenant,
@@ -302,8 +304,11 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
   (18,893 characters for today's twelve catalog entries; the build records the new figure).
 - **Rebases owed.** The proposed ADR-0027, ADR-0030, ADR-0031, ADR-0035, ADR-0036, ADR-0037 and
   ADR-0038 rebase onto d2, d7 and d9: ADR-0030 uses `include_unreviewed` (d4) rather than its own
-  flag, ADR-0035 names files through the upload verbs, and ADR-0030 and ADR-0031 move
-  `info.version` from `0.4.0-design`.
+  flag, and ADR-0035 names files through the upload verbs. ADR-0031, which lands in v0.4.0, bumps
+  `info.version` from `0.3.0-design` to `0.4.0-design` in its d15; that is the same bump as d14's
+  step 1, made once, under one `0.4.0-design` changelog section. ADR-0030, which is not in v0.4.0,
+  moves `info.version` from `0.4.0-design` to the next version its own record decides
+  (`0.5.0-design` unless it says otherwise).
 - **The serve binding is not fixed here.** `serve_id` is built from the memory's id
   (`lib.rs:669-673`) and binds the reviewer only through the claimed queue row, on which d10's
   default rests, not a serve record ([review](../api/http-api.md#review)); that is FR-66.
@@ -328,7 +333,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 | **`serve_id` required on approve** (the first draft's d10) | The reviewer copies what `review next` printed though it holds one item (call map D5). |
 | **Make `idempotency_key` optional** | Two deliberate identical writes would collapse into one. |
 | **Derive `claim_key` from the text alone** | An exact-text oracle through `submission.claim_key_conflict` (d6). |
-| **Aliases past v0.4.x, or on HTTP and the SDKs** | Each aliased release is a second surface to test; HTTP callers ship with the server or install from a checkout. |
+| **Aliases past v0.3.x, or on HTTP and the SDKs** (as the maintainer confirmed it while the rewrite was a patch release; d12 reads the bound as v0.4.x, a reading the maintainer has not decided) | Each aliased release is a second surface to test; HTTP callers ship with the server or install from a checkout. |
 | **`bootstrap claim --token <secret>`, as built** | The secret enters argv and shell history. |
 | **Keep `OML_CLI_SERVER` and `OML_CLI_KEY` beside the plugin's pair** (call map K7) | Two names for one pair. An admin key still never feeds an agent's context: the hook never reads the credentials file (ADR-0040 d3), and an admin key recalls no claim content ([roles and keys](../architecture/roles-and-keys.md)). |
 | **Resolve the URL and the key independently across sources** | A flag's URL could be paired with an exported key meant for another server. |
