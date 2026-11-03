@@ -19,7 +19,9 @@
 //! role that is not one prints `did not run: <role> cannot create roles` and
 //! the law returns, except under `OML_TEST_REQUIRE_SPLIT=1`, where it fails.
 //! The serving role's privilege laws sit beside the journal guard law, which
-//! runs as the owner (ADR-0034 d3, d6).
+//! runs as the owner (ADR-0034 d3, d6), and the role split's boot checks
+//! refuse each of their reasons by name and accept a minted, migrated pair
+//! (ADR-0034 d5).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -36,14 +38,17 @@ use oml_app::ports::{
     CommitReceipt, CommitRequest, JournalStore, MetadataFold, OutboxRow, StoreError,
 };
 use oml_app::types::KeyRecord;
-use oml_pg::{ForkCheckError, MIGRATOR, PgStore};
+use oml_pg::{
+    ForkCheckError, MIGRATOR, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
+    role_split_postflight, role_split_preflight,
+};
 use oml_port_contracts::{
     ChainRig, held_memory, key_record, name, run_journal_store_suite, test_signing_key,
     workarea_record,
 };
 use serde_json::{Value, json};
 use sqlx::migrate::Migrate as _;
-use sqlx::postgres::PgConnection;
+use sqlx::postgres::{PgConnection, PgPool};
 use sqlx::{Connection, Executor, Row};
 use uuid::Uuid;
 
@@ -638,6 +643,428 @@ async fn a_granting_migration_run_without_oml_serving_role_fails_at_current_sett
     let _ = admin
         .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
         .await;
+}
+
+// ---------------------------------------------------------------------------
+// The role split's boot checks (ADR-0034 d5)
+// ---------------------------------------------------------------------------
+
+/// A fresh database's serving store and its owner pool, nothing migrated
+/// (ADR-0034 d4, d8); the database's name.
+async fn split_pair(created: &Mutex<Vec<String>>) -> (String, PgStore, PgPool) {
+    let name = fresh_database(created).await;
+    let store = PgStore::connect(&serving_url(&name))
+        .await
+        .expect("serving connect");
+    let owner = store
+        .connect_owner(&owner_url(&name))
+        .await
+        .expect("owner connect");
+    (name, store, owner)
+}
+
+/// [`split_pair`], migrated through the owner pool; the pre-migration
+/// checks pass on it.
+async fn migrated_pair(created: &Mutex<Vec<String>>) -> (String, PgStore, PgPool) {
+    let (name, store, owner) = split_pair(created).await;
+    role_split_preflight(&owner, store.pool())
+        .await
+        .expect("control: a minted pair passes the checks before migrating");
+    store.migrate_as(&owner).await.expect("migrations apply");
+    (name, store, owner)
+}
+
+/// A superuser connection to `db`, for what neither role of the pair may do.
+async fn admin_in(db: &str) -> PgConnection {
+    let base = base_url();
+    let (prefix, _) = base
+        .rsplit_once('/')
+        .expect("DATABASE_URL names a database path");
+    PgConnection::connect(&format!("{prefix}/{db}"))
+        .await
+        .expect("admin connect to the throwaway database")
+}
+
+fn refused(result: Result<(), RoleSplitCheckError>, what: &str) -> RoleSplitReason {
+    match result {
+        Err(RoleSplitCheckError::Refused(RoleSplitError { reason })) => reason,
+        Err(other) => panic!("{what}: not a refusal by name: {other}"),
+        Ok(()) => panic!("{what}: the check accepted"),
+    }
+}
+
+/// Both URLs logging in as one role is refused by login, not by URL: two
+/// pools over the same login and database are one role (ADR-0034 d5). It
+/// needs no role pair, so it runs wherever `DATABASE_URL`'s role has
+/// CREATEDB.
+#[tokio::test]
+async fn preflight_refuses_one_login_for_both_urls_with_same_role() {
+    let name = format!(
+        "oml_test_{}_{}_{}",
+        std::process::id(),
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
+    );
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
+    admin
+        .execute(format!("CREATE DATABASE {name}").as_str())
+        .await
+        .expect("create throwaway database");
+    let base = base_url();
+    let (prefix, _) = base
+        .rsplit_once('/')
+        .expect("DATABASE_URL names a database path");
+    let url = format!("{prefix}/{name}");
+    let store = PgStore::connect(&url).await.expect("serving connect");
+    let owner = store.connect_owner(&url).await.expect("owner connect");
+
+    assert_eq!(
+        refused(
+            role_split_preflight(&owner, store.pool()).await,
+            "one login for both URLs"
+        ),
+        RoleSplitReason::SameRole
+    );
+    owner.close().await;
+    store.pool().close().await;
+    let _ = admin
+        .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
+        .await;
+}
+
+/// An owner login and a serving login that see two databases are refused
+/// (ADR-0034 d5).
+#[tokio::test]
+async fn preflight_refuses_two_databases_with_different_databases() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (a, _store, owner) = split_pair(&created).await;
+    let b = fresh_database(&created).await;
+    let elsewhere = PgStore::connect(&role_url(&b, &format!("{a}_serving")))
+        .await
+        .expect("the serving login connects to another database");
+    assert_eq!(
+        refused(
+            role_split_preflight(&owner, elsewhere.pool()).await,
+            "two databases"
+        ),
+        RoleSplitReason::DifferentDatabases
+    );
+    owner.close().await;
+    elsewhere.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// A serving role with an attribute d2 refuses, or a member of a role, is
+/// refused before migrating (ADR-0034 d2, d5).
+#[tokio::test]
+async fn preflight_refuses_a_serving_role_with_createdb_or_a_membership_with_serving_role_privileged()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (name, store, owner) = split_pair(&created).await;
+    role_split_preflight(&owner, store.pool())
+        .await
+        .expect("control: the minted pair passes");
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
+    for (grant, revoke) in [
+        (
+            format!("ALTER ROLE {name}_serving CREATEDB"),
+            format!("ALTER ROLE {name}_serving NOCREATEDB"),
+        ),
+        (
+            format!("GRANT {name}_owner TO {name}_serving"),
+            format!("REVOKE {name}_owner FROM {name}_serving"),
+        ),
+    ] {
+        admin.execute(grant.as_str()).await.expect("grant");
+        assert_eq!(
+            refused(role_split_preflight(&owner, store.pool()).await, &grant),
+            RoleSplitReason::ServingRolePrivileged,
+            "{grant}"
+        );
+        admin.execute(revoke.as_str()).await.expect("revoke");
+    }
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// A serving role that owns the database, as the one role of every unsplit
+/// install does, is refused before migrating (ADR-0034 d5, d7).
+#[tokio::test]
+async fn preflight_refuses_a_serving_role_that_owns_the_database_as_every_unsplit_install_does_with_serving_role_owns()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (name, store, owner) = split_pair(&created).await;
+    let mut admin = PgConnection::connect(&base_url())
+        .await
+        .expect("admin connect");
+    admin
+        .execute(format!("ALTER DATABASE {name} OWNER TO {name}_serving").as_str())
+        .await
+        .expect("the serving role takes the database");
+    assert_eq!(
+        refused(
+            role_split_preflight(&owner, store.pool()).await,
+            "the serving role owns the database"
+        ),
+        RoleSplitReason::ServingRoleOwns
+    );
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// A migration that grants `TRUNCATE`, which row security does not bind,
+/// is refused after migrating (ADR-0034 d3, d5).
+#[tokio::test]
+async fn postflight_refuses_a_migration_that_grants_truncate_with_serving_role_privileged() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (name, store, owner) = migrated_pair(&created).await;
+    role_split_postflight(&owner, store.pool())
+        .await
+        .expect("control: the committed migrations pass");
+    sqlx::query(&format!("GRANT TRUNCATE ON memories TO {name}_serving"))
+        .execute(&owner)
+        .await
+        .expect("a migration grants TRUNCATE");
+    assert_eq!(
+        refused(
+            role_split_postflight(&owner, store.pool()).await,
+            "TRUNCATE granted"
+        ),
+        RoleSplitReason::ServingRolePrivileged
+    );
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// Any privilege on `_sqlx_migrations`, a grant to `PUBLIC` among them, is
+/// refused after migrating (ADR-0034 d5, d6).
+#[tokio::test]
+async fn postflight_refuses_any_privilege_on_sqlx_migrations_with_serving_role_reads_migrations() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (name, store, owner) = migrated_pair(&created).await;
+    for privilege in [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN",
+    ] {
+        for grantee in [format!("{name}_serving"), "PUBLIC".to_owned()] {
+            sqlx::query(&format!(
+                "GRANT {privilege} ON _sqlx_migrations TO {grantee}"
+            ))
+            .execute(&owner)
+            .await
+            .expect("grant on _sqlx_migrations");
+            assert_eq!(
+                refused(
+                    role_split_postflight(&owner, store.pool()).await,
+                    &format!("{privilege} to {grantee}")
+                ),
+                RoleSplitReason::ServingRoleReadsMigrations,
+                "{privilege} to {grantee}"
+            );
+            sqlx::query(&format!(
+                "REVOKE {privilege} ON _sqlx_migrations FROM {grantee}"
+            ))
+            .execute(&owner)
+            .await
+            .expect("revoke on _sqlx_migrations");
+        }
+    }
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// A serving login the migrations did not grant, as when `postgres.url`
+/// names another role, is refused after migrating (ADR-0034 d5): here the
+/// migrations granted the owner, the setting naming it.
+#[tokio::test]
+async fn postflight_refuses_a_serving_login_the_migrations_did_not_grant_with_serving_role_ungranted()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (name, store, owner) = split_pair(&created).await;
+    let as_owner = PgStore::connect(&owner_url(&name))
+        .await
+        .expect("owner store");
+    as_owner
+        .migrate(&owner_url(&name))
+        .await
+        .expect("migrations granting the owner apply");
+    assert_eq!(
+        refused(
+            role_split_postflight(&owner, store.pool()).await,
+            "an ungranted serving login"
+        ),
+        RoleSplitReason::ServingRoleUngranted
+    );
+    as_owner.pool().close().await;
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// A table without `FORCE`, without a policy, or owned by a role other than
+/// the owner is refused after migrating (ADR-0034 d1, d5).
+#[tokio::test]
+async fn postflight_refuses_a_table_without_force_or_a_policy_or_owned_by_another_role_with_table_unfenced()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (name, store, owner) = migrated_pair(&created).await;
+    let mut admin = admin_in(&name).await;
+    let fenced = "ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY";
+    let cases: [(&str, Vec<String>, Vec<String>, bool); 3] = [
+        (
+            "crews without FORCE",
+            vec!["ALTER TABLE crews NO FORCE ROW LEVEL SECURITY".to_owned()],
+            vec!["ALTER TABLE crews FORCE ROW LEVEL SECURITY".to_owned()],
+            false,
+        ),
+        (
+            "a table with no policy",
+            vec![
+                "CREATE TABLE unpoliced (id int)".to_owned(),
+                format!("ALTER TABLE unpoliced {fenced}"),
+            ],
+            vec!["DROP TABLE unpoliced".to_owned()],
+            false,
+        ),
+        (
+            "a fenced table the superuser owns",
+            vec![
+                "CREATE TABLE foreign_owned (id int)".to_owned(),
+                format!("ALTER TABLE foreign_owned {fenced}"),
+                "CREATE POLICY foreign_owned_all ON foreign_owned USING (true)".to_owned(),
+            ],
+            vec!["DROP TABLE foreign_owned".to_owned()],
+            true,
+        ),
+    ];
+    for (what, make, unmake, as_admin) in cases {
+        for statement in &make {
+            if as_admin {
+                admin.execute(statement.as_str()).await.expect(what);
+            } else {
+                sqlx::query(statement).execute(&owner).await.expect(what);
+            }
+        }
+        assert_eq!(
+            refused(role_split_postflight(&owner, store.pool()).await, what),
+            RoleSplitReason::TableUnfenced,
+            "{what}"
+        );
+        for statement in &unmake {
+            if as_admin {
+                admin.execute(statement.as_str()).await.expect(what);
+            } else {
+                sqlx::query(statement).execute(&owner).await.expect(what);
+            }
+        }
+        role_split_postflight(&owner, store.pool())
+            .await
+            .unwrap_or_else(|e| panic!("control: undoing {what} passes: {e}"));
+    }
+    drop(admin);
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// A `SECURITY DEFINER` function in `public`, which would run a serving call
+/// as the owner, is refused after migrating (ADR-0034 d5).
+#[tokio::test]
+async fn postflight_refuses_a_security_definer_function_in_public_with_definer_function() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (_name, store, owner) = migrated_pair(&created).await;
+    sqlx::query(
+        "CREATE FUNCTION public.as_owner() RETURNS int LANGUAGE sql SECURITY DEFINER \
+         AS 'SELECT 1'",
+    )
+    .execute(&owner)
+    .await
+    .expect("the owner creates a definer function");
+    assert_eq!(
+        refused(
+            role_split_postflight(&owner, store.pool()).await,
+            "a definer function"
+        ),
+        RoleSplitReason::DefinerFunction
+    );
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// `ltree`'s member objects, which 0006's `CREATE EXTENSION` run by the
+/// owner leaves with the bootstrap superuser, are skipped by both checks
+/// (ADR-0034 d2, d5): a migrated pair passes before and after migrating.
+#[tokio::test]
+async fn the_checks_accept_ltrees_extension_members_owned_by_the_bootstrap_superuser() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (_name, store, owner) = migrated_pair(&created).await;
+    let foreign_members: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_depend d \
+         JOIN pg_extension e ON e.oid = d.refobjid AND d.refclassid = 'pg_extension'::regclass \
+         LEFT JOIN pg_proc p ON d.classid = 'pg_proc'::regclass AND p.oid = d.objid \
+         LEFT JOIN pg_type t ON d.classid = 'pg_type'::regclass AND t.oid = d.objid \
+         WHERE e.extname = 'ltree' AND d.deptype = 'e' \
+           AND coalesce(p.proowner, t.typowner) IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname = current_user) \
+           AND coalesce(p.proowner, t.typowner) IS NOT NULL",
+    )
+    .fetch_one(&owner)
+    .await
+    .expect("ltree's members");
+    assert!(
+        foreign_members > 0,
+        "precondition: ltree's members are not the owner's"
+    );
+    role_split_postflight(&owner, store.pool())
+        .await
+        .expect("the checks after migrating accept ltree's members");
+    role_split_preflight(&owner, store.pool())
+        .await
+        .expect("the checks before migrating accept ltree's members");
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
 }
 
 /// Rows of `grants` and `key_denials` this session sees with `oml.tenant_id`

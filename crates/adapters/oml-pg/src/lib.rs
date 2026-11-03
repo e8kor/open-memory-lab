@@ -52,6 +52,312 @@ pub enum ForkCheckError {
     Verify(#[from] VerifyError),
 }
 
+/// Why the lead refuses to serve over its two URLs (ADR-0034 d5): the
+/// `details.reason` of its `postgres.role_split` exit, before any listener
+/// binds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoleSplitReason {
+    /// `postgres.owner_url` is unset; the lead reads its configuration and
+    /// names this one itself.
+    OwnerUrlMissing,
+    /// Both URLs log in as one role, compared by login, not URL.
+    SameRole,
+    /// The two logins see different databases.
+    DifferentDatabases,
+    /// The serving role holds an attribute or membership d2 refuses, can
+    /// create in the database or `public`, or, after migrating, holds
+    /// `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN` on a table.
+    ServingRolePrivileged,
+    /// The serving role owns the database or an object in it, as in every
+    /// unsplit install.
+    ServingRoleOwns,
+    /// The serving role holds a privilege on `_sqlx_migrations` (d6).
+    ServingRoleReadsMigrations,
+    /// The serving role has no `SELECT` on `journal`: the migrations did
+    /// not grant the role `postgres.url` names.
+    ServingRoleUngranted,
+    /// A table but `_sqlx_migrations`, a partition included, is not the
+    /// owner's, lacks `ENABLE` or `FORCE ROW LEVEL SECURITY`, or has no
+    /// policy.
+    TableUnfenced,
+    /// A function in `public` is `SECURITY DEFINER`, which runs a serving
+    /// call as the owner.
+    DefinerFunction,
+}
+
+impl RoleSplitReason {
+    /// The reason as the lead's exit names it (ADR-0034 d5).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OwnerUrlMissing => "owner_url_missing",
+            Self::SameRole => "same_role",
+            Self::DifferentDatabases => "different_databases",
+            Self::ServingRolePrivileged => "serving_role_privileged",
+            Self::ServingRoleOwns => "serving_role_owns",
+            Self::ServingRoleReadsMigrations => "serving_role_reads_migrations",
+            Self::ServingRoleUngranted => "serving_role_ungranted",
+            Self::TableUnfenced => "table_unfenced",
+            Self::DefinerFunction => "definer_function",
+        }
+    }
+}
+
+impl std::fmt::Display for RoleSplitReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A refusal of the role split (ADR-0034 d5): `postgres.role_split` and its
+/// reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("postgres.role_split: {reason}")]
+pub struct RoleSplitError {
+    pub reason: RoleSplitReason,
+}
+
+/// A boot check's failure: the split refused by name, or a catalog read
+/// that did not complete, which proves nothing and refuses as well.
+#[derive(Debug, thiserror::Error)]
+pub enum RoleSplitCheckError {
+    #[error(transparent)]
+    Refused(#[from] RoleSplitError),
+    #[error("postgres.role_split: the check could not read the catalog: {0}")]
+    Backend(#[from] sqlx::Error),
+}
+
+impl RoleSplitCheckError {
+    /// The refusal's reason, `None` for a catalog read that failed.
+    #[must_use]
+    pub fn reason(&self) -> Option<RoleSplitReason> {
+        match self {
+            Self::Refused(e) => Some(e.reason),
+            Self::Backend(_) => None,
+        }
+    }
+}
+
+/// Who a pool logs in as and where: `session_user`, `current_user` and
+/// `current_database()`.
+async fn login_of(pool: &PgPool) -> Result<(String, String, String), sqlx::Error> {
+    sqlx::query_as("SELECT session_user::text, current_user::text, current_database()::text")
+        .fetch_one(pool)
+        .await
+}
+
+/// Whether `sql` returns true, read on the owner pool with the logins in
+/// scope as `split.serving` and `split.owner`.
+async fn holds(
+    owner: &PgPool,
+    sql: &str,
+    serving: &str,
+    owner_role: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "WITH split (serving, owner) AS (VALUES ($1::text, $2::text)) {sql}"
+    ))
+    .bind(serving)
+    .bind(owner_role)
+    .fetch_one(owner)
+    .await
+}
+
+/// `pg_depend` marks `<alias>.oid`, of catalog `<catalog>`, as an
+/// extension's member (`deptype` `'e'`), such as 0006's `ltree` objects,
+/// which stay with the bootstrap superuser (ADR-0034 d2).
+macro_rules! not_extension_member {
+    ($catalog:literal, $alias:literal) => {
+        concat!(
+            "NOT EXISTS (SELECT 1 FROM pg_depend dep WHERE dep.classid = '",
+            $catalog,
+            "'::regclass AND dep.objid = ",
+            $alias,
+            ".oid AND dep.deptype = 'e')"
+        )
+    };
+}
+
+/// The serving role owns the database or a relation, function or type in
+/// it, extension members skipped.
+const SERVING_ROLE_OWNS: &str = concat!(
+    "SELECT EXISTS (SELECT 1 FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba \
+                    WHERE d.datname = current_database() AND r.rolname = split.serving) \
+         OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner \
+                    WHERE r.rolname = split.serving AND ",
+    not_extension_member!("pg_class", "c"),
+    ") OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner \
+                    WHERE r.rolname = split.serving AND ",
+    not_extension_member!("pg_proc", "p"),
+    ") OR EXISTS (SELECT 1 FROM pg_type t JOIN pg_roles r ON r.oid = t.typowner \
+                    WHERE r.rolname = split.serving AND ",
+    not_extension_member!("pg_type", "t"),
+    ") FROM split"
+);
+
+/// The serving role holds an attribute d2 refuses, is a member of any role,
+/// or can create in the database or `public`.
+const SERVING_ROLE_PRIVILEGED_BEFORE: &str = "\
+    SELECT r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls \
+        OR EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid) \
+        OR has_database_privilege(r.oid, current_database(), 'CREATE') \
+        OR has_schema_privilege(r.oid, 'public', 'CREATE') \
+    FROM split JOIN pg_roles r ON r.rolname = split.serving";
+
+/// The tables of `public` the checks after migrating read: plain and
+/// partitioned tables, partitions included, extension members skipped.
+macro_rules! public_tables {
+    () => {
+        concat!(
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND ",
+            not_extension_member!("pg_class", "c")
+        )
+    };
+}
+
+/// The serving role holds a privilege row security does not bind on a
+/// table but `_sqlx_migrations`, granted to it, a role it is in or
+/// `PUBLIC`. `MAINTAIN` needs PostgreSQL 17, the pin.
+const SERVING_ROLE_PRIVILEGED_AFTER: &str = concat!(
+    "SELECT EXISTS (SELECT 1 ",
+    public_tables!(),
+    " AND c.relname <> '_sqlx_migrations' \
+       AND has_table_privilege(split.serving, c.oid, 'TRUNCATE, REFERENCES, TRIGGER, MAINTAIN')) \
+     FROM split"
+);
+
+/// The serving role holds any privilege on `_sqlx_migrations` (ADR-0034 d6).
+const SERVING_ROLE_READS_MIGRATIONS: &str = "\
+    SELECT has_table_privilege(split.serving, 'public._sqlx_migrations', \
+        'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN') FROM split";
+
+/// The serving role cannot read `journal`: the migrations did not grant it.
+const SERVING_ROLE_UNGRANTED: &str =
+    "SELECT NOT has_table_privilege(split.serving, 'public.journal', 'SELECT') FROM split";
+
+/// A table but `_sqlx_migrations` is not the owner's, lacks `ENABLE` or
+/// `FORCE ROW LEVEL SECURITY`, or has no policy.
+const TABLE_UNFENCED: &str = concat!(
+    "SELECT EXISTS (SELECT 1 ",
+    public_tables!(),
+    " AND c.relname <> '_sqlx_migrations' \
+       AND (c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = split.owner) \
+            OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity \
+            OR NOT EXISTS (SELECT 1 FROM pg_policy pol WHERE pol.polrelid = c.oid))) \
+     FROM split"
+);
+
+/// A function in `public` is `SECURITY DEFINER`.
+const DEFINER_FUNCTION: &str = concat!(
+    "SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+                    WHERE n.nspname = 'public' AND p.prosecdef AND ",
+    not_extension_member!("pg_proc", "p"),
+    ") FROM split"
+);
+
+/// Runs `checks` in order on the owner pool and refuses with the first
+/// that holds.
+async fn refuse_first(
+    owner: &PgPool,
+    serving: &str,
+    owner_role: &str,
+    checks: &[(RoleSplitReason, &str)],
+) -> Result<(), RoleSplitCheckError> {
+    for (reason, sql) in checks {
+        if holds(owner, sql, serving, owner_role).await? {
+            return Err(RoleSplitError { reason: *reason }.into());
+        }
+    }
+    Ok(())
+}
+
+/// The checks before migrating (ADR-0034 d5; postgres-schema.md
+/// "Privileges"), over the owner pool and the serving pool, in this order:
+/// both pools log in as one role, by `session_user` or `current_user`, never
+/// by URL (`same_role`); they see two databases (`different_databases`);
+/// the serving role owns the database or a relation, function or type in
+/// it (`serving_role_owns`), checked before the next since a database's
+/// owner can create in it; the serving role holds `SUPERUSER`, `CREATEDB`,
+/// `CREATEROLE`, `REPLICATION` or `BYPASSRLS`, is a member of any role, or
+/// holds `CREATE` on the database or `public` (`serving_role_privileged`).
+/// Extension members, `ltree`'s owned by the bootstrap superuser, are
+/// skipped (d2). A catalog read that fails refuses as well.
+pub async fn role_split_preflight(
+    owner: &PgPool,
+    serving: &PgPool,
+) -> Result<(), RoleSplitCheckError> {
+    let (owner_session, owner_role, owner_db) = login_of(owner).await?;
+    let (serving_session, serving_role, serving_db) = login_of(serving).await?;
+    if owner_role == serving_role || owner_session == serving_session {
+        return Err(RoleSplitError {
+            reason: RoleSplitReason::SameRole,
+        }
+        .into());
+    }
+    if owner_db != serving_db {
+        return Err(RoleSplitError {
+            reason: RoleSplitReason::DifferentDatabases,
+        }
+        .into());
+    }
+    refuse_first(
+        owner,
+        &serving_role,
+        &owner_role,
+        &[
+            (RoleSplitReason::ServingRoleOwns, SERVING_ROLE_OWNS),
+            (
+                RoleSplitReason::ServingRolePrivileged,
+                SERVING_ROLE_PRIVILEGED_BEFORE,
+            ),
+        ],
+    )
+    .await
+}
+
+/// The checks after migrating (ADR-0034 d5; postgres-schema.md
+/// "Privileges"), by `has_table_privilege`, so a grant through `PUBLIC` or
+/// a role counts, in this order: the serving role holds `TRUNCATE`,
+/// `REFERENCES`, `TRIGGER` or `MAINTAIN` on a table but `_sqlx_migrations`
+/// (`serving_role_privileged`); any of those or `SELECT`, `INSERT`,
+/// `UPDATE` or `DELETE` on `_sqlx_migrations` (`serving_role_reads_migrations`,
+/// d6); no `SELECT` on `journal` (`serving_role_ungranted`); a table but
+/// `_sqlx_migrations`, partitions included, is not the owner's, lacks
+/// `ENABLE` or `FORCE ROW LEVEL SECURITY`, or has no policy
+/// (`table_unfenced`); a function in `public` is `SECURITY DEFINER`
+/// (`definer_function`). Extension members are skipped (d2). A catalog read
+/// that fails refuses as well.
+pub async fn role_split_postflight(
+    owner: &PgPool,
+    serving: &PgPool,
+) -> Result<(), RoleSplitCheckError> {
+    let (_, owner_role, _) = login_of(owner).await?;
+    let (_, serving_role, _) = login_of(serving).await?;
+    refuse_first(
+        owner,
+        &serving_role,
+        &owner_role,
+        &[
+            (
+                RoleSplitReason::ServingRolePrivileged,
+                SERVING_ROLE_PRIVILEGED_AFTER,
+            ),
+            (
+                RoleSplitReason::ServingRoleReadsMigrations,
+                SERVING_ROLE_READS_MIGRATIONS,
+            ),
+            (
+                RoleSplitReason::ServingRoleUngranted,
+                SERVING_ROLE_UNGRANTED,
+            ),
+            (RoleSplitReason::TableUnfenced, TABLE_UNFENCED),
+            (RoleSplitReason::DefinerFunction, DEFINER_FUNCTION),
+        ],
+    )
+    .await
+}
+
 /// The Postgres `JournalStore`.
 #[derive(Debug, Clone)]
 pub struct PgStore {
@@ -79,20 +385,19 @@ impl PgStore {
         &self.pool
     }
 
-    /// Applies any pending committed migrations (forward-only,
-    /// postgres-schema.md "Migrations") as the owner role at `owner_url`
-    /// (ADR-0034 d2, d3, d4). The owner pool sets `oml.serving_role` on
-    /// every connection to this store's login, its pool's `current_user`, so
-    /// each table's migration grants that role the DML the adapter's
-    /// statements use (postgres-schema.md "Privileges"); no role name is
-    /// read from configuration (d2). The owner pool is closed before this
-    /// returns. A migration that grants, run without the setting, fails at
-    /// `current_setting` (`42704`).
-    pub async fn migrate(&self, owner_url: &str) -> Result<(), sqlx::migrate::MigrateError> {
+    /// Opens the owner's connection at `owner_url` (ADR-0034 d2, d4): one
+    /// connection whose `after_connect` sets `oml.serving_role` to this
+    /// store's login, its pool's `current_user`, so a granting migration names
+    /// it (d3); no role name is read from configuration (d2). It is not a
+    /// long-lived pool: the caller runs [`role_split_preflight`],
+    /// [`Self::migrate_as`] and [`role_split_postflight`] on it, then closes
+    /// it before serving (d4), and no owner connection outlives the boot but
+    /// d11's partition DDL (d8).
+    pub async fn connect_owner(&self, owner_url: &str) -> Result<PgPool, sqlx::Error> {
         let serving: String = sqlx::query_scalar("SELECT current_user::text")
             .fetch_one(&self.pool)
             .await?;
-        let owner = PgPoolOptions::new()
+        PgPoolOptions::new()
             .max_connections(1)
             .after_connect(move |conn, _meta| {
                 let serving = serving.clone();
@@ -105,8 +410,25 @@ impl PgStore {
                 })
             })
             .connect(owner_url)
-            .await?;
-        let applied = MIGRATOR.run(&owner).await;
+            .await
+    }
+
+    /// Applies any pending committed migrations (forward-only,
+    /// postgres-schema.md "Migrations") on `owner`, a pool from
+    /// [`Self::connect_owner`] (ADR-0034 d2, d3, d4), so each table's
+    /// migration grants this store's login the DML the adapter's statements
+    /// use (postgres-schema.md "Privileges"). A migration that grants, run
+    /// without `oml.serving_role`, fails at `current_setting` (`42704`).
+    pub async fn migrate_as(&self, owner: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+        MIGRATOR.run(owner).await
+    }
+
+    /// [`Self::migrate_as`] over an owner connection opened at `owner_url`
+    /// by [`Self::connect_owner`] and closed before this returns (ADR-0034
+    /// d4), with no boot check run around it.
+    pub async fn migrate(&self, owner_url: &str) -> Result<(), sqlx::migrate::MigrateError> {
+        let owner = self.connect_owner(owner_url).await?;
+        let applied = self.migrate_as(&owner).await;
         owner.close().await;
         applied
     }
