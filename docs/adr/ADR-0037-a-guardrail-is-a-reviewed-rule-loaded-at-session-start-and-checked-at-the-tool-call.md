@@ -74,9 +74,10 @@ no rule cache at all, the check allows and warns (d9). Each replaced reading is 
       maintainer's reading to confirm*. Issuance is a journalled act
       ([ADR-0010](ADR-0010-roles-and-keys.md) d3) and "There is no in-place re-key"
       ([key lifecycle](../architecture/roles-and-keys.md#key-lifecycle)), so only a rotation
-      changes it: `oml keys rotate --guardrail-scope` sets the successor's, which otherwise keeps
-      its predecessor's, journalled in `key.rotated`, the successor's stand-in for `key.issued`
-      (amends ADR-0026 d9). Rotation is decided, not built; until then, revoke and reissue.
+      changes it, *the maintainer's reading to confirm*: `oml keys rotate --guardrail-scope` sets
+      the successor's, which otherwise keeps its predecessor's, journalled in `key.rotated`, the
+      successor's stand-in for `key.issued` (amends ADR-0026 d9). Rotation is decided, not built;
+      until then, revoke and reissue.
     - **Never on the client.** `GET /v1/guardrails` takes no scope parameter, the hooks read no
       scope setting, and `X-OML-Workarea` picks N within the key's grants, never the scope. No
       `off` value exists: an admin who wants none issues the key with `workarea` where none is.
