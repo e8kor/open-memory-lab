@@ -797,16 +797,38 @@ pub struct ProposeClaimEdge {
     pub label: String,
 }
 
-/// The stored idempotent response of a claim-edge proposal: a replay
-/// returns this byte for byte, naming only the caller's own edge
-/// (http-api.md idempotency, claim edges).
+/// The stored idempotent response of a claim-edge proposal, the committed
+/// edge as openapi.yaml's `ClaimEdge` serves it: a replay returns this byte
+/// for byte, naming only the caller's own edge (http-api.md idempotency,
+/// claim edges).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimEdgeProposal {
     pub edge_id: Uuid,
+    /// The edge's source version, `src_artifact_id` as stored.
+    pub from_artifact_id: Uuid,
+    /// The edge's target version, `dst_artifact_id` as stored.
+    pub to_artifact_id: Uuid,
+    pub label: String,
     /// Always `pending`: a proposal confers nothing until a key that is not
     /// its proposer ratifies it (ADR-0008 d5; ADR-0012 R2).
     pub state: String,
-    pub journal_seq: u64,
+    pub proposer_key_id: Uuid,
+    /// Always `None` on a proposal.
+    pub ratifier_key_id: Option<Uuid>,
+}
+
+impl From<&ClaimEdgeRecord> for ClaimEdgeProposal {
+    fn from(edge: &ClaimEdgeRecord) -> Self {
+        Self {
+            edge_id: edge.edge_id,
+            from_artifact_id: edge.src_artifact_id,
+            to_artifact_id: edge.dst_artifact_id,
+            label: edge.label.clone(),
+            state: edge.state.as_str().to_owned(),
+            proposer_key_id: edge.proposer_key_id,
+            ratifier_key_id: edge.ratifier_key_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
