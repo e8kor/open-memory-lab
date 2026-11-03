@@ -11,7 +11,7 @@ use super::argument::{normalise_path, url_host};
 use super::cache::{CacheRefusal, CacheState, CachedRule};
 use super::glob::Glob;
 use super::rule::{Matcher, ToolClass};
-use super::shell::{ShellRefusal, shell_segments};
+use super::shell::{ShellRefusal, shell_command};
 
 /// The `systemMessage` of a matching call in a session with no cache: it
 /// decides nothing, and since the check keeps no state the line repeats on
@@ -51,7 +51,7 @@ pub enum Cause {
     /// A cached rule matched; the reason names its guardrail.
     Rule { artifact_id: Uuid, body: String },
     /// The built-in rule: an `edit` under the cache directory, or a `shell`
-    /// word containing `oml/guardrails`.
+    /// word or redirection target containing `oml/guardrails`.
     CacheDirectory,
     /// A rule of the call's class is cached and the call cannot be checked.
     Uncheckable(Uncheckable),
@@ -156,7 +156,7 @@ pub fn check(rules: &[CachedRule], call: &ToolCall<'_>, cache_dir: &str) -> Opti
                     found.push((Effect::Ask, Cause::CacheDirectory));
                 }
             }
-            Some(command) => match shell_segments(command) {
+            Some(command) => match shell_command(command) {
                 Err(refusal) => {
                     uncheckable(&mut found, Uncheckable::Shell(refusal));
                     if command.contains(CACHE_WORD) {
@@ -164,13 +164,21 @@ pub fn check(rules: &[CachedRule], call: &ToolCall<'_>, cache_dir: &str) -> Opti
                     }
                 }
                 Ok(segments) => {
-                    for words in &segments {
-                        if words.iter().any(|w| w.contains(CACHE_WORD)) {
+                    for segment in &segments {
+                        if segment
+                            .words
+                            .iter()
+                            .chain(&segment.redirect_targets)
+                            .any(|w| w.contains(CACHE_WORD))
+                        {
                             found.push((Effect::Ask, Cause::CacheDirectory));
+                        }
+                        if segment.words.is_empty() {
+                            continue;
                         }
                         for r in &of_class {
                             if let Matcher::Command(list) = r.rule.matcher()
-                                && Matcher::matches_words(list, words)
+                                && Matcher::matches_words(list, &segment.words)
                             {
                                 found.push((r.rule.effect(), cause(r)));
                             }

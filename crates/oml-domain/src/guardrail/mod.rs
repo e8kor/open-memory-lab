@@ -32,7 +32,7 @@ pub use cache::{
 pub use check::{Cause, Decision, NO_CACHE_WARNING, ToolCall, Uncheckable, Verdict, check, decide};
 pub use glob::Glob;
 pub use rule::{HostPattern, Matcher, Rule, RuleDefect, ToolClass};
-pub use shell::{ShellRefusal, shell_segments};
+pub use shell::{ShellRefusal, ShellSegment, shell_command, shell_segments};
 
 /// The one rule grammar (ADR-0037 d8). A cache naming another denies every
 /// call (d9).
