@@ -909,6 +909,50 @@ pub trait ConnectionStore: JournalStore {
     ) -> impl Future<Output = Result<Option<ConnectionRecord>, StoreError>> + Send;
 }
 
+/// The sealing port of an authorization request's handle (ADR-0031 d9 step
+/// 1): an AEAD under a key the lead generates when it starts and holds only
+/// in memory, so a handle is the request itself and no row is written for
+/// it. `open` answers the sealed bytes only for a handle this sealer's key
+/// sealed and nobody altered; any other string — another process's handle,
+/// a tampered one, or garbage — opens to `None`.
+pub trait HandleSealer: Send + Sync {
+    fn seal(&self, plaintext: &[u8]) -> String;
+    fn open(&self, handle: &str) -> Option<Vec<u8>>;
+}
+
+/// A client ID metadata document as fetched: its body as received, within
+/// the 16 KiB bound, and its `Cache-Control` `max-age` in seconds, `0`
+/// where it allows no caching (ADR-0031 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchedDocument {
+    pub body: Vec<u8>,
+    pub max_age: u64,
+}
+
+/// Why a document was not fetched (http-api.md "Client identity"): any
+/// failure within the fetch bounds, or a full fetch cap. Either serves a
+/// cached copy kept within its 24 hours; without one it is
+/// `oauth.client_invalid` (ADR-0031 d5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentFetchFailure {
+    /// An answer outside the address allow-list, TLS, a redirect, the
+    /// 5-second or 16 KiB cut, or any other failed fetch.
+    Failed,
+    /// At most 16 fetches at once, one per host name and one per resolved
+    /// address; past any cap (`reason: fetch_busy`).
+    Busy,
+}
+
+/// The outbound fetch of a client ID metadata document at its URL, under
+/// the bounds of http-api.md "Client identity" (ADR-0031 d5). The use case
+/// decides what the cache serves; the fetcher only fetches.
+pub trait ClientDocumentFetcher: Send + Sync {
+    fn fetch(
+        &self,
+        url: &str,
+    ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
+}
+
 /// The signer port — the lead/follower split as a trait: only the lead
 /// composition holds one (workspace-plan.md ninth trait; ADR-0006 d5).
 pub trait Signer: Send + Sync {

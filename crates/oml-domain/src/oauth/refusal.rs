@@ -105,6 +105,27 @@ impl Refusal {
             Refusal::RequestValidation(_) => "request.validation",
         }
     }
+
+    /// The RFC 6749 §4.1.2.1 `error` this refusal carries when
+    /// `/oauth/authorize` redirects it (errors.md, "`oauth` — connections"):
+    /// `invalid_target` for `oauth.resource_mismatch` (RFC 8707 §2),
+    /// `access_denied` for `oauth.authorization_expired`,
+    /// `unsupported_response_type` and `invalid_scope` for those two
+    /// `request.validation` faults, and `invalid_request` for the rest, an
+    /// `oauth.pkce_required` included. A refusal answered on the page
+    /// carries no `error`; which ones are is the authorize request's order.
+    #[must_use]
+    pub fn authorize_error(&self) -> &'static str {
+        match self {
+            Refusal::ResourceMismatch => "invalid_target",
+            Refusal::AuthorizationExpired(_) => "access_denied",
+            Refusal::RequestValidation(Validation::ResponseTypeUnsupported) => {
+                "unsupported_response_type"
+            }
+            Refusal::RequestValidation(Validation::ScopeUnsupported) => "invalid_scope",
+            _ => "invalid_request",
+        }
+    }
 }
 
 /// Why a client was not identified (errors.md, `oauth.client_invalid`).
@@ -169,6 +190,12 @@ pub enum PkceRequired {
 pub enum AuthorizationExpired {
     /// The fifth wrong entry (ADR-0031 d9).
     AttemptsSpent,
+    /// The form's handle does not open under the lead's sealing key, or
+    /// opens to no request: a restart or takeover of the lead, or a tampered
+    /// handle (ADR-0031 d9 step 1).
+    Unopened,
+    /// The handle's request outlived its ten minutes (ADR-0031 d9 step 1).
+    Lapsed,
     /// The confirmation's code was voided by a newer code or a revoked
     /// connection of its key (ADR-0031 d8).
     CodeVoided,
@@ -246,8 +273,10 @@ impl ConnectRefused {
 }
 
 /// Which parameter of an OAuth endpoint is malformed (`request.validation`).
-/// The edge carries it as `invalid_request`, or as `invalid_client_metadata`
-/// for a registration's members (errors.md, "`oauth` — connections").
+/// The edge carries it as `invalid_request`, or as the RFC's own name for the
+/// fault: `invalid_client_metadata` for a registration's members,
+/// `unsupported_response_type` and `invalid_scope` for an authorize request's
+/// (errors.md, "`oauth` — connections").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Validation {
     /// `state` past 512 bytes (ADR-0031 d4).
@@ -258,6 +287,18 @@ pub enum Validation {
     RedirectUriTooLong,
     /// A present `code_challenge` not matching `^[A-Za-z0-9_-]{43}$`.
     CodeChallengeMalformed,
+    /// An authorize parameter sent more than once (RFC 6749 §3.1),
+    /// answered on the page with the bounds (ADR-0031 d4).
+    ParameterRepeated,
+    /// An authorize request without `client_id`: no client to accept, so
+    /// answered on the page (RFC 6749 §4.1.2.1).
+    ClientIdAbsent,
+    /// An authorize `response_type` other than `code`, redirected as
+    /// `unsupported_response_type` (ADR-0031 d4).
+    ResponseTypeUnsupported,
+    /// An authorize `scope` naming anything but `mcp`, redirected as
+    /// `invalid_scope` (ADR-0031 d4).
+    ScopeUnsupported,
     /// A registration body that is not a JSON object.
     NotJsonObject,
     /// A registration without `client_name`, which the page shows.

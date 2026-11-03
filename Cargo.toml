@@ -31,6 +31,10 @@ oml-pg = { path = "crates/adapters/oml-pg" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive", "env"] }
 getrandom = "0.2"
+# The authorization request's sealed handle (ADR-0031 d9): ChaCha20-Poly1305
+# under a key held in memory. Already in the graph through sqlx's
+# tls-rustls-ring.
+ring = "0.17"
 # Blocking HTTP client for the thin-client CLI (ADR-0006 d6: the CLI reaches
 # the hexagon only over the network).
 ureq = { version = "2.12", features = ["json"] }

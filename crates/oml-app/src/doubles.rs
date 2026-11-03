@@ -6,7 +6,7 @@
 //! every test chain is reproducible byte for byte.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
@@ -27,10 +27,10 @@ use oml_domain::{
 };
 
 use crate::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen,
-    IdempotencyRecord, IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold,
-    OutboxRow, ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan,
-    claim_subject,
+    AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
+    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyRecord,
+    IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
+    ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use crate::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord,
@@ -218,6 +218,15 @@ impl MemStore {
     #[must_use]
     pub fn tenant_count(&self) -> usize {
         self.tenant_names.lock().expect("tenant names lock").len()
+    }
+
+    /// Test visibility: how many authorization-request rows the provider
+    /// tenant holds (postgres-schema.md `oauth_authorizations`).
+    #[must_use]
+    pub fn authorization_count(&self) -> usize {
+        self.tenant_existing(PROVIDER_TENANT).map_or(0, |provider| {
+            provider.lock().expect("tenant lock").authorizations.len()
+        })
     }
 
     /// Answers the next idempotency lookup with no record, whatever is
@@ -2425,6 +2434,80 @@ impl KeyringStore for MemKeyring {
         let mut stored = self.stored.lock().expect("keyring lock");
         let seed = *stored.get_or_insert(self.create_seed);
         Ok(SigningKey::from_bytes(&seed))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Client documents and handle sealing (ADR-0031 d5, d9)
+// ---------------------------------------------------------------------------
+
+/// What a document fetch answers for one URL: its body and `max-age`, or
+/// the failure.
+type Served = Result<(Vec<u8>, u64), DocumentFetchFailure>;
+
+/// Client ID metadata documents served from memory by URL, counting every
+/// fetch; a URL it does not serve fails as an unreachable host would. A
+/// clone is another handle on the same documents.
+#[derive(Debug, Default, Clone)]
+pub struct MemDocuments {
+    served: Arc<Mutex<BTreeMap<String, Served>>>,
+    fetches: Arc<AtomicUsize>,
+}
+
+impl MemDocuments {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Answers every later fetch of `url` with `answer`.
+    pub fn serve(&self, url: &str, answer: Served) {
+        self.served
+            .lock()
+            .expect("documents lock")
+            .insert(url.to_owned(), answer);
+    }
+
+    /// How many fetches were made, of any URL.
+    #[must_use]
+    pub fn fetches(&self) -> usize {
+        self.fetches.load(Ordering::SeqCst)
+    }
+}
+
+impl ClientDocumentFetcher for MemDocuments {
+    async fn fetch(&self, url: &str) -> Result<FetchedDocument, DocumentFetchFailure> {
+        self.fetches.fetch_add(1, Ordering::SeqCst);
+        let served = self
+            .served
+            .lock()
+            .expect("documents lock")
+            .get(url)
+            .cloned();
+        let (body, max_age) = served.unwrap_or(Err(DocumentFetchFailure::Failed))?;
+        Ok(FetchedDocument { body, max_age })
+    }
+}
+
+/// A sealer that seals nothing: the handle is the plaintext in lower-case
+/// hex, so a use-case test can read what a handle carries. It is a test
+/// double only: the lead's sealer is an AEAD (ADR-0031 d9).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PlainSealer;
+
+impl HandleSealer for PlainSealer {
+    fn seal(&self, plaintext: &[u8]) -> String {
+        plaintext.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn open(&self, handle: &str) -> Option<Vec<u8>> {
+        if !handle.len().is_multiple_of(2) || !handle.is_ascii() {
+            return None;
+        }
+        (0..handle.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&handle[i..i + 2], 16).ok())
+            .collect()
     }
 }
 

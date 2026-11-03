@@ -258,6 +258,61 @@ pub struct AuthorizationRecord {
     pub key_id: Uuid,
 }
 
+/// The query of `GET /oauth/authorize`, each parameter as received after its
+/// one form decoding, `None` where absent (http-api.md; ADR-0031 d4).
+/// `repeated` is whether any parameter was sent more than once (RFC 6749
+/// §3.1), which the edge sees and the bounds refuse.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuthorizeParams {
+    pub client_id: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub response_type: Option<String>,
+    pub code_challenge: Option<String>,
+    pub code_challenge_method: Option<String>,
+    pub state: Option<String>,
+    pub resource: Option<String>,
+    pub scope: Option<String>,
+    pub repeated: bool,
+}
+
+/// The connect-code page of a valid authorize request (ADR-0031 d9 step 1):
+/// the sealed handle its form carries, and what the page shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizePage {
+    /// The authorization request sealed under the lead's in-memory key.
+    pub handle: String,
+    pub client_name: String,
+    /// A document client's whole host, shown as "verified by"; `None` for a
+    /// registered client, whose name is marked "name not verified".
+    pub verified_by: Option<String>,
+    /// The redirect URI's host.
+    pub redirect_host: String,
+    pub attempts_left: u8,
+    pub expires_at: EventTime,
+}
+
+/// What `GET /oauth/authorize` answers (ADR-0031 d4, d9 step 1;
+/// errors.md "`oauth` — connections").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthorizeOutcome {
+    /// The page for a live authorization request.
+    Page(AuthorizePage),
+    /// A refusal of a bound, the client or the redirect URI: a `400` page,
+    /// never a redirect, since neither the redirect URI nor the `state` was
+    /// accepted.
+    PageRefusal(Refusal),
+    /// A refusal after the client and the redirect URI were accepted: a
+    /// redirect to `redirect_uri` with the refusal's RFC `error`
+    /// ([`Refusal::authorize_error`]), its description, the `state` echoed
+    /// and `iss` (RFC 9207 §2).
+    RedirectRefusal {
+        error: Refusal,
+        redirect_uri: String,
+        state: Option<String>,
+        iss: String,
+    },
+}
+
 /// What Connect adds to an authorization request's row to make its
 /// `authorized` connection: the rest of the connection is copied from the
 /// row the confirmation deletes (postgres-schema.md "connections

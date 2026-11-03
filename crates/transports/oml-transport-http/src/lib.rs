@@ -20,6 +20,7 @@
 
 pub mod error;
 pub mod mcp;
+pub mod oauth;
 pub mod time;
 
 use std::collections::{HashMap, HashSet};

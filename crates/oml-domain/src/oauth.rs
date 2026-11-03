@@ -7,6 +7,7 @@
 //!
 //! - the connect code's format, entry and digest (d8);
 //! - S256 PKCE and the authorize request's bounds (d4);
+//! - the authorization request a page's sealed handle carries (d9);
 //! - the exact-match redirect allowlist (d6);
 //! - client identity: the document URL's form, the fetched document and a
 //!   dynamic registration (d5);
@@ -35,6 +36,7 @@ mod address;
 mod client;
 mod code;
 mod discovery;
+mod handle;
 mod lifecycle;
 mod pkce;
 mod redirect;
@@ -53,6 +55,9 @@ pub use code::{CODE_SYMBOLS, CROCKFORD_ALPHABET, ConnectCode};
 pub use discovery::{
     ChallengeCause, Issuer, IssuerError, RESOURCE_NAME, SCOPE, authorization_server_document,
     check_resource, mcp_challenge, protected_resource_document,
+};
+pub use handle::{
+    AUTHORIZATION_REQUEST_SECONDS, AuthorizationRequest, RequestClientKind, open_request,
 };
 pub use lifecycle::{
     ATTEMPTS_PER_PAGE, CodeRow, ConnectionAct, ConnectionState, KeyState, LifecycleError,

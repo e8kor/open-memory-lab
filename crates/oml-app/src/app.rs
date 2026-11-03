@@ -23,7 +23,11 @@ use oml_domain::name::{
     assign_names, unresolved_value,
 };
 use oml_domain::oauth::{
-    ConnectCode as CodeSymbols, ConnectRefused, ConnectionState, Issuer, Refusal, RevokedCause,
+    ATTEMPTS_PER_PAGE, AUTHORIZATION_REQUEST_SECONDS, AuthorizationRequest, AuthorizeBounds,
+    ClientId, ClientInvalid, ConnectCode as CodeSymbols, ConnectRefused, ConnectionState,
+    DOCUMENT_KEPT_SECONDS, Issuer, PkceRequired, Refusal, RequestClientKind, RevokedCause, SCOPE,
+    Validation, check_authorize_bounds, check_pkce_method, check_resource, classify_client_id,
+    select_redirect, validate_document,
 };
 use oml_domain::{
     ChainHead, Envelope, EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role,
@@ -33,19 +37,21 @@ use oml_domain::{
 
 use crate::cursor::{ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
-    IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, OutboxRow, ScanOutcome,
-    Scanner, Signer, StoreError, SubjectRow, TailEvent,
+    AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
+    DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
+    JournalStore, MetadataFold, OutboxRow, ScanOutcome, Scanner, Signer, StoreError, SubjectRow,
+    TailEvent,
 };
 use crate::types::{
-    AppError, AssignedNames, BootstrapRequest, BootstrapResult, ConnectCode, ConnectCodeIssued,
+    AppError, AssignedNames, AuthorizeOutcome, AuthorizePage, AuthorizeParams, BootstrapRequest,
+    BootstrapResult, ClientDescription, ClientKind, ConnectCode, ConnectCodeIssued,
     ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
     CrewUpdate, DenialRecord, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey, KeyAccess,
     KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage,
-    MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult,
-    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome, SupersedeReceipt,
-    SupersedeRequest, TailPage, TailedEvent, TreeNode, TreePage, UnnamedRows, Verdict,
-    VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
+    MemoryRecord, NamingRefusal, OAuthClientRecord, PROVIDER_TENANT, RecallHit, RecallRequest,
+    RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SupersedeOutcome,
+    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TreeNode, TreePage, UnnamedRows,
+    Verdict, VerdictOutcome, VersionRef, WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -3368,6 +3374,250 @@ where
             revoked_seq: Some(receipt.seq),
             ..connection
         })
+    }
+
+    /// `GET /oauth/authorize` (http-api.md; ADR-0031 d4, d9 step 1). It runs
+    /// one order: the parameter bounds, a repeated parameter among them,
+    /// before anything is fetched; then the client — a document client from
+    /// a fresh cached copy, else by `client_lookup`, else from a copy kept
+    /// within its 24 hours when the fetch fails or a cap is full, and a
+    /// registered client from its row; then the redirect URI; each of those
+    /// refusals is a page and never a redirect. Then `response_type=code`,
+    /// S256 PKCE, `resource` and `scope`, each refusal redirected to the
+    /// accepted redirect URI with the `state` and `iss`. A valid request is
+    /// sealed by `sealer` into the handle the page's form carries, alive 10
+    /// minutes with five attempts. It writes no row but the document cache
+    /// and journals nothing. Without `oauth.issuer` the endpoint does not
+    /// exist (`access.not_found`).
+    pub async fn authorize_request<F>(
+        &self,
+        params: AuthorizeParams,
+        client_lookup: &F,
+        sealer: &dyn HandleSealer,
+    ) -> Result<AuthorizeOutcome, AppError>
+    where
+        F: ClientDocumentFetcher,
+    {
+        let issuer = self.oauth_issuer.as_ref().ok_or(AppError::NotFound)?;
+        let now = self.clock.now();
+        let bounds = AuthorizeBounds {
+            state: params.state.as_deref(),
+            client_id: params.client_id.as_deref(),
+            redirect_uri: params.redirect_uri.as_deref(),
+            code_challenge: params.code_challenge.as_deref(),
+        };
+        let page = |refusal| Ok(AuthorizeOutcome::PageRefusal(refusal));
+        if params.repeated {
+            return page(Refusal::RequestValidation(Validation::ParameterRepeated));
+        }
+        if let Err(refusal) = check_authorize_bounds(&bounds) {
+            return page(refusal);
+        }
+        let Some(client_id) = params.client_id.as_deref() else {
+            return page(Refusal::RequestValidation(Validation::ClientIdAbsent));
+        };
+        let client = match classify_client_id(client_id) {
+            Ok(client) => client,
+            Err(refusal) => return page(refusal),
+        };
+        let client = match self.authorize_client(client, client_lookup, &now).await? {
+            Ok(client) => client,
+            Err(refusal) => return page(refusal),
+        };
+        let redirect = match select_redirect(&client.redirect_uris, params.redirect_uri.as_deref())
+        {
+            Ok(redirect) => redirect,
+            Err(refusal) => return page(refusal),
+        };
+        let code_challenge = match authorize_later_checks(&params, issuer) {
+            Ok(code_challenge) => code_challenge.to_owned(),
+            Err(error) => {
+                return Ok(AuthorizeOutcome::RedirectRefusal {
+                    error,
+                    redirect_uri: redirect.uri.to_owned(),
+                    state: params.state,
+                    iss: issuer.as_str().to_owned(),
+                });
+            }
+        };
+        let expires_at = EventTime::from_unix_micros(
+            now.unix_micros() + AUTHORIZATION_REQUEST_SECONDS * 1_000_000,
+        )
+        .expect("ten minutes after a clock reading is a time the fixed-width form writes");
+        let request = AuthorizationRequest {
+            client_id: client_id.to_owned(),
+            kind: client.kind,
+            client_name: client.client_name,
+            document_host: client.document_host,
+            metadata_digest: client.metadata_digest,
+            redirect_uri: redirect.uri.to_owned(),
+            redirect_uri_sent: redirect.sent,
+            code_challenge,
+            state: params.state.clone(),
+            resource: issuer.resource().to_owned(),
+            expires_at,
+            attempts_left: ATTEMPTS_PER_PAGE,
+        };
+        Ok(AuthorizeOutcome::Page(AuthorizePage {
+            handle: sealer.seal(&request.encode()),
+            redirect_host: redirect_host(&request.redirect_uri).to_owned(),
+            verified_by: request.document_host,
+            client_name: request.client_name,
+            attempts_left: request.attempts_left,
+            expires_at: request.expires_at,
+        }))
+    }
+
+    /// The authorize request's client (ADR-0031 d5): a document client's
+    /// metadata from a cached copy within its `Cache-Control` lifetime,
+    /// else a fresh fetch, validated and cached, else — the fetch failed or
+    /// a cap is full — a copy kept within 24 hours of its fetch; a
+    /// registered client's from its registration. The inner `Err` is the
+    /// refusal the page answers.
+    async fn authorize_client<F>(
+        &self,
+        client: ClientId<'_>,
+        client_lookup: &F,
+        now: &EventTime,
+    ) -> Result<Result<AcceptedClient, Refusal>, AppError>
+    where
+        F: ClientDocumentFetcher,
+    {
+        let url = match client {
+            ClientId::Registered(client_id) => {
+                let row = self.journal.oauth_client(client_id).await?;
+                return Ok(row
+                    .filter(|row| row.kind == ClientKind::Dcr)
+                    .map(|row| AcceptedClient::from_row(row, None))
+                    .ok_or(Refusal::ClientInvalid(ClientInvalid::Unknown)));
+            }
+            ClientId::Document(url) => url,
+        };
+        let host = Some(url.host().to_owned());
+        let age = |row: &OAuthClientRecord| {
+            row.fetched_at
+                .as_ref()
+                .map_or(i64::MAX, |at| now.unix_micros() - at.unix_micros())
+        };
+        let kept = self
+            .journal
+            .oauth_client(url.as_str())
+            .await?
+            .filter(|row| row.kind == ClientKind::Cimd)
+            .filter(|row| age(row) < i64::from(DOCUMENT_KEPT_SECONDS) * 1_000_000);
+        if let Some(row) = kept
+            .as_ref()
+            .filter(|row| age(row) < i64::from(row.max_age.unwrap_or(0)) * 1_000_000)
+        {
+            self.journal.touch_cimd(url.as_str(), now).await?;
+            return Ok(Ok(AcceptedClient::from_row(row.clone(), host)));
+        }
+        match client_lookup.fetch(url.as_str()).await {
+            Ok(fetched) => {
+                let metadata = match validate_document(&url, &fetched.body) {
+                    Ok(metadata) => metadata,
+                    Err(refusal) => return Ok(Err(refusal)),
+                };
+                let document = ClientDescription {
+                    client_id: url.as_str().to_owned(),
+                    client_name: metadata.client_name,
+                    redirect_uris: metadata.redirect_uris,
+                    metadata_digest: Sha256Hash::digest(&fetched.body),
+                };
+                self.journal
+                    .upsert_cimd(document.clone(), now, fetched.max_age)
+                    .await?;
+                Ok(Ok(AcceptedClient {
+                    kind: RequestClientKind::Document,
+                    client_name: document.client_name,
+                    redirect_uris: document.redirect_uris,
+                    metadata_digest: document.metadata_digest,
+                    document_host: host,
+                }))
+            }
+            Err(failure) => match kept {
+                Some(row) => {
+                    self.journal.touch_cimd(url.as_str(), now).await?;
+                    Ok(Ok(AcceptedClient::from_row(row, host)))
+                }
+                None => Ok(Err(Refusal::ClientInvalid(match failure {
+                    DocumentFetchFailure::Failed => ClientInvalid::Fetch,
+                    DocumentFetchFailure::Busy => ClientInvalid::FetchBusy,
+                }))),
+            },
+        }
+    }
+}
+
+/// An authorize request's accepted client: what the sealed handle and the
+/// page carry of it (ADR-0031 d9 step 1).
+struct AcceptedClient {
+    kind: RequestClientKind,
+    client_name: String,
+    redirect_uris: Vec<String>,
+    metadata_digest: Sha256Hash,
+    document_host: Option<String>,
+}
+
+impl AcceptedClient {
+    /// A stored client: a registration with no host, or a cached document
+    /// with its URL's host.
+    fn from_row(row: OAuthClientRecord, document_host: Option<String>) -> Self {
+        Self {
+            kind: match row.kind {
+                ClientKind::Cimd => RequestClientKind::Document,
+                ClientKind::Dcr => RequestClientKind::Registered,
+            },
+            client_name: row.client_name,
+            redirect_uris: row.redirect_uris,
+            metadata_digest: row.metadata_digest,
+            document_host,
+        }
+    }
+}
+
+/// The authorize checks after the client and the redirect URI are
+/// accepted, in their order (ADR-0031 d4): `response_type` exactly `code`,
+/// S256 PKCE, `resource` absent or `<issuer>/mcp`, and `scope` absent or
+/// naming `mcp` alone. Each refusal is redirected; a request that passes
+/// answers its S256 `code_challenge`.
+fn authorize_later_checks<'p>(
+    params: &'p AuthorizeParams,
+    issuer: &Issuer,
+) -> Result<&'p str, Refusal> {
+    if params.response_type.as_deref() != Some("code") {
+        return Err(Refusal::RequestValidation(
+            Validation::ResponseTypeUnsupported,
+        ));
+    }
+    check_pkce_method(
+        params.code_challenge.as_deref(),
+        params.code_challenge_method.as_deref(),
+    )?;
+    let code_challenge = params
+        .code_challenge
+        .as_deref()
+        .ok_or(Refusal::PkceRequired(PkceRequired::ChallengeAbsent))?;
+    check_resource(params.resource.as_deref(), issuer)?;
+    if params
+        .scope
+        .as_deref()
+        .is_some_and(|scope| !scope.split(' ').all(|token| token == SCOPE))
+    {
+        return Err(Refusal::RequestValidation(Validation::ScopeUnsupported));
+    }
+    Ok(code_challenge)
+}
+
+/// The host a redirect URI delivers to, as the page shows it: the
+/// authority after `://` without its port, a bracketed IPv6 literal kept
+/// whole. Every URI here is inside the allowlist (ADR-0031 d6, d9).
+fn redirect_host(uri: &str) -> &str {
+    let authority = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+    let authority = authority.split(['/', '?']).next().unwrap_or(authority);
+    match authority.find(']') {
+        Some(end) if authority.starts_with('[') => &authority[..=end],
+        _ => authority.split(':').next().unwrap_or(authority),
     }
 }
 
