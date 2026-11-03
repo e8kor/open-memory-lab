@@ -233,19 +233,43 @@ before acceptance. Proposed, not built.
   deltalake 1.1.2; delta-rs `crates/core/Cargo.toml`), so each binary's composition builds one
   store with `object_store::parse_url_opts` from `storage.url` and `storage.options`, the crate's
   endpoint and credential keys, for `oml-objectstore` and, once the lake is built, `oml-lake`
-  ([ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md)). The workspace pins the `object_store`
-  the pinned deltalake-core links (`^0.13.2` in 1.1.2 and 1.1.3; all fetched 2026-10-31), since
-  another version's store is another type; S1's suite rechecks ADR-0023 F1, read at 0.14.2.
-  `oml-lake` enables deltalake's `s3`, `azure` and `gcs` features and registers their handlers,
-  since delta-rs picks its log store by the URL's scheme even when handed a store. One root holds
-  the `oml-quarantine/`, `oml-bodies/` and `lake/<tenant>/` prefixes (amends ADR-0023 d3's
-  directory names), each process holding the prefix credentials [deployment](../operations/deployment.md#workloads) grants it.
+  ([ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md)). `oml-lake` enables deltalake's `s3`,
+  `azure` and `gcs` features and registers their handlers, since delta-rs picks its log store by
+  the URL's scheme even when handed a store. One root holds the `oml-quarantine/`, `oml-bodies/`
+  and `lake/<tenant>/` prefixes (amends ADR-0023 d3's directory names), each process holding the
+  prefix credentials [deployment](../operations/deployment.md#workloads) grants it.
+    - **The port follows deltalake's pin.** The workspace pins `deltalake` 1.1.x and
+      `object_store` 0.13.x, the version that deltalake requires: deltalake 1.1.2's published
+      `Cargo.toml` asks for `deltalake-core` `version = "1.1"` (lines 213-214), and
+      deltalake-core 1.1.2's and 1.1.3's ask for `object_store` `version = "0.13.2"` (lines
+      225-226, from delta-rs `crates/core/Cargo.toml` line 43, `object_store = { workspace =
+      true }`), a caret range that stops below 0.14 (deltalake-core's manifests fetched
+      2026-10-31; deltalake's and the crates.io index 2026-11-03, which lists no deltalake-core
+      newer than 1.1.3 and no 1.x release asking for 0.14). A store of another version is another
+      type, which delta-rs cannot take, so `object_store` moves only when a deltalake release moves
+      its requirement, in the same change. ADR-0023 F1 was read at 0.14.2; at 0.13.2
+      `PutMode::Create` also links the staged file with `hard_link` and answers `AlreadyExists`
+      when the name is taken (object_store 0.13.2 `src/local.rs:372-383`), and S1's suite
+      rechecks it.
     - **The default.** Unset, as the standalone profile leaves it, `storage.url` is the `file://`
       URL of `oml-data` in the working directory, where the built `kms.keyring_path` default
       `oml-keyring` also lies (crates/bins/oml-server-lead/src/lib.rs:94-95), under ADR-0023 d3's
       NFS and SMB refusal, so a basic install runs no storage service; the docker and kubernetes
       `local` payloads set it to their MinIO (ADR-0023 d7), and `scaled` to S3. It replaces [configuration](../operations/configuration.md)'s
       required `object_store.uri` (amends ADR-0023 d8 and ADR-0004 d4's "S3-compatible").
+    - **Two obligations on every write, from the filesystem backend's gaps.** A write returns only
+      once its bytes and its directory entry are on stable storage, and no write asks a store for
+      a compare-and-set. object_store 0.13.2's `LocalFileSystem` syncs nothing (its
+      `src/local.rs` calls no `sync_all`) and has no `with_fsync`, which 0.14 adds, off by default
+      (0.14.2 `src/local.rs:308-323`), so until the pin reaches 0.14 the file store the
+      composition hands both adapters wraps `LocalFileSystem` and syncs each file a put, copy or
+      multipart completion writes, and its parent directory, before it returns; from 0.14 it is
+      `with_fsync(true)`. Every put but a part's is `PutMode::Create`, the put-if-absent each
+      scheme's self-test proves, so a stored object's name is written once; `PutMode::Update` is
+      refused by the filesystem backend (0.13.2 `src/local.rs:336-341`), so every compare-and-set
+      stays in Postgres. Two writes replace, each at a name only one session reaches: a retried
+      part, by d9's plain put, and the multipart completion, whose options carry no mode in 0.13.2
+      (`src/lib.rs:1813-1829`) and which renames onto the session's object (`src/local.rs:888`).
     - **Scaling out is configuration, never code:** `s3://` (AWS S3, Cloudflare R2, MinIO, Garage),
       `az://` or `gs://`, which cluster-mode followers on other hosts need, since `file` serves one
       host. Startup refuses the crate's `memory` and `http` schemes, naming the setting: one forgets
@@ -277,7 +301,7 @@ before acceptance. Proposed, not built.
 
     | Step | Lands | Check, tests named as sentences |
     |---|---|---|
-    | S1 | d10's store: `storage.url`, `storage.options`, the default, the refused schemes, the self-test on every backend; the object-store and KMS ports; `oml-objectstore`; `oml-kms` (`kms-file`); `upload_sessions` and `artifact_keys` as d9 keys them; a `minio` service at ADR-0023 d7's pinned tag in `docker-compose.yml`, with `storage.url` set to it, and in the `test` job of `.github/workflows/ci.yml`, which runs the suite | `the_filesystem_and_minio_backends_pass_one_object_store_conformance_suite`, failing rather than skipping in CI when the MinIO endpoint is absent; `an_unset_storage_url_stores_under_the_data_directory`; `a_memory_or_http_storage_url_is_refused_at_startup`; `kms_file_wraps_and_unwraps_a_dek_and_never_stores_it_in_clear` |
+    | S1 | d10's store: `storage.url`, `storage.options`, the default, the refused schemes, the self-test on every backend, the file store's syncs and `PutMode::Create` puts; the object-store and KMS ports; `oml-objectstore`; `oml-kms` (`kms-file`); `upload_sessions` and `artifact_keys` as d9 keys them; a `minio` service at ADR-0023 d7's pinned tag in `docker-compose.yml`, with `storage.url` set to it, and in the `test` job of `.github/workflows/ci.yml`, which runs the suite | `the_filesystem_and_minio_backends_pass_one_object_store_conformance_suite`, failing rather than skipping in CI when the MinIO endpoint is absent; `the_file_store_syncs_each_written_file_and_its_directory_before_it_returns`; `a_second_put_at_a_stored_objects_name_is_refused_while_a_retried_part_replaces_its_first`; `an_unset_storage_url_stores_under_the_data_directory`; `a_memory_or_http_storage_url_is_refused_at_startup`; `kms_file_wraps_and_unwraps_a_dek_and_never_stores_it_in_clear` |
     | S2 | upload sessions, the `bound` state, expiry and the lead's sweep, binding, `submission.attach`, the move at promotion, serves with every attachment, d3's fetch; d2's file manifest and d4's two forms on remember and supersede | `no_part_or_completed_upload_rests_as_plaintext_under_the_data_directory`, `a_frame_moved_to_another_position_fails_to_decrypt`, `an_unbound_session_past_its_expiry_has_no_wrapped_dek_and_no_object`, `a_session_the_sweep_expired_never_binds_and_a_bound_one_is_never_swept`, `the_keyless_gc_deletes_no_body_object_an_event_references_and_no_part_of_an_open_session`, `a_request_refused_before_begin_writes_no_object`, `a_promoted_versions_objects_move_from_quarantine_to_oml_bodies`, `one_key_uploading_the_same_bytes_twice_stores_two_objects_under_two_deks`, `a_completed_upload_binds_into_one_version_only`, `each_bound_file_has_its_own_wrapped_dek_row_under_its_version`, `a_verdict_counts_only_when_every_attachment_was_served_to_its_reviewer`, `a_fetch_serves_the_object_of_the_version_it_names`, `every_attachment_fetch_answers_as_a_download_with_scripts_disabled`, `a_file_manifest_that_does_not_name_exactly_the_other_bound_digests_is_refused`, `an_inline_text_and_an_uploaded_file_of_the_same_bytes_bind_the_same_digest_and_scan`, `inline_texts_past_the_body_bound_are_refused_as_payload_too_large`, `every_property_oml_remember_advertises_is_accepted_by_its_argument_struct` |
     | S3 | d5 and d6: descriptors, `oml-tc/2` with `memories.file_manifest_bytes` and retrieval's [token budgets](../architecture/retrieval.md#token-budgets), `include_text`, `attachment_forms` and `attachment_limits` | `recall_counts_a_hits_file_descriptors_under_oml_tc_2`, `a_listing_item_carries_no_file_descriptors`, `the_workarea_read_states_the_calling_keys_forms_and_limits` |
     | S4 | kind `deliverable`, its class, the `kind` and `kinds` filters | `a_new_deliverable_on_a_taken_claim_key_answers_claim_key_conflict`, `a_recall_without_kinds_serves_deliverable_tips`, `two_deliverables_in_one_workarea_keep_their_own_tips_when_one_is_superseded`, `the_scoped_listing_by_kind_lists_one_tip_per_deliverable` |
@@ -306,9 +330,10 @@ and served again, and only comparing file manifests narrows the work ([FR-2](../
 so an agent submits finished work, not drafts, as the `oml-memory` skill says. Inline text costs
 the agent's output once per version, and whether claude.ai accepts a call near the 1 MiB cap is
 unverified (FR-42). Wrapped DEKs multiply by file count, promotion copies every file once, each
-served hit with files decrypts its file manifest, and a cloud backend adds a network round trip to
-every object operation, all unmeasured against [FR-25](../product/roadmap.md); `oml-tc/2` changes
-every count with files, the session hook's too.
+served hit with files decrypts its file manifest, each write to the file store waits for a file
+and a directory sync, and a cloud backend adds a network round trip to every object operation,
+all unmeasured against [FR-25](../product/roadmap.md); `oml-tc/2` changes every count with files,
+the session hook's too.
 
 **Opened.** [FR-40](../product/roadmap.md), deliverables, closes when S6's scenario passes in
 continuous integration; FR-41 to FR-43 and FR-46 as above; FR-31 gains no residual, since the forward read

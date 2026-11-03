@@ -46,9 +46,10 @@ confirmed d2's departure from the brief on 2026-10-31.
   `include_text` (d5); the forms described per key and selected by the harness (d6); several
   deliverables in one workarea (d7); declared lineage and the descendants read (d8); one DEK per
   stored object, the `bound` session state, the object's frame format, its lifecycle and expiry,
-  and their copy classes (d9); one `object_store` port for files and the lake, `storage.url` with
-  the local filesystem by default, the conformance suite against the filesystem and MinIO, and
-  `oml storage copy` (d10); two vocabulary rows (d11); the build order after iteration 3 (d12).
+  and their copy classes (d9); one `object_store` port for files and the lake, pinned to the
+  version deltalake requires, `storage.url` with the local filesystem by default, every write
+  synced and every put but a part's put-if-absent, the conformance suite against the filesystem
+  and MinIO, and `oml storage copy` (d10); two vocabulary rows (d11); the build order after iteration 3 (d12).
 - **Pages touched:** the record, its register row and nav entry, `llms.txt`, and FR-40 to FR-43
   and FR-46 on the roadmap, each marked proposed (FR-44 and FR-45 are used on another branch). No
   contract page changes, so `info.version` stays `0.2.0-design`.
