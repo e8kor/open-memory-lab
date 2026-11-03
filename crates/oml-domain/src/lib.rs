@@ -16,7 +16,10 @@
 //! rotation with reuse detection and the connection lifecycle (ADR-0031,
 //! proposed); `web` holds the web pages' sign-in core — the allowlist
 //! entry's email and user, the sealed sign-in state, the provider answers
-//! the server admits and the CSRF token (ADR-0045, proposed).
+//! the server admits and the CSRF token (ADR-0045, proposed); `guardrail`
+//! holds the guardrail kind's fields and caps, the `oml-gr/1` rule grammar,
+//! its tool classes, glob and check, the set's order and conflicts, and the
+//! rule cache's codec (proposed ADR-0037 d2, d4, d7, d8, d9, d10).
 
 #![forbid(unsafe_code)]
 
@@ -24,6 +27,7 @@ pub mod access;
 pub mod budget;
 pub mod chain;
 pub mod envelope;
+pub mod guardrail;
 pub mod jcs;
 pub mod keys;
 pub mod model;
