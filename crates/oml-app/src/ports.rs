@@ -954,27 +954,51 @@ pub trait ClientDocumentFetcher: Send + Sync {
     ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
 }
 
+/// The fetch-cap slots one piece of outbound work holds (ADR-0031 d5):
+/// they are given back when the last guard holding them drops. An adapter
+/// moves the guard it is handed into whatever runs the I/O — the
+/// `spawn_blocking` closure, not the future awaiting it — so a dropped
+/// request or a timeout that fires while a resolver or a connection still
+/// runs leaves its slots taken until that work ends. Only
+/// [`crate::oauth_fetch::CappedFetcher`] mints one.
+#[must_use = "the slots are given back when the guard drops"]
+pub struct FetchGuard {
+    _slots: Vec<std::sync::Arc<crate::oauth_fetch::Slot>>,
+}
+
+impl FetchGuard {
+    pub(crate) fn new(slots: Vec<std::sync::Arc<crate::oauth_fetch::Slot>>) -> Self {
+        Self { _slots: slots }
+    }
+}
+
 /// The outbound I/O under a document fetch, split at the one point the fetch
 /// caps need between its halves (ADR-0031 d5; http-api.md "Client
 /// identity"): resolve the host, then fetch from one address the use case
 /// checked. [`crate::oauth_fetch::CappedFetcher`] holds the caps and the
-/// address allow-list over it, so an adapter cannot widen either.
+/// address allow-list over it, so an adapter cannot widen either. Each half
+/// is handed the [`FetchGuard`] of the slots it runs under and keeps it
+/// until its I/O ends, whether or not anything still awaits it.
 pub trait DocumentFetcher: Send + Sync {
     /// Every A and AAAA answer for `host`, unfiltered; a resolver failure
-    /// or timeout is [`DocumentFetchFailure::Failed`].
+    /// or timeout is [`DocumentFetchFailure::Failed`]. `guard` is held
+    /// until the resolver itself returns.
     fn resolve(
         &self,
         host: &str,
+        guard: FetchGuard,
     ) -> impl Future<Output = Result<Vec<IpAddr>, DocumentFetchFailure>> + Send;
 
     /// `GET url` over a connection to `address` with no second resolution,
     /// no proxy and no redirect, `Accept-Encoding: identity`, cut at 5
     /// seconds and at 16 KiB received; TLS verifies the URL's host, sent
     /// as SNI. Any answer but `200` is [`DocumentFetchFailure::Failed`].
+    /// `guard` is held until the connection is done with.
     fn fetch(
         &self,
         url: &str,
         address: IpAddr,
+        guard: FetchGuard,
     ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
 }
 

@@ -19,7 +19,7 @@ use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, PlainSeal
 use oml_app::oauth_fetch::{CappedFetcher, FETCH_SLOTS};
 use oml_app::ports::{
     ClientDocumentFetcher as _, ConnectionStore as _, DocumentFetchFailure, DocumentFetcher,
-    FetchedDocument,
+    FetchGuard, FetchedDocument,
 };
 use oml_app::types::{AuthorizeOutcome, AuthorizeParams, ClientDescription};
 
@@ -97,7 +97,11 @@ impl Outbound {
 struct Shared(Arc<Outbound>);
 
 impl DocumentFetcher for Shared {
-    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, DocumentFetchFailure> {
+    async fn resolve(
+        &self,
+        host: &str,
+        _guard: FetchGuard,
+    ) -> Result<Vec<IpAddr>, DocumentFetchFailure> {
         let outbound = &self.0;
         outbound.resolved.fetch_add(1, Ordering::SeqCst);
         outbound
@@ -113,6 +117,7 @@ impl DocumentFetcher for Shared {
         &self,
         url: &str,
         address: IpAddr,
+        _guard: FetchGuard,
     ) -> Result<FetchedDocument, DocumentFetchFailure> {
         let outbound = &self.0;
         outbound
@@ -343,4 +348,227 @@ async fn a_stale_cached_copy_is_served_when_the_fetch_fails_within_24_hours() {
     assert_eq!(outbound.connections(), []);
     let row = store.oauth_client(DOC_URL).await.expect("read");
     assert_eq!(row.expect("kept").fetched_at, Some(fetched_at));
+}
+
+/// Outbound work that outlives the future awaiting it, as `spawn_blocking`
+/// does: each resolve or fetch runs on a spawned task that waits on `gate`,
+/// and the awaiting future only joins it, so dropping that future leaves
+/// the work running until the test opens the gate.
+struct Detached {
+    outbound: Arc<Outbound>,
+    resolve_gate: Option<Arc<Semaphore>>,
+    fetch_gate: Arc<Semaphore>,
+    /// The work still running.
+    running: Arc<AtomicUsize>,
+}
+
+impl Detached {
+    fn new(outbound: &Arc<Outbound>, fetch_gate: &Arc<Semaphore>) -> Self {
+        Self {
+            outbound: Arc::clone(outbound),
+            resolve_gate: None,
+            fetch_gate: Arc::clone(fetch_gate),
+            running: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn with_resolve_gate(mut self, gate: &Arc<Semaphore>) -> Self {
+        self.resolve_gate = Some(Arc::clone(gate));
+        self
+    }
+}
+
+/// Runs `work` on a spawned task that owns `guard`, after a permit on
+/// `gate`, counting it as running until it ends — as the adapter moves its
+/// guard into the `spawn_blocking` closure.
+async fn detached<T: Send + 'static>(
+    gate: Option<Arc<Semaphore>>,
+    running: &Arc<AtomicUsize>,
+    guard: FetchGuard,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    running.fetch_add(1, Ordering::SeqCst);
+    let running = Arc::clone(running);
+    tokio::spawn(async move {
+        if let Some(gate) = gate {
+            gate.acquire().await.expect("gate open").forget();
+        }
+        let out = work();
+        drop(guard);
+        running.fetch_sub(1, Ordering::SeqCst);
+        out
+    })
+    .await
+    .expect("the work ends")
+}
+
+impl DocumentFetcher for Detached {
+    async fn resolve(
+        &self,
+        host: &str,
+        guard: FetchGuard,
+    ) -> Result<Vec<IpAddr>, DocumentFetchFailure> {
+        let outbound = Arc::clone(&self.outbound);
+        let host = host.to_owned();
+        detached(self.resolve_gate.clone(), &self.running, guard, move || {
+            outbound.resolved.fetch_add(1, Ordering::SeqCst);
+            outbound
+                .answers
+                .lock()
+                .expect("answers")
+                .get(&host)
+                .cloned()
+                .ok_or(DocumentFetchFailure::Failed)
+        })
+        .await
+    }
+
+    async fn fetch(
+        &self,
+        url: &str,
+        address: IpAddr,
+        guard: FetchGuard,
+    ) -> Result<FetchedDocument, DocumentFetchFailure> {
+        self.outbound
+            .connected
+            .lock()
+            .expect("connections")
+            .push((url.to_owned(), address));
+        let url = url.to_owned();
+        detached(
+            Some(Arc::clone(&self.fetch_gate)),
+            &self.running,
+            guard,
+            move || {
+                Ok(FetchedDocument {
+                    body: document(&url),
+                    max_age: 3_600,
+                })
+            },
+        )
+        .await
+    }
+}
+
+/// Waits until `count` pieces of outbound work are running.
+async fn working(running: &AtomicUsize, count: usize) {
+    tokio::time::timeout(NO_WAIT, async {
+        while running.load(Ordering::SeqCst) < count {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the outbound work starts");
+}
+
+/// Waits until no outbound work is running.
+async fn idle(running: &AtomicUsize) {
+    tokio::time::timeout(NO_WAIT, async {
+        while running.load(Ordering::SeqCst) > 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the outbound work ends");
+    // The task that ran the last piece has dropped what it owned.
+    tokio::task::yield_now().await;
+}
+
+#[tokio::test]
+async fn sixteen_fetches_whose_futures_are_dropped_hold_their_slots_until_their_outbound_work_ends()
+{
+    let gate = Arc::new(Semaphore::new(0));
+    let outbound = Arc::new(Outbound::default());
+    let inner = Detached::new(&outbound, &gate);
+    let running = Arc::clone(&inner.running);
+    let fetcher = Arc::new(CappedFetcher::new(inner));
+    let mut abandoned = Vec::new();
+    for n in 0..FETCH_SLOTS {
+        let host = format!("client{n}.example.com");
+        outbound.answer(&host, &[public(n + 1)]);
+        let fetcher = Arc::clone(&fetcher);
+        abandoned.push(tokio::spawn(async move {
+            fetcher
+                .fetch(&format!("https://{host}/metadata.json"))
+                .await
+        }));
+    }
+    held(&outbound, FETCH_SLOTS).await;
+    // Every awaiting future is dropped, as a client that disconnects drops
+    // its handler's; the outbound work keeps running.
+    for fetch in abandoned {
+        fetch.abort();
+        assert!(fetch.await.expect_err("aborted").is_cancelled());
+    }
+    assert_eq!(running.load(Ordering::SeqCst), FETCH_SLOTS);
+
+    outbound.answer(DOC_HOST, &[public(200)]);
+    let seventeenth = tokio::time::timeout(NO_WAIT, fetcher.fetch(DOC_URL))
+        .await
+        .expect("a seventeenth fetch waits for no slot");
+    assert_eq!(seventeenth, Err(DocumentFetchFailure::Busy));
+    assert_eq!(outbound.connections().len(), FETCH_SLOTS);
+
+    gate.add_permits(FETCH_SLOTS + 1);
+    idle(&running).await;
+    assert!(fetcher.fetch(DOC_URL).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_fetch_whose_future_is_dropped_holds_its_host_and_address_slots_until_its_outbound_work_ends()
+ {
+    let gate = Arc::new(Semaphore::new(0));
+    let outbound = Arc::new(Outbound::default());
+    outbound.answer(DOC_HOST, &[public(1)]);
+    outbound.answer("other.example.com", &[public(1)]);
+    let inner = Detached::new(&outbound, &gate);
+    let running = Arc::clone(&inner.running);
+    let fetcher = Arc::new(CappedFetcher::new(inner));
+    let abandoned = {
+        let fetcher = Arc::clone(&fetcher);
+        tokio::spawn(async move { fetcher.fetch(DOC_URL).await })
+    };
+    held(&outbound, 1).await;
+    abandoned.abort();
+    assert!(abandoned.await.expect_err("aborted").is_cancelled());
+
+    let same_host = "https://client.example.com/other/metadata.json";
+    let same_address = "https://other.example.com/metadata.json";
+    for url in [DOC_URL, same_host, same_address] {
+        let again = tokio::time::timeout(NO_WAIT, fetcher.fetch(url))
+            .await
+            .expect("a fetch waits for no slot");
+        assert_eq!(again, Err(DocumentFetchFailure::Busy), "{url}");
+    }
+    assert_eq!(outbound.connections().len(), 1);
+
+    gate.add_permits(2);
+    idle(&running).await;
+    assert!(fetcher.fetch(same_address).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_resolve_that_outlives_its_timeout_holds_its_host_slot_until_the_resolver_returns() {
+    let resolve_gate = Arc::new(Semaphore::new(0));
+    let fetch_gate = Arc::new(Semaphore::new(1));
+    let outbound = Arc::new(Outbound::default());
+    outbound.answer(DOC_HOST, &[public(1)]);
+    let inner = Detached::new(&outbound, &fetch_gate).with_resolve_gate(&resolve_gate);
+    let running = Arc::clone(&inner.running);
+    let fetcher = CappedFetcher::new(inner);
+    // The caller's timeout fires while the resolver still runs, as the
+    // adapter's 5-second resolve cut does under a slow getaddrinfo.
+    let cut = tokio::time::timeout(Duration::from_millis(50), fetcher.fetch(DOC_URL)).await;
+    assert!(cut.is_err(), "the resolve is still running");
+    working(&running, 1).await;
+
+    let again = tokio::time::timeout(NO_WAIT, fetcher.fetch(DOC_URL))
+        .await
+        .expect("a fetch waits for no slot");
+    assert_eq!(again, Err(DocumentFetchFailure::Busy));
+
+    resolve_gate.add_permits(2);
+    idle(&running).await;
+    assert!(fetcher.fetch(DOC_URL).await.is_ok());
+    assert_eq!(outbound.resolved.load(Ordering::SeqCst), 2);
 }

@@ -6,7 +6,10 @@
 //! is handed, and it decides nothing: the 16-slot, per-host and
 //! per-address caps and the address allow-list are
 //! `oml_app::oauth_fetch::CappedFetcher`'s, run before this adapter is
-//! asked to connect. The fetch connects to the given address with no
+//! asked to connect. Each blocking call owns the [`FetchGuard`] it is
+//! handed, so its slots stay taken until the thread returns: dropping a
+//! `spawn_blocking` handle, or the resolve timeout firing, stops nothing.
+//! The fetch connects to the given address with no
 //! second resolution, through a `ureq` agent whose resolver answers only
 //! that address; it reads no proxy from the environment, follows no
 //! redirect, sends `Accept-Encoding: identity`, and is cut at 5 seconds
@@ -22,7 +25,7 @@ use std::io::Read as _;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs as _};
 use std::time::Duration;
 
-use oml_app::ports::{DocumentFetchFailure, DocumentFetcher, FetchedDocument};
+use oml_app::ports::{DocumentFetchFailure, DocumentFetcher, FetchGuard, FetchedDocument};
 
 /// The cut on a document's body (ADR-0031 d5).
 pub const BODY_MAX_BYTES: usize = 16 * 1024;
@@ -40,9 +43,14 @@ const HTTPS_PORT: u16 = 443;
 pub struct PinnedFetcher;
 
 impl DocumentFetcher for PinnedFetcher {
-    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, DocumentFetchFailure> {
+    async fn resolve(
+        &self,
+        host: &str,
+        guard: FetchGuard,
+    ) -> Result<Vec<IpAddr>, DocumentFetchFailure> {
         let host = host.to_owned();
         let lookup = tokio::task::spawn_blocking(move || {
+            let _guard = guard;
             (host.as_str(), HTTPS_PORT)
                 .to_socket_addrs()
                 .map(|answers| answers.map(|answer| answer.ip()).collect::<Vec<_>>())
@@ -57,9 +65,11 @@ impl DocumentFetcher for PinnedFetcher {
         &self,
         url: &str,
         address: IpAddr,
+        guard: FetchGuard,
     ) -> Result<FetchedDocument, DocumentFetchFailure> {
         let url = url.to_owned();
         tokio::task::spawn_blocking(move || {
+            let _guard = guard;
             fetch_pinned(&url, SocketAddr::new(address, HTTPS_PORT))
         })
         .await
