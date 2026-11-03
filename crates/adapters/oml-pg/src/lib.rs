@@ -1181,7 +1181,10 @@ async fn apply_fold(
             // 'committed', every other node's 'development'. The path is the
             // parent's with this node's name appended, the root's its name
             // alone (ADR-0026 d7); a parent the lead has not named yet has
-            // no path, and neither does its child until the naming fold.
+            // no path, and neither does its child until the naming fold. A
+            // parent the tenant does not hold, another tenant's node
+            // included, meets the key (tenant_id, parent_id) and is the
+            // backend's refusal, as any 23503 is (ADR-0034 d12).
             let crew = w
                 .crew
                 .as_ref()
@@ -2365,9 +2368,11 @@ impl JournalStore for PgStore {
         let Some(top) = ancestry.last() else {
             return Ok(None);
         };
-        // A walk that stops short of a root left the tenant (a parent_id the
-        // foreign key admits across tenants); it would drop ancestors'
-        // grants and denials, so it is refused.
+        // A walk that stops short of a root left the tenant; it would drop
+        // ancestors' grants and denials, so it is refused. Since 0008 the
+        // key (tenant_id, parent_id) refuses such a parent at its insert,
+        // having validated every row before it (ADR-0034 d12); this refusal
+        // stays as the walk's own guard.
         if let Some(parent_id) = top.parent_id {
             return Err(StoreError::Backend(format!(
                 "the ancestry of {workarea_id} names parent {parent_id}, \
