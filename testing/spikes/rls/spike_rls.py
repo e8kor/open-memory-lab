@@ -99,9 +99,10 @@ WORKAREA_COLUMNS = "id, tenant_id, parent_id, name, crew"
 # check (ADR-0034 d8, d9, d10 step 2). The two estimate checks were recorded until 0009 made
 # memories one partition per tenant (ADR-0034 d11): each partition's statistics hold one
 # tenant_id, so the policy's tenant A, which the planner evaluates for its estimate, gives
-# another tenant's partition one row whatever the word, and the checks passed on 18.6 on
-# 2026-11-03 (spike-3-rls.md#s34). A listed check that passes fails the run, so they are no
-# longer listed; the per-partition catalog channels stay observations (FR-45).
+# another tenant's partition one row whatever the word: the owner's check passed on 18.6 on
+# 2026-11-03 and the service role's is read to (spike-3-rls.md#s34; ADR-0034 d10 step 4, d11).
+# A listed check that passes fails the run, so they are no longer listed; the per-partition
+# catalog channels stay observations (FR-45).
 RECORDED_FAILURES: dict[str, str] = {}
 
 # The tables the seeders below wrote rows into, filled by seed_insert as they run. A table a

@@ -3627,8 +3627,8 @@ async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
 
 /// No partition's statistics reach the serving role: it holds no privilege
 /// on a partition, and the parent's row security hides the parent's, while
-/// the owner's view, the control, shows each partition's (ADR-0034 d1,
-/// d11).
+/// the owner's view, the control, shows each partition's FTS index's
+/// (ADR-0034 d1, d11).
 #[tokio::test]
 async fn the_serving_role_sees_no_partitions_pg_stats() {
     if !splits().await {
@@ -3663,9 +3663,20 @@ async fn the_serving_role_sees_no_partitions_pg_stats() {
         .await
         .expect("the serving role's pg_stats");
     assert_eq!(serving, 0, "the serving role sees no memories statistics");
+    // The partition is FORCE ROW LEVEL SECURITY and the owner bypasses
+    // nothing, so `pg_stats` hides the partition's own columns from the owner
+    // too; the control is the statistics of the partition's index attached to
+    // `memories_claim_fts`, which stay in the owner's view (spike 3 S3.1).
     for tenant in tenants {
         let shown: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_stats WHERE schemaname = 'public' AND tablename = $1",
+            "SELECT count(*) FROM pg_stats s \
+               JOIN pg_class i ON i.relname = s.tablename \
+                              AND i.relnamespace = 'public'::regnamespace \
+               JOIN pg_index x ON x.indexrelid = i.oid \
+               JOIN pg_inherits h ON h.inhrelid = i.oid \
+              WHERE s.schemaname = 'public' \
+                AND x.indrelid = $1::regclass \
+                AND h.inhparent = 'memories_claim_fts'::regclass",
         )
         .bind(partition_of(tenant))
         .fetch_one(&mut owner)
@@ -3673,7 +3684,7 @@ async fn the_serving_role_sees_no_partitions_pg_stats() {
         .expect("the owner's pg_stats");
         assert!(
             shown > 0,
-            "control: the owner sees {}'s statistics",
+            "control: the owner sees the statistics of {}'s FTS index",
             partition_of(tenant)
         );
     }
@@ -3765,6 +3776,72 @@ async fn an_attach_that_waits_past_the_lock_timeout_answers_partition_lock_timeo
         .await
         .expect("with the lock gone the same call succeeds");
     drop(holder);
+    drop_dbs(&created).await;
+}
+
+/// The attach clones `memories`' foreign keys, so it takes
+/// `ShareRowExclusiveLock` on `journal` and then `tenants`; a serving
+/// transaction shaped as a genesis commit, `tenants` then `journal`, meets
+/// it in a deadlock, which the detector breaks by aborting the attach, the
+/// side that waited first. The port answers that `40P01` as it answers a
+/// lock timeout, retryable, and commits nothing; the serving transaction
+/// commits (ADR-0034 d11).
+#[tokio::test]
+async fn an_attach_the_deadlock_detector_aborts_answers_partition_lock_timeout() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let owner = owner_role(&store).await;
+    let tenant = Uuid::from_u128(0xA000_0000 + 245);
+    let mut serving = store.pool().acquire().await.expect("serving connection");
+    let mut genesis = serving.begin().await.expect("begin");
+    genesis
+        .execute("LOCK TABLE tenants IN ROW EXCLUSIVE MODE")
+        .await
+        .expect("the serving transaction takes the lock its tenants insert takes");
+    let ddl = tokio::spawn({
+        let store = store.clone();
+        async move { store.create_tenant_partitions(tenant).await }
+    });
+    // The attach holds `journal` and waits on `tenants`.
+    let mut waiting = false;
+    for _ in 0..100 {
+        waiting = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks \
+                             WHERE relation = 'tenants'::regclass AND NOT granted)",
+        )
+        .fetch_one(store.pool())
+        .await
+        .expect("pg_locks");
+        if waiting {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(waiting, "control: the attach waits on tenants");
+    genesis
+        .execute("LOCK TABLE journal IN ROW EXCLUSIVE MODE")
+        .await
+        .expect("the serving transaction takes journal once the detector aborts the attach");
+    genesis
+        .commit()
+        .await
+        .expect("the serving transaction commits");
+    let err = ddl
+        .await
+        .expect("the DDL task")
+        .expect_err("the detector aborts the attach");
+    assert_eq!(err, StoreError::PartitionLockTimeout);
+    drop(serving);
+    let mut conn = owner_conn(&store).await;
+    assert_eq!(
+        partition_fence(&mut conn, &partition_of(tenant), &owner).await,
+        None,
+        "the aborted DDL committed nothing"
+    );
+    drop(conn);
     drop_dbs(&created).await;
 }
 

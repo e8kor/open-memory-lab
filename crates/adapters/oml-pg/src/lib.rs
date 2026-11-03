@@ -381,12 +381,13 @@ fn memories_partition(tenant_id: Uuid) -> String {
     format!("memories_t_{}", tenant_id.simple())
 }
 
-/// A partition DDL failure as the port answers it: a lock that waited past
-/// the timeout (`55P03`) is [`StoreError::PartitionLockTimeout`], anything
-/// else [`StoreError::Partition`] (ADR-0034 d11).
+/// A partition DDL failure as the port answers it: a lock contest the DDL
+/// lost, a wait past the timeout (`55P03`) or a deadlock the detector broke
+/// by aborting it (`40P01`), is [`StoreError::PartitionLockTimeout`],
+/// retryable; anything else [`StoreError::Partition`] (ADR-0034 d11).
 fn partition_error(e: &sqlx::Error) -> StoreError {
     match e.as_database_error().and_then(|db| db.code()) {
-        Some(code) if code == "55P03" => StoreError::PartitionLockTimeout,
+        Some(code) if code == "55P03" || code == "40P01" => StoreError::PartitionLockTimeout,
         _ => StoreError::Partition(e.to_string()),
     }
 }
@@ -396,10 +397,15 @@ fn partition_error(e: &sqlx::Error) -> StoreError {
 /// `FORCE ROW LEVEL SECURITY` and its parent's `tenant_isolation` policy,
 /// then `ATTACH PARTITION`, which takes `ShareUpdateExclusiveLock` on the
 /// parent where `CREATE TABLE … PARTITION OF` would take
-/// `AccessExclusiveLock` and stop every tenant's reads and writes
-/// (postgres-schema.md, the per-tenant partitions; ADR-0034 d11). The
-/// identifiers and the bound derive from the id alone, which is why they
-/// are spelled into the DDL, which takes no parameters.
+/// `AccessExclusiveLock` and stop every tenant's reads and writes. The
+/// attach clones `memories`' foreign keys, so it also takes
+/// `ShareRowExclusiveLock` on `journal`, `tenants` and `review_queue`:
+/// every tenant's commits, each of which inserts into `journal`, wait for
+/// it, bounded by the timeout, and a commit that inserts into `tenants`
+/// then `journal`, as a genesis does, can deadlock with it
+/// ([`partition_error`]; postgres-schema.md, the per-tenant partitions;
+/// ADR-0034 d11). The identifiers and the bound derive from the id alone,
+/// which is why they are spelled into the DDL, which takes no parameters.
 async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Result<(), sqlx::Error> {
     let partition = memories_partition(tenant_id);
     let mut tx = owner.begin().await?;

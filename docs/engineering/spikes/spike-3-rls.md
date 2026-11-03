@@ -49,9 +49,10 @@ to tenant A along two channels:
 The harness's `RECORDED_FAILURES` held the two `estimate` checks alone, `S3.4/owner/estimate` and
 `S3.4/service/estimate` ([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
 d9 and d10 step 2), and CI stayed green while they reproduced. Over migration 0009's per-tenant
-partitions (ADR-0034 d11) both passed in the owner-only run on 18.6 on 2026-11-03, so the list
-is now empty ([S3.4](#s34), "Over per-tenant partitions"); CI's pinned pg17 run, which measures
-the service role too, has not run over them. Since d9 the
+partitions (ADR-0034 d11) `S3.4/owner/estimate` passed in the owner-only run on 18.6 on
+2026-11-03, and the service role's is read to pass under the same policy, so the list is now empty,
+as ADR-0034 d10 step 4 and d11 state ([S3.4](#s34), "Over per-tenant partitions"); CI's pinned
+pg17 run, which measures the service role too, has not run over them. Since d9 the
 harness migrates as the lead does, `_sqlx_migrations` created as sqlx creates it and the service
 role holding only the grants the migrations make it through `oml.serving_role`. The owner serves
 nothing under the split, so `S3.1/owner/pg_stats` and `S3.4/owner/pg_stats`, which failed in the

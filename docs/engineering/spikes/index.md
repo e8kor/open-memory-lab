@@ -190,7 +190,7 @@ Both estimate checks were recorded, `S3.4/owner/estimate` and `S3.4/service/esti
 ([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d9 and d10 step
 2): PostgreSQL gives the same estimate to every role the policy binds. Over migration 0009's
 per-tenant partitions (ADR-0034 d11) the owner's passed on 18.6 on 2026-11-03, so the list is
-empty and CI fails if either estimate check fails on the pinned pg17 (the
+empty, as ADR-0034 d10 step 4 states, and CI fails if either estimate check fails on the pinned pg17 (the
 [spike 3 findings](spike-3-rls.md#s34)). The owner serves nothing under the split, so its
 `pg_stats` view is no longer a check: in S3.1 and S3.4 it is a control that must show tenant
 B's lexemes, or `S3.4/service/pg_stats`, which is not on the list, could not have caught them

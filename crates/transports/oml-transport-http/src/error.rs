@@ -387,8 +387,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::unavailable("idempotency record contention")
         }
         AppError::Store(StoreError::Backend(e)) => ApiError::unavailable(&e),
-        // A tenant's partition DDL waited past its lock timeout and
-        // committed nothing; retryable. Any other DDL failure is a defect
+        // A tenant's partition DDL lost a lock contest, a timeout or a
+        // deadlock, and committed nothing; retryable. Any other DDL failure is a defect
         // (errors.md `system.unavailable`; ADR-0034 d11).
         AppError::Store(StoreError::PartitionLockTimeout) => {
             ApiError::unavailable("partition_lock_timeout")
