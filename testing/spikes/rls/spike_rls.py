@@ -570,9 +570,10 @@ class _Rollback(Exception):
 # Two findings (docs/engineering/spikes/index.md). The mechanism: PostgreSQL keeps a non-owner
 # role with DML grants and no BYPASSRLS inside the policy, and migrations succeed under the
 # owner while FORCE binds it. OML's roles: the roles a deployment uses are split from the
-# owner and none holds BYPASSRLS. The harness mints its own roles and writes their grants, so
-# asserting their attributes would show only that it ran its own CREATE ROLE statements; the
-# second finding stays open until a deployment's bootstrap specifies roles and grants.
+# owner and none holds BYPASSRLS. The harness mints its own roles and takes their grants from
+# the migrations, so asserting their attributes would show only that it ran its own CREATE ROLE
+# statements; the second finding stays open until a deployment's bootstrap specifies roles and
+# grants.
 # ---------------------------------------------------------------------------
 
 S3_2_MECHANISM = ("S3.2 (mechanism)", "a non-owner role with DML grants and no BYPASSRLS cannot read across "

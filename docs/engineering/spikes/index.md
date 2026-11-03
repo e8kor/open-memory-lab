@@ -122,11 +122,16 @@ roles only when the connecting role is a superuser:
 
 - **CI** (`pgvector/pgvector:pg17`, whose `POSTGRES_USER` is a superuser): the script mints an
   owner role and a service role with unique names, both `NOSUPERUSER NOBYPASSRLS`, and creates
-  the database owned by the owner role. It runs the migrations as the owner, then grants the
-  service role DML on every table except `journal`, where it gets `SELECT, INSERT` only (the
-  append-only rule of [ADR-0002](../../adr/ADR-0002-postgresql-system-of-record.md) d4). It runs
-  S3.1 as the owner, S3.2's mechanism as both, and S3.3 and S3.4 as both roles. Both roles are
-  dropped at the end.
+  the database owned by the owner role. It migrates as the lead does
+  ([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d9): as the
+  owner, it creates `_sqlx_migrations` with sqlx's own DDL, sets `oml.serving_role` to the
+  service role, and applies the files in order. The service role holds only the grants the
+  migrations make it. The harness grants it nothing of its own, so `journal` gives it
+  `SELECT, INSERT` only (the append-only rule of
+  [ADR-0002](../../adr/ADR-0002-postgresql-system-of-record.md) d4), a table it may not `SELECT`
+  is checked as refused with `42501` and left out of the row probes, and `_sqlx_migrations` is
+  checked to grant it nothing. It runs S3.1 as the owner, S3.2's mechanism as both, and S3.3 and
+  S3.4 as both roles. Both roles are dropped at the end.
 - **Elsewhere** (a role that is not a superuser and can create databases, as on the host that
   recorded the first findings):
   the connecting role owns the database and runs S3.1, S3.3 and S3.4 as the owner, which
@@ -144,10 +149,10 @@ so it reports them as two findings:
 - **S3.2 (mechanism):** a role that does not own the tables, holds DML grants and has no
   `BYPASSRLS` reads only its tenant's rows. It cannot lift `FORCE`, disable RLS, drop or create a
   policy, take ownership, `SET ROLE` to the owner, grant itself `UPDATE` on `journal`, or turn
-  `row_security` off. With the `journal` grants above, it cannot update, delete or truncate the
-  journal. Migrations succeed under the owner while `FORCE` binds it. This finding can pass.
+  `row_security` off. With the `journal` grants the migrations make it, it cannot update, delete
+  or truncate the journal. Migrations succeed under the owner while `FORCE` binds it. This finding can pass.
 - **S3.2 (OML's roles):** the roles an OML deployment uses are split from the owner, and none
-  holds `BYPASSRLS`. The harness mints its own roles and writes their grants. Checking their
+  holds `BYPASSRLS`. The harness mints its own roles and takes their grants from the migrations. Checking their
   attributes would only show that it ran its own `CREATE ROLE` statements, so it does not do
   that. It treats them as preconditions of the mechanism finding: if they are not as minted, that
   finding is inconclusive. OML has no roles of its own to test.
@@ -181,9 +186,14 @@ run. A listed check that passes, or does not run, does fail the run, so a fixed 
 finding re-recorded instead of going stale. A failure not on the list fails the run as usual.
 This is a strict expected failure: the scenario's verdict stays `fail`, and only the exit code
 treats a known result as known. A recorded failure belongs to the role that showed it.
-`S3.4/owner/estimate` is recorded, and `S3.4/service/estimate` is not, because no run has shown
-it, so CI fails if the service role sees the same estimates (as the
-[spike 3 findings](spike-3-rls.md#s34) expect). Recording a failure does not decide it. A failed scenario's
+Both estimate checks are recorded, `S3.4/owner/estimate` and `S3.4/service/estimate`
+([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d9 and d10 step
+2): PostgreSQL gives the same estimate to every role the policy binds, so CI fails if the
+service role's estimates stop following the other tenant's words (the
+[spike 3 findings](spike-3-rls.md#s34)). The owner serves nothing under the split, so its
+`pg_stats` view is no longer a check: in S3.1 and S3.4 it is a control that must show tenant
+B's lexemes, or `S3.4/service/pg_stats`, which is not on the list, could not have caught them
+(ADR-0034 d8). Recording a failure does not decide it. A failed scenario's
 `action` line, on its finding and in the script's output, says **ADR amendment needed** with its
 clause and "awaiting maintainer decision" until the maintainer decides. The harness never prints
 `none` for a failure.
