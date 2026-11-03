@@ -24,18 +24,21 @@ recall and get, the server describing the file forms it accepts and the harness 
 storage should "keep our basic installation simple but … allow us to scale in future", its
 "underneath solution" replaceable "with cloud or local host, with local host enabled by default".
 
-**What the build has**, at `02a385d`: no attachment substrate. Envelopes carry `"attachments": []`
-(crates/oml-app/src/app.rs:1365, 2037), and a submit naming a digest answers
-`submission.attachment_missing` (crates/transports/oml-transport-http/src/lib.rs:1453-1466); no
-migration lays `upload_sessions` or `artifact_keys` (migrations/0001_init.sql:9-11); the keyring
-holds only the signing key; no object-store or KMS port (crates/oml-app/src/ports.rs), `object_store`
-or `deltalake` dependency (Cargo.toml), or object store in CI or compose (docker-compose.yml:7-9)
-exists; no lineage read is routed (lib.rs:172-189); `oml_attach` and `oml_graph` answer "not
-built" (mcp.rs:57). ADR-0026 (iteration 3),
-ADR-0030 (in-progress workareas) and ADR-0031 (connections) are proposed on other branches, cited
-by number and unlinked. d10 is the user's decision; d2 departs from the brief, as the maintainer
-confirmed on 2026-10-31; each other decision is the maintainer's reading, which the user confirms
-before acceptance. Proposed, not built.
+**What the build has**, at `fc242c5` (v0.3.0 with #18): no attachment substrate. Envelopes carry
+`"attachments": []` (crates/oml-app/src/app.rs:2194, 2865), and a submit naming a digest answers
+`submission.attachment_missing` (crates/transports/oml-transport-http/src/lib.rs:1958-1971); no
+migration up to `0006_names.sql` lays `upload_sessions` or `artifact_keys`
+(migrations/0001_init.sql:9-11); the keyring port loads only the signing key
+(crates/oml-app/src/ports.rs:623-628), and no object-store or KMS port, `object_store` or
+`deltalake` dependency (Cargo.toml), or object store in CI or compose (docker-compose.yml:7-9)
+exists; no lineage read is routed (lib.rs:199-225); `oml_attach` and `oml_graph` answer "not
+built" (mcp.rs:57-59). [ADR-0026](ADR-0026-names-are-keys.md) (iteration 3) is accepted and
+built, so the workarea and keys below go by their names, and the ids this record's new arguments
+take, a claim version's `artifact_id` and an upload session's id, belong to no kind that carries
+a name. ADR-0030 (in-progress workareas) and ADR-0031 (connections) are proposed on other
+branches, cited by number and unlinked. d10 is the user's decision; d2 departs from the brief, as
+the maintainer confirmed on 2026-10-31; each other decision is the maintainer's reading, which the
+user confirms before acceptance. Proposed, not built.
 
 ## Decision
 
@@ -150,10 +153,12 @@ before acceptance. Proposed, not built.
 
 - **d7 — Several deliverables coexist in one workarea, each its own claim, and every act names one
   version.**
-    - **Naming.** All kinds share the workarea's claim keys (ADR-0025 d18): a new deliverable on a
-      `claim_key` a held, promoted or demoted version holds answers `409
+    - **Claim keys.** All claim kinds share the workarea's claim keys (ADR-0025 d18): a new
+      deliverable on a `claim_key` a held, promoted or demoted version holds answers `409
       submission.claim_key_conflict` ([FR-31](../product/roadmap.md)'s residual), so the agent
-      names each apart, as `q4-cost-report` and `q4-cost-deck`.
+      gives each its own, as `q4-cost-report` and `q4-cost-deck`. A claim key is not a name
+      (ADR-0026 d1): it groups one claim's versions, and a claim whose every version is rejected
+      or erased releases it (ADR-0025 d18), where a name is never released (ADR-0026 d10).
     - **Listing, the tip of each.** `GET /v1/memories?kind=deliverable`, an existing filter, lists
       each deliverable's promoted served tip in scope. On MCP, `oml_my_work` gains `kind` and
       `oml_recall` `kinds`, both ring filters, so an agent lists its own and finds others' by a
@@ -194,15 +199,16 @@ before acceptance. Proposed, not built.
       commit (amends ADR-0005 d1's "per artifact" to per stored object).
     - **Objects.** Every object's name ends in its `artifact_keys.object_id`, the version's
       `artifact_id` for a body and the session's `id` for a file, as
-      `oml-quarantine/<tenant>/<digest>/<object_id>` and its `oml-bodies` twin (amends ADR-0004
-      d4), else two versions binding unchanged bytes would put two ciphertexts at one name. A
+      `oml-quarantine/<tenant_id>/<digest>/<object_id>` and its `oml-bodies` twin (amends ADR-0004
+      d4), else two versions binding unchanged bytes would put two ciphertexts at one name; the
+      tenant segment is its id, never its name, as ADR-0026 d1 binds stored state. A
       file's object is a run of frames, one per part or inline file: a 4-byte big-endian
       ciphertext length, a random 12-byte nonce (a retried part re-encrypts, and a counter would
       repeat one), then AES-256-GCM ciphertext and tag under the session DEK, with the session's
       `id` and part number as associated data, so a moved frame fails to decrypt, and the
       plaintext digest, checked at completion and on every serve (ADR-0004 d4), catches a dropped
       one. Each encrypted part is its own object at
-      `oml-quarantine/<tenant>/uploads/<session_id>/<part_number>`, written by plain put on every
+      `oml-quarantine/<tenant_id>/uploads/<session_id>/<part_number>`, written by plain put on every
       backend, so a retry re-puts it; completion streams the frames in part order into the
       session's object with one `put_multipart`, the bytes `submission.attach`'s ciphertext digest
       covers, then deletes the parts.
@@ -236,7 +242,7 @@ before acceptance. Proposed, not built.
   ([ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md)). `oml-lake` enables deltalake's `s3`,
   `azure` and `gcs` features and registers their handlers, since delta-rs picks its log store by
   the URL's scheme even when handed a store. One root holds the `oml-quarantine/`, `oml-bodies/`
-  and `lake/<tenant>/` prefixes (amends ADR-0023 d3's directory names), each process holding the
+  and `lake/<tenant_id>/` prefixes (amends ADR-0023 d3's directory names), each process holding the
   prefix credentials [deployment](../operations/deployment.md#workloads) grants it.
     - **The port follows deltalake's pin.** The workspace pins `deltalake` 1.1.x and
       `object_store` 0.13.x, the version that deltalake requires: deltalake 1.1.2's published
@@ -339,21 +345,22 @@ the session hook's too.
 continuous integration; FR-41 to FR-43 and FR-46 as above; FR-31 gains no residual, since the forward read
 stops where the backward read redacts. New surface: `submission.file_manifest_invalid` (422), the
 session state `bound`, `storage.url`, `storage.options` and the fields above; no contract page
-changes now, so `info.version` stays `0.2.0-design`.
+changes now, so `info.version` stays `0.3.0-design`.
 
 **Process obligations.** With the proposal: this file, a [register](index.md) row, a `mkdocs.yml`
 nav entry, `llms.txt`, FR-40 to FR-43 and FR-46 on the [roadmap](../product/roadmap.md) marked proposed, one
 [changelog](../changelog.md) entry. On acceptance, not before: this record and its register row
 become `accepted design` with the date; the Status line of each record the Amends line names
-(ADR-0022 and ADR-0024 among them) gains "· amended by ADR-0035"; ADR-0005 d4's table and the
+(ADR-0022 and ADR-0024 among them) gains ADR-0035 in its "amended by" list, which ADR-0018's,
+ADR-0022's and ADR-0025's already open; ADR-0005 d4's table and the
 [erasure inventory](../architecture/audit-and-lineage.md) gain d9's two copy classes;
 [storage](../architecture/storage.md) states that the lake writes through the same port; storage,
 admission and deployment name d10's one root and prefixes, and admission's [quarantine
 placement](../architecture/admission.md#quarantine-placement), its keyless GC paragraph included,
 d9's object names and both sweep rules; the budget-token row (ADR-0025 d6) and concepts' budget
 sentence name `oml-tc/2`'s file manifest bytes; the D2–D5, D12, D13 and D15 cells name this
-record; concepts gains a deliverables section and map row, and its and CONTRIBUTING's vocabulary
-pointers name d11; the spec tag is cut.
+record; concepts gains a deliverables section and map row, and its vocabulary pointer names d11;
+the spec tag is cut.
 
 ## Rejected alternatives
 
