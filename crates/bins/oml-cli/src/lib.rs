@@ -8,4 +8,5 @@ pub mod client;
 pub mod creds;
 pub mod hook;
 pub mod issue;
+pub mod owner_only;
 pub mod verify;
