@@ -10,12 +10,17 @@
 
 #![forbid(unsafe_code)]
 
-use core::future::Future;
+use core::future::{Future, poll_fn};
+use core::pin::pin;
+use core::task::Poll;
 
 use oml_app::domain::Sha256Hash;
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
-use oml_app::domain::oauth::{ConnectionState, RevokedCause};
+use oml_app::domain::oauth::{
+    ConnectionState, Issuer, KeyState, RefreshDecision, RefreshInvalid, RevokedCause, TokenKind,
+    decide_refresh,
+};
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
     event_types, key_fingerprint, next_envelope, sha256_digest_string, sign, verify_chain,
@@ -29,8 +34,9 @@ use oml_app::ports::{
 use oml_app::types::{
     AuthorizationRecord, ClaimKeyState, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
     ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, GrantRecord, KeyAccess,
-    KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord, OAuthClientRecord,
-    RecallCandidate, UnnamedRows, WorkareaRecord,
+    KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord, MintedToken,
+    OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow,
+    TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -4150,6 +4156,67 @@ fn fixture_time(at: &str) -> EventTime {
     EventTime::parse(at).expect("fixed-width fixture time")
 }
 
+/// The SHA-256 of a fixture connection's authorization code, the one
+/// [`authorized_connection`] stores.
+#[must_use]
+pub fn auth_code_hash(connection_id: Uuid) -> Sha256Hash {
+    Sha256Hash::digest(connection_id.as_bytes())
+}
+
+/// A fixture token pair, its digests derived from `seed`: an access token
+/// that lives to 14:00 and a refresh token to 2026-11-28 (ADR-0031 d10).
+#[must_use]
+pub fn token_pair(seed: Uuid) -> TokenPair {
+    TokenPair {
+        access: MintedToken {
+            token_hash: Sha256Hash::digest(&[b"access:".as_slice(), seed.as_bytes()].concat()),
+            expires_at: fixture_time("2026-10-29T14:00:00.000000Z"),
+        },
+        refresh: MintedToken {
+            token_hash: Sha256Hash::digest(&[b"refresh:".as_slice(), seed.as_bytes()].concat()),
+            expires_at: fixture_time("2026-11-28T13:00:00.000000Z"),
+        },
+    }
+}
+
+/// The refresh rule of the token endpoint, for a request from the fixture
+/// client to the fixture issuer: the domain's own decision on the facts the
+/// store read under the lock (roles-and-keys.md connections; ADR-0031 d10,
+/// d11).
+fn fixture_refresh_rule(facts: Option<&RefreshFacts>) -> RefreshDecision {
+    let issuer = Issuer::parse("https://oml.example.com").expect("fixture issuer");
+    let client = authorized_connection(Uuid::nil(), Uuid::nil(), Uuid::nil()).client_id;
+    decide_refresh(facts.map(RefreshFacts::row).as_ref(), &client, &issuer)
+}
+
+/// Both futures, polled in turn until each is ready: two requests in
+/// flight at once, without a runtime dependency.
+async fn both<A: Future, B: Future>(a: A, b: B) -> (A::Output, B::Output) {
+    let (mut a, mut b) = (pin!(a), pin!(b));
+    let (mut done_a, mut done_b) = (None, None);
+    poll_fn(|cx| {
+        if done_a.is_none()
+            && let Poll::Ready(out) = a.as_mut().poll(cx)
+        {
+            done_a = Some(out);
+        }
+        if done_b.is_none()
+            && let Poll::Ready(out) = b.as_mut().poll(cx)
+        {
+            done_b = Some(out);
+        }
+        match (done_a.take(), done_b.take()) {
+            (Some(x), Some(y)) => Poll::Ready((x, y)),
+            (x, y) => {
+                done_a = x;
+                done_b = y;
+                Poll::Pending
+            }
+        }
+    })
+    .await
+}
+
 impl ChainRig {
     /// Commit one `connection.code_issued` folding `code`, naming `voids`
     /// as the unredeemed code it replaces. Its payload carries ids and the
@@ -4177,12 +4244,35 @@ impl ChainRig {
     }
 
     /// Commit one `connection.opened` of `connection_id`, naming `replaces`
-    /// as the key's earlier open connection (ADR-0031 d12).
+    /// as the key's earlier open connection, presenting the fixture
+    /// authorization code's digest and minting [`token_pair`] of the
+    /// connection (ADR-0031 d10, d12).
     pub async fn open_connection<S: JournalStore>(
         &mut self,
         store: &S,
         connection_id: Uuid,
         replaces: Option<Uuid>,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.open_connection_with(
+            store,
+            connection_id,
+            replaces,
+            auth_code_hash(connection_id),
+            token_pair(connection_id),
+        )
+        .await
+    }
+
+    /// Commit one `connection.opened` of `connection_id` presenting
+    /// `presented`, the digest of an authorization code, and minting
+    /// `tokens`. Its payload carries neither digest (ADR-0031 d10, d12).
+    pub async fn open_connection_with<S: JournalStore>(
+        &mut self,
+        store: &S,
+        connection_id: Uuid,
+        replaces: Option<Uuid>,
+        presented: Sha256Hash,
+        tokens: TokenPair,
     ) -> Result<CommitReceipt, StoreError> {
         self.commit(
             store,
@@ -4194,6 +4284,8 @@ impl ChainRig {
             MetadataFold::ConnectionOpened {
                 connection_id,
                 replaces,
+                auth_code_hash: presented,
+                tokens,
             },
             None,
         )
@@ -4266,7 +4358,7 @@ impl ChainRig {
             .expect("mint");
         assert!(
             store
-                .connect_code_redeem(
+                .spend_code(
                     self.tenant_id,
                     code_id,
                     &fixture_time("2026-10-29T13:00:20.000000Z")
@@ -4433,13 +4525,13 @@ pub async fn minting_a_code_voids_the_keys_earlier_unredeemed_code_in_the_same_c
 
     assert!(
         store
-            .connect_code_redeem(t, c2, &fixture_time("2026-10-29T13:00:20.000000Z"))
+            .spend_code(t, c2, &fixture_time("2026-10-29T13:00:20.000000Z"))
             .await
             .expect("redeem")
     );
     assert!(
         !store
-            .connect_code_redeem(t, c2, &fixture_time("2026-10-29T13:00:21.000000Z"))
+            .spend_code(t, c2, &fixture_time("2026-10-29T13:00:21.000000Z"))
             .await
             .expect("redeem"),
         "a spent code is spent once"
@@ -4746,7 +4838,7 @@ pub async fn connection_opened_for_an_expired_authorization_code_is_refused_and_
         .expect("mint");
     assert!(
         store
-            .connect_code_redeem(t, code, &fixture_time("2026-10-29T12:59:50.000000Z"))
+            .spend_code(t, code, &fixture_time("2026-10-29T12:59:50.000000Z"))
             .await
             .expect("redeem")
     );
@@ -4834,7 +4926,7 @@ pub async fn a_tenants_codes_and_connections_are_invisible_and_unwritable_from_a
     );
     assert!(
         !store
-            .connect_code_redeem(tb, live_code, &fixture_time("2026-10-29T13:00:20.000000Z"))
+            .spend_code(tb, live_code, &fixture_time("2026-10-29T13:00:20.000000Z"))
             .await
             .expect("redeem"),
         "another tenant's code is not spent from here"
@@ -4948,7 +5040,7 @@ pub async fn connect_takes_the_request_stamps_its_client_and_creates_the_authori
         .expect("mint");
     assert!(
         store
-            .connect_code_redeem(t, c2, &fixture_time("2026-10-29T13:00:40.000000Z"))
+            .spend_code(t, c2, &fixture_time("2026-10-29T13:00:40.000000Z"))
             .await
             .expect("redeem")
     );
@@ -5070,6 +5162,725 @@ pub async fn a_refused_connect_leaves_the_authorization_row_and_connected_at_unc
     assert_eq!(store.connection(t, second).await.expect("read"), None);
 }
 
+/// A connect code is found by its digest before its tenant is known, with
+/// its tenant, its key and its state; spending it is one conditional
+/// update, so of two racing correct entries exactly one spends it and the
+/// other changes nothing (postgres-schema.md "connections (ADR-0031)";
+/// roles-and-keys.md connect codes; ADR-0031 d8, d9).
+pub async fn a_code_is_spent_by_exactly_one_of_two_racing_correct_entries<S: ConnectionStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(340);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3400));
+    rig.issue_key(store, key.clone()).await;
+    let code = connect_code(Uuid::from_u128(0xC3401), key.key_id);
+    let minted = rig
+        .mint_code(store, code.clone(), None)
+        .await
+        .expect("mint");
+    let found = store
+        .code_by_hash(&code.code_hash)
+        .await
+        .expect("lookup")
+        .expect("the code's digest finds its row");
+    assert_eq!(found.tenant_id, t, "the lookup names the code's tenant");
+    assert_eq!(
+        (found.row.code_id, found.row.key_id, found.row.issued_seq),
+        (code.code_id, key.key_id, minted.seq)
+    );
+    assert_eq!((found.row.redeemed_at, found.row.voided_seq), (None, None));
+
+    let at = fixture_time("2026-10-29T13:00:20.000000Z");
+    let (first, second) = both(
+        store.spend_code(t, code.code_id, &at),
+        store.spend_code(t, code.code_id, &at),
+    )
+    .await;
+    let spent = [first.expect("spend"), second.expect("spend")];
+    assert_eq!(
+        spent.iter().filter(|s| **s).count(),
+        1,
+        "exactly one racing entry spends the code: {spent:?}"
+    );
+    assert_eq!(
+        store
+            .code_by_hash(&code.code_hash)
+            .await
+            .expect("lookup")
+            .map(|c| c.row.redeemed_at),
+        Some(Some(at)),
+        "the code is spent once, at its first correct entry"
+    );
+}
+
+/// An unknown digest finds no code, and a code spends only while it is
+/// unexpired, unvoided and in the tenant that names it: past its expiry,
+/// from another tenant, or once voided by a newer code, the update matches
+/// nothing and the code is unchanged (ADR-0031 d8).
+pub async fn an_expired_or_voided_code_is_not_spent<S: ConnectionStore>(store: &S) {
+    let mut rig = ChainRig::new(341);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3410));
+    rig.issue_key(store, key.clone()).await;
+    let code = connect_code(Uuid::from_u128(0xC3411), key.key_id);
+    rig.mint_code(store, code.clone(), None)
+        .await
+        .expect("mint");
+    assert_eq!(
+        store
+            .code_by_hash(&Sha256Hash::digest(b"no such code"))
+            .await
+            .expect("lookup"),
+        None
+    );
+    // Its expiry is 13:10:00; at that instant it is expired.
+    assert!(
+        !store
+            .spend_code(
+                t,
+                code.code_id,
+                &fixture_time("2026-10-29T13:10:00.000000Z")
+            )
+            .await
+            .expect("spend"),
+        "an expired code is not spent"
+    );
+    assert!(
+        !store
+            .spend_code(
+                Uuid::from_u128(0xA000_0000 + 342),
+                code.code_id,
+                &fixture_time("2026-10-29T13:00:20.000000Z")
+            )
+            .await
+            .expect("spend"),
+        "another tenant spends nothing"
+    );
+    let newer = connect_code(Uuid::from_u128(0xC3412), key.key_id);
+    rig.mint_code(store, newer, Some(code.code_id))
+        .await
+        .expect("mint");
+    assert!(
+        !store
+            .spend_code(
+                t,
+                code.code_id,
+                &fixture_time("2026-10-29T13:00:20.000000Z")
+            )
+            .await
+            .expect("spend"),
+        "a voided code is not spent"
+    );
+    assert_eq!(
+        store
+            .code_by_hash(&code.code_hash)
+            .await
+            .expect("lookup")
+            .map(|c| c.row.redeemed_at),
+        Some(None),
+        "a refused entry leaves the code unspent"
+    );
+}
+
+/// The exchange's `connection.opened` redeems by the presented code's
+/// digest and inserts the pair it minted in the same commit: a digest that
+/// is not the connection's is refused and inserts nothing, and after the
+/// opening the code's digest still finds the connection, redeemed, and
+/// each token's digest its row; a pair for a connection that is not open
+/// is refused (postgres-schema.md, redemption and rotation are conditional
+/// updates; ADR-0031 d10, d12).
+pub async fn connection_opened_redeems_by_the_code_digest_and_inserts_the_minted_pair<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(342);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3420));
+    rig.issue_key(store, key.clone()).await;
+    let (code, connection) = (Uuid::from_u128(0xC3421), Uuid::from_u128(0xE3421));
+    rig.authorized_connection(store, key.key_id, code, connection, None)
+        .await;
+    let early = token_pair(Uuid::from_u128(0xF3420));
+    store
+        .insert_token_pair(
+            t,
+            connection,
+            early.clone(),
+            &fixture_time("2026-10-29T13:00:40.000000Z"),
+        )
+        .await
+        .expect_err("an authorized connection holds no tokens");
+    assert_eq!(
+        store
+            .token_by_hash(&early.access.token_hash, TokenKind::Access)
+            .await
+            .expect("lookup"),
+        None
+    );
+
+    let head = store.chain_head(t).await.expect("head");
+    assert_eq!(
+        rig.open_connection_with(
+            store,
+            connection,
+            None,
+            Sha256Hash::digest(b"another code"),
+            token_pair(connection),
+        )
+        .await
+        .expect_err("a digest that is not the connection's"),
+        StoreError::ConnectionNotOpenable {
+            connection_id: connection
+        }
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        store
+            .token_by_hash(&token_pair(connection).access.token_hash, TokenKind::Access)
+            .await
+            .expect("lookup"),
+        None,
+        "a refused opening inserts no token"
+    );
+
+    let opened = rig
+        .open_connection(store, connection, None)
+        .await
+        .expect("open");
+    let at = rig.head_at();
+    let pair = token_pair(connection);
+    for (minted, kind) in [
+        (&pair.access, TokenKind::Access),
+        (&pair.refresh, TokenKind::Refresh),
+    ] {
+        assert_eq!(
+            store
+                .token_by_hash(&minted.token_hash, kind)
+                .await
+                .expect("lookup"),
+            Some(TenantRow {
+                tenant_id: t,
+                row: TokenRecord {
+                    token_hash: minted.token_hash,
+                    connection_id: connection,
+                    kind,
+                    expires_at: minted.expires_at.clone(),
+                    rotated_at: None,
+                    created_at: at.clone(),
+                },
+            }),
+            "the opening's commit inserts the minted {kind:?} token"
+        );
+    }
+    let found = store
+        .connection_by_auth_code(&auth_code_hash(connection))
+        .await
+        .expect("lookup")
+        .expect("the redeemed code's digest still finds its connection");
+    assert_eq!(found.tenant_id, t);
+    assert_eq!(found.row.state, ConnectionState::Open);
+    assert_eq!(found.row.opened_seq, Some(opened.seq));
+    assert_eq!(found.row.auth_code_redeemed_at, Some(at));
+    assert_eq!(
+        store
+            .connection_by_auth_code(&Sha256Hash::digest(b"another code"))
+            .await
+            .expect("lookup"),
+        None
+    );
+}
+
+/// The fixture opened connection of a fresh rig: the key, its code and the
+/// connection opened from it with [`token_pair`] of the connection.
+async fn opened_fixture<S: ConnectionStore>(store: &S, seed: u64) -> (ChainRig, Uuid) {
+    let mut rig = ChainRig::new(seed);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let n = u128::from(seed) << 4;
+    let key = connector_key(t, Uuid::from_u128(0xD0000 + n));
+    rig.issue_key(store, key.clone()).await;
+    let connection = Uuid::from_u128(0xE0000 + n);
+    rig.opened_connection(
+        store,
+        key.key_id,
+        Uuid::from_u128(0xC0000 + n),
+        connection,
+        None,
+        None,
+    )
+    .await;
+    (rig, connection)
+}
+
+/// Two racing refreshes presenting one refresh token mint exactly one new
+/// pair: the second reads the first's rotation under the connection's row
+/// lock and decides reuse, writing nothing, and the presented token is
+/// rotated once (postgres-schema.md, redemption and rotation are
+/// conditional updates; ADR-0031 d10).
+pub async fn two_racing_refreshes_with_one_token_mint_exactly_one_new_pair<S: ConnectionStore>(
+    store: &S,
+) {
+    let (rig, connection) = opened_fixture(store, 343).await;
+    let t = rig.tenant_id;
+    let presented = token_pair(connection).refresh.token_hash;
+    let (next_a, next_b) = (
+        token_pair(Uuid::from_u128(0xF343A)),
+        token_pair(Uuid::from_u128(0xF343B)),
+    );
+    let at = fixture_time("2026-10-29T13:01:00.000000Z");
+    let (a, b) = both(
+        store.rotate_refresh(t, &presented, next_a.clone(), &at, fixture_refresh_rule),
+        store.rotate_refresh(t, &presented, next_b.clone(), &at, fixture_refresh_rule),
+    )
+    .await;
+    let decisions = [a.expect("refresh").decision, b.expect("refresh").decision];
+    assert_eq!(
+        decisions
+            .iter()
+            .filter(|d| **d == RefreshDecision::Rotate)
+            .count(),
+        1,
+        "exactly one refresh rotates: {decisions:?}"
+    );
+    assert!(
+        decisions.contains(&RefreshDecision::RevokeForReuse),
+        "the other reads the rotation and decides reuse: {decisions:?}"
+    );
+    let mut minted = 0;
+    for next in [&next_a, &next_b] {
+        let access = store
+            .token_by_hash(&next.access.token_hash, TokenKind::Access)
+            .await
+            .expect("lookup");
+        let refresh = store
+            .token_by_hash(&next.refresh.token_hash, TokenKind::Refresh)
+            .await
+            .expect("lookup");
+        assert_eq!(
+            access.is_some(),
+            refresh.is_some(),
+            "a pair is inserted whole or not at all"
+        );
+        minted += usize::from(access.is_some());
+    }
+    assert_eq!(minted, 1, "exactly one new pair is minted");
+    assert_eq!(
+        store
+            .token_by_hash(&presented, TokenKind::Refresh)
+            .await
+            .expect("lookup")
+            .and_then(|r| r.row.rotated_at),
+        Some(at),
+        "the presented token is rotated once"
+    );
+}
+
+/// A rotated refresh token keeps its row until its own expiry, so its
+/// reuse inside that window is recognized: presented again it is decided
+/// reuse and mints nothing, the sweep before its expiry keeps it, and the
+/// sweep at its expiry removes it (postgres-schema.md, the removal
+/// paragraph; ADR-0031 d10).
+pub async fn a_rotated_refresh_token_keeps_its_row_until_its_own_expiry<S: ConnectionStore>(
+    store: &S,
+) {
+    let (rig, connection) = opened_fixture(store, 344).await;
+    let t = rig.tenant_id;
+    let presented = token_pair(connection).refresh.token_hash;
+    let next = token_pair(Uuid::from_u128(0xF3441));
+    let rotated = store
+        .rotate_refresh(
+            t,
+            &presented,
+            next,
+            &fixture_time("2026-10-29T13:01:00.000000Z"),
+            fixture_refresh_rule,
+        )
+        .await
+        .expect("refresh");
+    assert_eq!(rotated.decision, RefreshDecision::Rotate);
+
+    // Both access tokens lapse at 14:00, both refresh tokens on 11-28.
+    assert_eq!(
+        store
+            .sweep_expired(t, &fixture_time("2026-11-28T12:59:59.999999Z"))
+            .await
+            .expect("sweep"),
+        SweepReport {
+            tokens_removed: 2,
+            ..SweepReport::default()
+        }
+    );
+    let kept = store
+        .token_by_hash(&presented, TokenKind::Refresh)
+        .await
+        .expect("lookup")
+        .expect("a rotated refresh token keeps its row");
+    assert!(kept.row.rotated_at.is_some());
+    let again = token_pair(Uuid::from_u128(0xF3442));
+    let reused = store
+        .rotate_refresh(
+            t,
+            &presented,
+            again.clone(),
+            &fixture_time("2026-11-28T12:59:59.999999Z"),
+            fixture_refresh_rule,
+        )
+        .await
+        .expect("refresh");
+    assert_eq!(
+        reused.decision,
+        RefreshDecision::RevokeForReuse,
+        "reuse inside the window is recognized"
+    );
+    assert_eq!(
+        store
+            .token_by_hash(&again.refresh.token_hash, TokenKind::Refresh)
+            .await
+            .expect("lookup"),
+        None,
+        "a reuse mints nothing"
+    );
+    assert_eq!(
+        store
+            .sweep_expired(t, &fixture_time("2026-11-28T13:00:00.000000Z"))
+            .await
+            .expect("sweep"),
+        SweepReport {
+            tokens_removed: 2,
+            ..SweepReport::default()
+        }
+    );
+    assert_eq!(
+        store
+            .token_by_hash(&presented, TokenKind::Refresh)
+            .await
+            .expect("lookup"),
+        None,
+        "the row goes at its own expiry"
+    );
+}
+
+/// An expired refresh token is not rotated and is not reuse: the rule
+/// answers `oauth.refresh_invalid` (expired), the token's row is left
+/// unrotated, no pair is minted and the connection stays open
+/// (postgres-schema.md, redemption and rotation are conditional updates;
+/// ADR-0031 d10).
+pub async fn an_expired_refresh_token_is_not_rotated_and_is_not_reuse<S: ConnectionStore>(
+    store: &S,
+) {
+    let (rig, connection) = opened_fixture(store, 345).await;
+    let t = rig.tenant_id;
+    let short = TokenPair {
+        refresh: MintedToken {
+            expires_at: fixture_time("2026-10-29T13:00:30.000000Z"),
+            ..token_pair(Uuid::from_u128(0xF3451)).refresh
+        },
+        ..token_pair(Uuid::from_u128(0xF3451))
+    };
+    store
+        .insert_token_pair(
+            t,
+            connection,
+            short.clone(),
+            &fixture_time("2026-10-29T13:00:10.000000Z"),
+        )
+        .await
+        .expect("an open connection's pair");
+    let next = token_pair(Uuid::from_u128(0xF3452));
+    let outcome: RefreshOutcome = store
+        .rotate_refresh(
+            t,
+            &short.refresh.token_hash,
+            next.clone(),
+            &fixture_time("2026-10-29T13:00:40.000000Z"),
+            fixture_refresh_rule,
+        )
+        .await
+        .expect("refresh");
+    assert_eq!(
+        outcome.decision,
+        RefreshDecision::Refuse(RefreshInvalid::Expired),
+        "an expired token is refused, not reuse"
+    );
+    let facts = outcome.facts.expect("the row was read");
+    assert_eq!(
+        (facts.expired, facts.rotated, facts.key),
+        (true, false, KeyState::Active)
+    );
+    assert_eq!(
+        store
+            .token_by_hash(&short.refresh.token_hash, TokenKind::Refresh)
+            .await
+            .expect("lookup")
+            .map(|r| r.row.rotated_at),
+        Some(None),
+        "the expired token is not rotated"
+    );
+    assert_eq!(
+        store
+            .token_by_hash(&next.refresh.token_hash, TokenKind::Refresh)
+            .await
+            .expect("lookup"),
+        None,
+        "no pair is minted"
+    );
+    assert_eq!(
+        store
+            .connection(t, connection)
+            .await
+            .expect("read")
+            .map(|c| c.state),
+        Some(ConnectionState::Open),
+        "nothing is revoked"
+    );
+}
+
+/// At `/mcp`-kind lookup a refresh token's digest finds nothing, and at a
+/// refresh an access token's digest finds nothing: each digest finds its
+/// row only under its own kind (roles-and-keys.md connections; ADR-0031
+/// d11).
+pub async fn at_mcp_kind_lookup_a_refresh_tokens_digest_finds_nothing<S: ConnectionStore>(
+    store: &S,
+) {
+    let (rig, connection) = opened_fixture(store, 346).await;
+    let pair = token_pair(connection);
+    let lookup = |hash: Sha256Hash, kind: TokenKind| async move {
+        store
+            .token_by_hash(&hash, kind)
+            .await
+            .expect("lookup")
+            .map(|r| (r.tenant_id, r.row.kind))
+    };
+    assert_eq!(
+        lookup(pair.refresh.token_hash, TokenKind::Access).await,
+        None,
+        "a refresh token is no bearer credential at /mcp"
+    );
+    assert_eq!(
+        lookup(pair.access.token_hash, TokenKind::Refresh).await,
+        None,
+        "an access token is no refresh token"
+    );
+    assert_eq!(
+        lookup(pair.access.token_hash, TokenKind::Access).await,
+        Some((rig.tenant_id, TokenKind::Access))
+    );
+    assert_eq!(
+        lookup(pair.refresh.token_hash, TokenKind::Refresh).await,
+        Some((rig.tenant_id, TokenKind::Refresh))
+    );
+}
+
+/// Connect after Cancel finds no authorization row: Cancel deletes the
+/// request's row by its handle digest and returns it, a second Cancel
+/// finds nothing, and Connect answers no request and creates no
+/// connection (postgres-schema.md "connections (ADR-0031)"; ADR-0031 d9).
+pub async fn connect_after_cancel_finds_no_authorization_row<S: ConnectionStore>(store: &S) {
+    let mut rig = ChainRig::new(347);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3470));
+    rig.issue_key(store, key.clone()).await;
+    let (code, connection) = (Uuid::from_u128(0xC3471), Uuid::from_u128(0xE3471));
+    rig.mint_code(store, connect_code(code, key.key_id), None)
+        .await
+        .expect("mint");
+    assert!(
+        store
+            .spend_code(t, code, &fixture_time("2026-10-29T13:00:20.000000Z"))
+            .await
+            .expect("spend")
+    );
+    let request = authorization_request(t, key.key_id, code, connection);
+    store
+        .authorization_insert(request.clone())
+        .await
+        .expect("request");
+    assert_eq!(
+        store
+            .take_authorization_by_handle(&handle_hash(connection))
+            .await
+            .expect("cancel"),
+        Some(request),
+        "Cancel takes the request's row"
+    );
+    assert_eq!(
+        store
+            .take_authorization_by_handle(&handle_hash(connection))
+            .await
+            .expect("cancel"),
+        None
+    );
+    assert_eq!(
+        store
+            .connection_connect(&handle_hash(connection), connect_grant(connection))
+            .await
+            .expect("connect"),
+        ConnectOutcome::NoRequest,
+        "Connect after Cancel finds no row"
+    );
+    assert_eq!(store.connection(t, connection).await.expect("read"), None);
+}
+
+/// The sweep removes an `authorized` connection once its authorization
+/// code lapsed unexchanged, and an authorization request 24 hours after its
+/// expiry, and nothing before either instant (postgres-schema.md, the
+/// removal paragraph; ADR-0031 d9, d10).
+pub async fn the_sweep_removes_a_lapsed_authorized_connection_and_a_request_a_day_after_it_lapses<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(348);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let key = connector_key(t, Uuid::from_u128(0xD3480));
+    rig.issue_key(store, key.clone()).await;
+    let connection = Uuid::from_u128(0xE3481);
+    rig.authorized_connection(
+        store,
+        key.key_id,
+        Uuid::from_u128(0xC3481),
+        connection,
+        None,
+    )
+    .await;
+    // A request whose page was abandoned: it lapses at 13:10:00.
+    let abandoned = Uuid::from_u128(0xE3482);
+    store
+        .authorization_insert(authorization_request(
+            t,
+            key.key_id,
+            Uuid::from_u128(0xC3482),
+            abandoned,
+        ))
+        .await
+        .expect("request");
+
+    // The authorization code lapses at 13:01:00.
+    assert_eq!(
+        store
+            .sweep_expired(t, &fixture_time("2026-10-29T13:00:59.999999Z"))
+            .await
+            .expect("sweep"),
+        SweepReport::default()
+    );
+    assert_eq!(
+        store
+            .sweep_expired(t, &fixture_time("2026-10-29T13:01:00.000000Z"))
+            .await
+            .expect("sweep"),
+        SweepReport {
+            connections_removed: 1,
+            ..SweepReport::default()
+        }
+    );
+    assert_eq!(store.connection(t, connection).await.expect("read"), None);
+    assert_eq!(
+        store
+            .connection_by_auth_code(&auth_code_hash(connection))
+            .await
+            .expect("lookup"),
+        None
+    );
+    assert_eq!(
+        store
+            .sweep_expired(t, &fixture_time("2026-10-30T13:09:59.999999Z"))
+            .await
+            .expect("sweep"),
+        SweepReport::default(),
+        "a lapsed request stays a day"
+    );
+    assert_eq!(
+        store
+            .sweep_expired(t, &fixture_time("2026-10-30T13:10:00.000000Z"))
+            .await
+            .expect("sweep"),
+        SweepReport {
+            authorizations_removed: 1,
+            ..SweepReport::default()
+        }
+    );
+    assert_eq!(
+        store
+            .authorization(&handle_hash(abandoned))
+            .await
+            .expect("read"),
+        None
+    );
+}
+
+/// Once a connection is revoked, the sweep clears its authorization code's
+/// digest and removes its token rows, whatever their expiry, while before
+/// the sweep the redeemed code's digest still finds the revoked connection
+/// (postgres-schema.md, the removal paragraph; ADR-0031 d10).
+pub async fn revocation_clears_the_auth_code_digest_and_the_connections_tokens_at_the_sweep<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let (mut rig, connection) = opened_fixture(store, 349).await;
+    let t = rig.tenant_id;
+    rig.revoke_connection(store, connection, RevokedCause::Admin)
+        .await
+        .expect("revoke");
+    assert_eq!(
+        store
+            .connection_by_auth_code(&auth_code_hash(connection))
+            .await
+            .expect("lookup")
+            .map(|c| c.row.state),
+        Some(ConnectionState::Revoked(RevokedCause::Admin))
+    );
+    assert_eq!(
+        store
+            .sweep_expired(t, &fixture_time("2026-10-29T13:00:59.999999Z"))
+            .await
+            .expect("sweep"),
+        SweepReport {
+            tokens_removed: 2,
+            codes_cleared: 1,
+            ..SweepReport::default()
+        }
+    );
+    assert_eq!(
+        store
+            .connection_by_auth_code(&auth_code_hash(connection))
+            .await
+            .expect("lookup"),
+        None
+    );
+    assert_eq!(
+        store
+            .connection(t, connection)
+            .await
+            .expect("read")
+            .map(|c| c.auth_code_hash),
+        Some(None),
+        "the revoked connection's row stays, its digest cleared"
+    );
+    let pair = token_pair(connection);
+    assert_eq!(
+        store
+            .token_by_hash(&pair.access.token_hash, TokenKind::Access)
+            .await
+            .expect("lookup"),
+        None
+    );
+    assert_eq!(
+        store
+            .token_by_hash(&pair.refresh.token_hash, TokenKind::Refresh)
+            .await
+            .expect("lookup"),
+        None
+    );
+}
+
 /// Every connection-store law in one call, each against a fresh store.
 pub async fn run_connection_store_suite<S, F, Fut>(new_store: F)
 where
@@ -5103,6 +5914,23 @@ where
     .await;
     a_refused_connect_leaves_the_authorization_row_and_connected_at_unchanged(&new_store().await)
         .await;
+    a_code_is_spent_by_exactly_one_of_two_racing_correct_entries(&new_store().await).await;
+    an_expired_or_voided_code_is_not_spent(&new_store().await).await;
+    connection_opened_redeems_by_the_code_digest_and_inserts_the_minted_pair(&new_store().await)
+        .await;
+    two_racing_refreshes_with_one_token_mint_exactly_one_new_pair(&new_store().await).await;
+    a_rotated_refresh_token_keeps_its_row_until_its_own_expiry(&new_store().await).await;
+    an_expired_refresh_token_is_not_rotated_and_is_not_reuse(&new_store().await).await;
+    at_mcp_kind_lookup_a_refresh_tokens_digest_finds_nothing(&new_store().await).await;
+    connect_after_cancel_finds_no_authorization_row(&new_store().await).await;
+    the_sweep_removes_a_lapsed_authorized_connection_and_a_request_a_day_after_it_lapses(
+        &new_store().await,
+    )
+    .await;
+    revocation_clears_the_auth_code_digest_and_the_connections_tokens_at_the_sweep(
+        &new_store().await,
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------

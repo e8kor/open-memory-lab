@@ -3,7 +3,9 @@
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
-use oml_domain::oauth::{ConnectionState, Refusal};
+use oml_domain::oauth::{
+    ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, TokenKind,
+};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
     Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
@@ -257,6 +259,101 @@ pub enum ConnectOutcome {
     /// code or a connection revocation of its key. Nothing changed;
     /// answered `oauth.authorization_expired` (`code_voided`).
     CodeVoided,
+}
+
+/// A row a pre-tenant lookup found by a digest, with the tenant whose
+/// `oml.tenant_id` everything after it runs under (postgres-schema.md
+/// "connections (ADR-0031)"; ADR-0031 d8, d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantRow<T> {
+    pub tenant_id: Uuid,
+    pub row: T,
+}
+
+/// A token as its mint hands it to the store: the SHA-256 of the token
+/// string and its expiry, never the token (postgres-schema.md
+/// `oauth_tokens`; ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MintedToken {
+    pub token_hash: Sha256Hash,
+    /// Set at minting; rotation never changes it.
+    pub expires_at: EventTime,
+}
+
+/// The access and refresh tokens one exchange or one refresh mints
+/// (ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenPair {
+    pub access: MintedToken,
+    pub refresh: MintedToken,
+}
+
+/// A stored token row (postgres-schema.md `oauth_tokens`; ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenRecord {
+    pub token_hash: Sha256Hash,
+    pub connection_id: Uuid,
+    pub kind: TokenKind,
+    pub expires_at: EventTime,
+    /// A refresh token's rotation: presenting it after this is reuse.
+    pub rotated_at: Option<EventTime>,
+    pub created_at: EventTime,
+}
+
+/// What a refresh reads under its connection's row lock, before its
+/// conditional update: the presented refresh token's rotation and expiry
+/// at the refresh's time, its connection's state, client and resource, and
+/// its key's state (postgres-schema.md, redemption and rotation are
+/// conditional updates; ADR-0031 d10, d11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefreshFacts {
+    pub connection_id: Uuid,
+    pub connection: ConnectionState,
+    pub client_id: String,
+    pub resource: String,
+    pub key: KeyState,
+    pub rotated: bool,
+    pub expired: bool,
+}
+
+impl RefreshFacts {
+    /// The facts as the domain's refresh rule reads them.
+    #[must_use]
+    pub fn row(&self) -> RefreshRow<'_> {
+        RefreshRow {
+            rotated: self.rotated,
+            expired: self.expired,
+            connection: self.connection,
+            client_id: &self.client_id,
+            resource: &self.resource,
+            key: self.key,
+        }
+    }
+}
+
+/// What a refresh's one transaction did: the decision its caller's rule
+/// took on the facts read under the lock, and those facts, `None` for a
+/// digest no refresh row of the tenant holds. Only
+/// [`RefreshDecision::Rotate`] wrote anything: the presented token's
+/// `rotated_at` and the new pair (ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefreshOutcome {
+    pub decision: RefreshDecision,
+    pub facts: Option<RefreshFacts>,
+}
+
+/// How many rows one sweep removed or cleared (postgres-schema.md, the
+/// removal paragraph; ADR-0031 d9, d10).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SweepReport {
+    /// `authorized` connections whose authorization code lapsed unexchanged.
+    pub connections_removed: u64,
+    /// Token rows past their own expiry, or of a revoked connection.
+    pub tokens_removed: u64,
+    /// Revoked connections whose `auth_code_hash` was cleared.
+    pub codes_cleared: u64,
+    /// Authorization requests 24 hours past their expiry.
+    pub authorizations_removed: u64,
 }
 
 /// A stored grant row: the domain grant and its epoch, the journal seq of

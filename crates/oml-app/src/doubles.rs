@@ -16,7 +16,10 @@ use uuid::Uuid;
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::{hit_order, steering_order};
 use oml_domain::name::{Name, NamedKind, Naming, UNIVERSE};
-use oml_domain::oauth::{ConnectionAct, ConnectionState, RevokedCause, connection_transition};
+use oml_domain::oauth::{
+    ConnectionAct, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
+    connection_transition,
+};
 use oml_domain::{
     ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
     event_types,
@@ -32,7 +35,8 @@ use crate::types::{
     AuthorizationRecord, ClaimKeyState, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
     ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS,
     KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord,
-    OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord,
+    OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport,
+    TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -125,6 +129,8 @@ struct TenantState {
     /// The provider tenant's authorization requests by their handle digest
     /// (postgres-schema.md `oauth_authorizations`).
     authorizations: BTreeMap<[u8; 32], AuthorizationRecord>,
+    /// Token rows by their digest (postgres-schema.md `oauth_tokens`).
+    tokens: BTreeMap<[u8; 32], TokenRecord>,
     /// Per key id, in commit order — which is epoch order.
     access: BTreeMap<Uuid, KeyAccess>,
     queue: Vec<QueueEntry>,
@@ -237,6 +243,22 @@ impl MemStore {
             .expect("tenants lock")
             .get(&tenant_id)
             .cloned()
+    }
+
+    /// The pre-tenant lookup: the first tenant whose state `find` matches,
+    /// with the row. The tenants are listed before any tenant's lock is
+    /// taken, since Connect takes the tenants' lock under a tenant's.
+    fn find_in_tenants<T>(&self, find: impl Fn(&TenantState) -> Option<T>) -> Option<TenantRow<T>> {
+        let tenants: Vec<(Uuid, Arc<Mutex<TenantState>>)> = self
+            .tenants
+            .lock()
+            .expect("tenants lock")
+            .iter()
+            .map(|(id, state)| (*id, Arc::clone(state)))
+            .collect();
+        tenants.into_iter().find_map(|(tenant_id, state)| {
+            find(&state.lock().expect("tenant lock")).map(|row| TenantRow { tenant_id, row })
+        })
     }
 
     /// Test visibility: how many outbox rows a tenant has accumulated.
@@ -590,6 +612,46 @@ fn void_unopened_codes(state: &mut TenantState, key_id: Uuid, seq: u64) {
     }
 }
 
+/// Refuses a pair either of whose digests a token row holds already, as
+/// the `oauth_tokens` primary key does (ADR-0031 d10).
+fn require_free_tokens(state: &TenantState, tokens: &TokenPair) -> Result<(), StoreError> {
+    if tokens.access.token_hash == tokens.refresh.token_hash
+        || state.tokens.contains_key(&tokens.access.token_hash.0)
+        || state.tokens.contains_key(&tokens.refresh.token_hash.0)
+    {
+        return Err(StoreError::Backend(
+            "a token digest is held already".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Inserts a checked pair's two rows of `connection_id`, created at `at`.
+fn insert_tokens(state: &mut TenantState, connection_id: Uuid, tokens: TokenPair, at: &EventTime) {
+    for (minted, kind) in [
+        (tokens.access, TokenKind::Access),
+        (tokens.refresh, TokenKind::Refresh),
+    ] {
+        state.tokens.insert(
+            minted.token_hash.0,
+            TokenRecord {
+                token_hash: minted.token_hash,
+                connection_id,
+                kind,
+                expires_at: minted.expires_at,
+                rotated_at: None,
+                created_at: at.clone(),
+            },
+        );
+    }
+}
+
+/// Whether `expires_at` has passed at `at`: a row lives while its expiry is
+/// later than the instant, as the store's `expires_at > $at` reads it.
+fn lapsed(expires_at: &EventTime, at: &EventTime) -> bool {
+    expires_at.unix_micros() <= at.unix_micros()
+}
+
 /// Applies one fold, or refuses it before changing anything — what the
 /// schema refuses, the double refuses, so the commit stays all or nothing.
 /// `seq` and `at` are the commit's event seq and time: a key's
@@ -797,6 +859,8 @@ fn apply_fold(
         MetadataFold::ConnectionOpened {
             connection_id,
             replaces,
+            auth_code_hash,
+            tokens,
         } => {
             // Every refusal of an opening is one typed refusal, as the
             // store's conditional update is one statement (ADR-0031 d10).
@@ -806,6 +870,11 @@ fn apply_fold(
             };
             let (key_id, code_id) = (connection.key_id, connection.code_id);
             if connection_transition(connection.state, ConnectionAct::Exchange).is_err() {
+                return Err(not_openable);
+            }
+            // The exchange's update matches the row by the presented code's
+            // digest (postgres-schema.md `oauth_connections`; ADR-0031 d10).
+            if connection.auth_code_hash != Some(auth_code_hash) {
                 return Err(not_openable);
             }
             // The exchange redeems the authorization code once and before
@@ -846,6 +915,7 @@ fn apply_fold(
             if open != replaces {
                 return Err(not_openable);
             }
+            require_free_tokens(state, &tokens)?;
             if let Some(earlier) = open.and_then(|id| state.connections.get_mut(&id)) {
                 earlier.state = ConnectionState::Revoked(RevokedCause::Replaced);
                 earlier.revoked_seq = Some(seq);
@@ -855,6 +925,7 @@ fn apply_fold(
                 connection.opened_seq = Some(seq);
                 connection.auth_code_redeemed_at = Some(at.clone());
             }
+            insert_tokens(state, connection_id, tokens, at);
         }
         MetadataFold::ConnectionRevoked {
             connection_id,
@@ -1774,7 +1845,194 @@ impl JournalStore for MemStore {
 }
 
 impl ConnectionStore for MemStore {
-    async fn connect_code_redeem(
+    async fn code_by_hash(
+        &self,
+        code_hash: &Sha256Hash,
+    ) -> Result<Option<TenantRow<ConnectCodeRecord>>, StoreError> {
+        Ok(self.find_in_tenants(|state| {
+            state
+                .connect_codes
+                .values()
+                .find(|c| c.code_hash == *code_hash)
+                .cloned()
+        }))
+    }
+
+    async fn take_authorization_by_handle(
+        &self,
+        handle_hash: &Sha256Hash,
+    ) -> Result<Option<AuthorizationRecord>, StoreError> {
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        Ok(provider.authorizations.remove(&handle_hash.0))
+    }
+
+    async fn connection_by_auth_code(
+        &self,
+        auth_code_hash: &Sha256Hash,
+    ) -> Result<Option<TenantRow<ConnectionRecord>>, StoreError> {
+        Ok(self.find_in_tenants(|state| {
+            state
+                .connections
+                .values()
+                .find(|c| c.auth_code_hash == Some(*auth_code_hash))
+                .cloned()
+        }))
+    }
+
+    async fn token_by_hash(
+        &self,
+        token_hash: &Sha256Hash,
+        kind: TokenKind,
+    ) -> Result<Option<TenantRow<TokenRecord>>, StoreError> {
+        Ok(self.find_in_tenants(|state| {
+            state
+                .tokens
+                .get(&token_hash.0)
+                .filter(|t| t.kind == kind)
+                .cloned()
+        }))
+    }
+
+    async fn insert_token_pair(
+        &self,
+        tenant_id: Uuid,
+        connection_id: Uuid,
+        tokens: TokenPair,
+        at: &EventTime,
+    ) -> Result<(), StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Err(StoreError::Backend(format!(
+                "connection {connection_id} is not an open connection of this tenant"
+            )));
+        };
+        let mut state = tenant.lock().expect("tenant lock");
+        if state
+            .connections
+            .get(&connection_id)
+            .is_none_or(|c| c.state != ConnectionState::Open)
+        {
+            return Err(StoreError::Backend(format!(
+                "connection {connection_id} is not an open connection of this tenant"
+            )));
+        }
+        require_free_tokens(&state, &tokens)?;
+        insert_tokens(&mut state, connection_id, tokens, at);
+        Ok(())
+    }
+
+    async fn rotate_refresh<F>(
+        &self,
+        tenant_id: Uuid,
+        token_hash: &Sha256Hash,
+        next: TokenPair,
+        at: &EventTime,
+        decide: F,
+    ) -> Result<RefreshOutcome, StoreError>
+    where
+        F: FnOnce(Option<&RefreshFacts>) -> RefreshDecision + Send,
+    {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(RefreshOutcome {
+                decision: decide(None),
+                facts: None,
+            });
+        };
+        // The tenant's lock stands for the connection's row lock: the
+        // facts, the decision and the conditional update are one step.
+        let mut state = tenant.lock().expect("tenant lock");
+        let facts = state
+            .tokens
+            .get(&token_hash.0)
+            .filter(|t| t.kind == TokenKind::Refresh)
+            .and_then(|token| {
+                let connection = state.connections.get(&token.connection_id)?;
+                let key = match state.keys.get(&connection.key_id) {
+                    Some(k) if k.revoked_at.is_none() => KeyState::Active,
+                    _ => KeyState::Revoked,
+                };
+                Some(RefreshFacts {
+                    connection_id: connection.connection_id,
+                    connection: connection.state,
+                    client_id: connection.client_id.clone(),
+                    resource: connection.resource.clone(),
+                    key,
+                    rotated: token.rotated_at.is_some(),
+                    expired: lapsed(&token.expires_at, at),
+                })
+            });
+        let decision = decide(facts.as_ref());
+        if decision == RefreshDecision::Rotate {
+            let Some(facts) = facts.as_ref() else {
+                return Err(StoreError::Backend(
+                    "a refresh decided to rotate a token no row holds".to_owned(),
+                ));
+            };
+            // The conditional update: unrotated and unexpired at `at`.
+            let matched = state
+                .tokens
+                .get(&token_hash.0)
+                .is_some_and(|t| t.rotated_at.is_none() && !lapsed(&t.expires_at, at));
+            if !matched {
+                return Err(StoreError::Backend(
+                    "the refresh token moved under its connection's lock".to_owned(),
+                ));
+            }
+            require_free_tokens(&state, &next)?;
+            if let Some(token) = state.tokens.get_mut(&token_hash.0) {
+                token.rotated_at = Some(at.clone());
+            }
+            insert_tokens(&mut state, facts.connection_id, next, at);
+        }
+        Ok(RefreshOutcome { decision, facts })
+    }
+
+    async fn sweep_expired(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> Result<SweepReport, StoreError> {
+        const DAY_MICROS: i64 = 24 * 3_600 * 1_000_000;
+        let mut report = SweepReport::default();
+        if let Some(tenant) = self.tenant_existing(tenant_id) {
+            let mut state = tenant.lock().expect("tenant lock");
+            let before = state.connections.len();
+            state.connections.retain(|_, c| {
+                c.state != ConnectionState::Authorized
+                    || c.auth_code_expires_at
+                        .as_ref()
+                        .is_none_or(|expires| !lapsed(expires, at))
+            });
+            report.connections_removed = (before - state.connections.len()) as u64;
+            let revoked: BTreeSet<Uuid> = state
+                .connections
+                .values()
+                .filter(|c| matches!(c.state, ConnectionState::Revoked(_)))
+                .map(|c| c.connection_id)
+                .collect();
+            let before = state.tokens.len();
+            state
+                .tokens
+                .retain(|_, t| !lapsed(&t.expires_at, at) && !revoked.contains(&t.connection_id));
+            report.tokens_removed = (before - state.tokens.len()) as u64;
+            for connection in state.connections.values_mut().filter(|c| {
+                matches!(c.state, ConnectionState::Revoked(_)) && c.auth_code_hash.is_some()
+            }) {
+                connection.auth_code_hash = None;
+                report.codes_cleared += 1;
+            }
+        }
+        let provider = self.tenant(PROVIDER_TENANT);
+        let mut provider = provider.lock().expect("tenant lock");
+        let before = provider.authorizations.len();
+        provider
+            .authorizations
+            .retain(|_, a| a.expires_at.unix_micros() + DAY_MICROS > at.unix_micros());
+        report.authorizations_removed = (before - provider.authorizations.len()) as u64;
+        Ok(report)
+    }
+
+    async fn spend_code(
         &self,
         tenant_id: Uuid,
         code_id: Uuid,
@@ -1785,11 +2043,9 @@ impl ConnectionStore for MemStore {
         };
         let mut state = tenant.lock().expect("tenant lock");
         // The one conditional update two racing entries cannot both pass.
-        match state
-            .connect_codes
-            .get_mut(&code_id)
-            .filter(|c| c.redeemed_at.is_none() && c.voided_seq.is_none())
-        {
+        match state.connect_codes.get_mut(&code_id).filter(|c| {
+            c.redeemed_at.is_none() && c.voided_seq.is_none() && !lapsed(&c.expires_at, at)
+        }) {
             Some(code) => {
                 code.redeemed_at = Some(at.clone());
                 Ok(true)

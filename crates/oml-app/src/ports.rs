@@ -13,13 +13,14 @@ use uuid::Uuid;
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
-use oml_domain::oauth::RevokedCause;
+use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{
     AuthorizationRecord, ClaimKeyState, ConnectCode, ConnectCodeRecord, ConnectGrant,
     ConnectOutcome, ConnectionRecord, CrewRecord, KeyAccess, KeyRecord, ListingFilter,
-    ListingPosition, MemoryRecord, OAuthClientRecord, RecallCandidate, UnnamedRows, WorkareaRecord,
+    ListingPosition, MemoryRecord, OAuthClientRecord, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -194,9 +195,20 @@ pub enum MetadataFold {
     /// [`StoreError::ConnectionNotOpenable`] (postgres-schema.md
     /// `oauth_connections`; event-catalog.md `connection.opened`; ADR-0031
     /// d7, d8, d10, d11, d12).
+    ///
+    /// The exchange's conditional update matches the row by
+    /// `auth_code_hash`, the presented code's digest, so a digest that is
+    /// not the connection's is refused the same way, and on its match the
+    /// fold inserts `tokens`, the pair the exchange minted, created at the
+    /// commit's `at`: redemption, the pair and the event are one transaction
+    /// under the chain lock. No journal payload carries either digest
+    /// (postgres-schema.md, redemption and rotation are conditional updates;
+    /// ADR-0031 d10, d12).
     ConnectionOpened {
         connection_id: Uuid,
         replaces: Option<Uuid>,
+        auth_code_hash: Sha256Hash,
+        tokens: TokenPair,
     },
     /// `connection.revoked`: the open connection is revoked with `cause`,
     /// its `revoked_seq` this commit's seq, and every code of its key from
@@ -663,21 +675,111 @@ pub trait JournalStore: Send + Sync {
 /// The connection rows of a store that serves connector keys
 /// (postgres-schema.md "connections (ADR-0031)"): the operational writes
 /// that journal nothing — code entry spending a code and writing its
-/// authorization request, Connect taking that request and creating an
-/// `authorized` connection, a client's row — and the reads. The journalled
-/// acts are folds of [`MetadataFold`] (ADR-0031 d5, d8, d9, d12;
-/// event-catalog.md, operational state).
+/// authorization request, Connect or Cancel taking that request, Connect
+/// creating an `authorized` connection, a client's row, a refresh's
+/// rotation and the sweep — and the reads, the pre-tenant digest lookups
+/// among them. Every argument that names a secret is its digest, never the
+/// secret (ADR-0031 d10). The journalled acts are folds of
+/// [`MetadataFold`] (ADR-0031 d5, d8, d9, d12; event-catalog.md,
+/// operational state).
 pub trait ConnectionStore: JournalStore {
-    /// Spends the code by its first correct entry, `redeemed_at` = `at`:
-    /// `true` when this call spent it, `false` for a code the tenant does
-    /// not hold or one already spent or voided, which it leaves unchanged.
-    /// Expiry and the key's state are the caller's check (ADR-0031 d8, d9).
-    fn connect_code_redeem(
+    /// The pre-tenant lookup of a connect code by the SHA-256 of its twelve
+    /// decoded symbols, as `api_keys.hash` is found: the code's row, which
+    /// names its key and its state, and the tenant that then sets
+    /// `oml.tenant_id`; `None` for a digest no row holds (postgres-schema.md
+    /// "connections (ADR-0031)"; ADR-0031 d8).
+    fn code_by_hash(
+        &self,
+        code_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<TenantRow<ConnectCodeRecord>>, StoreError>> + Send;
+
+    /// Spends the code by its first correct entry, `redeemed_at` = `at`, in
+    /// one conditional update that matches only a code still unredeemed,
+    /// unvoided and unexpired at `at`, so of two racing correct entries
+    /// exactly one spends it: `true` when this call spent it, `false`
+    /// otherwise, the code unchanged. The key's state is the caller's check
+    /// (ADR-0031 d8, d9).
+    fn spend_code(
         &self,
         tenant_id: Uuid,
         code_id: Uuid,
         at: &EventTime,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// Cancel: deletes the authorization request's row by `handle_hash`
+    /// under the provider tenant and returns it, `None` when Connect or
+    /// Cancel took it already or it was removed, so a later confirmation
+    /// with that handle finds no row (postgres-schema.md "connections
+    /// (ADR-0031)"; ADR-0031 d9).
+    fn take_authorization_by_handle(
+        &self,
+        handle_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<AuthorizationRecord>, StoreError>> + Send;
+
+    /// The pre-tenant lookup of a connection by its authorization code's
+    /// digest, redeemed or not, so a second redemption is recognized while
+    /// the connection stands; `None` for a digest no row holds
+    /// (ADR-0031 d10).
+    fn connection_by_auth_code(
+        &self,
+        auth_code_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<TenantRow<ConnectionRecord>>, StoreError>> + Send;
+
+    /// The pre-tenant lookup of a token by its digest, matching only a row
+    /// of `kind`: at `/mcp` the kind is `access` and at a refresh `refresh`,
+    /// so a refresh token's digest finds nothing at `/mcp`
+    /// (roles-and-keys.md connections; ADR-0031 d11).
+    fn token_by_hash(
+        &self,
+        token_hash: &Sha256Hash,
+        kind: TokenKind,
+    ) -> impl Future<Output = Result<Option<TenantRow<TokenRecord>>, StoreError>> + Send;
+
+    /// Inserts an open connection's access and refresh rows, created at
+    /// `at`; a connection that is not open, or a digest held already, is
+    /// refused and inserts neither (ADR-0031 d10).
+    fn insert_token_pair(
+        &self,
+        tenant_id: Uuid,
+        connection_id: Uuid,
+        tokens: TokenPair,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// A refresh, in one transaction that takes no chain lock: it finds the
+    /// presented refresh token's row, locks its connection's row, reads
+    /// [`RefreshFacts`] at `at` and asks `decide`; only on
+    /// [`RefreshDecision::Rotate`] it runs the conditional update that marks
+    /// the token rotated where it is still unrotated and unexpired, and on
+    /// that match inserts `next`. Of two racing refreshes with one token,
+    /// the second reads the first's rotation under the lock, so exactly one
+    /// mints. A reuse decision writes nothing here: its `connection.revoked`
+    /// is a commit of its own under the chain lock (postgres-schema.md,
+    /// redemption and rotation are conditional updates; ADR-0031 d10, d11).
+    fn rotate_refresh<F>(
+        &self,
+        tenant_id: Uuid,
+        token_hash: &Sha256Hash,
+        next: TokenPair,
+        at: &EventTime,
+        decide: F,
+    ) -> impl Future<Output = Result<RefreshOutcome, StoreError>> + Send
+    where
+        F: FnOnce(Option<&RefreshFacts>) -> RefreshDecision + Send;
+
+    /// The operational removal at `at` (postgres-schema.md, the removal
+    /// paragraph; ADR-0031 d9, d10): under `tenant_id`, every `authorized`
+    /// connection whose authorization code lapsed unexchanged, every token
+    /// row past its own expiry and every token row of a revoked connection,
+    /// and a revoked connection's `auth_code_hash`; under the provider
+    /// tenant, every authorization request 24 hours past its expiry. A
+    /// rotated refresh token keeps its row until its own expiry. Journals
+    /// nothing (ADR-0031 d12).
+    fn sweep_expired(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<SweepReport, StoreError>> + Send;
 
     /// Connect, in one transaction (postgres-schema.md "connections
     /// (ADR-0031)"): it deletes the authorization request's row by

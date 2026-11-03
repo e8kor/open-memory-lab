@@ -45,9 +45,9 @@ use oml_pg::{
     role_split_postflight, role_split_preflight,
 };
 use oml_port_contracts::{
-    ChainRig, authorization_request, connect_code, connect_grant, connector_key, handle_hash,
-    held_memory, key_record, name, run_connection_store_suite, run_journal_store_suite,
-    test_signing_key, workarea_record,
+    ChainRig, auth_code_hash, authorization_request, connect_code, connect_grant, connector_key,
+    handle_hash, held_memory, key_record, name, run_connection_store_suite,
+    run_journal_store_suite, test_signing_key, token_pair, workarea_record,
 };
 use serde_json::{Value, json};
 use sqlx::migrate::Migrate as _;
@@ -382,6 +382,8 @@ async fn open_at(
             fold: MetadataFold::ConnectionOpened {
                 connection_id,
                 replaces: None,
+                auth_code_hash: auth_code_hash(connection_id),
+                tokens: token_pair(connection_id),
             },
             outbox: OutboxRow {
                 event_id,
@@ -416,12 +418,7 @@ async fn two_racing_connection_opened_commits_for_one_key_leave_exactly_one_open
         .await
         .expect("mint");
     let spent_at = EventTime::parse("2026-10-29T13:00:20.000000Z").expect("fixture time");
-    assert!(
-        store
-            .connect_code_redeem(t, code, &spent_at)
-            .await
-            .expect("redeem")
-    );
+    assert!(store.spend_code(t, code, &spent_at).await.expect("redeem"));
     store
         .authorization_insert(authorization_request(t, key.key_id, code, connection))
         .await

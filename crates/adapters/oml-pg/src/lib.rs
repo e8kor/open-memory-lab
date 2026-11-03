@@ -12,7 +12,7 @@
 
 use oml_app::domain::access::{Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
-use oml_app::domain::oauth::{ConnectionState, RevokedCause};
+use oml_app::domain::oauth::{ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, VerifyError, verify_chain,
@@ -26,7 +26,8 @@ use oml_app::types::{
     AuthorizationRecord, ClaimKeyState, ClientKind, ConnectCode, ConnectCodeRecord, ConnectGrant,
     ConnectOutcome, ConnectionRecord, Credential, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS,
     KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord,
-    OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, UnnamedRows, WorkareaRecord,
+    OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport,
+    TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -1559,8 +1560,19 @@ async fn apply_fold(
         MetadataFold::ConnectionOpened {
             connection_id,
             replaces,
+            auth_code_hash,
+            tokens,
         } => {
-            fold_connection_opened(tx, tenant_id, seq, at, connection_id, replaces).await?;
+            fold_connection_opened(
+                tx,
+                tenant_id,
+                (seq, at),
+                connection_id,
+                replaces,
+                &auth_code_hash,
+            )
+            .await?;
+            insert_tokens(tx, tenant_id, connection_id, tokens, at).await?;
         }
         MetadataFold::ConnectionRevoked {
             connection_id,
@@ -1668,15 +1680,18 @@ async fn fold_code_issued(
 /// connect code unvoided and its key unrevoked, stamping `opened_seq` and
 /// `auth_code_redeemed_at`. A second open connection of the key, an opening
 /// that names none while one is open, is refused by
-/// `oauth_connections_open` (postgres-schema.md `oauth_connections`;
-/// ADR-0031 d7, d8, d10, d11, d12).
+/// `oauth_connections_open`. The update matches the row by `presented`,
+/// the exchange's code digest, so a digest that is not the connection's is
+/// refused as the rest are (postgres-schema.md `oauth_connections`, and
+/// redemption and rotation are conditional updates; ADR-0031 d7, d8, d10,
+/// d11, d12).
 async fn fold_connection_opened(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
-    seq: i64,
-    at: &EventTime,
+    (seq, at): (i64, &EventTime),
     connection_id: Uuid,
     replaces: Option<Uuid>,
+    presented: &Sha256Hash,
 ) -> Result<(), StoreError> {
     let key_id: Option<Uuid> = sqlx::query_scalar(
         "SELECT key_id FROM oauth_connections WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
@@ -1712,7 +1727,8 @@ async fn fold_connection_opened(
     let opened = sqlx::query(
         "UPDATE oauth_connections o \
          SET state = 'open', opened_seq = $3, auth_code_redeemed_at = ($4)::timestamptz \
-         WHERE o.tenant_id = $1 AND o.id = $2 AND o.state = 'authorized' \
+         WHERE o.tenant_id = $1 AND o.id = $2 AND o.auth_code_hash = $5 \
+         AND o.state = 'authorized' \
          AND o.auth_code_redeemed_at IS NULL AND o.auth_code_expires_at > ($4)::timestamptz \
          AND EXISTS (SELECT 1 FROM connect_codes c \
                       WHERE c.tenant_id = o.tenant_id AND c.id = o.code_id \
@@ -1725,6 +1741,7 @@ async fn fold_connection_opened(
     .bind(connection_id)
     .bind(seq)
     .bind(at.as_str())
+    .bind(presented.0.to_vec())
     .execute(&mut **tx)
     .await
     .map_err(|e| match &e {
@@ -1739,6 +1756,34 @@ async fn fold_connection_opened(
     if opened.rows_affected() != 1 {
         return Err(not_openable);
     }
+    Ok(())
+}
+
+/// Inserts the access and refresh rows of `connection_id`, created at `at`,
+/// in the caller's transaction; a digest held already meets the primary
+/// key and aborts it (postgres-schema.md `oauth_tokens`; ADR-0031 d10).
+async fn insert_tokens(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    connection_id: Uuid,
+    tokens: TokenPair,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO oauth_tokens (hash, tenant_id, connection_id, kind, expires_at, created_at) \
+         VALUES ($1, $3, $4, 'access', ($2)::timestamptz, ($7)::timestamptz), \
+                ($5, $3, $4, 'refresh', ($6)::timestamptz, ($7)::timestamptz)",
+    )
+    .bind(tokens.access.token_hash.0.to_vec())
+    .bind(tokens.access.expires_at.as_str())
+    .bind(tenant_id)
+    .bind(connection_id)
+    .bind(tokens.refresh.token_hash.0.to_vec())
+    .bind(tokens.refresh.expires_at.as_str())
+    .bind(at.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
     Ok(())
 }
 
@@ -2966,6 +3011,63 @@ fn connection_from_row(row: &PgRow) -> Result<ConnectionRecord, StoreError> {
     })
 }
 
+const TOKEN_COLUMNS: &str = concat!(
+    "hash, connection_id, kind, ",
+    utc!("expires_at"),
+    " AS expires_at_signed, ",
+    utc!("rotated_at"),
+    " AS rotated_at_signed, ",
+    utc!("created_at"),
+    " AS created_at_signed"
+);
+
+fn token_from_row(row: &PgRow) -> Result<TokenRecord, StoreError> {
+    let hash: Vec<u8> = row.try_get("hash").map_err(backend)?;
+    let kind: String = row.try_get("kind").map_err(backend)?;
+    let kind = match kind.as_str() {
+        "access" => TokenKind::Access,
+        "refresh" => TokenKind::Refresh,
+        other => {
+            return Err(StoreError::Backend(format!(
+                "oauth_tokens.kind {other:?} is not a token kind"
+            )));
+        }
+    };
+    Ok(TokenRecord {
+        token_hash: hash32(&hash)?,
+        connection_id: row.try_get("connection_id").map_err(backend)?,
+        kind,
+        expires_at: event_time_column(row, "expires_at_signed")?
+            .ok_or_else(|| StoreError::Backend("oauth_tokens.expires_at is null".to_owned()))?,
+        rotated_at: event_time_column(row, "rotated_at_signed")?,
+        created_at: event_time_column(row, "created_at_signed")?
+            .ok_or_else(|| StoreError::Backend("oauth_tokens.created_at is null".to_owned()))?,
+    })
+}
+
+fn token_kind_str(kind: TokenKind) -> &'static str {
+    match kind {
+        TokenKind::Access => "access",
+        TokenKind::Refresh => "refresh",
+    }
+}
+
+/// Opens the pre-tenant lookup in `tx`: the `key_resolution` policies of
+/// 0012 show exactly the rows whose digest equals `oml.api_key_hash`, with
+/// no `oml.tenant_id` set, as `key_by_hash` finds `api_keys.hash`
+/// (postgres-schema.md "connections (ADR-0031)").
+async fn set_lookup_digest(
+    tx: &mut Transaction<'_, Postgres>,
+    digest: &Sha256Hash,
+) -> Result<(), StoreError> {
+    sqlx::query("SELECT set_config('oml.api_key_hash', $1, true)")
+        .bind(hex::encode(digest.0))
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
 /// The connection rows under the tenant's RLS, and the provider tenant's
 /// client and authorization-request rows under its own (postgres-schema.md
 /// "connections (ADR-0031)"). The journalled acts are folds in
@@ -2974,7 +3076,291 @@ fn connection_from_row(row: &PgRow) -> Result<ConnectionRecord, StoreError> {
 /// switching it from the provider tenant to the code's (ADR-0031 d5, d8,
 /// d9, d12).
 impl ConnectionStore for PgStore {
-    async fn connect_code_redeem(
+    async fn code_by_hash(
+        &self,
+        code_hash: &Sha256Hash,
+    ) -> Result<Option<TenantRow<ConnectCodeRecord>>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_lookup_digest(&mut tx, code_hash).await?;
+        let row = sqlx::query(&format!(
+            "SELECT tenant_id, {CODE_COLUMNS} FROM connect_codes WHERE hash = $1"
+        ))
+        .bind(code_hash.0.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref()
+            .map(|row| {
+                Ok(TenantRow {
+                    tenant_id: row.try_get("tenant_id").map_err(backend)?,
+                    row: code_from_row(row)?,
+                })
+            })
+            .transpose()
+    }
+
+    async fn take_authorization_by_handle(
+        &self,
+        handle_hash: &Sha256Hash,
+    ) -> Result<Option<AuthorizationRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, PROVIDER_TENANT).await?;
+        let row = sqlx::query(&format!(
+            "DELETE FROM oauth_authorizations WHERE tenant_id = $1 AND handle_hash = $2 \
+             RETURNING {AUTHORIZATION_COLUMNS}"
+        ))
+        .bind(PROVIDER_TENANT)
+        .bind(handle_hash.0.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let request = row.as_ref().map(authorization_from_row).transpose()?;
+        tx.commit().await.map_err(backend)?;
+        Ok(request)
+    }
+
+    async fn connection_by_auth_code(
+        &self,
+        auth_code_hash: &Sha256Hash,
+    ) -> Result<Option<TenantRow<ConnectionRecord>>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_lookup_digest(&mut tx, auth_code_hash).await?;
+        let row = sqlx::query(&format!(
+            "SELECT tenant_id, {CONNECTION_COLUMNS} FROM oauth_connections \
+             WHERE auth_code_hash = $1"
+        ))
+        .bind(auth_code_hash.0.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref()
+            .map(|row| {
+                Ok(TenantRow {
+                    tenant_id: row.try_get("tenant_id").map_err(backend)?,
+                    row: connection_from_row(row)?,
+                })
+            })
+            .transpose()
+    }
+
+    async fn token_by_hash(
+        &self,
+        token_hash: &Sha256Hash,
+        kind: TokenKind,
+    ) -> Result<Option<TenantRow<TokenRecord>>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_lookup_digest(&mut tx, token_hash).await?;
+        // At /mcp only an access row authenticates, at a refresh only a
+        // refresh row (roles-and-keys.md connections; ADR-0031 d11).
+        let row = sqlx::query(&format!(
+            "SELECT tenant_id, {TOKEN_COLUMNS} FROM oauth_tokens WHERE hash = $1 AND kind = $2"
+        ))
+        .bind(token_hash.0.to_vec())
+        .bind(token_kind_str(kind))
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref()
+            .map(|row| {
+                Ok(TenantRow {
+                    tenant_id: row.try_get("tenant_id").map_err(backend)?,
+                    row: token_from_row(row)?,
+                })
+            })
+            .transpose()
+    }
+
+    async fn insert_token_pair(
+        &self,
+        tenant_id: Uuid,
+        connection_id: Uuid,
+        tokens: TokenPair,
+        at: &EventTime,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The connection's row lock holds it open until the rows commit.
+        let open: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM oauth_connections \
+             WHERE tenant_id = $1 AND id = $2 AND state = 'open' FOR UPDATE",
+        )
+        .bind(tenant_id)
+        .bind(connection_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if open.is_none() {
+            return Err(StoreError::Backend(format!(
+                "connection {connection_id} is not an open connection of this tenant"
+            )));
+        }
+        insert_tokens(&mut tx, tenant_id, connection_id, tokens, at).await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn rotate_refresh<F>(
+        &self,
+        tenant_id: Uuid,
+        token_hash: &Sha256Hash,
+        next: TokenPair,
+        at: &EventTime,
+        decide: F,
+    ) -> Result<RefreshOutcome, StoreError>
+    where
+        F: FnOnce(Option<&RefreshFacts>) -> RefreshDecision + Send,
+    {
+        // One transaction without the chain lock (postgres-schema.md,
+        // redemption and rotation are conditional updates).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let hash = token_hash.0.to_vec();
+        let connection_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT connection_id FROM oauth_tokens \
+             WHERE tenant_id = $1 AND hash = $2 AND kind = 'refresh'",
+        )
+        .bind(tenant_id)
+        .bind(&hash)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let Some(connection_id) = connection_id else {
+            tx.commit().await.map_err(backend)?;
+            return Ok(RefreshOutcome {
+                decision: decide(None),
+                facts: None,
+            });
+        };
+        let connection = sqlx::query(&format!(
+            "SELECT {CONNECTION_COLUMNS} FROM oauth_connections \
+             WHERE tenant_id = $1 AND id = $2 FOR UPDATE"
+        ))
+        .bind(tenant_id)
+        .bind(connection_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let connection = connection_from_row(&connection)?;
+        // Read after the lock, so a racing refresh's rotation is seen.
+        let (rotated, expired): (bool, bool) = sqlx::query_as(
+            "SELECT rotated_at IS NOT NULL, expires_at <= ($3)::timestamptz FROM oauth_tokens \
+             WHERE tenant_id = $1 AND hash = $2 AND kind = 'refresh'",
+        )
+        .bind(tenant_id)
+        .bind(&hash)
+        .bind(at.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let live: bool = sqlx::query_scalar(
+            "SELECT revoked_at IS NULL FROM api_keys WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(connection.key_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?
+        .unwrap_or(false);
+        let facts = RefreshFacts {
+            connection_id,
+            connection: connection.state,
+            client_id: connection.client_id,
+            resource: connection.resource,
+            key: if live {
+                KeyState::Active
+            } else {
+                KeyState::Revoked
+            },
+            rotated,
+            expired,
+        };
+        let decision = decide(Some(&facts));
+        if decision == RefreshDecision::Rotate {
+            let matched: Option<Uuid> = sqlx::query_scalar(
+                "UPDATE oauth_tokens SET rotated_at = ($3)::timestamptz \
+                 WHERE tenant_id = $1 AND hash = $2 AND kind = 'refresh' \
+                 AND rotated_at IS NULL AND expires_at > ($3)::timestamptz \
+                 RETURNING connection_id",
+            )
+            .bind(tenant_id)
+            .bind(&hash)
+            .bind(at.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?;
+            if matched.is_none() {
+                return Err(StoreError::Backend(
+                    "the refresh token moved under its connection's lock".to_owned(),
+                ));
+            }
+            insert_tokens(&mut tx, tenant_id, connection_id, next, at).await?;
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(RefreshOutcome {
+            decision,
+            facts: Some(facts),
+        })
+    }
+
+    async fn sweep_expired(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> Result<SweepReport, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let connections = sqlx::query(
+            "DELETE FROM oauth_connections WHERE tenant_id = $1 AND state = 'authorized' \
+             AND auth_code_expires_at <= ($2)::timestamptz",
+        )
+        .bind(tenant_id)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let tokens = sqlx::query(
+            "DELETE FROM oauth_tokens t WHERE t.tenant_id = $1 \
+             AND (t.expires_at <= ($2)::timestamptz \
+                  OR EXISTS (SELECT 1 FROM oauth_connections c \
+                              WHERE c.tenant_id = t.tenant_id AND c.id = t.connection_id \
+                                AND c.state = 'revoked'))",
+        )
+        .bind(tenant_id)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let codes = sqlx::query(
+            "UPDATE oauth_connections SET auth_code_hash = NULL \
+             WHERE tenant_id = $1 AND state = 'revoked' AND auth_code_hash IS NOT NULL",
+        )
+        .bind(tenant_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        set_tenant(&mut tx, PROVIDER_TENANT).await?;
+        let authorizations = sqlx::query(
+            "DELETE FROM oauth_authorizations WHERE tenant_id = $1 \
+             AND expires_at + interval '24 hours' <= ($2)::timestamptz",
+        )
+        .bind(PROVIDER_TENANT)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(SweepReport {
+            connections_removed: connections.rows_affected(),
+            tokens_removed: tokens.rows_affected(),
+            codes_cleared: codes.rows_affected(),
+            authorizations_removed: authorizations.rows_affected(),
+        })
+    }
+
+    async fn spend_code(
         &self,
         tenant_id: Uuid,
         code_id: Uuid,
@@ -2985,7 +3371,8 @@ impl ConnectionStore for PgStore {
         // The one conditional update two racing entries cannot both pass.
         let spent = sqlx::query(
             "UPDATE connect_codes SET redeemed_at = ($3)::timestamptz \
-             WHERE tenant_id = $1 AND id = $2 AND redeemed_at IS NULL AND voided_seq IS NULL",
+             WHERE tenant_id = $1 AND id = $2 AND redeemed_at IS NULL AND voided_seq IS NULL \
+             AND expires_at > ($3)::timestamptz",
         )
         .bind(tenant_id)
         .bind(code_id)
