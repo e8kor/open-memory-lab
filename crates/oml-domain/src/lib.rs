@@ -29,6 +29,7 @@ pub mod model;
 pub mod name;
 pub mod vocab;
 pub mod vocab_edges;
+pub mod vocab_release;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,
