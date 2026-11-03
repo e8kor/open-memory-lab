@@ -42,8 +42,8 @@ use crate::types::{
     ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
     RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
     SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TransitionRecord,
-    TransitionState, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef,
-    WorkareaInfo, WorkareaRecord, WorkareaStatusView,
+    TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome,
+    VersionRef, WorkareaInfo, WorkareaRecord, WorkareaStatusView,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -1894,7 +1894,9 @@ where
     /// The status read of the node, by id or name: its stored rung, the
     /// review policy in force and its live proposals in proposal order, the
     /// pending rows whose `from` is the node's status (workareas.md, the
-    /// status read lists only live proposals; ADR-0009 d3). The refusal
+    /// status read lists only live proposals; ADR-0009 d3), each naming its
+    /// proposing key only to that key and never its principal (ADR-0025
+    /// d15). The refusal
     /// order: (1) the key role, an admin key passing on its role and any
     /// other key needing reader among its admissible grant roles; (2) the
     /// node resolves; (3) a non-admin key needs reader effective access on
@@ -1929,6 +1931,19 @@ where
             .await?
             .into_iter()
             .filter(|t| t.from == node.status)
+            .map(|t| {
+                // The own key set is the calling key alone until rotation
+                // is built (roles-and-keys.md#own), as on the tail.
+                let own = t.proposer_key_id == key.key_id;
+                TransitionView {
+                    transition_id: t.transition_id,
+                    workarea_id: t.workarea_id,
+                    from: t.from,
+                    to: t.to,
+                    state: t.state,
+                    proposed_by_key_id: own.then_some(t.proposer_key_id),
+                }
+            })
             .collect();
         Ok(WorkareaStatusView {
             workarea_id,
