@@ -90,8 +90,9 @@ one-time connect code: the admin issues the agent key and a connect code togethe
 code and, on a correct one, opens the connection bound to that key, so claude.ai holds only
 tokens bound to that one key and no key value is pasted anywhere. Pasting the key value on OML's
 sign-in page is rejected, because the value would pass through the person's clipboard and browser.
-(3) The build follows iteration 3, names as keys (the proposed ADR-0026, on another branch); the
-implementation plan marks the pure modules that can land earlier.
+(3) The build follows iteration 3, names as keys ([ADR-0026](ADR-0026-names-are-keys.md), accepted
+and released in v0.3.0 after this record was proposed); the implementation plan marks the pure
+modules that can land earlier.
 
 **One word to keep apart.** The fixed vocabulary gives "grant" to a key's access to a workarea
 node (ADR-0018 d4). OAuth's "authorization grant" is therefore never called a grant here: the
@@ -322,23 +323,25 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 - **d7 — A connector key is an agent key issued with a connect code instead of a value; it has no
   bearer value and holds at most one open connection.** `POST /v2/keys` with `connect_code: true`
   runs the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)
-  unchanged and then refuses, with `oauth.connect_refused`, a key role of `admin` or `operator`
+  with one step more, after the default workarea and before the name, since
+  [ADR-0026](ADR-0026-names-are-keys.md) d5 checks `name.taken` after every other check: it
+  refuses, with `oauth.connect_refused`, a key role of `admin` or `operator`
   (`details.reason: role`), `held_by: service` (`held_by_service`) and a deployment without
   `oauth.issuer` (`not_configured`). The server mints no value for the key: `api_keys.credential`
   is `connection`, folded from `key.issued`, `api_keys.hash` is null, and the `201` carries
   `connect_code` — `{code_id, code, expires_at, connector_url}` — in place of `value`, returned
   only after the last `grant.issued` and the `connection.code_issued` commit. The key
   authenticates nothing until a connection opens, and then only at `/mcp`. This amends ADR-0025
-  d2: the issuance body gains `connect_code`, the issuance order gains its seventh step,
-  `key.issued` gains `credential`, and "the value only after the last grant commits" gains its
-  connect-code form.
+  d2: the issuance body gains `connect_code`, the issuance order gains its seventh step, which
+  makes ADR-0026's name check the eighth, `key.issued` gains `credential`, and "the value only
+  after the last grant commits" gains its connect-code form.
 
-    `oml keys issue-agent --principal crew/claude-mobile --workarea <workarea-id> --connect-code`
-    sends that issuance and prints exactly two lines on stdout, the connector URL and the code; the
-    key id, the expiry and the next step go to stderr. `--out` with `--connect-code` is refused
-    (exit `2`): there is no value to write, and a code is for a person to read and type within
-    minutes. `--json` prints the `201`, as every verb does. The key's name, as a positional
-    argument, arrives with names (ADR-0026 d12, proposed).
+    `oml keys issue-agent claude-mobile --principal crew/claude-mobile --workarea <workarea>
+    --connect-code` sends that issuance, under the key name and the optional `--crew` that
+    ADR-0026 d12 gives the verb, and prints exactly two lines on stdout, the connector URL and the
+    code; the key's name and id, the expiry and the next step go to stderr. `--out` with
+    `--connect-code` is refused (exit `2`): there is no value to write, and a code is for a person
+    to read and type within minutes. `--json` prints the `201`, as every verb does.
 
     **A replay carries no connect code.** The idempotency record of `POST /v2/keys`
     with `connect_code: true` and of `POST /v2/keys/{key_id}/connect-codes` stores its response
@@ -349,8 +352,8 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     for the two connect-code responses ("returns the stored response" returns it without the
     code) and ADR-0028 d1 (`issue-agent`'s output). On a replayed answer,
     `oml keys issue-agent --connect-code` and `oml keys connect-code` print no code, name the key
-    id on stderr, say that the code went only to the first answer and that
-    `oml keys connect-code <key-id>` mints a new one, and exit `2`
+    on stderr, say that the code went only to the first answer and that
+    `oml keys connect-code <key>` mints a new one, and exit `2`
     ([CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation)). The cost: a
     code whose first answer is lost is minted again.
 
@@ -409,7 +412,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     produced, then cannot open a connection that would replace the one the admin meant. Code entry
     reads the key's state as `/mcp` does (d11): the code of a revoked or expired key answers the one
     message for a code that is not valid, `oauth.connect_code_invalid`, so the page never shows a
-    dead key's grants. `POST /v2/keys/{key_id}/connect-codes` (`oml keys connect-code <key-id>`)
+    dead key's grants. `POST /v2/keys/{key_id}/connect-codes` (`oml keys connect-code <key>`)
     mints a fresh code for a connector key, refused with `oauth.connect_refused` for a bearer key,
     a revoked or expired key, or a deployment without `oauth.issuer`.
 
@@ -458,8 +461,8 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        authorization request's row with the code's id, key and tenant and the sealed fields,
        under a fresh 256-bit handle the confirmation's form carries, and shows what the
        connection will act as: the tenant the key belongs to, by the name the operator gave it
-       at `POST /v2/tenants`, which no tenant admin can set; the key's principal and role; every
-       workarea it holds a grant on, with the grant's
+       at `POST /v2/tenants`, which no tenant admin can set; the key's name, principal and role;
+       every workarea it holds a grant on, by its name, with the grant's
        role; and sentences built from the key's role and effective access, one per kind of verb
        it holds — "Claude can remember and learn as this agent in `<workareas>`." where it holds
        writer, "Claude can recall and read as this agent in `<workareas>`." where it holds reader,
@@ -474,7 +477,8 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        and the attempts left, under a new sealed handle with one attempt fewer. The fifth wrong
        entry ends the request and redirects with `access_denied`. An earlier handle sent again
        carries its earlier count, which costs nothing: the five attempts bound one page's typing
-       errors, not guessing (d8). Once names exist (ADR-0026, proposed), the page names the key too.
+       errors, not guessing (d8). The names are [ADR-0026](ADR-0026-names-are-keys.md)'s, unique
+       and immutable, so a name on the page means one row for as long as the deployment exists.
     3. **The confirmation.** `POST /oauth/authorize` with exactly `handle` and `action`, accepted
        only when the handle names a request row, which only a verified code writes, and that
        row's code is not voided (d8). Connect creates the connection, `authorized`, and issues an
@@ -605,7 +609,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     to show. Every other tool answers exactly as it would to the key
     ([agent plugin](../api/mcp-plugin.md#oml_attach)).
 
-    `POST /v2/keys/{key_id}/connections/{connection_id}/revoke` (`oml keys disconnect <key-id>
+    `POST /v2/keys/{key_id}/connections/{connection_id}/revoke` (`oml keys disconnect <key>
     <connection-id>`) ends a connection: the lead refuses every token of it at the next request,
     and a follower after replication lag, as for a revoked key. The same commit voids the key's
     codes from which no connection has opened, ending every page in progress and every
@@ -739,27 +743,25 @@ constant, a policy choice; nothing about OML is measured, and what would need me
       follower's lag. This is the MCP request forwarded to the same endpoint, not a token passed to
       a ring route (d11), and the follower never asserts a key id it resolved.
 
-- **d15 — `info.version` moves from `0.2.0-design` to `0.3.0-design`.** The changelog's rule names
-  the error taxonomy among the provider ring's contract, and the `ErrorCode` enum that `/v1`
-  responses share gains the `oauth` family; a change carrying a proposed record that changes the
-  OpenAPI document bumps the version (`CONTRIBUTING.md`, "Spec versioning and tags").
-  No `/v1` operation changes: no path, request or response shape, idempotency or pagination rule,
-  and no `/v1` operation answers an `oauth` code; `oauth.attach_refused` is the facade's, before
-  any `/v1` call. On `/v2` one idempotency rule changes: the record of the two connect-code
-  responses stores its response without the code (d7). The proposed ADR-0026, on another branch,
-  moves
-  to `0.3.0-design` as well: if its revision is still untagged when this record lands, the two
-  share `0.3.0-design`; if `spec-v0.3` has been cut, this record takes `0.4.0-design` when it is
-  rebased.
+- **d15 — `info.version` moves from `0.3.0-design` to `0.4.0-design`.** The changelog's rule
+  ([how the changelog is kept](../changelog.md#how-this-changelog-is-kept)) names the error
+  taxonomy among the provider ring's contract, and the `ErrorCode` enum that `/v1` responses share
+  gains the `oauth` family, so the version bumps. No `/v1` operation changes: no path, request or
+  response shape, idempotency or pagination rule, and no `/v1` operation answers an `oauth` code;
+  `oauth.attach_refused` is the facade's, before any `/v1` call. On `/v2` one idempotency rule
+  changes: the record of the two connect-code responses stores its response without the code
+  (d7). `0.3.0-design` is [ADR-0026](ADR-0026-names-are-keys.md)'s revision, tagged `spec-v0.3`
+  when that record was accepted, so this record opens the next revision, and `spec-v0.4` is cut
+  when it is accepted.
 
 - **d16 — The build follows iteration 3; the pure modules may land before it.** What touches key
   issuance — the `POST /v2/keys` body, `issue-agent`'s arguments, `api_keys` and the migration
-  sequence, the page's description of the key — waits for names, which change all of them. The
-  pure modules — the connect code's format and normalization, PKCE verification, the redirect
-  matcher, the address allow-list, document and registration validation, the discovery documents
-  and the challenge, the sealed authorization-request handle, the refresh state machine, the
-  page's rendering and headers — depend on none of that and may land
-  earlier, behind no route.
+  sequence, the page's description of the key — waited for names, which change all of them;
+  v0.3.0 shipped them, so that part builds on names as the server serves them. The pure modules — the connect code's format and normalization, PKCE
+  verification, the redirect matcher, the address allow-list, document and registration
+  validation, the discovery documents and the challenge, the sealed authorization-request handle,
+  the refresh state machine, the page's rendering and headers — depend on none of that and may
+  land first, behind no route.
 
 ## Consequences
 
@@ -804,6 +806,10 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   [audit and lineage](../architecture/audit-and-lineage.md), [concepts](../concepts.md), the
   [HTTP API](../api/http-api.md) (the `POST /v1/memories` ceiling), `openapi.yaml` and the
   [agent plugin](../api/mcp-plugin.md).
+- The [client SDKs](../engineering/sdks.md#the-regeneration-rule), in the change that lands this
+  record's `openapi.yaml` on `main`: both generated layers regenerate from it, and each wrapper
+  gains an exception class for the `oauth` family, since the wrappers raise one class per family
+  of [errors](../api/errors.md).
 
 **Opened.** [FR-34](../product/roadmap.md): the connection flow is designed, not built, and no live
 connection has run. It closes on the end-to-end test of the in-process lead passing in CI and a
@@ -904,5 +910,5 @@ D9, D13 and D14 cells of the D-register name it, `llms.txt` names it, and one
 | **d13 — RFC codes only, with no OML codes** | The taxonomy would stop being closed, and logs and doctor would have no stable name for these refusals. |
 | **d14 — A follower's own `oauth.issuer`** | A follower left on another value would honor tokens the lead refuses, or serve documents for endpoints the lead answers `404`, for as long as it ran. |
 | **d14 — Every limit a setting** | A value with one caller is a constant, and these bounds are security properties a deployment should not loosen by editing a file. |
-| **d15 — Leave `info.version` at `0.2.0-design`** | The shared error taxonomy changes, which the changelog's rule names, after `0.2.0-design` was tagged. |
+| **d15 — Leave `info.version` at `0.3.0-design`** | The shared error taxonomy changes, which the changelog's rule names, after `0.3.0-design` was tagged `spec-v0.3`. |
 | **d16 — Build now, before names** | Issuance, `issue-agent` and the key tables all change again when names land. |

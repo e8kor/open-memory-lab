@@ -21,6 +21,11 @@ it. Issue that key with the writer role, a writer grant and a reader grant on th
 workarea, and that workarea as its default. A key without the reader grant still writes,
 but `oml_recall` refuses it with `access.not_found`.
 
+Every tool argument that takes a workarea, `workarea` or `scope`, takes its name, such as
+`metals-crew`, or its id. A workarea's name is unique in the tenant and never changes. A name
+the key cannot see is refused exactly as its id would be, with `access.not_found`, and a path
+such as `universe.procurement.metals-crew` is not a name and is refused.
+
 ## The loop
 
 On that one key the agent:
@@ -45,13 +50,51 @@ their own work, both depend on it. Keep the key in the environment, not in a fil
 commit. To issue keys and run a server, see "Quickstart" in the
 [repository README](../../README.md#quickstart).
 
-`oml keys issue-agent --principal <principal> --workarea <workarea-id>` issues an agent's key in
-one call: a writer key with a writer and a reader grant on the workarea, which is also its
-default. It prints the `export OML_URL=…` and `export OML_API_KEY=…` lines to run before you start
-Claude Code. With `--out <path>` the value goes to a new owner-only file and the second line reads
-it from there; the `oml-admin` plugin in this marketplace runs it that way from inside Claude Code,
-so the value never enters the conversation. See the
+`oml keys issue-agent <key-name> --principal <principal> --workarea <workarea>` issues an
+agent's key in one call: a writer key named `<key-name>`, with a writer and a reader grant on the
+workarea, given by its name or id, which is also its default. It prints the `export OML_URL=…`
+and `export OML_API_KEY=…` lines to run before you start Claude Code. With `--out <path>` the
+value goes to a new owner-only file and the second line reads it from there; the `oml-admin`
+plugin in this marketplace runs it that way from inside Claude Code, so the value never enters
+the conversation. See the
 [CLI reference](../../docs/cli/reference.md#oml-keys-issuance-revocation-rotation).
+
+## Every session starts from memory
+
+When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
+session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It reads the
+workarea's steering, your key's ten newest submissions and the memories that match the name of
+the directory you work in, at most 800 budget tokens of matches, and adds them to the session as
+stored data to check. After a compaction it also asks Claude to record the summary's durable facts
+with `oml_remember`. It reads `OML_URL` and `OML_API_KEY`, never the CLI's own credentials, and
+prints nothing when the server does not answer. Set `OML_SESSION_CONTEXT=off` to turn it off, or
+`OML_SESSION_CONTEXT_MAX_TOKENS` to change the budget. Without the CLI the hook does nothing. See
+the [CLI reference](../../docs/cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
+
+A plugin cannot allow its own tools for you, so Claude Code asks you before each call to one
+of them until you allow it. To stop the question on reads and keep it on every write, add the
+read tools to `permissions.allow` in your settings:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_oml_oml__oml_recall",
+      "mcp__plugin_oml_oml__oml_get",
+      "mcp__plugin_oml_oml__oml_my_work",
+      "mcp__plugin_oml_oml__oml_workarea_info",
+      "mcp__plugin_oml_oml__oml_events_tail"
+    ]
+  }
+}
+```
+
+The broader rule, `mcp__plugin_oml_oml`, allows every tool of the plugin, the writes too, and
+costs you the sight of them: Claude then calls `oml_remember`, `oml_learn` and `oml_supersede`,
+which can propose retiring a claim, without showing you the call, so whatever the session
+chooses to record leaves for the server unseen. What it chooses is shaped by the stored text the
+hook adds at session start, which other writers in the workarea can influence. Every write is
+still held until a different identity reviews it, so nothing it records is shared before then.
 
 ## Other MCP clients
 

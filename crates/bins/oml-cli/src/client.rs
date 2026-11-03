@@ -61,8 +61,19 @@ pub struct Client {
 impl Client {
     #[must_use]
     pub fn new(server: String, key: Option<String>) -> Self {
+        Self::with_timeout(server, key, Duration::from_secs(30))
+    }
+
+    /// A client whose every request ends after `timeout`, its TCP connect
+    /// included. The DNS lookup has no deadline here: ureq gives it none, so
+    /// a caller that must end in time bounds the whole call itself, as `oml
+    /// hook session-start` does (ADR-0029 d5).
+    #[must_use]
+    pub fn with_timeout(server: String, key: Option<String>, timeout: Duration) -> Self {
+        // `timeout` alone leaves ureq's own 30-second connect timeout in force.
         let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
+            .timeout_connect(timeout)
+            .timeout(timeout)
             .build();
         Self {
             agent,
@@ -131,6 +142,48 @@ impl Client {
         }
         finish(request.send_json(body.clone()))
     }
+}
+
+/// One path segment carrying a reference exactly as the operator typed it,
+/// [`encode`]d, so a `/`, a `?` or a `%` stays inside the segment and
+/// reaches the server, which alone classifies the value as an id, a name or
+/// neither (`request.validation`). Three spellings no URL path carries as
+/// one segment are refused here instead, before anything is sent: the empty
+/// value, which leaves no segment, and `.` and `..`, which the URL parser
+/// ureq sends through removes as dot segments (url 2.5.8 `src/parser.rs`,
+/// after the URL Standard's single-dot and double-dot path segments, which
+/// count an escaped `%2e` as a dot too, so no escape carries them). No id
+/// or name is spelled that way (ADR-0026 d2, d3), and the refusal turns away
+/// no value the server would resolve; beyond it the CLI classifies and
+/// resolves nothing (cli/reference.md conventions; ADR-0026 d4).
+///
+/// # Errors
+///
+/// A local failure (exit 2) naming the value, when it is ``, `.` or `..`.
+pub fn segment(text: &str) -> Result<String, CliError> {
+    if matches!(text, "" | "." | "..") {
+        return Err(CliError::local(format!(
+            "{text:?} is neither an id nor a name and cannot travel as one URL path segment (an \
+             empty value leaves none, and a URL parser removes `.` and `..` as dot segments); \
+             nothing was sent (cli/reference.md conventions)"
+        )));
+    }
+    Ok(encode(text))
+}
+
+/// `text` with every byte outside RFC 3986's unreserved set percent-encoded,
+/// for a path segment ([`segment`]) or a query value.
+#[must_use]
+pub fn encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 /// One idempotency key per invocation: a re-run is a new act, a transport

@@ -6,5 +6,6 @@
 
 pub mod client;
 pub mod creds;
+pub mod hook;
 pub mod issue;
 pub mod verify;
