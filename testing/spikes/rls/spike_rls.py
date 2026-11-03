@@ -96,11 +96,13 @@ WORKAREA_COLUMNS = "id, tenant_id, parent_id, name, crew"
 #
 # The owner's pg_stats view is no longer a check: under the role split the owner serves
 # nothing, and its view of tenant B's lexemes is the control of the service role's pg_stats
-# check (ADR-0034 d8, d9, d10 step 2).
-RECORDED_FAILURES = {
-    "S3.4/owner/estimate": "spike-3-rls.md#s34",
-    "S3.4/service/estimate": "spike-3-rls.md#s34",
-}
+# check (ADR-0034 d8, d9, d10 step 2). The two estimate checks were recorded until 0009 made
+# memories one partition per tenant (ADR-0034 d11): each partition's statistics hold one
+# tenant_id, so the policy's tenant A, which the planner evaluates for its estimate, gives
+# another tenant's partition one row whatever the word, and the checks passed on 18.6 on
+# 2026-11-03 (spike-3-rls.md#s34). A listed check that passes fails the run, so they are no
+# longer listed; the per-partition catalog channels stay observations (FR-45).
+RECORDED_FAILURES: dict[str, str] = {}
 
 # The tables the seeders below wrote rows into, filled by seed_insert as they run. A table a
 # later migration adds and no seeder writes is probed structurally (ENABLE, FORCE, a policy,
@@ -263,8 +265,19 @@ def seed_insert(conn: psycopg.Connection, statement: str, params: list) -> None:
     conn.execute(statement, params)
 
 
+# A tenant's partition of memories, as 0009 and the lead name it: memories_t_<tenant id, 32
+# hex> (ADR-0034 d11). Its rows are seeded through its parent, one tenant's to each.
+PARTITION = re.compile(r"(memories)_t_[0-9a-f]{32}")
+
+
+def seeded(table: str) -> bool:
+    """Whether a seeder wrote rows into table, or into the parent a partition of it holds."""
+    partition = PARTITION.fullmatch(table)
+    return table in SEEDED_TABLES or (partition is not None and partition.group(1) in SEEDED_TABLES)
+
+
 def unseeded(tables: dict[str, str]) -> list[str]:
-    return sorted(set(tables) - SEEDED_TABLES)
+    return sorted(t for t in tables if not seeded(t))
 
 
 def journal_row(conn, t: Tenant, seq: int, event_type: str, payload: dict, key: uuid.UUID | None):
@@ -482,8 +495,9 @@ def connect(conninfo: str, notices: list[str] | None = None) -> psycopg.Connecti
 FTS_INDEX_CLAUSES = ("ADR-0007 d4 (tenant isolation extends through every storage layer) and security.md's STRIDE "
                      "information-disclosure mitigation (FTS physically partitioned per tenant, no cross-tenant "
                      "index to leak through), for the statistics of the cross-tenant index memories_claim_fts")
-FTS_INDEX_FIX = ("an implementation fix that makes the FTS index per tenant, which this run does not test; the "
-                 "designed memories_fts and held_fts are not partitioned per tenant either (postgres-schema.md)")
+FTS_INDEX_FIX = ("an implementation fix that makes the FTS index per tenant, which 0009's per-tenant partitions of "
+                 "memories build and this run tests (ADR-0034 d11); the designed memories_fts and held_fts are "
+                 "not built (postgres-schema.md)")
 
 
 def s3_1(owner_ci: str, a: Tenant, b: Tenant, owner_name: str) -> Scenario:
@@ -510,6 +524,8 @@ def s3_1(owner_ci: str, a: Tenant, b: Tenant, owner_name: str) -> Scenario:
         for viewer, other in ((a, b), (b, a)):
             c = counts(conn, tables, viewer.id, other.id)
             foreign = {t: v[1] for t, v in c.items() if v[1]}
+            # A partition is not in SEEDED_TABLES: it holds one tenant's rows, so the other
+            # tenant's shows the viewer none.
             empty = [t for t, v in c.items() if v[0] == 0 and t in SEEDED_TABLES]
             s.check(not foreign and not empty,
                     f"as owner with tenant {viewer.letter} set, every seeded table shows its own rows only "
@@ -1204,8 +1220,13 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         index_table = dict(conn.execute(
             "SELECT indexname, tablename FROM pg_indexes WHERE schemaname = 'public' AND tablename <> %s",
             [SQLX_MIGRATIONS]).fetchall())
-        schema_indexes = {i for i, t in index_table.items() if t in tables}
-        privileged = sorted(set(index_table) - schema_indexes)
+        # A partition's index is probed through the partitioned index it is attached to, whose
+        # name the probe carries; a plan names the partition's (ADR-0034 d11).
+        index_parent = dict(conn.execute(
+            "SELECT i.inhrelid::regclass::text, i.inhparent::regclass::text FROM pg_inherits i "
+            "JOIN pg_class c ON c.oid = i.inhrelid WHERE c.relkind = 'i'").fetchall())
+        schema_indexes = {i for i, t in index_table.items() if t in tables and i not in index_parent}
+        privileged = sorted(set(index_table) - schema_indexes - set(index_parent))
         probes = [p for p in index_shapes(b) if p[0] in schema_indexes or p[0] not in index_table]
         missed, idx_bad = [], []
         for index, statement, params, settings in probes:
@@ -1215,7 +1236,7 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
                     conn.execute(f"SET LOCAL {setting_line}")
                 plan = conn.execute(f"EXPLAIN (FORMAT JSON) {statement}", params).fetchone()[0]
                 rows = conn.execute(statement, params).fetchall()
-            used = plan_indexes(plan)
+            used = {index_parent.get(u, u) for u in plan_indexes(plan)}
             if index not in used:
                 missed.append(f"{index} (plan used {sorted(used) or 'no index'})")
             if rows_tainted(rows, needles):

@@ -186,10 +186,11 @@ run. A listed check that passes, or does not run, does fail the run, so a fixed 
 finding re-recorded instead of going stale. A failure not on the list fails the run as usual.
 This is a strict expected failure: the scenario's verdict stays `fail`, and only the exit code
 treats a known result as known. A recorded failure belongs to the role that showed it.
-Both estimate checks are recorded, `S3.4/owner/estimate` and `S3.4/service/estimate`
+Both estimate checks were recorded, `S3.4/owner/estimate` and `S3.4/service/estimate`
 ([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d9 and d10 step
-2): PostgreSQL gives the same estimate to every role the policy binds, so CI fails if the
-service role's estimates stop following the other tenant's words (the
+2): PostgreSQL gives the same estimate to every role the policy binds. Over migration 0009's
+per-tenant partitions (ADR-0034 d11) the owner's passed on 18.6 on 2026-11-03, so the list is
+empty and CI fails if either estimate check fails on the pinned pg17 (the
 [spike 3 findings](spike-3-rls.md#s34)). The owner serves nothing under the split, so its
 `pg_stats` view is no longer a check: in S3.1 and S3.4 it is a control that must show tenant
 B's lexemes, or `S3.4/service/pg_stats`, which is not on the list, could not have caught them

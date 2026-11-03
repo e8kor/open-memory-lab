@@ -498,7 +498,10 @@ constraint (ADR-0034 d12). The keys built this way:
 
 - **The targets.** 0008 adds `UNIQUE (tenant_id, event_id)` on `journal` and `UNIQUE (tenant_id,
   id)` on `memories`; `workareas` and `api_keys` have theirs from 0004. Each key keeps its 0001
-  constraint name.
+  constraint name. 0009 makes `(tenant_id, id)` `memories`' primary key, which its partitions
+  require, drops 0008's constraint on the same columns with the old table, and points
+  `review_queue_memory_id_fkey` at the primary key ([per-tenant
+  partitions](#the-built-fts-index-per-tenant-partitions)).
 - **Provider-level keys.** On an `api_keys` row whose `tenant_id` is NULL, an operator key's, "the
   row is not required to have a match"
   ([CREATE TABLE](https://www.postgresql.org/docs/17/sql-createtable.html), fetched 2026-10-31):
@@ -752,6 +755,64 @@ embedding model (and therefore the `vector` dimension and distance operator) is 
 [roadmap](../product/roadmap.md). Simulation rows never enter these shared indexes; they are
 indexed per simulation, which keeps the read-path predicate out of the hot index at the cost of
 duplicate index machinery per open simulation.
+
+### The built FTS index: per-tenant partitions
+
+**Status:** built in `migrations/0009_memories_partitions.sql` and `oml-pg`'s
+`create_tenant_partitions` · its checks run only where a superuser mints the suites' role pairs,
+CI's `cargo test (Postgres)`, and in CI's `rls-spike`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8, d9, d11, d13).
+The tables above are designed, not built; the PoC's FTS index is `memories_claim_fts`, an
+expression index over `memories.claim`.
+
+`memories` is list-partitioned by `tenant_id`, one partition per tenant, so every index on it is
+a partitioned index and each tenant's partition holds its own: no FTS index, and no index's
+statistics, span tenants (ADR-0007 d4).
+
+```sql
+CREATE TABLE memories (
+    …,                                    -- the columns, defaults and checks of 0001–0005
+    PRIMARY KEY (tenant_id, id),          -- a unique key must include the partition key
+    FOREIGN KEY (tenant_id) REFERENCES tenants (id),
+    FOREIGN KEY (tenant_id, created_event_id) REFERENCES journal (tenant_id, event_id)
+) PARTITION BY LIST (tenant_id);          -- no DEFAULT partition
+CREATE INDEX memories_claim_fts ON memories USING gin (to_tsvector('simple', claim));
+-- memories_workarea, memories_claim_version, memories_served_tip, memories_author as before;
+-- RLS, FORCE and tenant_isolation as on every table.
+
+-- per tenant, before the commit whose fold creates its row, one owner transaction:
+SET LOCAL lock_timeout = '5s';
+CREATE TABLE memories_t_<tenant id, 32 hex> (LIKE memories INCLUDING ALL);
+ALTER TABLE memories_t_<…> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memories_t_<…> FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON memories_t_<…> USING (…) WITH CHECK (…);  -- the parent's
+ALTER TABLE memories ATTACH PARTITION memories_t_<…> FOR VALUES IN ('<tenant id>');
+```
+
+- **The name** is the tenant's id, never its name, which would put every tenant's name in
+  `pg_class` for every role.
+- **Who creates it.** The owner, on a connection opened for that call alone and closed after it,
+  while tenant creation holds no serving transaction open; 0009 creates each existing tenant's
+  and fills it under that tenant's context. `ATTACH PARTITION` takes `ShareUpdateExclusiveLock`
+  on `memories`, where `CREATE TABLE … PARTITION OF` would take `AccessExclusiveLock` and stop
+  every tenant's reads and writes; both take `ShareRowExclusiveLock` on `review_queue`, so its
+  writes wait for the attach, bounded by the timeout.
+- **Failure.** A DDL that fails fails tenant creation before any commit: nothing is journalled
+  and the bootstrap claim spends no enrollment token. A lock timeout (`55P03`) answers
+  `system.unavailable`, retryable, `details.reason` `partition_lock_timeout`; any other failure
+  answers `system.internal`. A partition whose DDL committed is kept when the genesis commit then
+  fails: it is empty, the owner's and fenced, so the checks after migrating accept it, and the
+  retry mints a fresh id.
+- **Reads.** Every adapter statement on `memories` binds `tenant_id = $n` to the tenant it sets
+  in `oml.tenant_id`, so the plan keeps that tenant's partition alone, at planning or as it
+  starts; row security stays the fence. No function is marked `LEAKPROOF`, so `@@` cannot become
+  an index condition under the policy and an FTS read scans its tenant's partition (ADR-0034
+  d13; FR-25 measures its latency per tenant size).
+- **Privileges.** A partition is reached only through `memories`, whose grants are 0007's
+  ([Privileges](#privileges)); a partition grants the serving role nothing, so it sees no
+  partition's `pg_stats`.
+- **Stays open** (FR-45): each partition's `reltuples`, bound and name give every role one
+  tenant's row count and id.
 
 ## upload_sessions
 

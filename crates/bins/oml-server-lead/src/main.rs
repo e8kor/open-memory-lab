@@ -37,11 +37,13 @@ async fn run() -> Result<(), String> {
     let build = oml_server_lead::build_info();
     tracing::info!(version = %build.version, commit = %build.commit, commit_time = %build.commit_time, build_time = %build.build_time, rustc = %build.rustc, target = %build.target, profile = %build.profile, "build");
 
+    // ADR-0034 d10 step 2 lands d4's postgres.owner_url; until then the one
+    // URL migrates as its own owner, 0007 grants that same login, and it
+    // runs each new tenant's partition DDL (d11).
     let store = PgStore::connect(&config.postgres_url)
         .await
-        .map_err(|e| format!("postgres connect: {e}"))?;
-    // ADR-0034 d10 step 2 lands d4's postgres.owner_url; until then the one
-    // URL migrates as its own owner and 0007 grants that same login.
+        .map_err(|e| format!("postgres connect: {e}"))?
+        .with_owner_url(&config.postgres_url);
     store
         .migrate(&config.postgres_url)
         .await

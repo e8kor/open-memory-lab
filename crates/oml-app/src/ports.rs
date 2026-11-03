@@ -44,6 +44,16 @@ pub enum StoreError {
     /// tenants; errors.md `name.taken`; ADR-0026 d5, d10).
     #[error("the {} name {} is already taken in its namespace", .kind.as_str(), .name.as_str())]
     NameTaken { kind: NamedKind, name: Name },
+    /// A tenant's partition DDL waited past its lock timeout (`55P03`) and
+    /// committed nothing: retryable, answered `system.unavailable` with
+    /// `details.reason` `partition_lock_timeout` (postgres-schema.md, the
+    /// per-tenant partitions; ADR-0034 d11).
+    #[error("the tenant's partition DDL waited past its lock timeout")]
+    PartitionLockTimeout,
+    /// A tenant's partition DDL failed otherwise and committed nothing: a
+    /// defect, answered `system.internal` (ADR-0034 d11).
+    #[error("the tenant's partition DDL failed: {0}")]
+    Partition(String),
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -304,6 +314,21 @@ pub trait JournalStore: Send + Sync {
         &self,
         reqs: Vec<CommitRequest>,
     ) -> impl Future<Output = Result<CommitReceipt, StoreError>> + Send;
+
+    /// Creates `tenant_id`'s fenced partitions, before the commit whose fold
+    /// creates its row (`tenant.genesis` today), in a transaction of their
+    /// own that the store's serving connections never hold open: the
+    /// Postgres store runs the DDL as the owner, on a connection opened for
+    /// this call alone (postgres-schema.md, the per-tenant partitions;
+    /// ADR-0034 d4, d11). A refusal commits nothing:
+    /// [`StoreError::PartitionLockTimeout`] when a lock waited past its
+    /// timeout, [`StoreError::Partition`] otherwise. Partitions that
+    /// committed are kept when the genesis commit then fails; the retry
+    /// mints a fresh id.
+    fn create_tenant_partitions(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
     fn chain_head(
         &self,

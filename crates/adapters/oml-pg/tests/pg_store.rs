@@ -37,7 +37,7 @@ use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, JournalStore, MetadataFold, OutboxRow, StoreError,
 };
-use oml_app::types::KeyRecord;
+use oml_app::types::{AppError, BootstrapRequest, KeyRecord};
 use oml_pg::{
     ForkCheckError, MIGRATOR, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
@@ -157,7 +157,8 @@ async fn fresh_store(created: &Mutex<Vec<String>>) -> PgStore {
     let name = fresh_database(created).await;
     let store = PgStore::connect(&serving_url(&name))
         .await
-        .expect("connect");
+        .expect("connect")
+        .with_owner_url(&owner_url(&name));
     store
         .migrate(&owner_url(&name))
         .await
@@ -655,7 +656,8 @@ async fn split_pair(created: &Mutex<Vec<String>>) -> (String, PgStore, PgPool) {
     let name = fresh_database(created).await;
     let store = PgStore::connect(&serving_url(&name))
         .await
-        .expect("serving connect");
+        .expect("serving connect")
+        .with_owner_url(&owner_url(&name));
     let owner = store
         .connect_owner(&owner_url(&name))
         .await
@@ -1515,7 +1517,8 @@ async fn a_poc_superseded_row_whose_successor_is_held_migrates_back_to_the_serve
 
     let store = PgStore::connect(&serving_url(&name))
         .await
-        .expect("connect");
+        .expect("connect")
+        .with_owner_url(&owner_url(&name));
     store
         .migrate(&owner_url(&name))
         .await
@@ -1675,7 +1678,8 @@ async fn a_poc_held_first_version_beside_a_live_one_refuses_the_migration_by_nam
 
         let store = PgStore::connect(&serving_url(&name))
             .await
-            .expect("connect");
+            .expect("connect")
+            .with_owner_url(&owner_url(&name));
         let err = store
             .migrate(&owner_url(&name))
             .await
@@ -1775,7 +1779,8 @@ async fn a_poc_claim_captured_after_a_rejected_first_version_migrates_as_a_fresh
 
     let store = PgStore::connect(&serving_url(&name))
         .await
-        .expect("connect");
+        .expect("connect")
+        .with_owner_url(&owner_url(&name));
     store
         .migrate(&owner_url(&name))
         .await
@@ -1812,8 +1817,9 @@ async fn a_poc_claim_captured_after_a_rejected_first_version_migrates_as_a_fresh
 
 /// The served-tip index is the schema's own refusal: a second promoted tip
 /// of one claim_key in one workarea fails at the index whatever wrote it,
-/// while a replaced version and another workarea's tip stand beside it
-/// (postgres-schema.md `memories_served_tip`).
+/// while a replaced version and another workarea's tip stand beside it;
+/// the refusing index is the tenant partition's own, attached to it
+/// (postgres-schema.md `memories_served_tip`; ADR-0034 d11).
 #[tokio::test]
 async fn the_served_tip_index_refuses_a_second_tip() {
     if !splits().await {
@@ -1885,11 +1891,23 @@ async fn the_served_tip_index_refuses_a_second_tip() {
         .execute(&mut *tx)
         .await
         .expect_err("a second tip of one claim is refused");
-    assert!(
-        err.to_string().contains("memories_served_tip"),
-        "got: {err}"
-    );
+    let violated = err
+        .as_database_error()
+        .and_then(|db| db.constraint())
+        .unwrap_or_else(|| panic!("a constraint refusal, got: {err}"))
+        .to_owned();
     drop(tx);
+    // memories is list-partitioned by tenant (0009): the refusing index is
+    // the tenant partition's, attached to memories_served_tip.
+    let parent: String = sqlx::query_scalar(
+        "SELECT i.inhparent::regclass::text FROM pg_inherits i \
+          WHERE i.inhrelid = to_regclass($1)",
+    )
+    .bind(&violated)
+    .fetch_one(store.pool())
+    .await
+    .unwrap_or_else(|e| panic!("{violated} is a partition index: {e}"));
+    assert_eq!(parent, "memories_served_tip", "refused by {violated}");
     drop_dbs(&created).await;
 }
 
@@ -2033,7 +2051,10 @@ async fn the_schema_refuses_a_non_root_workarea_named_universe() {
     .await
     .expect("PoC root");
     tx.commit().await.expect("commit the PoC rows");
-    let store = PgStore::connect(&serving_url(&db)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
     store
         .migrate(&owner_url(&db))
         .await
@@ -2484,7 +2505,10 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
         poc_rows(&mut conn, tenant, false).await,
         poc_rows(&mut conn, twin, false).await,
     ];
-    let store = PgStore::connect(&serving_url(&db)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
     store
         .migrate(&owner_url(&db))
         .await
@@ -2585,7 +2609,10 @@ async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_a
     .await
     .expect("PoC key");
     tx.commit().await.expect("commit the PoC rows");
-    let store = PgStore::connect(&serving_url(&db)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
     store
         .migrate(&owner_url(&db))
         .await
@@ -2772,7 +2799,10 @@ async fn the_naming_fills_the_names_crews_and_paths_of_a_migrated_poc_database_o
         .expect("key row");
     }
     tx.commit().await.expect("commit the PoC rows");
-    let store = PgStore::connect(&serving_url(&db)).await.expect("connect");
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
     store.migrate(&owner_url(&db)).await.expect("0006 applies");
 
     let app = App::new(
@@ -3292,5 +3322,506 @@ async fn an_operator_key_with_tenant_id_null_still_issues_a_tenants_first_admin_
     tx.rollback().await.expect("rollback");
     assert_eq!(issued_by, Some(operator));
     assert_eq!(authors, vec![Some(operator), Some(operator)]);
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Per-tenant FTS partitions (migrations/0009_memories_partitions.sql;
+// ADR-0034 d11, d13, d10 step 4)
+// ---------------------------------------------------------------------------
+
+/// The partition `memories` holds `tenant`'s rows in, as 0009 and
+/// `create_tenant_partitions` name it: its id in 32 hex digits, never its
+/// name (ADR-0034 d11).
+fn partition_of(tenant: Uuid) -> String {
+    format!("memories_t_{}", tenant.simple())
+}
+
+/// How `partition`'s catalog rows read: (a partition of `memories`, owned
+/// by `owner`, `ENABLE` and `FORCE ROW LEVEL SECURITY`, policies), or
+/// `None` when no such relation exists.
+async fn partition_fence(
+    conn: &mut PgConnection,
+    partition: &str,
+    owner: &str,
+) -> Option<(bool, bool, bool, bool, i64)> {
+    sqlx::query_as(
+        "SELECT c.relispartition \
+                AND EXISTS (SELECT 1 FROM pg_inherits i \
+                             WHERE i.inhrelid = c.oid AND i.inhparent = 'memories'::regclass), \
+                pg_get_userbyid(c.relowner) = $2, c.relrowsecurity, c.relforcerowsecurity, \
+                (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid) \
+           FROM pg_class c \
+          WHERE c.relnamespace = 'public'::regnamespace AND c.relname = $1",
+    )
+    .bind(partition)
+    .bind(owner)
+    .fetch_optional(conn)
+    .await
+    .expect("the partition's catalog row")
+}
+
+/// The owner role of `store`'s role pair.
+async fn owner_role(store: &PgStore) -> String {
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("database name");
+    format!("{db}_owner")
+}
+
+/// How many `tenants` rows hold `tenant`, read over the serving login with
+/// `tenant` set.
+async fn tenant_rows(store: &PgStore, tenant: Uuid) -> i64 {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM tenants WHERE id = $1")
+        .bind(tenant)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("tenant rows");
+    tx.rollback().await.expect("rollback");
+    n
+}
+
+/// The owner creates a tenant's partition before the commit whose fold
+/// creates its row: once `create_tenant_partitions` returns, the partition
+/// is attached to `memories`, owned by the owner, fenced with `ENABLE` and
+/// `FORCE ROW LEVEL SECURITY` and a policy, while no tenant row exists;
+/// the genesis commit then creates the row, and the tenant's memories land
+/// in its partition (ADR-0034 d11, d10 step 4).
+#[tokio::test]
+async fn a_tenants_fenced_partition_exists_before_its_row_commits() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let owner = owner_role(&store).await;
+    let tenant = Uuid::from_u128(0xA000_0000 + 200);
+    let mut conn = owner_conn(&store).await;
+    assert_eq!(
+        partition_fence(&mut conn, &partition_of(tenant), &owner).await,
+        None,
+        "no partition before the call"
+    );
+
+    store
+        .create_tenant_partitions(tenant)
+        .await
+        .expect("the owner creates the partition");
+    assert_eq!(
+        partition_fence(&mut conn, &partition_of(tenant), &owner).await,
+        Some((true, true, true, true, 1)),
+        "attached, the owner's, ENABLE and FORCE, one policy"
+    );
+    assert_eq!(tenant_rows(&store, tenant).await, 0, "no tenant row yet");
+
+    let mut rig = ChainRig::new(200);
+    assert_eq!(rig.tenant_id, tenant);
+    // The rig's own genesis would ask for the partition again; this one
+    // commits the row onto the partition the call above created.
+    let first = rig.next_event(
+        event_types::TENANT_GENESIS,
+        json!({ "tenant_name": rig.tenant_name.as_str() }),
+    );
+    store
+        .commit(CommitRequest {
+            event: first.clone(),
+            fold: rig.genesis_fold(),
+            outbox: OutboxRow {
+                event_id: first.envelope.event_id,
+                topic: first.envelope.event_type.clone(),
+                payload: json!({ "seq": 1 }),
+            },
+            idempotency: None,
+        })
+        .await
+        .expect("the genesis commits");
+    assert_eq!(tenant_rows(&store, tenant).await, 1, "the row committed");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// A bootstrap whose genesis commit fails after its partition committed
+/// leaves that partition: empty, the owner's and fenced, so the checks
+/// after migrating accept it, and the retry mints a fresh id with a
+/// partition of its own (ADR-0034 d5, d11).
+#[tokio::test]
+async fn a_partition_left_by_a_failed_genesis_commit_is_empty_fenced_and_accepted_by_the_d5_checks()
+{
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (_name, store, owner) = migrated_pair(&created).await;
+    let owner_name = owner_role(&store).await;
+    let app = App::new(
+        store.clone(),
+        MemSigner::new(oml_port_contracts::TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let request = BootstrapRequest {
+        tenant_name: name("acme"),
+        admin_key_name: name("root-admin"),
+        admin_principal: "alice-admin".to_owned(),
+    };
+    let first = app
+        .bootstrap_tenant(&request)
+        .await
+        .expect("the first tenant");
+    let refused = app
+        .bootstrap_tenant(&request)
+        .await
+        .expect_err("a second tenant under the name is refused at its genesis commit");
+    assert!(matches!(refused, AppError::NameTaken { .. }), "{refused:?}");
+
+    let partitions: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid \
+          WHERE i.inhparent = 'memories'::regclass ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("the partitions");
+    assert_eq!(partitions.len(), 2, "{partitions:?}");
+    let orphan = partitions
+        .iter()
+        .find(|p| **p != partition_of(first.tenant_id))
+        .expect("the partition the refused genesis left")
+        .clone();
+    let orphan_id = Uuid::parse_str(orphan.trim_start_matches("memories_t_")).expect("a hex id");
+    assert_eq!(tenant_rows(&store, orphan_id).await, 0, "no tenant row");
+
+    let mut conn = owner_conn(&store).await;
+    assert_eq!(
+        partition_fence(&mut conn, &orphan, &owner_name).await,
+        Some((true, true, true, true, 1)),
+        "the orphan is the owner's and fenced"
+    );
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, false)")
+        .bind(orphan_id.to_string())
+        .execute(&mut conn)
+        .await
+        .expect("the orphan's tenant set");
+    let rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {orphan}"))
+        .fetch_one(&mut conn)
+        .await
+        .expect("the orphan's rows");
+    assert_eq!(rows, 0, "the orphan is empty");
+    drop(conn);
+    role_split_postflight(&owner, store.pool())
+        .await
+        .expect("the checks after migrating accept the orphan");
+
+    let retry = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("acme-two"),
+            ..request
+        })
+        .await
+        .expect("the retry");
+    assert_ne!(retry.tenant_id, orphan_id, "the retry mints a fresh id");
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// Every relation an `EXPLAIN (FORMAT JSON)` plan names.
+fn plan_relations(plan: &Value, found: &mut std::collections::BTreeSet<String>) {
+    match plan {
+        Value::Object(node) => {
+            if let Some(Value::String(relation)) = node.get("Relation Name") {
+                found.insert(relation.clone());
+            }
+            for value in node.values() {
+                plan_relations(value, found);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                plan_relations(item, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The adapter's FTS reads, their statement text as the adapter runs it,
+/// planned under tenant A over the serving login, scan tenant A's partition
+/// alone: pruned at planning under a custom plan, and at executor start
+/// under a generic one (ADR-0034 d11).
+#[tokio::test]
+async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut tenants = Vec::new();
+    for seed in [210_u64, 211] {
+        let mut rig = ChainRig::new(seed);
+        rig.seed_chain(&store, 0).await;
+        tenants.push(rig.tenant_id);
+    }
+    let a = tenants[0];
+    let readable = Uuid::from_u128(0xB210);
+    let author = Uuid::from_u128(0xD210);
+    let mut conn = store.pool().acquire().await.expect("serving connection");
+    for (statement, types, args) in [
+        (
+            oml_pg::RECALL_FTS,
+            "uuid, uuid[], text, text[], bigint",
+            format!("'{a}', '{{{}}}', 'runbook', '{{memory}}', 10", readable),
+        ),
+        (
+            oml_pg::RECALL_OWN_HELD,
+            "uuid, uuid[], uuid[], text, text[], bigint",
+            format!(
+                "'{a}', '{{{}}}', '{{{}}}', 'runbook', '{{memory}}', 10",
+                author, readable
+            ),
+        ),
+    ] {
+        for mode in ["force_custom_plan", "force_generic_plan"] {
+            let mut tx = conn.begin().await.expect("begin");
+            sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+                .bind(a.to_string())
+                .execute(&mut *tx)
+                .await
+                .expect("set tenant");
+            tx.execute(format!("SET LOCAL plan_cache_mode = {mode}").as_str())
+                .await
+                .expect("plan cache mode");
+            tx.execute(format!("PREPARE oml_fts_probe ({types}) AS {statement}").as_str())
+                .await
+                .expect("prepare the adapter's statement");
+            let plan: Value = sqlx::query_scalar(&format!(
+                "EXPLAIN (FORMAT JSON) EXECUTE oml_fts_probe ({args})"
+            ))
+            .fetch_one(&mut *tx)
+            .await
+            .expect("explain");
+            // A prepared statement outlives its transaction.
+            tx.execute("DEALLOCATE oml_fts_probe")
+                .await
+                .expect("deallocate");
+            tx.rollback().await.expect("rollback");
+            let mut relations = std::collections::BTreeSet::new();
+            plan_relations(&plan, &mut relations);
+            assert_eq!(
+                relations.into_iter().collect::<Vec<_>>(),
+                vec![partition_of(a)],
+                "{mode}: {plan}"
+            );
+        }
+    }
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// No partition's statistics reach the serving role: it holds no privilege
+/// on a partition, and the parent's row security hides the parent's, while
+/// the owner's view, the control, shows each partition's (ADR-0034 d1,
+/// d11).
+#[tokio::test]
+async fn the_serving_role_sees_no_partitions_pg_stats() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut tenants = Vec::new();
+    for seed in [220_u64, 221] {
+        let mut rig = ChainRig::new(seed);
+        rig.seed_chain(&store, 0).await;
+        let wa = Uuid::from_u128(0xB000 + u128::from(seed));
+        for n in 0..4_u128 {
+            hold(
+                &store,
+                &mut rig,
+                wa,
+                Uuid::from_u128((u128::from(seed) << 16) | n),
+                Uuid::from_u128(0xD000 + u128::from(seed)),
+                false,
+            )
+            .await;
+        }
+        tenants.push(rig.tenant_id);
+    }
+    let mut owner = owner_conn(&store).await;
+    owner.execute("ANALYZE").await.expect("the owner analyses");
+    let stats = "SELECT count(*) FROM pg_stats \
+                  WHERE schemaname = 'public' AND tablename::text LIKE 'memories%'";
+    let serving: i64 = sqlx::query_scalar(stats)
+        .fetch_one(store.pool())
+        .await
+        .expect("the serving role's pg_stats");
+    assert_eq!(serving, 0, "the serving role sees no memories statistics");
+    for tenant in tenants {
+        let shown: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stats WHERE schemaname = 'public' AND tablename = $1",
+        )
+        .bind(partition_of(tenant))
+        .fetch_one(&mut owner)
+        .await
+        .expect("the owner's pg_stats");
+        assert!(
+            shown > 0,
+            "control: the owner sees {}'s statistics",
+            partition_of(tenant)
+        );
+    }
+    drop(owner);
+    drop_dbs(&created).await;
+}
+
+/// The checks after migrating read partitions as tables: a tenant's
+/// partition passes them, and with `FORCE` lifted on it they refuse it
+/// with `table_unfenced` (ADR-0034 d5, d11).
+#[tokio::test]
+async fn d5_holds_over_partitions() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (_name, store, owner) = migrated_pair(&created).await;
+    let mut rig = ChainRig::new(230);
+    rig.seed_chain(&store, 0).await;
+    role_split_postflight(&owner, store.pool())
+        .await
+        .expect("control: a fenced partition passes");
+    let partition = partition_of(rig.tenant_id);
+    sqlx::query(&format!(
+        "ALTER TABLE {partition} NO FORCE ROW LEVEL SECURITY"
+    ))
+    .execute(&owner)
+    .await
+    .expect("the owner lifts FORCE on the partition");
+    assert_eq!(
+        refused(
+            role_split_postflight(&owner, store.pool()).await,
+            "a partition without FORCE"
+        ),
+        RoleSplitReason::TableUnfenced
+    );
+    sqlx::query(&format!("ALTER TABLE {partition} FORCE ROW LEVEL SECURITY"))
+        .execute(&owner)
+        .await
+        .expect("the owner restores FORCE");
+    role_split_postflight(&owner, store.pool())
+        .await
+        .expect("control: FORCE restored passes");
+    owner.close().await;
+    store.pool().close().await;
+    drop_dbs(&created).await;
+}
+
+/// An attach that waits on a lock past the five-second timeout fails with
+/// `55P03`, answered `PartitionLockTimeout`, and commits nothing: no
+/// partition remains, and once the lock is gone the same call succeeds
+/// (ADR-0034 d11).
+#[tokio::test]
+async fn an_attach_that_waits_past_the_lock_timeout_answers_partition_lock_timeout() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let owner = owner_role(&store).await;
+    let tenant = Uuid::from_u128(0xA000_0000 + 240);
+    let mut holder = owner_conn(&store).await;
+    // SHARE UPDATE EXCLUSIVE conflicts with the attach's own lock on the
+    // parent and not with the AccessShareLock LIKE takes, so the wait is the
+    // attach's.
+    let mut held = holder.begin().await.expect("begin");
+    held.execute("LOCK TABLE memories IN SHARE UPDATE EXCLUSIVE MODE")
+        .await
+        .expect("a second owner connection holds a conflicting lock");
+    let started = std::time::Instant::now();
+    let err = store
+        .create_tenant_partitions(tenant)
+        .await
+        .expect_err("the attach waits past its lock timeout");
+    assert_eq!(err, StoreError::PartitionLockTimeout);
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(5),
+        "it waited the timeout: {:?}",
+        started.elapsed()
+    );
+    held.rollback().await.expect("release the lock");
+    assert_eq!(
+        partition_fence(&mut holder, &partition_of(tenant), &owner).await,
+        None,
+        "the refused DDL committed nothing"
+    );
+    store
+        .create_tenant_partitions(tenant)
+        .await
+        .expect("with the lock gone the same call succeeds");
+    drop(holder);
+    drop_dbs(&created).await;
+}
+
+/// The partition DDL's owner connection is opened for the call alone:
+/// once `create_tenant_partitions` returns, `pg_stat_activity` shows no
+/// connection of the owner role (ADR-0034 d4, d8).
+#[tokio::test]
+async fn pg_stat_activity_shows_no_owner_connection_after_the_partition_ddl() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let owner = owner_role(&store).await;
+    store
+        .create_tenant_partitions(Uuid::from_u128(0xA000_0000 + 250))
+        .await
+        .expect("the partition");
+    // A closed connection's backend exits just after the client leaves.
+    let mut open = -1_i64;
+    for _ in 0..50 {
+        open = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+              WHERE datname = current_database() AND usename = $1",
+        )
+        .bind(&owner)
+        .fetch_one(store.pool())
+        .await
+        .expect("pg_stat_activity");
+        if open == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(open, 0, "no owner connection outlives the partition DDL");
+    drop_dbs(&created).await;
+}
+
+/// The migrations mark no function `LEAKPROOF`: only a superuser can, and
+/// the owner that runs them is not one, so an FTS read scans its tenant's
+/// partition under row security (ADR-0034 d13).
+#[tokio::test]
+async fn the_migrations_create_no_function_marked_leakproof() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let marked: Vec<String> = sqlx::query_scalar(
+        "SELECT p.oid::regprocedure::text FROM pg_proc p \
+          WHERE p.pronamespace = 'public'::regnamespace AND p.proleakproof \
+            AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass \
+                             AND d.objid = p.oid AND d.deptype = 'e')",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("the leakproof functions");
+    assert_eq!(marked, Vec::<String>::new());
     drop_dbs(&created).await;
 }
