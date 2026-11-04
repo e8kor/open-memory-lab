@@ -39,6 +39,7 @@ use crate::types::{
     ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
     UnnamedRows, WorkareaRecord, WorkareaRef,
+    TransitionRecord, TransitionState,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -139,6 +140,9 @@ struct TenantState {
     /// Per key id, in commit order — which is epoch order.
     access: BTreeMap<Uuid, KeyAccess>,
     queue: Vec<QueueEntry>,
+    /// Each status-ladder proposal with the seq of the event that proposed
+    /// it, as `workarea_transitions.proposed_seq` holds it (ADR-0009 d3).
+    transitions: BTreeMap<Uuid, (u64, TransitionRecord)>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
 }
@@ -591,6 +595,105 @@ fn require_parent(state: &TenantState, parent_id: Option<Uuid>) -> Result<(), St
         )),
         _ => Ok(()),
     }
+}
+
+/// The one step forward from each rung, as `workarea_transitions_one_rung`
+/// admits it (ADR-0009 d1).
+fn one_rung(from: WorkareaStatus, to: WorkareaStatus) -> bool {
+    matches!(
+        (from, to),
+        (WorkareaStatus::Development, WorkareaStatus::Committed)
+            | (WorkareaStatus::Committed, WorkareaStatus::Validated)
+    )
+}
+
+/// `workarea.status_proposed`'s fold: what the schema refuses, the double
+/// refuses — a node or proposing key the tenant does not hold, a step other
+/// than one rung forward, a record that is not pending, and an id already
+/// held (0016_workarea_transitions.sql).
+fn propose_transition_fold(
+    state: &mut TenantState,
+    seq: u64,
+    proposal: TransitionRecord,
+) -> Result<(), StoreError> {
+    require_held(state, proposal.proposer_key_id, proposal.workarea_id)?;
+    if !one_rung(proposal.from, proposal.to) {
+        return Err(StoreError::Backend(format!(
+            "a transition is one rung forward, never {} to {}",
+            proposal.from.as_str(),
+            proposal.to.as_str()
+        )));
+    }
+    if proposal.state != TransitionState::Pending || proposal.ratifier_key_id.is_some() {
+        return Err(StoreError::Backend(format!(
+            "transition {} is proposed pending, with no ratifier",
+            proposal.transition_id
+        )));
+    }
+    if state.transitions.contains_key(&proposal.transition_id) {
+        return Err(StoreError::Backend(format!(
+            "transition {} is already held",
+            proposal.transition_id
+        )));
+    }
+    state
+        .transitions
+        .insert(proposal.transition_id, (seq, proposal));
+    Ok(())
+}
+
+/// `workarea.status_transition`'s fold, as the store's guarded updates
+/// apply it: the row must be pending on this node with this `to`, the
+/// node's status must still be the row's `from`, the ratifier a key of the
+/// tenant other than the proposing key, and a universe root never leaves
+/// `committed`; anything else refuses the commit, which writes nothing
+/// (ADR-0009 d1, d3).
+fn ratify_transition_fold(
+    state: &mut TenantState,
+    transition_id: Uuid,
+    workarea_id: Uuid,
+    to: WorkareaStatus,
+    ratifier_key_id: Uuid,
+) -> Result<(), StoreError> {
+    let guard = || {
+        StoreError::Backend(format!(
+            "transition {transition_id} is not a pending proposal on workarea {workarea_id} \
+             to {} from the node's status",
+            to.as_str()
+        ))
+    };
+    let Some((_, row)) = state.transitions.get(&transition_id) else {
+        return Err(guard());
+    };
+    let Some(node) = state.workareas.get(&workarea_id) else {
+        return Err(guard());
+    };
+    if row.workarea_id != workarea_id
+        || row.to != to
+        || row.state != TransitionState::Pending
+        || node.status != row.from
+    {
+        return Err(guard());
+    }
+    require_held(state, ratifier_key_id, workarea_id)?;
+    if ratifier_key_id == row.proposer_key_id {
+        return Err(StoreError::Backend(format!(
+            "transition {transition_id}'s ratifier is never its proposing key"
+        )));
+    }
+    if node.parent_id.is_none() && to != WorkareaStatus::Committed {
+        return Err(StoreError::Backend(
+            "the universe root is permanently committed".to_owned(),
+        ));
+    }
+    if let Some(node) = state.workareas.get_mut(&workarea_id) {
+        node.status = to;
+    }
+    if let Some((_, row)) = state.transitions.get_mut(&transition_id) {
+        row.state = TransitionState::Ratified;
+        row.ratifier_key_id = Some(ratifier_key_id);
+    }
+    Ok(())
 }
 
 /// Names the tenant at its genesis, as the `tenants` row does: a tenant
@@ -1077,6 +1180,17 @@ fn apply_fold(
                 memory.promoted_at = Some(at.clone());
             }
             state.queue.retain(|e| e.memory_id != successor);
+        }
+        MetadataFold::TransitionProposed(proposal) => {
+            propose_transition_fold(state, seq, proposal)?;
+        }
+        MetadataFold::TransitionRatified {
+            transition_id,
+            workarea_id,
+            to,
+            ratifier_key_id,
+        } => {
+            ratify_transition_fold(state, transition_id, workarea_id, to, ratifier_key_id)?;
         }
     }
     Ok(())
@@ -1963,6 +2077,41 @@ impl JournalStore for MemStore {
             (a.name.as_str(), a.workarea_id).cmp(&(b.name.as_str(), b.workarea_id))
         });
         Ok(children)
+    }
+
+    async fn transition(
+        &self,
+        tenant_id: Uuid,
+        transition_id: Uuid,
+    ) -> Result<Option<TransitionRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .transitions
+            .get(&transition_id)
+            .map(|(_, row)| row.clone()))
+    }
+
+    async fn pending_transitions(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<TransitionRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut pending: Vec<&(u64, TransitionRecord)> = state
+            .transitions
+            .values()
+            .filter(|(_, row)| {
+                row.workarea_id == workarea_id && row.state == TransitionState::Pending
+            })
+            .collect();
+        pending.sort_by_key(|(seq, _)| *seq);
+        Ok(pending.into_iter().map(|(_, row)| row.clone()).collect())
     }
 
     async fn idempotency_get(
