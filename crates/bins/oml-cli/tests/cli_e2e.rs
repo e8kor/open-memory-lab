@@ -3688,6 +3688,10 @@ async fn doctor_stub() -> (String, Calls, tokio::task::JoinHandle<()>) {
                     .and_then(|v| v.to_str().ok())
                     .map(ToOwned::to_owned),
             ));
+            // A lead without oauth.issuer serves no discovery document.
+            if path == "/.well-known/oauth-authorization-server" {
+                return axum::http::StatusCode::NOT_FOUND.into_response();
+            }
             axum::Json(match path.as_str() {
                 "/healthz" => json!({ "status": "ok" }),
                 "/readyz" => json!({ "status": "ready", "checks": { "database": "ok" } }),
@@ -3705,6 +3709,7 @@ async fn doctor_stub() -> (String, Calls, tokio::task::JoinHandle<()>) {
                 "/v2/events" => json!({ "events": [], "head_seq": 7 }),
                 _ => json!({}),
             })
+            .into_response()
         })
         .with_state(seen.clone());
     let (url, task) = serve_stub(router).await;
@@ -3774,8 +3779,12 @@ async fn doctor_with_a_url_alone_probes_readiness_and_names_the_missing_key() {
         assert!(!log.contains("oml_file_key"), "no key printed: {log}");
         assert_eq!(
             calls(&seen),
-            vec![("/healthz".to_owned(), None), ("/readyz".to_owned(), None)],
-            "{source}: the probes alone, keyless"
+            vec![
+                ("/healthz".to_owned(), None),
+                ("/readyz".to_owned(), None),
+                ("/.well-known/oauth-authorization-server".to_owned(), None),
+            ],
+            "{source}: the probes and the discovery document alone, keyless"
         );
     }
     task.abort();
@@ -3812,12 +3821,20 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
     let seen = calls(&seen);
     assert_eq!(
         seen.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
-        ["/healthz", "/readyz", "/v2/whoami", "/v2/events"],
+        [
+            "/healthz",
+            "/readyz",
+            "/v2/whoami",
+            "/v2/events",
+            "/.well-known/oauth-authorization-server"
+        ],
     );
     assert_eq!(seen[0].1, None);
     assert_eq!(seen[1].1, None);
     assert_eq!(seen[2].1, bearer("oml_file_key"));
     assert_eq!(seen[3].1, bearer("oml_file_key"));
+    assert_eq!(seen[4].1, None, "the discovery document is fetched keyless");
+    assert_eq!(doctor["oauth_discovery"]["state"], "off", "{log}");
     task.abort();
     std::fs::remove_dir_all(&dir).expect("cleaned up");
 }

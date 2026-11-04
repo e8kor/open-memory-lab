@@ -49,7 +49,7 @@ use crate::ports::{
 };
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
-    BootstrapRequest, BootstrapResult, ClientAuthentication, ClientDescription, ClientKind,
+    Bearer, BootstrapRequest, BootstrapResult, ClientAuthentication, ClientDescription, ClientKind,
     CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView,
     ConnectCode, ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
     ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
@@ -732,6 +732,16 @@ where
     async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
         let key = self.key_of_value(api_key).await?;
         self.caller_of(key).await
+    }
+
+    /// The caller a key value acts as, or the caller a connection's access
+    /// token resolved to, its grants and denials read again here: one key,
+    /// one caller, whichever credential presented it (ADR-0031 d11).
+    async fn authenticate_bearer(&self, bearer: Bearer<'_>) -> Result<Caller, AppError> {
+        match bearer {
+            Bearer::Key(value) => self.authenticate(value).await,
+            Bearer::Connection(caller) => self.caller_of(caller.key.clone()).await,
+        }
     }
 
     /// The caller `key` acts as: its grants and denials, read now.
@@ -1796,10 +1806,10 @@ where
     /// mcp-plugin.md `oml_workarea_info`; ADR-0026 d4).
     pub async fn workarea_info(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         node: Option<Reference>,
     ) -> Result<WorkareaInfo, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let structure = caller.key.role == Role::Admin;
         if !structure {
             require_admissible(&caller.key, Role::Reader, "workarea_info")?;
@@ -2340,10 +2350,10 @@ where
     /// key and to `api.cursor_ttl`, and every page re-applies the filter.
     pub async fn list_memories(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &ListRequest,
     ) -> Result<MemoryPage, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let tenant_id = key.tenant_id;
         let subtree_ids = |node: Uuid| async move {
@@ -2468,10 +2478,10 @@ where
     /// http-api.md).
     pub async fn submit_memory(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &SubmitRequest,
     ) -> Result<SubmitOutcome, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Writer, "submit")?;
         // The body's workarea, by id or name, resolves after step 1 and
@@ -3011,7 +3021,7 @@ where
     /// read log's two inputs (d9).
     pub async fn recall(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &RecallRequest,
     ) -> Result<RecallResult, AppError> {
         // A budget counts bodies, so it is refused with bodies off before
@@ -3020,7 +3030,7 @@ where
         if req.max_tokens.is_some() && !req.include_text {
             return Err(AppError::BudgetWithoutBodies);
         }
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "recall")?;
         let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
@@ -3160,10 +3170,10 @@ where
     /// any lookup (step 1 of the refusal order; ADR-0025 d1; ADR-0026 d15).
     pub async fn get_memory(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         memory_id: Uuid,
     ) -> Result<ServedMemory, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         require_admissible(&caller.key, Role::Reader, "get")?;
         let memory = self
             .journal
@@ -3198,10 +3208,10 @@ where
     /// what the slice does not claim).
     pub async fn supersede(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &SupersedeRequest,
     ) -> Result<SupersedeOutcome, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
         let dreamer = admissible.contains(&Role::Dreamer);
@@ -3498,12 +3508,12 @@ where
     /// refused.
     pub async fn tail_events(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         workarea: Option<Reference>,
         after_seq: u64,
         limit: usize,
     ) -> Result<TailPage, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "events_tail")?;
         let scope = self.target_workarea(key, workarea.as_ref()).await?;
@@ -4230,7 +4240,6 @@ where
     /// key neither revoked nor expired; the caller is then exactly the one
     /// the key's own authentication builds (roles-and-keys.md connections;
     /// ADR-0031 d10, d11). Anything else is [`AppError::Unauthorized`].
-    /// `/mcp` accepts it once ADR-0039's surface lands.
     pub async fn resolve_access_token(&self, token: &str) -> Result<Caller, AppError> {
         let issuer = self.oauth_issuer.as_ref().ok_or(AppError::Unauthorized)?;
         if token_kind(token) != Some(TokenKind::Access) {

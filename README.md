@@ -285,11 +285,13 @@ Found a vulnerability? Please report it privately, as described in [SECURITY.md]
 
 ## Using OML from claude.ai and your phone
 
-**Status:** decided, not built. The [roadmap](docs/product/roadmap.md) tracks it.
+**Status:** built for v0.4.0; no live claude.ai connection has been made yet, which the
+[roadmap](docs/product/roadmap.md) tracks.
 
 Claude on the web, Claude Desktop and the Claude apps for iOS and Android cannot hold an OML key,
 so OML will connect them with a one-time connect code. The server must run at a public HTTPS
-address with connections turned on, and the person connecting needs a claude.ai account; Anthropic
+address with connections turned on, `oauth.issuer` set to that address and its proxy passing the
+connection paths through ([deployment](docs/operations/deployment.md#connections-behind-a-reverse-proxy)), and the person connecting needs a claude.ai account; Anthropic
 offers custom connectors on every plan, one on the Free plan
 ([Anthropic Help Center](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
 read 2026-10-31).

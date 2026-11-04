@@ -5,7 +5,7 @@ info:
   summary: >-
     The designed annex of the OML HTTP API: decided, not routed. Nothing is generated from it.
   description: >-
-    Status: designed, not built. This annex holds under paths the 47 operations the design
+    Status: designed, not built. This annex holds under paths the 45 operations the design
     decides and the server does not route, and under x-oml-designed-fields, keyed by
     operationId, the designed fields of operations that openapi.yaml serves (ADR-0039 d9). No
     SDK and no server code is generated from it, and a call to any operation here answers 404
@@ -981,69 +981,6 @@ paths:
               schema: { $ref: '#/components/schemas/EffectiveAccess' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key}/connect-codes:
-    post:
-      tags: [keys]
-      operationId: mintConnectCode
-      summary: Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-      description: 'Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, the stored idempotency response omits it, so a replay carries no code, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key''s earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. Lifetime: the oauth.connect_code_ttl setting.'
-      parameters:
-        - { $ref: 'openapi.yaml#/components/parameters/KeyId' }
-        - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
-      responses:
-        '201':
-          description: The connect code, shown once.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                code_id: cc_01JB3A2C4E6G8J1L3N5Q7S9UWY
-                code: 7KQ2-M9XD-4TPA
-                expires_at: '2026-10-31T14:13:00Z'
-                connector_url: https://oml.example.com/mcp
-              schema: { $ref: '#/components/schemas/ConnectCode' }
-        '404': { $ref: 'openapi.yaml#/components/responses/NotFound' }
-        '422': { $ref: 'openapi.yaml#/components/responses/Unprocessable' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
-  /v2/keys/{key}/connections/{connection_id}/revoke:
-    post:
-      tags: [keys]
-      operationId: revokeConnection
-      summary: Journalled revocation of one connection.
-      description: 'Requires: admin key role. Journals connection.revoked with cause admin, which ends the connection and voids the key''s codes as docs/architecture/roles-and-keys.md (Connections) declares (ADR-0031 d8, d11). An authorized connection is not journalled or listed, and naming one answers 404 access.not_found, as an unknown id does. Served whether or not oauth.issuer is set.'
-      parameters:
-        - { $ref: 'openapi.yaml#/components/parameters/KeyId' }
-        - { $ref: '#/components/parameters/ConnectionId' }
-        - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
-      requestBody:
-        required: false
-        content:
-          application/json:
-            example:
-              reason: phone lost
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                reason: { type: string }
-      responses:
-        '200':
-          description: Revoked.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                journal_seq: 4371
-                event_id: evt_01JB3A4E6G8J1L3N5Q7S9UWY2C
-                dry_run: false
-              schema: { $ref: '#/components/schemas/ActResult' }
-        '404': { $ref: 'openapi.yaml#/components/responses/NotFound' }
-        '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
   /v2/bans:
     get:
       tags: [bans]
@@ -1580,11 +1517,6 @@ components:
         high-entropy random, and it enables the UNIQUE-index lookup at authentication.
 
   parameters:
-    ConnectionId:
-      name: connection_id
-      in: path
-      required: true
-      schema: { type: string }
     Curie:
       name: curie
       in: path
@@ -1601,31 +1533,6 @@ components:
           schema: { $ref: 'openapi.yaml#/components/schemas/ErrorEnvelope' }
 
   schemas:
-    ConnectCode:
-      type: object
-      required: [code_id, expires_at, connector_url]
-      properties:
-        code_id: { type: string }
-        code: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$', description: 'Twelve Crockford base32 symbols (60 bits) in three groups of four — shown exactly once, never journalled, stored only as the SHA-256 of the normalized symbols (ADR-0031 d8). Present in every fresh 201; absent on an idempotent replay.' }
-        expires_at: { type: string, format: date-time }
-        connector_url: { type: string, description: 'The URL to enter as the custom connector: <issuer>/mcp, from oauth.issuer, not from the address the CLI used.' }
-
-    Connection:
-      type: object
-      required: [connection_id, client_id, client_kind, redirect_uri, state]
-      properties:
-        connection_id: { type: string }
-        client_id: { type: string, description: The metadata-document URL or the registered client id. }
-        client_kind: { type: string, enum: [cimd, dcr] }
-        client_name: { type: string, description: As the document or the registration states it; verified only for cimd. }
-        redirect_uri: { type: string }
-        resource: { type: string, description: '<issuer>/mcp when the connection was created; its tokens work only while this is the current <issuer>/mcp.' }
-        state: { type: string, enum: [authorized, open, revoked] }
-        live: { type: boolean, description: 'Whether the connection is live, as docs/architecture/roles-and-keys.md (Connections) defines it.' }
-        opened_at: { type: [string, 'null'], format: date-time }
-        revoked_at: { type: [string, 'null'], format: date-time }
-        revoked_cause: { type: [string, 'null'], enum: [admin, refresh_reuse, code_reuse, replaced, null] }
-
     Lineage:
       type: object
       required: [artifact_id, nodes, edges]
@@ -2185,13 +2092,6 @@ x-oml-designed-fields:
     request:
       expiry: { type: string, format: date-time, description: 'When the issued key stops authenticating. Refused with request.validation until key expiry is built: a key minted without it would keep its access past the issuer''s date (ADR-0025 d2, d16).' }
       tenant: { $ref: 'openapi.yaml#/components/schemas/TenantRef', description: "Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant, and its name is in the provider's namespace (ADR-0026 d4, d5). Refused with request.validation until the first-admin-key path is built." }
-      connect_code: { type: boolean, default: false, description: "Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role, held_by service, or a deployment without oauth.issuer. The stored idempotency response omits connect_code.code. Refused with request.validation until the route reads it: the use case is built, the closed body does not yet take the field." }
-    response:
-      connect_code: { $ref: '#/components/schemas/ConnectCode', description: "A fresh 201 carries exactly one of value (a bearer key) and connect_code (a connector key). An idempotent replay (Idempotency-Replay: true) of a connector key's issuance returns the stored response, which omits connect_code.code (docs/api/http-api.md, Idempotency)." }
-  getKey:
-    response:
-      credential: { type: string, enum: [bearer, connection], description: "bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7)." }
-      connections: { type: array, items: { $ref: '#/components/schemas/Connection' }, description: "A connector key's connections, at most one open." }
   reviewNext:
     request:
       workarea: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: 'Serve only from this subtree, by id or name. Refused with request.validation until the subtree filter is built: the queue is served whole, so the filter is refused, never ignored (ADR-0026 d4).' }

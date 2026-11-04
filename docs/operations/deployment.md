@@ -307,6 +307,61 @@ Only then is the running lead stopped, `oml-server-lead-$v-$t/oml-server-lead` p
 old binary, and the lead started; [upgrades](upgrades.md) fixes the order when more than the lead
 runs. An archive that does not verify is not installed.
 
+## Connections behind a reverse proxy
+
+*Planned for v0.4.0 · [releases](../product/releases.md)*
+
+Claude's hosted apps — claude.ai, Claude Desktop and the Claude mobile apps — reach OML through a
+connection opened by a one-time connect code
+([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)). The lead serves the whole
+surface itself, on the origin that already serves `/mcp`: there is no separate host, port or
+service to run. Two settings make it reachable.
+
+1. **`oauth.issuer` is the public origin**, `https` with no path and no trailing slash, the one
+   people type and Claude fetches, never the address the lead binds:
+
+    ```toml
+    [oauth]
+    issuer = "https://oml.example.com"
+    ```
+
+    or `OML_OAUTH__ISSUER=https://oml.example.com` in the lead's environment
+    ([configuration](configuration.md)). Unset, connections are off: the documents and the OAuth
+    endpoints answer `404`, `/mcp` takes keys only, and a connect code is refused.
+
+2. **The reverse proxy passes the paths through** on that origin, unchanged, with no path
+   rewriting and no caching: `/mcp`, `/.well-known/oauth-protected-resource/mcp`,
+   `/.well-known/oauth-authorization-server` and `/oauth/*`. A proxy that forwards the whole
+   origin to the lead already does; one that forwards only `/mcp`, `/v1` and `/v2` adds
+   `/.well-known/oauth-*` and `/oauth/*`. The page's security headers are the lead's own, so the
+   proxy adds none. Its access log must not record the `Location` header of
+   `POST /oauth/authorize` or the bodies of `POST /oauth/authorize` and `POST /oauth/token`,
+   which carry the codes and tokens ([observability](observability.md#per-profile-checks)). A
+   Caddy site:
+
+    ```caddy
+    oml.example.com {
+        reverse_proxy 127.0.0.1:8080
+        log {
+            format filter {
+                wrap json
+                fields {
+                    resp_headers>Location delete
+                }
+            }
+        }
+    }
+    ```
+
+`oml doctor` then checks the route from wherever it runs: it reads the issuer the lead serves at
+the configured URL and fetches both discovery documents again from that issuer, and reports
+`oauth : failing` with the URL that failed when the proxy does not pass a path or a node serves
+another issuer ([observability](observability.md#the-doctor-contract)). With connections on,
+`oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> --connect-code`
+prints the connector URL and the code to give the person connecting
+([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
+
 ## The standalone profile
 
 *Available since v0.1.0 · [releases](../product/releases.md)*

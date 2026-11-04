@@ -86,7 +86,11 @@ def sync_detailed(
     its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409
     name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server
     takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its
-    grant.issued journal seq).
+    grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is
+    minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator
+    role, held_by service and a deployment without oauth.issuer are refused with 422
+    oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a
+    retried issuance answers name.taken and its code is minted again with oml keys connect-code.
 
     Args:
         idempotency_key (str):
@@ -133,7 +137,11 @@ def sync(
     its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409
     name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server
     takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its
-    grant.issued journal seq).
+    grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is
+    minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator
+    role, held_by service and a deployment without oauth.issuer are refused with 422
+    oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a
+    retried issuance answers name.taken and its code is minted again with oml keys connect-code.
 
     Args:
         idempotency_key (str):
@@ -175,7 +183,11 @@ async def asyncio_detailed(
     its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409
     name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server
     takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its
-    grant.issued journal seq).
+    grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is
+    minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator
+    role, held_by service and a deployment without oauth.issuer are refused with 422
+    oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a
+    retried issuance answers name.taken and its code is minted again with oml keys connect-code.
 
     Args:
         idempotency_key (str):
@@ -220,7 +232,11 @@ async def asyncio(
     its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409
     name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server
     takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its
-    grant.issued journal seq).
+    grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is
+    minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator
+    role, held_by service and a deployment without oauth.issuer are refused with 422
+    oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a
+    retried issuance answers name.taken and its code is minted again with oml keys connect-code.
 
     Args:
         idempotency_key (str):

@@ -20,9 +20,11 @@ use uuid::Uuid;
 
 use oml_cli::client::{CallOpts, CliError, Client, encode, new_idempotency_key, segment};
 use oml_cli::creds::{self, Credentials};
+use oml_cli::discovery;
 use oml_cli::hook;
 use oml_cli::issue::{
-    KeyFile, configure_line, connect_code_printed, sh_quote, with_reader_beside_writers,
+    KeyFile, configure_line, connect_code_printed, minted_code_printed, sh_quote,
+    with_reader_beside_writers,
 };
 use oml_cli::verify::parse_verifying_key;
 
@@ -235,6 +237,25 @@ enum KeysCommand {
         // Not `key`: clap would merge that id with the global --key.
         #[arg(value_name = "KEY")]
         key_ref: String,
+    },
+    /// Mint a fresh connect code for a connector key, voiding its earlier
+    /// codes, and print the connector URL and the code (ADR-0031 d7, d8).
+    ConnectCode {
+        /// The connector key's id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+    },
+    /// End one connection of a connector key; journalled as
+    /// connection.revoked (ADR-0031 d11).
+    Disconnect {
+        /// The connector key's id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// The connection's id, as `oml keys show` lists it.
+        connection_id: String,
+        /// Why; the journal keeps its digest.
+        #[arg(long)]
+        reason: Option<String>,
     },
 }
 
@@ -996,6 +1017,66 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     Some(at) => println!("    revoked  : {at}"),
                     None => println!("    revoked  : no (live)"),
                 }
+                println!("    credential: {}", field(&response, "credential"));
+                // A connector key's connections, by id: the id is what
+                // `oml keys disconnect` names (ADR-0031 d11).
+                for c in response["connections"].as_array().into_iter().flatten() {
+                    println!(
+                        "    connection: {} {} {} -> {}",
+                        field(c, "connection_id"),
+                        field(c, "state"),
+                        field(c, "client_id"),
+                        field(c, "redirect_uri"),
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Keys {
+            command: KeysCommand::ConnectCode { key_ref },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let path = format!("/v2/keys/{}/connect-codes", segment(key_ref)?);
+            let (response, replayed) = client.post_replayable(&path, &json!({}), &write_opts())?;
+            let printed = minted_code_printed(key_ref, &response, replayed, cli.json);
+            for line in &printed.stdout {
+                println!("{line}");
+            }
+            for line in &printed.stderr {
+                eprintln!("{line}");
+            }
+            Ok(ExitCode::from(printed.exit))
+        }
+
+        Command::Keys {
+            command:
+                KeysCommand::Disconnect {
+                    key_ref,
+                    connection_id,
+                    reason,
+                },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let path = format!(
+                "/v2/keys/{}/connections/{}/revoke",
+                segment(key_ref)?,
+                segment(connection_id)?
+            );
+            let body = match reason {
+                Some(reason) => json!({ "reason": reason }),
+                None => json!({}),
+            };
+            let (_, response) = client.post(&path, &body, &write_opts())?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "connection {} of key {key_ref}: {} ({})",
+                    field(&response, "connection_id"),
+                    field(&response, "state"),
+                    field(&response, "revoked_cause"),
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -2114,9 +2195,15 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 .and_then(|(_, v)| v["head_seq"].as_u64());
         }
     }
+    // The connection surface, from wherever the CLI runs (ADR-0031 d14).
+    let oauth = source
+        .as_ref()
+        .and_then(|s| s.url)
+        .map(|url| discovery::check(url));
+    let oauth_ok = !oauth.as_ref().is_some_and(|o| o["state"] == "failing");
     let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
     let whoami_ok = !matches!(me, Some(Err(_)));
-    let outcome = if !probes_ok || !whoami_ok {
+    let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
         "fail"
     } else if me.is_none() {
         "warn"
@@ -2147,6 +2234,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "readyz": probe_json(&ready),
             "whoami": whoami,
             "chain_head_seq": head_seq,
+            "oauth_discovery": oauth,
             "client_version": env!("CARGO_PKG_VERSION"),
             // The PoC API exposes no server version endpoint.
             "server_version": Value::Null,
@@ -2188,6 +2276,21 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         match head_seq {
             Some(seq) => println!("chain head  : seq {seq}"),
             None => println!("chain head  : unavailable (needs a key with events-tail access)"),
+        }
+        match &oauth {
+            Some(o) if o["state"] == "off" => {
+                println!("oauth       : off (no oauth.issuer: /mcp takes keys only)");
+            }
+            Some(o) if o["state"] == "ok" => println!(
+                "oauth       : ok (issuer {} serves both discovery documents)",
+                field(o, "issuer")
+            ),
+            Some(o) => println!(
+                "oauth       : failing ({}: {})",
+                field(o, "url"),
+                field(o, "reason")
+            ),
+            None => println!("oauth       : not probed (no URL)"),
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         println!("server      : version not exposed by the PoC API");

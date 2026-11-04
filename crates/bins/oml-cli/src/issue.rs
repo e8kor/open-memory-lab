@@ -229,11 +229,64 @@ pub fn connect_code_printed(answer: &Value, replayed: bool, json: bool) -> Print
                 text(&answer["principal"]),
                 text(&connect_code["expires_at"]),
             ),
-            "next: add a custom connector with exactly the URL above at Customize > Connectors \
-             on claude.ai, and enter the code on the page that opens before it expires; give \
-             the code only to the person who will connect, for a page they reached by adding \
-             the connector themselves"
-                .to_owned(),
+            NEXT_STEP.to_owned(),
+        ],
+        exit: 0,
+    }
+}
+
+/// The step after a connect code is printed (cli/reference.md
+/// `--connect-code`).
+const NEXT_STEP: &str = "next: add a custom connector with exactly the URL above at Customize > \
+     Connectors on claude.ai, and enter the code on the page that opens before it expires; give \
+     the code only to the person who will connect, for a page they reached by adding the \
+     connector themselves";
+
+/// What `oml keys connect-code <key>` prints for the `201` of
+/// `POST /v2/keys/{key}/connect-codes` (cli/reference.md; ADR-0031 d7, d8):
+/// as [`connect_code_printed`], the connector URL and the code on stdout and
+/// the expiry and the next step on stderr, and for an answer without a code,
+/// a replay's among them, nothing on stdout, the key named, and exit 2.
+#[must_use]
+pub fn minted_code_printed(key: &str, answer: &Value, replayed: bool, json: bool) -> Printed {
+    let text = |v: &Value| v.as_str().unwrap_or("").to_owned();
+    let code = answer["code"].as_str().filter(|_| !replayed);
+    let mut stdout = Vec::new();
+    if json {
+        stdout.push(serde_json::to_string_pretty(answer).unwrap_or_default());
+    }
+    let Some(code) = code else {
+        let why = if replayed {
+            "this answer is an idempotent replay, and the connect code went only to the first \
+             answer"
+        } else {
+            "the 201 carried no connect code"
+        };
+        return Printed {
+            stdout,
+            stderr: vec![format!(
+                "a connect code for connector key {key} was minted, but {why}; \
+                 `oml keys connect-code {key}` mints a new one (ADR-0031 d7)"
+            )],
+            exit: 2,
+        };
+    };
+    if json {
+        return Printed {
+            stdout,
+            stderr: Vec::new(),
+            exit: 0,
+        };
+    }
+    Printed {
+        stdout: vec![text(&answer["connector_url"]), code.to_owned()],
+        stderr: vec![
+            format!(
+                "connect code for connector key {key}: single use, shown this once, expiring at \
+                 {}; the key's earlier codes no longer connect",
+                text(&answer["expires_at"]),
+            ),
+            NEXT_STEP.to_owned(),
         ],
         exit: 0,
     }
@@ -245,7 +298,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{KeyFile, configure_line, connect_code_printed};
+    use super::{KeyFile, configure_line, connect_code_printed, minted_code_printed};
 
     /// A `201` of `POST /v2/keys` with `connect_code: true`, as openapi.yaml
     /// `IssuedKey` and `ConnectCode` shape it; a replay omits the code.
@@ -427,6 +480,44 @@ mod tests {
              '/home/op/.config/oml/keys/crew-agent-7' \
              '{url: $u, api_key: ($k | rtrimstr(\"\\n\"))}' \
              | claude plugin configure oml@open-memory-lab --values-stdin"
+        );
+    }
+
+    #[test]
+    fn keys_connect_code_prints_exactly_the_connector_url_and_the_code_on_stdout() {
+        let answer = json!({
+            "code_id": "cc_01J9ZK",
+            "code": "7KQ2-M9XD-4TPA",
+            "expires_at": "2026-11-04T10:10:00Z",
+            "connector_url": "https://oml.example.com/mcp",
+        });
+        let printed = minted_code_printed("claude-mobile", &answer, false, false);
+        assert_eq!(
+            printed.stdout,
+            ["https://oml.example.com/mcp", "7KQ2-M9XD-4TPA"]
+        );
+        assert_eq!(printed.exit, 0);
+        assert!(
+            printed.stderr[0].contains("claude-mobile"),
+            "{:?}",
+            printed.stderr
+        );
+    }
+
+    #[test]
+    fn keys_connect_code_prints_no_code_and_exits_2_on_a_replayed_answer() {
+        let answer = json!({
+            "code_id": "cc_01J9ZK",
+            "expires_at": "2026-11-04T10:10:00Z",
+            "connector_url": "https://oml.example.com/mcp",
+        });
+        let printed = minted_code_printed("claude-mobile", &answer, true, false);
+        assert!(printed.stdout.is_empty(), "{:?}", printed.stdout);
+        assert_eq!(printed.exit, 2);
+        assert!(
+            printed.stderr[0].contains("oml keys connect-code claude-mobile"),
+            "{:?}",
+            printed.stderr
         );
     }
 }

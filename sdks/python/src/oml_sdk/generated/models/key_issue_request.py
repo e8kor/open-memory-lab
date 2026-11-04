@@ -37,6 +37,9 @@ class KeyIssueRequest:
             d4).
         label (str | Unset): A free-text note; unique nowhere.
         principal (str | Unset): Who acts — the attribution identity, shared across one identity's keys; free text.
+        connect_code (bool | Unset): Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries
+            connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role),
+            held_by service (held_by_service), or a deployment without oauth.issuer (not_configured). Default: False.
     """
 
     role: Role
@@ -47,6 +50,7 @@ class KeyIssueRequest:
     crew: str | Unset = UNSET
     label: str | Unset = UNSET
     principal: str | Unset = UNSET
+    connect_code: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
@@ -80,6 +84,8 @@ class KeyIssueRequest:
 
         principal = self.principal
 
+        connect_code = self.connect_code
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -100,6 +106,8 @@ class KeyIssueRequest:
             field_dict["label"] = label
         if principal is not UNSET:
             field_dict["principal"] = principal
+        if connect_code is not UNSET:
+            field_dict["connect_code"] = connect_code
 
         return field_dict
 
@@ -146,6 +154,8 @@ class KeyIssueRequest:
 
         principal = d.pop("principal", UNSET)
 
+        connect_code = d.pop("connect_code", UNSET)
+
         key_issue_request = cls(
             role=role,
             name=name,
@@ -155,6 +165,7 @@ class KeyIssueRequest:
             crew=crew,
             label=label,
             principal=principal,
+            connect_code=connect_code,
         )
 
         return key_issue_request

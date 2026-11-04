@@ -163,7 +163,7 @@ the two discovery documents and the OAuth endpoints are unauthenticated.
   anchor into the journal ([retrieval.md](../architecture/retrieval.md#the-read-log)).
 
 Bearer keys are the shipped mechanism on every route; `/mcp` also accepts a connection's access
-token, decided, not built, waiting for the proposed ADR-0039's `/mcp` rewrite
+token, as exactly the key the connection is bound to, and no other route does
 ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md),
 [RS-2](../product/roadmap.md)). The role vocabulary and key authorization semantics are owned by
 [roles-and-keys.md](../architecture/roles-and-keys.md).
@@ -431,7 +431,9 @@ caller that lost it mints a new one
 byte-for-byte replay above, decided, not built
 ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, amending ADR-0014 d3). A
 bearer key's issuance or rotation replays byte for byte, value included
-([FR-36](../product/roadmap.md)).
+([FR-36](../product/roadmap.md)). As built, the key routes keep no idempotency record at all: a
+retried connector-key issuance answers `name.taken`, and a retried `connect-codes` call mints
+another code, which voids the first.
 
 A `committed` record is retained for at least **24 hours** — a committed floor, not an
 estimate. The `idempotency.retention` setting
@@ -511,7 +513,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v2/review/queue` · `POST /v2/review/reopen` | dreamer(review); refused per row by lineage-closure exclusion | designed |
 | `POST /v2/keys` · `GET /v2/keys/{key}` · `POST /v2/keys/{key}/denials` | admin (key role); operator only for operator keys and a tenant's first admin key | served |
 | `GET /v2/keys` · `POST /v2/keys/{key}/revoke` · `/rotate` · `/grants` · `GET /v2/keys/{key}/effective-access` · `POST /v2/keys/{key}/grants/{grant_id}/revoke` · `POST /v2/keys/{key}/denials/{denial_id}/lift` | admin (key role) | designed |
-| `POST /v2/keys/{key}/connect-codes` · `POST /v2/keys/{key}/connections/{connection_id}/revoke` | admin (key role) | designed |
+| `POST /v2/keys/{key}/connect-codes` · `POST /v2/keys/{key}/connections/{connection_id}/revoke` | admin (key role) | served |
 | `GET /v2/whoami` | any live key, of any role; its own record only ([Whoami](#whoami-get-v2whoami)) | served |
 | `GET /v2/bans` · `POST /v2/bans` · `POST /v2/bans/{ban_id}/lift` | admin (key role) | designed |
 | `GET /v2/simulations` · `GET /v2/simulations/{id}` · `POST /v2/simulations` · `POST /v2/simulations/{id}/audience` · `POST /v2/simulations/{id}/end` | admin (key role) | designed |
@@ -1058,8 +1060,8 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 | Endpoint | Does |
 |---|---|
-| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea, role, deny: [{workarea}]}], default_workarea?, held_by?, crew?, expiry?, label?, principal?, tenant?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused, and a v0.3.0 spelling names its successor in `details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7); the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant`, and a tenant's first admin key, with `tenant` naming the tenant; an admin key never sends `tenant` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). The designed `connect_code: true` issues a connector key with no value and its `connect_code` `{code_id, code, expires_at, connector_url}` in the value's place ([connections](../architecture/roles-and-keys.md#connections)); the use case is built, and the route refuses the field as unknown until it reads it ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). |
-| `GET /v2/keys` · `GET /v2/keys/{key}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events. Never values. A revoked or expired key's name still resolves here. |
+| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea, role, deny: [{workarea}]}], default_workarea?, held_by?, crew?, expiry?, label?, principal?, tenant?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused, and a v0.3.0 spelling names its successor in `details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7); the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant`, and a tenant's first admin key, with `tenant` naming the tenant; an admin key never sends `tenant` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). `connect_code: true` issues a connector key with no value and its `connect_code` `{code_id, code, expires_at, connector_url}` in the value's place, refused with `422 oauth.connect_refused` for an admin or operator role, `held_by: service` or a deployment without `oauth.issuer` ([connections](../architecture/roles-and-keys.md#connections); [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). |
+| `GET /v2/keys` · `GET /v2/keys/{key}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events; `credential` (`bearer` or `connection`) and the key's open and revoked `connections`, each `{connection_id, client_id, client_kind, redirect_uri, resource, state, revoked_cause}`, an `authorized` one not listed (whether a connection is live, its client's name and its opening and revocation times are designed). Never values, never a token. As built, `GET /v2/keys/{key}` serves the detail. A revoked or expired key's name still resolves here. |
 | `POST /v2/keys/{key}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
 | `POST /v2/keys/{key}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). A connector key is not rotated: `422 oauth.connect_refused` (`details.reason: connector_key`); a fresh connection is a new code, a fresh identity a new connector key ([connections](../architecture/roles-and-keys.md#connections)). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `POST /v2/keys/{key}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
@@ -1067,7 +1069,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 | `POST /v2/keys/{key}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. `{workarea, reason?}`, `workarea_node_id` refused naming `workarea` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). A denial on an admin key is refused, `request.validation` with `details.field: key`: denials attenuate grants, and an admin key carries none ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). |
 | `POST /v2/keys/{key}/denials/{denial_id}/lift` | Journalled lift. |
 | `POST /v2/keys/{key}/connect-codes` | Mint a fresh connect code for a connector key → `201` `{code_id, code, expires_at, connector_url}`, the code shown once; the same commit (`connection.code_issued`) voids the key's earlier codes as [connections](../architecture/roles-and-keys.md#connections) declares. A bearer key, a revoked or expired key, or a deployment without `oauth.issuer` answers `422 oauth.connect_refused`. |
-| `POST /v2/keys/{key}/connections/{connection_id}/revoke` | `{reason?}` → journalled `connection.revoked`, which ends the connection and voids the key's codes as [connections](../architecture/roles-and-keys.md#connections) declares. An `authorized` connection is not listed, and naming one answers `access.not_found`, as an unknown id does. `GET /v2/keys/{key}` lists a key's open and revoked connections. Both are designed, their use cases built; the revoke works whether or not the deployment sets `oauth.issuer`. |
+| `POST /v2/keys/{key}/connections/{connection_id}/revoke` | `{reason?}` → journalled `connection.revoked`, which ends the connection and voids the key's codes as [connections](../architecture/roles-and-keys.md#connections) declares. An `authorized` connection is not listed, and naming one answers `access.not_found`, as an unknown id does. `GET /v2/keys/{key}` lists a key's open and revoked connections. The revoke answers the connection, `state: revoked`, `revoked_cause: admin`, and works whether or not the deployment sets `oauth.issuer`. |
 | `GET /v2/keys/{key}/effective-access?workarea=…` | The resolved answer: what this key may do where, and which deny produced each hole — reproducible from journalled grants by construction (permission epoch). |
 
 ### Whoami — `GET /v2/whoami`
@@ -1118,15 +1120,18 @@ example `https://oml.example.com`; the protected resource is `<issuer>/mcp`. Uns
 and endpoints below answer `404`, `/mcp` is bearer-only, and a connect code is refused; listing and
 revoking a key's connections on `/v2` are still served. **Built:** the two discovery documents,
 `GET` and `POST /oauth/authorize` with the authorization page, `POST /oauth/token` and
-`POST /oauth/register`, the client document fetch under its caps and allow-list, and the use cases
-beneath them, a connector key's issuance, minting a connect code, and listing and revoking a key's
-connections; and the lead's operational removal, at its start and every hour after, of unused
-registrations, lapsed authorization requests and codes, and expired or revoked tokens
-([Postgres schema](../data/postgres-schema.md#connections-adr-0031)). **Waiting for the proposed ADR-0039**, which rewrites `/mcp` and the `/v2` routes: `/mcp`
-accepting an access token and the challenge below; the `/v2` connect-code, connections and revoke
-routes, and the `connect_code` member of `POST /v2/keys`, which is not yet read; the CLI's wiring
-to them; the doctor checks `oauth_discovery`, `connect_codes` and `connections`; and the cluster
-lease's issuer. No live claude.ai connection has run ([FR-34](../product/roadmap.md)).
+`POST /oauth/register`, the client document fetch under its caps and allow-list; `/mcp` accepting
+an access token beside a key, and the challenge below; `connect_code` on `POST /v2/keys`, the `/v2`
+connect-code and connection-revoke routes and a key's connections on `GET /v2/keys/{key}`, with
+the CLI's `--connect-code`, `oml keys connect-code`, `oml keys disconnect` and the connections in
+`oml keys show`; doctor's `oauth_discovery`; and the lead's operational removal, at its start and
+every hour after, of unused registrations, lapsed authorization requests and codes, and expired or
+revoked tokens ([Postgres schema](../data/postgres-schema.md#connections-adr-0031)). The connect
+flow runs end to end over HTTP against the lead in continuous integration
+(`crates/bins/oml-cli/tests/connect_flow.rs`). **Not built:** doctor's `connect_codes`,
+`connections` and `connect_code_failures`; the cluster lease's issuer, since a follower is not
+built; and the connection fields designed above. No live claude.ai connection has run
+([FR-34](../product/roadmap.md)).
 
 **The challenge.** A `401` from `/mcp` keeps its typed body (`auth.missing` with no header,
 `auth.invalid` for a credential that failed) and carries:

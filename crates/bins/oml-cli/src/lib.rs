@@ -6,6 +6,7 @@
 
 pub mod client;
 pub mod creds;
+pub mod discovery;
 pub mod hook;
 pub mod issue;
 pub mod owner_only;

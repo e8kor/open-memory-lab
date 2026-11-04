@@ -34,6 +34,39 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — Connections on the rewritten surface: `/mcp` takes an access token as its key, and `/v2` mints and revokes (ADR-0031, ADR-0039 d9, implementation)
+
+No decision changes, and ADR-0031 stays proposed.
+
+- **`/mcp`** accepts a connection's access token beside a key value. The facade resolves the token
+  once per request to its live connection's key and runs every tool under that key, so a token
+  is never more than its key and never reaches a ring route as a credential (d10, d11). A `401`
+  carries `WWW-Authenticate: Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource/mcp", scope="mcp"`,
+  with `error="invalid_token"` when a credential failed, and `Bearer realm="oml"` without
+  `oauth.issuer` (d2).
+- **Served** in [openapi.yaml](api/openapi.yaml), moved from the annex, which now holds 45
+  operations: `POST /v2/keys/{key}/connect-codes` and
+  `POST /v2/keys/{key}/connections/{connection_id}/revoke`; `connect_code` on `POST /v2/keys`, its
+  `201` carrying `connect_code` in the value's place; `credential` and `connections` on
+  `GET /v2/keys/{key}`. A connection's liveness, client name and times stay designed.
+- **The CLI:** `oml keys issue-agent --connect-code` now reaches the route; `oml keys connect-code`
+  and `oml keys disconnect` are added, and `oml keys show` lists a key's connections. The key value
+  still goes only to `--out`.
+- **Doctor** gains `oauth_discovery`: `off`, `ok`, or `failing` with the URL, from both discovery
+  documents fetched at the issuer the lead serves.
+- **The check.** `oml-cli`'s `connect_flow` suite runs the flow over HTTP against the lead on a TCP
+  port: the claim, the CLI's issuance, a registration, the page, the exchange, `/mcp` under the
+  access token, the refresh token refused there, the token refused on `/v1`, the disconnect and a
+  fresh code. It runs where a superuser mints the role pair, as CI does.
+- **Docs:** [deployment](operations/deployment.md#connections-behind-a-reverse-proxy) states
+  `oauth.issuer=https://<public origin>` and what the proxy passes through on the same origin.
+- **SDKs** regenerate from openapi.yaml.
+- **Pages touched:** [HTTP API](api/http-api.md), [errors](api/errors.md),
+  [agent plugin](api/mcp-plugin.md), [roles and keys](architecture/roles-and-keys.md),
+  [CLI reference](cli/reference.md), [configuration](operations/configuration.md),
+  [deployment](operations/deployment.md), [observability](operations/observability.md), the
+  [roadmap](product/roadmap.md) (FR-34, FR-35), `README.md` and this page.
+
 ### 2026-11-04 — Connections merged onto the rewrite: the OAuth routes are served and the connect-code routes designed (ADR-0031, ADR-0039 d9, implementation)
 
 Merging the connections build into this branch. No decision changes, and ADR-0031 stays

@@ -2356,6 +2356,9 @@ async fn get_v2_keys_by_name_answers_the_key() {
                 "lifted": false,
             }],
             "epoch": denial["epoch"],
+            // A bearer key, which holds no connection (ADR-0031 d7, d11).
+            "credential": "bearer",
+            "connections": [],
         })
     );
     let (status, _, by_id) = read(key_id.clone(), admin.clone()).await;
@@ -7165,8 +7168,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        29,
-        "the 22 routed operations, whoami and the six OAuth operations"
+        31,
+        "the 24 routed operations, whoami and the six OAuth operations"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 

@@ -21,10 +21,11 @@ use axum::body::Bytes;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer};
+use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer};
 
 use super::{
-    get_item, insert_header, listing_output, parse_args, recall_output, ring_headers, ring_outcome,
+    Presented, get_item, insert_header, listing_output, parse_args, recall_output, ring_headers,
+    ring_outcome,
 };
 use crate::ApiState;
 
@@ -134,7 +135,7 @@ pub(super) fn successor(name: &str) -> Option<&'static str> {
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -144,7 +145,7 @@ where
     /// naming `successor` and `caller` whatever its outcome (ADR-0039 d12).
     pub(super) async fn call_alias(
         st: &Self,
-        token: &str,
+        presented: Presented<'_>,
         caller: &Caller<'_>,
         name: &str,
         successor: &str,
@@ -160,21 +161,26 @@ where
             "mcp_alias_called: {name} is a v0.3.0 tool name, which v0.5.0 removes; its successor is {successor}"
         );
         match name {
-            "oml_remember" => Self::tool_submit(st, token, "remember", args).await,
-            "oml_learn" => Self::tool_submit(st, token, "learn", args).await,
-            "oml_recall" => Self::tool_recall(st, token, args).await,
-            "oml_get" => Self::tool_get(st, token, args).await,
-            "oml_supersede" => Self::tool_supersede(st, token, args).await,
-            "oml_my_work" => Self::tool_my_work(st, token, args).await,
-            "oml_workarea_info" => Self::tool_workarea_info(st, token, args).await,
-            _ => Self::tool_events_tail(st, token, args).await,
+            "oml_remember" => Self::tool_submit(st, presented, "remember", args).await,
+            "oml_learn" => Self::tool_submit(st, presented, "learn", args).await,
+            "oml_recall" => Self::tool_recall(st, presented, args).await,
+            "oml_get" => Self::tool_get(st, presented, args).await,
+            "oml_supersede" => Self::tool_supersede(st, presented, args).await,
+            "oml_my_work" => Self::tool_my_work(st, presented, args).await,
+            "oml_workarea_info" => Self::tool_workarea_info(st, presented, args).await,
+            _ => Self::tool_events_tail(st, presented, args).await,
         }
     }
 
     /// `oml_remember` / `oml_learn`: one `POST /v1/memories`.
-    async fn tool_submit(st: &Self, token: &str, verb: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_submit(
+        st: &Self,
+        presented: Presented<'_>,
+        verb: &str,
+        args: Value,
+    ) -> Result<Value, Value> {
         let args: RememberArgs = parse_args(args)?;
-        let mut headers = ring_headers(token);
+        let mut headers = ring_headers(presented);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
         let mut body = json!({
             "verb": verb,
@@ -195,7 +201,13 @@ where
                 obj.insert("simulated_time".to_owned(), Value::String(at));
             }
         }
-        let response = Self::submit_inner(st, &headers, &Bytes::from(body.to_string())).await;
+        let response = Self::submit_inner(
+            st,
+            &headers,
+            &Bytes::from(body.to_string()),
+            presented.connection,
+        )
+        .await;
         let replayed = response
             .as_ref()
             .is_ok_and(|r| r.headers().contains_key("idempotency-replay"));
@@ -218,9 +230,9 @@ where
     /// its defaults, its range checks and its query digest to exactly what
     /// the agent asked (retrieval.md own held rows and token budgets;
     /// ADR-0025 d4, d7, d9, d12).
-    async fn tool_recall(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_recall(st: &Self, presented: Presented<'_>, args: Value) -> Result<Value, Value> {
         let args: RecallArgs = parse_args(args)?;
-        let headers = ring_headers(token);
+        let headers = ring_headers(presented);
         let mut body = Map::new();
         body.insert("query".to_owned(), Value::String(args.query));
         for (name, value) in [
@@ -234,7 +246,13 @@ where
             }
         }
         let result = ring_outcome(
-            Self::recall_inner(st, &headers, &Bytes::from(Value::Object(body).to_string())).await,
+            Self::recall_inner(
+                st,
+                &headers,
+                &Bytes::from(Value::Object(body).to_string()),
+                presented.connection,
+            )
+            .await,
         )
         .await?;
         Ok(recall_output(&result))
@@ -244,11 +262,18 @@ where
     /// claim item with `text`, `derives_from` and `attachments`, whose
     /// `derives_from` and `replaces` the ring has already limited to what
     /// the key can read (mcp-plugin.md `oml_get`; ADR-0025 d3, d12).
-    async fn tool_get(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_get(st: &Self, presented: Presented<'_>, args: Value) -> Result<Value, Value> {
         let args: GetArgs = parse_args(args)?;
-        let memory =
-            ring_outcome(Self::get_memory_inner(st, &args.artifact_id, &ring_headers(token)).await)
-                .await?;
+        let memory = ring_outcome(
+            Self::get_memory_inner(
+                st,
+                &args.artifact_id,
+                &ring_headers(presented),
+                presented.connection,
+            )
+            .await,
+        )
+        .await?;
         Ok(get_item(&memory))
     }
 
@@ -259,9 +284,13 @@ where
     /// its own defaults. The tool carries no vocabulary fields, so a target
     /// of a vocabulary kind is refused at step 5 of the supersede rule
     /// (mcp-plugin.md `oml_supersede`; ADR-0025 d10, d11, d12).
-    async fn tool_supersede(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_supersede(
+        st: &Self,
+        presented: Presented<'_>,
+        args: Value,
+    ) -> Result<Value, Value> {
         let args: SupersedeArgs = parse_args(args)?;
-        let mut headers = ring_headers(token);
+        let mut headers = ring_headers(presented);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
         let mut body = Map::new();
         body.insert("body".to_owned(), Value::String(args.text));
@@ -283,6 +312,7 @@ where
             &headers,
             &Bytes::from(Value::Object(body).to_string()),
             true,
+            presented.connection,
         )
         .await;
         let replayed = response
@@ -307,7 +337,11 @@ where
     /// `state`, `claim_key`, `limit` and the client-held `cursor` pass
     /// through; each item is the claim item without `text`, plus
     /// `held_expires_at` (mcp-plugin.md `oml_my_work`; ADR-0025 d12, d13).
-    async fn tool_my_work(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_my_work(
+        st: &Self,
+        presented: Presented<'_>,
+        args: Value,
+    ) -> Result<Value, Value> {
         let args: MyWorkArgs = parse_args(args)?;
         let mut params = vec![("own".to_owned(), "true".to_owned())];
         for (name, value) in [
@@ -321,9 +355,17 @@ where
                 params.push((name.to_owned(), value));
             }
         }
-        let page =
-            ring_outcome(Self::list_memories_inner(st, &params, &ring_headers(token), false).await)
-                .await?;
+        let page = ring_outcome(
+            Self::list_memories_inner(
+                st,
+                &params,
+                &ring_headers(presented),
+                false,
+                presented.connection,
+            )
+            .await,
+        )
+        .await?;
         Ok(listing_output(&page, false))
     }
 
@@ -333,7 +375,11 @@ where
     /// on the ring. The page is projected to `{events, head_seq,
     /// next_after_seq, idle}`, idle once the resume point has reached the
     /// head (mcp-plugin.md `oml_events_tail`; ADR-0025 d15).
-    async fn tool_events_tail(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_events_tail(
+        st: &Self,
+        presented: Presented<'_>,
+        args: Value,
+    ) -> Result<Value, Value> {
         let args: EventsTailArgs = parse_args(args)?;
         let mut params = HashMap::from([(
             "after_seq".to_owned(),
@@ -345,8 +391,11 @@ where
         if let Some(limit) = args.limit {
             params.insert("limit".to_owned(), limit.to_string());
         }
-        let page =
-            ring_outcome(Self::events_tail_inner(st, &params, &ring_headers(token)).await).await?;
+        let page = ring_outcome(
+            Self::events_tail_inner(st, &params, &ring_headers(presented), presented.connection)
+                .await,
+        )
+        .await?;
         let events: Vec<Value> = page["items"]
             .as_array()
             .map(|items| items.iter().map(tail_item).collect())

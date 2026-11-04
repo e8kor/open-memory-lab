@@ -622,11 +622,12 @@ OAuth client's standing authority to act as one connector key at `/mcp`; it exis
 Claude's hosted apps, which cannot hold a key, can use the [agent plugin](../api/mcp-plugin.md)
 without a key value being pasted anywhere. **Built:** connector keys, connect codes, connections
 and their tokens as this section declares them, in the store and the use cases, with the OAuth
-endpoints and the authorization page over them. **Waiting for the proposed ADR-0039:** a token
-accepted at `/mcp`, the `/v2` connect-code, connections and revoke routes, the CLI's wiring to them
-(`oml keys issue-agent --connect-code` sends `connect_code: true`, which `POST /v2/keys` does not
-yet read, and `oml keys connect-code` and `oml keys disconnect` do not exist), the doctor checks
-`oauth_discovery`, `connect_codes` and `connections`, and the cluster lease's issuer. No live
+endpoints and the authorization page over them; an access token accepted at `/mcp`, where the
+facade resolves it to its connection's key once per request and runs every tool under that key;
+the `/v2` connect-code and connection-revoke routes and a key's connections on its read; the CLI's
+`--connect-code`, `oml keys connect-code`, `oml keys disconnect` and the connections in
+`oml keys show`; and doctor's `oauth_discovery`. **Not built:** whether a listed connection is
+live, the doctor checks `connect_codes` and `connections`, and the cluster lease's issuer. No live
 claude.ai connection has run ([FR-34](../product/roadmap.md)).
 
 **Connector keys.** A key issued with `connect_code: true` (`oml keys issue-agent …

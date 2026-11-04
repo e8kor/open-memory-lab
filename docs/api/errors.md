@@ -82,14 +82,13 @@ there today is an unknown field, refused as `request.validation` without
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
 | `auth.missing` | 401 | No `Authorization: Bearer` header. | Every request on either ring authenticates, and so does `/mcp`; only `/healthz`, `/readyz`, the discovery documents and the OAuth endpoints do not. |
-| `auth.invalid` | 401 | The key is unknown, malformed, expired or revoked (`details.reason` says which). An access token is not a credential, at `/mcp` as built and on either ring, and answers `reason: unknown`. Decided, not built ([waiting for ADR-0039](http-api.md#connections-oauth-for-hosted-mcp-clients)): at `/mcp` the same reasons are to cover a connection's access token: unknown, expired, a revoked connection, a revoked or expired connector key; a token whose connection's resource is not the current `<issuer>/mcp` is to answer `reason: unknown`. Only a token of kind `access` is to authenticate at `/mcp`: a refresh token presented there is to answer `reason: unknown` and be neither rotated nor counted as reuse. | Tenant and identity derive from the key, server-side, or not at all — an unverifiable caller gets nothing (D6); a token is exactly its key ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11). |
+| `auth.invalid` | 401 | The key is unknown, malformed, expired or revoked (`details.reason` says which; as built a key's refusal names `unknown`). At `/mcp` the same reasons cover a connection's access token: unknown, expired, a revoked connection, a revoked or expired connector key, and a token whose connection's resource is not the current `<issuer>/mcp`, each answering `reason: unknown` as built. Only a token of kind `access` authenticates at `/mcp`: a refresh token presented there answers `reason: unknown` and is neither rotated nor counted as reuse. On either ring an access token is not a credential and answers `reason: unknown`. | Tenant and identity derive from the key, server-side, or not at all — an unverifiable caller gets nothing (D6); a token is exactly its key ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11). |
 
-Decided, not built, and waiting for ADR-0039's `/mcp` rewrite
-([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)): at `/mcp` both
-codes are to carry the RFC 9728 challenge, `WWW-Authenticate: Bearer
-resource_metadata="…", scope="mcp"`, with `error="invalid_token"` added to an `auth.invalid`
+At `/mcp` both codes carry the RFC 9728 challenge, `WWW-Authenticate: Bearer
+resource_metadata="…", scope="mcp"`, with `error="invalid_token"` added to an `auth.invalid`, and
+`Bearer realm="oml"` where the deployment sets no `oauth.issuer`
 ([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)). The bodies are
-unchanged.
+unchanged, and no ring route's `401` carries the header ([FR-35](../product/roadmap.md)).
 
 ## `oauth` — connections
 
@@ -108,7 +107,9 @@ column is the status when the code is answered as a body or a page; a refusal re
 the redirect; and `oauth.client_invalid` answering a token request that sent an `Authorization`
 header is `401` with `WWW-Authenticate` naming the scheme the request used (RFC 6749 §5.2).
 `oauth.connect_refused` answers on `/v2` in the envelope above, and
-`oauth.attach_refused` as an `/mcp` tool result in the same envelope.
+`oauth.attach_refused` is an `/mcp` tool result in the same envelope, which no served tool answers
+since `oml_attach` left the catalog ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d2).
 Malformed parameters on the OAuth endpoints are `request.validation`, carried as
 `invalid_request` or as the RFC's own name for the fault (`unsupported_grant_type`,
 `unsupported_response_type`, `invalid_scope`, `invalid_client_metadata`).

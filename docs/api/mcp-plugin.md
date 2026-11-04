@@ -106,9 +106,11 @@ connector — to one connector key, opened by a one-time connect code an admin i
 token resolves to that key on every call, so the tools below answer exactly as they would to the
 key, and never more, with one exception: [`oml_attach`](#oml_attach) `open` is refused under a
 connection ([roles and keys — connections](../architecture/roles-and-keys.md#connections),
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md); decided, not built). A refused
-call keeps its typed `401` and carries the OAuth challenge that starts a client's sign-in
-([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)).
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)); as built no served tool opens an
+upload, since `oml_attach` left the catalog. A refused call keeps its typed `401` and carries the
+OAuth challenge that starts a client's sign-in
+([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)), or `Bearer
+realm="oml"` where the deployment sets no `oauth.issuer`.
 
 The mapping is entirely server-side (D6): the key resolves to a tenant, a
 role, and a set of grants over workarea subtrees
@@ -1640,8 +1642,10 @@ this shape (ADR-0040 d6).
 
 Claude's hosted apps — claude.ai, Claude Desktop, and the Claude iOS and Android
 apps — cannot carry the header above, so they connect through a connection
-instead (decided, not built; [FR-34](../product/roadmap.md)). The deployment
-must set `oauth.issuer` ([configuration](../operations/configuration.md)).
+instead (built for v0.4.0, no live connection yet: [FR-34](../product/roadmap.md)).
+The deployment must set `oauth.issuer` to its public origin, and its reverse
+proxy must pass the discovery and OAuth paths through
+([deployment](../operations/deployment.md#connections-behind-a-reverse-proxy)).
 
 1. An admin issues the agent's connector key and its connect code in one call,
    one principal per agent as always:

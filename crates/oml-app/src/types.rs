@@ -1464,6 +1464,33 @@ pub struct TailPage {
     pub next_after_seq: u64,
 }
 
+/// Who a use case serves: a key value, as every route presents it, or the
+/// caller a connection's access token resolved to at `/mcp`, which only
+/// [`App::resolve_access_token`](crate::App::resolve_access_token) builds,
+/// so a token reaches the agent use cases the facade dispatches and nothing
+/// else, and acts as exactly its key (roles-and-keys.md connections;
+/// ADR-0031 d10, d11). It has no `Debug`, so no log line prints a key value.
+#[derive(Clone, Copy)]
+pub enum Bearer<'a> {
+    /// A key value.
+    Key(&'a str),
+    /// The caller of a live connection's access token, resolved on this
+    /// request.
+    Connection(&'a crate::app::Caller),
+}
+
+impl<'a> From<&'a str> for Bearer<'a> {
+    fn from(value: &'a str) -> Self {
+        Bearer::Key(value)
+    }
+}
+
+impl<'a> From<&'a String> for Bearer<'a> {
+    fn from(value: &'a String) -> Self {
+        Bearer::Key(value)
+    }
+}
+
 /// A typed application refusal; every variant names the rule it enforces.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {

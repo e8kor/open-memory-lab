@@ -16,8 +16,8 @@ T = TypeVar("T", bound="TokenResponse")
 class TokenResponse:
     """
     Attributes:
-        access_token (str): Opaque; the server stores only its SHA-256. For /mcp alone, which accepts it once /mcp is
-            wired to connections (designed, ADR-0031 d11).
+        access_token (str): Opaque; the server stores only its SHA-256. A credential at /mcp alone, where it acts as
+            exactly its connection's key (ADR-0031 d11).
         token_type (TokenResponseTokenType):
         expires_in (int): Seconds; the oauth.access_token_ttl setting.
         refresh_token (str): Opaque, single-use; rotated by every refresh.

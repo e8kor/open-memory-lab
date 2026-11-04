@@ -26,8 +26,10 @@ use axum::response::Response;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+use oml_app::app::Caller;
+use oml_app::domain::oauth::{ChallengeCause, Issuer, TokenKind, mcp_challenge, token_kind};
 use oml_app::domain::sha256_digest_string;
-use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer};
+use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer};
 use oml_app::types::{AppError, KeyRecord};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -198,7 +200,7 @@ struct WorkareaInfoArgs {
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -206,11 +208,19 @@ where
 {
     pub(crate) async fn mcp(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
         let rid = new_request_id();
-        // No anonymous call, `tools/list` included: the key is resolved
-        // before any message is read (mcp-plugin.md "Authentication").
-        let (token, key) = match Self::mcp_key(&st, &headers).await {
+        // No anonymous call, `tools/list` included: the key or the access
+        // token is resolved before any message is read (mcp-plugin.md
+        // "Authentication"), and a `401` carries the challenge (ADR-0031 d2).
+        let (token, key, connection) = match Self::mcp_key(&st, &headers).await {
             Ok(resolved) => resolved,
-            Err(e) => return finish(&rid, Err(e)),
+            Err(e) => {
+                let missing = e.code == "auth.missing";
+                return challenged(finish(&rid, Err(e)), st.app.oauth_issuer(), missing);
+            }
+        };
+        let presented = Presented {
+            token: &token,
+            connection: connection.as_ref(),
         };
         // A revision the facade does not speak is a 400; an absent header
         // means 2025-03-26, whose stateless JSON shape this one shares.
@@ -280,24 +290,38 @@ where
             "tools/list" => rpc_result(&id, &json!({ "tools": served_catalog() })),
             "tools/call" => match serde_json::from_value::<ToolCall>(request.params) {
                 Err(_) => rpc_error(&id, INVALID_PARAMS, "tools/call takes {name, arguments}"),
-                Ok(call) => Self::call_tool(&st, &token, &key, &id, &rid, call).await,
+                Ok(call) => Self::call_tool(&st, presented, &key, &id, &rid, call).await,
             },
             other => rpc_error(&id, METHOD_NOT_FOUND, &format!("method not found: {other}")),
         };
         finish(&rid, Ok(response))
     }
 
-    /// The bearer key, resolved against the journal's key fold, and its
-    /// record.
-    async fn mcp_key(st: &Self, headers: &HeaderMap) -> Result<(String, KeyRecord), ApiError> {
+    /// What `Authorization: Bearer` presents, resolved: a key value
+    /// against the journal's key fold, or a connection's access token to
+    /// the caller of the live connection's key, which then rides every ring
+    /// call in the value's place (ADR-0031 d10, d11). Any other token,
+    /// a refresh token included, is read as a key value and names none.
+    async fn mcp_key(
+        st: &Self,
+        headers: &HeaderMap,
+    ) -> Result<(String, KeyRecord, Option<Caller>), ApiError> {
         let token = bearer(headers)?;
+        if token_kind(&token) == Some(TokenKind::Access) {
+            let caller = st
+                .app
+                .resolve_access_token(&token)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            return Ok((token, caller.key().clone(), Some(caller)));
+        }
         let key = st
             .store
             .key_by_hash(&sha256_digest_string(token.as_bytes()))
             .await
             .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
             .ok_or_else(|| ApiError::auth_invalid("unknown"))?;
-        Ok((token, key))
+        Ok((token, key, None))
     }
 
     /// One `tools/call`. A tool that is not served is a protocol fault,
@@ -306,7 +330,7 @@ where
     /// though `tools/list` names none of them (ADR-0039 d12).
     async fn call_tool(
         st: &Self,
-        token: &str,
+        presented: Presented<'_>,
         key: &KeyRecord,
         id: &Value,
         request_id: &str,
@@ -320,13 +344,13 @@ where
                 tenant_id: key.tenant_id,
                 request_id,
             };
-            let outcome = Self::call_alias(st, token, &caller, name, successor, args).await;
+            let outcome = Self::call_alias(st, presented, &caller, name, successor, args).await;
             return rpc_result(id, &tool_result(outcome, request_id));
         }
         let outcome = match name {
-            "oml_write" => Self::tool_write(st, token, args).await,
-            "oml_read" => Self::tool_read(st, token, args).await,
-            "oml_workarea" => Self::tool_workarea_info(st, token, args).await,
+            "oml_write" => Self::tool_write(st, presented, args).await,
+            "oml_read" => Self::tool_read(st, presented, args).await,
+            "oml_workarea" => Self::tool_workarea_info(st, presented, args).await,
             _ if DESIGNED_TOOLS.contains(&name) => {
                 return rpc_error(
                     id,
@@ -371,9 +395,9 @@ where
     /// `refuse_vocabulary_target`, so the ring refuses a vocabulary target
     /// and a workarea other than the target's. Each refusal is
     /// `request.validation` naming its field (ADR-0039 d3, ADR-0025 d16).
-    async fn tool_write(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_write(st: &Self, presented: Presented<'_>, args: Value) -> Result<Value, Value> {
         let args: WriteArgs = parse_args(args)?;
-        let mut headers = ring_headers(token);
+        let mut headers = ring_headers(presented);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
         let mut body = Map::new();
         body.insert("body".to_owned(), Value::String(args.text));
@@ -411,6 +435,7 @@ where
                 &headers,
                 &Bytes::from(Value::Object(body).to_string()),
                 true,
+                presented.connection,
             )
             .await;
             ("supersede", response)
@@ -438,9 +463,13 @@ where
                     body.insert(name.to_owned(), value);
                 }
             }
-            let response =
-                Self::submit_inner(st, &headers, &Bytes::from(Value::Object(body).to_string()))
-                    .await;
+            let response = Self::submit_inner(
+                st,
+                &headers,
+                &Bytes::from(Value::Object(body).to_string()),
+                presented.connection,
+            )
+            .await;
             ("submit", response)
         };
         let replayed = response
@@ -467,7 +496,7 @@ where
     /// the designed `lineage` and `depth` are each `request.validation`
     /// naming the field; every mode answers claim items with text under
     /// `mode` (ADR-0039 d4, ADR-0025 d12, d16).
-    async fn tool_read(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_read(st: &Self, presented: Presented<'_>, args: Value) -> Result<Value, Value> {
         let args: ReadArgs = parse_args(args)?;
         for (field, sent) in [
             ("lineage", args.lineage.is_some()),
@@ -523,9 +552,16 @@ where
             ));
         }
         let mut out = if let Some(artifact_id) = args.artifact_id {
-            let memory =
-                ring_outcome(Self::get_memory_inner(st, &artifact_id, &ring_headers(token)).await)
-                    .await?;
+            let memory = ring_outcome(
+                Self::get_memory_inner(
+                    st,
+                    &artifact_id,
+                    &ring_headers(presented),
+                    presented.connection,
+                )
+                .await,
+            )
+            .await?;
             json!({ "items": [get_item(&memory)] })
         } else if let Some(query) = args.query {
             let mut body = Map::new();
@@ -547,8 +583,9 @@ where
             let result = ring_outcome(
                 Self::recall_inner(
                     st,
-                    &ring_headers(token),
+                    &ring_headers(presented),
                     &Bytes::from(Value::Object(body).to_string()),
+                    presented.connection,
                 )
                 .await,
             )
@@ -572,7 +609,14 @@ where
                 }
             }
             let page = ring_outcome(
-                Self::list_memories_inner(st, &params, &ring_headers(token), true).await,
+                Self::list_memories_inner(
+                    st,
+                    &params,
+                    &ring_headers(presented),
+                    true,
+                    presented.connection,
+                )
+                .await,
             )
             .await?;
             listing_output(&page, true)
@@ -594,10 +638,20 @@ where
     /// answers with structure by its key role, reads its default the same
     /// way (mcp-plugin.md; roles-and-keys.md refusal order; ADR-0025 d14;
     /// ADR-0026 d15).
-    async fn tool_workarea_info(st: &Self, token: &str, args: Value) -> Result<Value, Value> {
+    async fn tool_workarea_info(
+        st: &Self,
+        presented: Presented<'_>,
+        args: Value,
+    ) -> Result<Value, Value> {
         let args: WorkareaInfoArgs = parse_args(args)?;
         let view = ring_outcome(
-            Self::get_workarea_inner(st, args.workarea.as_deref(), &ring_headers(token)).await,
+            Self::get_workarea_inner(
+                st,
+                args.workarea.as_deref(),
+                &ring_headers(presented),
+                presented.connection,
+            )
+            .await,
         )
         .await?;
         // The plugin's output names the parent `parent`; `crew` is null when
@@ -731,9 +785,21 @@ fn recall_item(m: &Value, score: Option<&Value>) -> Value {
     Value::Object(item)
 }
 
-fn ring_headers(token: &str) -> HeaderMap {
+/// The credential `/mcp` accepted, as each tool hands it to the ring
+/// handler it rides: the key value, carried in that handler's
+/// `Authorization`, or the caller a connection's access token resolved to,
+/// which the handler acts as and which no header carries (ADR-0031 d11).
+#[derive(Clone, Copy)]
+pub(crate) struct Presented<'a> {
+    token: &'a str,
+    pub(crate) connection: Option<&'a Caller>,
+}
+
+fn ring_headers(presented: Presented<'_>) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
+    if presented.connection.is_none()
+        && let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", presented.token))
+    {
         headers.insert(header::AUTHORIZATION, value);
     }
     headers.insert(
@@ -741,6 +807,29 @@ fn ring_headers(token: &str) -> HeaderMap {
         HeaderValue::from_static("application/json"),
     );
     headers
+}
+
+/// A refusal of `/mcp`'s credential, with the RFC 9728 challenge on its
+/// `401` (ADR-0031 d2): `auth.missing` (`missing`) answers the pointer and the scope,
+/// `auth.invalid` adds `error="invalid_token"`, and without `oauth.issuer`
+/// either is `Bearer realm="oml"`. Any other status, a store failure's
+/// `503` among them, is left as it is: Claude reads the challenge only on a
+/// `401`.
+fn challenged(mut response: Response, issuer: Option<&Issuer>, missing: bool) -> Response {
+    if response.status() != StatusCode::UNAUTHORIZED {
+        return response;
+    }
+    let cause = if missing {
+        ChallengeCause::Missing
+    } else {
+        ChallengeCause::CredentialFailed
+    };
+    if let Ok(value) = HeaderValue::from_str(&mcp_challenge(issuer, cause)) {
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, value);
+    }
+    response
 }
 
 fn insert_header(headers: &mut HeaderMap, name: &'static str, value: &str) -> Result<(), Value> {

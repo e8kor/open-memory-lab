@@ -37,6 +37,13 @@ from .client_registration_request_response_types_item import (
 from .client_registration_request_token_endpoint_auth_method import (
     ClientRegistrationRequestTokenEndpointAuthMethod,
 )
+from .connect_code import ConnectCode
+from .connection import Connection
+from .connection_client_kind import ConnectionClientKind
+from .connection_revoked_cause_type_1 import ConnectionRevokedCauseType1
+from .connection_revoked_cause_type_2_type_1 import ConnectionRevokedCauseType2Type1
+from .connection_revoked_cause_type_3_type_1 import ConnectionRevokedCauseType3Type1
+from .connection_state import ConnectionState
 from .crew import Crew
 from .crew_create import CrewCreate
 from .crew_page import CrewPage
@@ -58,6 +65,7 @@ from .health import Health
 from .journal_event import JournalEvent
 from .journal_event_payload import JournalEventPayload
 from .key import Key
+from .key_credential import KeyCredential
 from .key_held_by_type_1 import KeyHeldByType1
 from .key_held_by_type_2_type_1 import KeyHeldByType2Type1
 from .key_held_by_type_3_type_1 import KeyHeldByType3Type1
@@ -92,6 +100,7 @@ from .recall_request_kinds_item import RecallRequestKindsItem
 from .recall_response import RecallResponse
 from .recall_response_hits_item import RecallResponseHitsItem
 from .review_next_body import ReviewNextBody
+from .revoke_connection_body import RevokeConnectionBody
 from .role import Role
 from .serve import Serve
 from .served_digests import ServedDigests
@@ -155,6 +164,13 @@ __all__ = (
     "ClientRegistrationRequestGrantTypesItem",
     "ClientRegistrationRequestResponseTypesItem",
     "ClientRegistrationRequestTokenEndpointAuthMethod",
+    "ConnectCode",
+    "Connection",
+    "ConnectionClientKind",
+    "ConnectionRevokedCauseType1",
+    "ConnectionRevokedCauseType2Type1",
+    "ConnectionRevokedCauseType3Type1",
+    "ConnectionState",
     "Crew",
     "CrewCreate",
     "CrewPage",
@@ -176,6 +192,7 @@ __all__ = (
     "JournalEvent",
     "JournalEventPayload",
     "Key",
+    "KeyCredential",
     "KeyHeldByType1",
     "KeyHeldByType2Type1",
     "KeyHeldByType3Type1",
@@ -206,6 +223,7 @@ __all__ = (
     "RecallResponse",
     "RecallResponseHitsItem",
     "ReviewNextBody",
+    "RevokeConnectionBody",
     "Role",
     "Serve",
     "ServedDigests",

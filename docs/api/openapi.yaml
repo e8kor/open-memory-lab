@@ -53,8 +53,10 @@ info:
     where the deployment sets oauth.issuer: the RFC 9728 and RFC 8414 discovery documents and the
     /oauth/* endpoints are served unversioned, unauthenticated and outside both rings, speaking
     their RFCs' wire shapes and carrying the oauth error family inside RFC error bodies; unset,
-    each answers 404 as an unknown path does. /mcp accepting a connection's access token, and the
-    connect-code and connection routes on /v2, are designed (openapi-designed.yaml).
+    each answers 404 as an unknown path does. /mcp, whose contract is docs/api/mcp-tools.json,
+    accepts a connection's access token beside a key and answers a 401 with the RFC 9728
+    challenge; the token is a credential nowhere else. The connect-code and connection routes
+    under /v2/keys are served whether or not oauth.issuer is set, minting a code only where it is.
 servers:
   - url: /
     description: Deployment-relative; OML is deployed per installation, there is no central host.
@@ -766,7 +768,7 @@ paths:
       tags: [keys]
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
-      description: 'Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).'
+      description: 'Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value''s place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a retried issuance answers name.taken and its code is minted again with oml keys connect-code.'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -928,6 +930,73 @@ paths:
                 epoch: 10
                 lifted: false
               schema: { $ref: '#/components/schemas/Denial' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/keys/{key}/connect-codes:
+    post:
+      tags: [keys]
+      operationId: mintConnectCode
+      summary: Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
+      description: 'Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key''s earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting.'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '201':
+          description: The connect code, shown once.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              example:
+                code_id: 1f0d2c7e-3a4b-4c5d-9e6f-7a8b9c0d1e2f
+                code: 7KQ2-M9XD-4TPA
+                expires_at: '2026-10-31T14:13:00Z'
+                connector_url: https://oml.example.com/mcp
+              schema: { $ref: '#/components/schemas/ConnectCode' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/keys/{key}/connections/{connection_id}/revoke:
+    post:
+      tags: [keys]
+      operationId: revokeConnection
+      summary: Journalled revocation of one connection.
+      description: 'Requires: admin key role. Journals connection.revoked with cause admin, which ends the connection at its next request and voids the key''s codes as docs/architecture/roles-and-keys.md (Connections) declares (ADR-0031 d8, d11). An authorized connection is not journalled or listed, and naming one answers 404 access.not_found, as an unknown id does. Served whether or not oauth.issuer is set.'
+      parameters:
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/ConnectionId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            example:
+              reason: phone lost
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, description: 'Why; the journal keeps its SHA-256 digest, never the text.' }
+      responses:
+        '200':
+          description: The connection, revoked.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              example:
+                connection_id: 6a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+                client_id: 8e2f4a6c-0b1d-4e3f-9a5b-7c9d1e3f5a7b
+                client_kind: dcr
+                redirect_uri: https://claude.ai/api/mcp/auth_callback
+                resource: https://oml.example.com/mcp
+                state: revoked
+                revoked_cause: admin
+              schema: { $ref: '#/components/schemas/Connection' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -1309,6 +1378,11 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/WorkareaRef' }
+    ConnectionId:
+      name: connection_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     KeyId:
       name: key
       in: path
@@ -1473,7 +1547,7 @@ components:
 
     ErrorCode:
       type: string
-      description: The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused is designed to answer on /v2 and oauth.attach_refused as an /mcp tool result, both in this envelope, once those routes are wired (ADR-0031, ADR-0039 d9).
+      description: The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
       enum:
         - auth.missing
         - auth.invalid
@@ -1982,6 +2056,7 @@ components:
         crew: { $ref: '#/components/schemas/CrewRef', description: "The key's crew record, by id or name, journalled as crew_id and fixed for the key's life; one that names no crew record of the tenant answers access.not_found at step 4 of the issuance order (ADR-0026 d8)." }
         label: { type: string, description: A free-text note; unique nowhere. }
         principal: { type: string, description: 'Who acts — the attribution identity, shared across one identity''s keys; free text.' }
+        connect_code: { type: boolean, default: false, description: "Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured)." }
 
     Key:
       type: object
@@ -2001,6 +2076,8 @@ components:
         grants: { type: array, items: { $ref: '#/components/schemas/Grant' } }
         denials: { type: array, items: { $ref: '#/components/schemas/Denial' } }
         epoch: { type: integer }
+        credential: { type: string, enum: [bearer, connection], description: "bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7)." }
+        connections: { type: array, items: { $ref: '#/components/schemas/Connection' }, description: "A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11)." }
 
     WhoamiRef:
       type: object
@@ -2066,9 +2143,32 @@ components:
       allOf:
         - { $ref: '#/components/schemas/Key' }
         - type: object
-          required: [value]
+          description: A fresh 201 carries exactly one of value (a bearer key) and connect_code (a connector key).
           properties:
             value: { type: string, description: "The secret — returned exactly once, journalled as issued-without-value." }
+            connect_code: { $ref: '#/components/schemas/ConnectCode' }
+
+    ConnectCode:
+      type: object
+      required: [code_id, expires_at, connector_url]
+      properties:
+        code_id: { type: string }
+        code: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$', description: 'Twelve Crockford base32 symbols (60 bits) in three groups of four — shown exactly once, never journalled, stored only as the SHA-256 of the normalized symbols (ADR-0031 d8).' }
+        expires_at: { type: string, format: date-time }
+        connector_url: { type: string, description: 'The URL to enter as the custom connector: <issuer>/mcp, from oauth.issuer, not from the address the CLI used.' }
+
+    Connection:
+      type: object
+      required: [connection_id, client_id, client_kind, redirect_uri, resource, state]
+      description: "One of a connector key's connections, never a token or a digest of one. Whether it is live, the client's name and its opening and revocation times are designed (docs/api/http-api.md, Keys)."
+      properties:
+        connection_id: { type: string }
+        client_id: { type: string, description: The metadata-document URL or the registered client id. }
+        client_kind: { type: string, enum: [cimd, dcr] }
+        redirect_uri: { type: string }
+        resource: { type: string, description: '<issuer>/mcp when the connection was created; its tokens work only while this is the current <issuer>/mcp.' }
+        state: { type: string, enum: [open, revoked] }
+        revoked_cause: { type: [string, 'null'], enum: [admin, refresh_reuse, code_reuse, replaced, null] }
 
     ProtectedResourceMetadata:
       type: object
@@ -2113,7 +2213,7 @@ components:
       type: object
       required: [access_token, token_type, expires_in, refresh_token, scope]
       properties:
-        access_token: { type: string, pattern: '^oml_at_[A-Za-z0-9]{43}$', description: 'Opaque; the server stores only its SHA-256. For /mcp alone, which accepts it once /mcp is wired to connections (designed, ADR-0031 d11).' }
+        access_token: { type: string, pattern: '^oml_at_[A-Za-z0-9]{43}$', description: 'Opaque; the server stores only its SHA-256. A credential at /mcp alone, where it acts as exactly its connection''s key (ADR-0031 d11).' }
         token_type: { type: string, enum: [Bearer] }
         expires_in: { type: integer, description: Seconds; the oauth.access_token_ttl setting. }
         refresh_token: { type: string, pattern: '^oml_rt_[A-Za-z0-9]{43}$', description: 'Opaque, single-use; rotated by every refresh.' }

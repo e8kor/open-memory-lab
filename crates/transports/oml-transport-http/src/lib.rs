@@ -41,19 +41,21 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::App;
+use oml_app::app::Caller;
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
+use oml_app::domain::oauth::ConnectionState;
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
     Signer, StoreError,
 };
 use oml_app::types::{
-    AppError, BootstrapRequest, CrewCreateRequest, CrewRecord, CrewUpdate, GrantRecord,
-    GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, NamedServe, RecallRequest,
-    ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict,
-    VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
+    AppError, Bearer, BootstrapRequest, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest,
+    CrewRecord, CrewUpdate, GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail,
+    ListRequest, NamedServe, RecallRequest, ServedMemory, SubmitRequest, SubmitVerb,
+    SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -81,6 +83,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/keys"),
     ("GET", "/v2/keys/{key}"),
     ("POST", "/v2/keys/{key}/denials"),
+    ("POST", "/v2/keys/{key}/connect-codes"),
+    ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke"),
     ("GET", "/v2/whoami"),
     ("POST", "/v2/crews"),
     ("GET", "/v2/crews"),
@@ -250,6 +254,10 @@ where
             ("POST", "/v2/keys") => post(Self::issue_key),
             ("GET", "/v2/keys/{key}") => get(Self::get_key),
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
+            ("POST", "/v2/keys/{key}/connect-codes") => post(Self::mint_connect_code),
+            ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke") => {
+                post(Self::revoke_connection)
+            }
             ("GET", "/v2/whoami") => get(Self::whoami),
             ("POST", "/v2/crews") => post(Self::create_crew),
             ("GET", "/v2/crews") => get(Self::list_crews),
@@ -268,7 +276,7 @@ where
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -364,16 +372,17 @@ where
 
     async fn submit(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
         let rid = new_request_id();
-        finish(&rid, Self::submit_inner(&st, &headers, &body).await)
+        finish(&rid, Self::submit_inner(&st, &headers, &body, None).await)
     }
 
     async fn submit_inner(
         st: &Self,
         headers: &HeaderMap,
         body: &Bytes,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "/workarea")?;
         let idem_key = idempotency_key(headers)?;
         let req: SubmitBody = parse_json(headers, body)?;
@@ -419,7 +428,7 @@ where
             workarea,
             derives_from: req.derives_from,
         };
-        let outcome = retry_chain(|| st.app.submit_memory(&token, &app_req))
+        let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let r = &outcome.receipt;
@@ -455,7 +464,9 @@ where
     ) -> Response {
         let rid = new_request_id();
         let result = match query {
-            Ok(Query(params)) => Self::list_memories_inner(&st, &params, &headers, false).await,
+            Ok(Query(params)) => {
+                Self::list_memories_inner(&st, &params, &headers, false, None).await
+            }
             Err(e) => Err(ApiError::validation(format!(
                 "the query string is not this operation's shape: {e}"
             ))),
@@ -476,13 +487,14 @@ where
         params: &[(String, String)],
         headers: &HeaderMap,
         include_text: bool,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "workarea")?;
         let req = list_request(params)?;
         let page = st
             .app
-            .list_memories(&token, &req)
+            .list_memories(acting.bearer(), &req)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -502,7 +514,7 @@ where
         let rid = new_request_id();
         finish(
             &rid,
-            Self::get_memory_inner(&st, &artifact_id, &headers).await,
+            Self::get_memory_inner(&st, &artifact_id, &headers, None).await,
         )
     }
 
@@ -513,8 +525,9 @@ where
         st: &Self,
         artifact_id: &str,
         headers: &HeaderMap,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, connection)?;
         if headers.contains_key(WORKAREA_HEADER) {
             return Err(ApiError::validation(
                 "X-OML-Workarea is refused on get: get resolves no workarea",
@@ -525,7 +538,7 @@ where
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let memory = st
             .app
-            .get_memory(&token, id)
+            .get_memory(acting.bearer(), id)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &memory_json(&memory, true)))
@@ -533,16 +546,17 @@ where
 
     async fn recall(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
         let rid = new_request_id();
-        finish(&rid, Self::recall_inner(&st, &headers, &body).await)
+        finish(&rid, Self::recall_inner(&st, &headers, &body, None).await)
     }
 
     async fn recall_inner(
         st: &Self,
         headers: &HeaderMap,
         body: &Bytes,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         // Read-shaped POST: no Idempotency-Key (http-api.md idempotency).
-        let token = bearer(headers)?;
+        let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "/workarea")?;
         // The body is closed: a field the server does not serve is refused,
         // never dropped (ADR-0025 d16), and a v0.3.0 spelling names its
@@ -590,7 +604,7 @@ where
         let result = st
             .app
             .recall(
-                &token,
+                acting.bearer(),
                 &RecallRequest {
                     query: req.query.clone(),
                     k,
@@ -643,7 +657,7 @@ where
         finish(
             &rid,
             // The ring supersedes a target of any kind (ADR-0025 d12).
-            Self::supersede_inner(&st, &artifact_id, &headers, &body, false).await,
+            Self::supersede_inner(&st, &artifact_id, &headers, &body, false, None).await,
         )
     }
 
@@ -659,9 +673,10 @@ where
         headers: &HeaderMap,
         body: &Bytes,
         refuse_vocabulary_target: bool,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "/workarea")?;
         let idem_key = idempotency_key(headers)?;
         let target_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
@@ -698,7 +713,7 @@ where
             workarea: optional_reference("/workarea", req.workarea.as_deref())?,
             refuse_vocabulary_target,
         };
-        let outcome = retry_chain(|| st.app.supersede(&token, &app_req))
+        let outcome = retry_chain(|| st.app.supersede(acting.bearer(), &app_req))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let r = &outcome.receipt;
@@ -956,8 +971,7 @@ where
             default_workarea,
             crew,
             grants,
-            // The `connect_code` member waits for ADR-0039's route rewrite.
-            connect_code: false,
+            connect_code: req.connect_code,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await
@@ -1065,7 +1079,7 @@ where
         let rid = new_request_id();
         finish(
             &rid,
-            Self::get_workarea_inner(&st, Some(&workarea_id), &headers).await,
+            Self::get_workarea_inner(&st, Some(&workarea_id), &headers, None).await,
         )
     }
 
@@ -1080,12 +1094,13 @@ where
         st: &Self,
         workarea_id: Option<&str>,
         headers: &HeaderMap,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, connection)?;
         let node = optional_reference("workarea", workarea_id)?;
         let info = st
             .app
-            .workarea_info(&token, node)
+            .workarea_info(acting.bearer(), node)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
@@ -1148,15 +1163,19 @@ where
         headers: HeaderMap,
     ) -> Response {
         let rid = new_request_id();
-        finish(&rid, Self::events_tail_inner(&st, &params, &headers).await)
+        finish(
+            &rid,
+            Self::events_tail_inner(&st, &params, &headers, None).await,
+        )
     }
 
     async fn events_tail_inner(
         st: &Self,
         params: &HashMap<String, String>,
         headers: &HeaderMap,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "workarea")?;
         if params.contains_key("workarea_id") {
             return Err(ApiError::renamed("workarea_id", "workarea"));
@@ -1180,7 +1199,7 @@ where
         let workarea = optional_reference("workarea", params.get("workarea").map(String::as_str))?;
         let page = st
             .app
-            .tail_events(&token, workarea, after_seq, limit)
+            .tail_events(acting.bearer(), workarea, after_seq, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // head_seq for measuring lag, next_after_seq to resume from, both
@@ -1292,7 +1311,95 @@ where
             .key(&token, key)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(StatusCode::OK, &key_json(&detail)))
+        // A connector key's open and revoked connections; a bearer key has
+        // none (ADR-0031 d11).
+        let connections = st
+            .app
+            .list_connections(&token, Reference::Id(detail.key.key_id))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &key_json(&detail, &connections),
+        ))
+    }
+
+    async fn mint_connect_code(
+        State(st): State<Self>,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(
+            &rid,
+            Self::mint_connect_code_inner(&st, &key_id, &headers).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key}/connect-codes`: a fresh connect code for a
+    /// connector key, by id or name, shown once; its commit voids the key's
+    /// earlier codes (http-api.md keys; ADR-0031 d7, d8).
+    async fn mint_connect_code_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        let code = retry_chain(|| st.app.mint_connect_code(&token, key.clone()))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::CREATED,
+            &connect_code_json(&code),
+        ))
+    }
+
+    async fn revoke_connection(
+        State(st): State<Self>,
+        Path((key_id, connection_id)): Path<(String, String)>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let rid = new_request_id();
+        finish(
+            &rid,
+            Self::revoke_connection_inner(&st, &key_id, &connection_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key}/connections/{connection_id}/revoke`: one
+    /// journalled `connection.revoked`, the key by id or name and the
+    /// connection by its id; served whether or not `oauth.issuer` is set,
+    /// and an `authorized` connection, like an unknown id, is
+    /// `access.not_found` (http-api.md keys; ADR-0031 d1, d11, d12).
+    async fn revoke_connection_inner(
+        st: &Self,
+        key_id: &str,
+        connection_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        // A connection has no name; anything but its id names none.
+        let connection_id = Uuid::parse_str(connection_id).map_err(|_| ApiError::not_found())?;
+        let req: ConnectionRevokeBody = if body.is_empty() {
+            ConnectionRevokeBody::default()
+        } else {
+            parse_json(headers, body)?
+        };
+        let revoked = retry_chain(|| {
+            st.app
+                .revoke_connection(&token, key.clone(), connection_id, req.reason.as_deref())
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &connection_json(&revoked)))
     }
 
     async fn whoami(State(st): State<Self>, headers: HeaderMap) -> Response {
@@ -1636,6 +1743,18 @@ struct KeyIssueBody {
     /// Parsed only to be refused while the first-admin-key path is unbuilt
     /// (ADR-0039 d9).
     tenant: Option<String>,
+    /// A connector key: no value, and a connect code in its place
+    /// (ADR-0031 d7).
+    #[serde(default)]
+    connect_code: bool,
+}
+
+/// The revoke body of `POST /v2/keys/{key}/connections/{connection_id}/revoke`,
+/// closed; absent, no reason is given.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct ConnectionRevokeBody {
+    reason: Option<String>,
 }
 
 /// openapi.yaml `DenialRequest`, closed, so a v0.3.0 spelling is refused
@@ -1845,6 +1964,31 @@ fn bearer(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(token.to_owned())
 }
 
+/// Who a handler acts as: the key value in `Authorization` on a ring route,
+/// or, where the facade dispatches for a connection, the caller its access
+/// token already resolved to at `/mcp`, so a token is never read as a
+/// credential on a ring route (ADR-0031 d10, d11).
+enum Acting<'a> {
+    Value(String),
+    Connection(&'a Caller),
+}
+
+impl Acting<'_> {
+    fn bearer(&self) -> Bearer<'_> {
+        match self {
+            Acting::Value(value) => Bearer::Key(value),
+            Acting::Connection(caller) => Bearer::Connection(caller),
+        }
+    }
+}
+
+fn acting<'a>(headers: &HeaderMap, connection: Option<&'a Caller>) -> Result<Acting<'a>, ApiError> {
+    match connection {
+        Some(caller) => Ok(Acting::Connection(caller)),
+        None => bearer(headers).map(Acting::Value),
+    }
+}
+
 fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     let value = headers
         .get("idempotency-key")
@@ -2007,7 +2151,7 @@ fn parse_grant_role(role: &str) -> Result<Role, ApiError> {
 /// and the value, shown once (ADR-0025 d2).
 fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
     let grants: Vec<Value> = issued.access.grants.iter().map(grant_json).collect();
-    json!({
+    let mut body = json!({
         "key_id": issued.key_id,
         "name": issued.name.as_str(),
         "role": issued.role.as_str(),
@@ -2022,9 +2166,43 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         "grants": grants,
         "denials": [],
         "epoch": issued.access.permission_epoch(),
+    });
+    match &issued.connect_code {
+        // A connector key has no value; its code stands in the value's
+        // place, shown once (ADR-0031 d7).
+        Some(code) => body["connect_code"] = connect_code_json(code),
         // Show-once: the value appears exactly here, journalled as
         // issued-without-value (D14).
-        "value": issued.value,
+        None => body["value"] = json!(issued.value),
+    }
+    body
+}
+
+/// openapi.yaml `ConnectCode`: the code shown once, its expiry and the URL
+/// to enter as the custom connector (ADR-0031 d7, d8).
+fn connect_code_json(code: &ConnectCodeIssued) -> Value {
+    json!({
+        "code_id": code.code_id,
+        "code": code.code,
+        "expires_at": code.expires_at.as_str(),
+        "connector_url": code.connector_url,
+    })
+}
+
+/// openapi.yaml `Connection`: one of a key's open or revoked connections,
+/// never a token or a digest of one (ADR-0031 d10, d11).
+fn connection_json(c: &ConnectionRecord) -> Value {
+    json!({
+        "connection_id": c.connection_id,
+        "client_id": c.client_id,
+        "client_kind": c.client_kind.as_str(),
+        "redirect_uri": c.redirect_uri,
+        "resource": c.resource,
+        "state": c.state.as_str(),
+        "revoked_cause": match c.state {
+            ConnectionState::Revoked(cause) => Value::from(cause.as_str()),
+            _ => Value::Null,
+        },
     })
 }
 
@@ -2054,10 +2232,12 @@ fn grant_json(g: &GrantRecord) -> Value {
 /// unbuilt, so `expiry` and `rotated_from` are null. Nothing stores the
 /// label, so the read omits `label` rather than serve a value it has not
 /// read.
-fn key_json(detail: &KeyDetail) -> Value {
+fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord]) -> Value {
     let key = &detail.key;
     json!({
         "key_id": key.key_id,
+        "credential": key.credential.as_str(),
+        "connections": connections.iter().map(connection_json).collect::<Vec<_>>(),
         "name": key.name.as_ref().map(Name::as_str),
         "role": key.role.as_str(),
         "principal": key.principal,

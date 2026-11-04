@@ -303,7 +303,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a retried issuance answers name.taken and its code is minted again with oml keys connect-code.
          */
         post: operations["issueKey"];
         delete?: never;
@@ -366,6 +366,46 @@ export interface paths {
          * @description Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/{key}/connect-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
+         * @description Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting.
+         */
+        post: operations["mintConnectCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/{key}/connections/{connection_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Journalled revocation of one connection.
+         * @description Requires: admin key role. Journals connection.revoked with cause admin, which ends the connection at its next request and voids the key's codes as docs/architecture/roles-and-keys.md (Connections) declares (ADR-0031 d8, d11). An authorized connection is not journalled or listed, and naming one answers 404 access.not_found, as an unknown id does. Served whether or not oauth.issuer is set.
+         */
+        post: operations["revokeConnection"];
         delete?: never;
         options?: never;
         head?: never;
@@ -553,7 +593,7 @@ export interface components {
         /** @enum {string} */
         Role: "reader" | "writer" | "dreamer" | "admin" | "operator";
         /**
-         * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused is designed to answer on /v2 and oauth.attach_refused as an /mcp tool result, both in this envelope, once those routes are wired (ADR-0031, ADR-0039 d9).
+         * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
         ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
@@ -950,6 +990,11 @@ export interface components {
             label?: string;
             /** @description Who acts — the attribution identity, shared across one identity's keys; free text. */
             principal?: string;
+            /**
+             * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured).
+             * @default false
+             */
+            connect_code?: boolean;
         };
         Key: {
             key_id: string;
@@ -976,6 +1021,13 @@ export interface components {
             grants?: components["schemas"]["Grant"][];
             denials?: components["schemas"]["Denial"][];
             epoch?: number;
+            /**
+             * @description bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7).
+             * @enum {string}
+             */
+            credential?: "bearer" | "connection";
+            /** @description A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11). */
+            connections?: components["schemas"]["Connection"][];
         };
         /** @description A row the calling key's record references, by its id and its name (ADR-0039 d15). */
         WhoamiRef: {
@@ -1022,7 +1074,32 @@ export interface components {
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
-            value: string;
+            value?: string;
+            connect_code?: components["schemas"]["ConnectCode"];
+        };
+        ConnectCode: {
+            code_id: string;
+            /** @description Twelve Crockford base32 symbols (60 bits) in three groups of four — shown exactly once, never journalled, stored only as the SHA-256 of the normalized symbols (ADR-0031 d8). */
+            code?: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description The URL to enter as the custom connector: <issuer>/mcp, from oauth.issuer, not from the address the CLI used. */
+            connector_url: string;
+        };
+        /** @description One of a connector key's connections, never a token or a digest of one. Whether it is live, the client's name and its opening and revocation times are designed (docs/api/http-api.md, Keys). */
+        Connection: {
+            connection_id: string;
+            /** @description The metadata-document URL or the registered client id. */
+            client_id: string;
+            /** @enum {string} */
+            client_kind: "cimd" | "dcr";
+            redirect_uri: string;
+            /** @description <issuer>/mcp when the connection was created; its tokens work only while this is the current <issuer>/mcp. */
+            resource: string;
+            /** @enum {string} */
+            state: "open" | "revoked";
+            /** @enum {string|null} */
+            revoked_cause?: "admin" | "refresh_reuse" | "code_reuse" | "replaced" | null;
         };
         ProtectedResourceMetadata: {
             /** @description Exactly <issuer>/mcp (RFC 9728 §3.3). */
@@ -1068,7 +1145,7 @@ export interface components {
             scope?: "mcp";
         };
         TokenResponse: {
-            /** @description Opaque; the server stores only its SHA-256. For /mcp alone, which accepts it once /mcp is wired to connections (designed, ADR-0031 d11). */
+            /** @description Opaque; the server stores only its SHA-256. A credential at /mcp alone, where it acts as exactly its connection's key (ADR-0031 d11). */
             access_token: string;
             /** @enum {string} */
             token_type: "Bearer";
@@ -1235,6 +1312,7 @@ export interface components {
         Cursor: string;
         ArtifactId: string;
         WorkareaId: components["schemas"]["WorkareaRef"];
+        ConnectionId: string;
         KeyId: components["schemas"]["KeyRef"];
         CrewId: components["schemas"]["CrewRef"];
     };
@@ -2408,6 +2486,96 @@ export interface operations {
                     "application/json": components["schemas"]["Denial"];
                 };
             };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    mintConnectCode: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connect code, shown once. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code_id": "1f0d2c7e-3a4b-4c5d-9e6f-7a8b9c0d1e2f",
+                     *       "code": "7KQ2-M9XD-4TPA",
+                     *       "expires_at": "2026-10-31T14:13:00Z",
+                     *       "connector_url": "https://oml.example.com/mcp"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConnectCode"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeConnection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+                connection_id: components["parameters"]["ConnectionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "phone lost"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description Why; the journal keeps its SHA-256 digest, never the text. */
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The connection, revoked. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "connection_id": "6a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+                     *       "client_id": "8e2f4a6c-0b1d-4e3f-9a5b-7c9d1e3f5a7b",
+                     *       "client_kind": "dcr",
+                     *       "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
+                     *       "resource": "https://oml.example.com/mcp",
+                     *       "state": "revoked",
+                     *       "revoked_cause": "admin"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Connection"];
+                };
+            };
+            404: components["responses"]["NotFound"];
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };
