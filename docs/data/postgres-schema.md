@@ -478,7 +478,7 @@ CREATE INDEX claim_edges_listing ON claim_edges (tenant_id, created_at DESC, id 
   the ratification transaction's. `claim_edges_ratified_has_ratifier` makes a row ratified
   exactly when it names a ratifier. Each refuses with `23514`.
 - **Order.** `created_at` is the `at` of the edge's `claim_edge.proposed` event, and
-  `GET /v2/claim-edges` lists by it newest first, then by `id` descending, as every list
+  `GET /v2/edges?kind=claim` lists by it newest first, then by `id` descending, as every list
   endpoint does ([http-api.md](../api/http-api.md#pagination)).
 - **States.** `pending` and `ratified` only. A `rejected` state and a `term_curie` column belong
   to ADR-0027, which is not accepted; the domain's `EdgeState::Rejected` is not stored.

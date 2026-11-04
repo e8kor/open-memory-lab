@@ -11475,7 +11475,7 @@ async fn of_two_ratifications_racing_to_close_an_is_a_cycle_one_commits_and_the_
 }
 
 // ---------------------------------------------------------------------------
-// The claim-edge read: GET /v2/claim-edges behind its use case (http-api.md,
+// The claim-edge read: GET /v2/edges?kind=claim behind its use case (http-api.md,
 // claim edges and pagination; ADR-0008 d5)
 // ---------------------------------------------------------------------------
 
