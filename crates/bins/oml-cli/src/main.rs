@@ -2569,32 +2569,44 @@ fn owner_only_dir(path: &std::path::Path) -> Result<(), CliError> {
 // oml setup claude-code
 // ---------------------------------------------------------------------------
 
-/// The pair `oml setup claude-code` hands the plugin: `--key-file`'s key
-/// with the `--url` flag, a flag source of its own, or the pair as
-/// [`resolve`] takes it (ADR-0039 d15, ADR-0041 d7 step 1).
+/// The pair `oml setup claude-code` hands the plugin, and whether its URL is
+/// the default: `--key-file`'s key with the `--url` flag, a flag source of
+/// its own, or the pair as [`resolve`] takes it (ADR-0039 d15, ADR-0041 d7
+/// step 1). A key named without a URL, by either form, is paired with
+/// [`oml_cli::setup::DEFAULT_URL`] and the verb says so on stderr before
+/// anything is sent; a URL named without a key is refused (ADR-0043 d4).
 fn setup_pair(
     cli: &Cli,
     stored: &Credentials,
     key_file: Option<&std::path::Path>,
-) -> Result<(Client, String), CliError> {
+) -> Result<(Client, String, bool), CliError> {
+    use oml_cli::setup::url_beside_key;
+    let beside = |named: Option<&String>| {
+        let (url, said) = url_beside_key(named.map(String::as_str));
+        if let Some(said) = said {
+            eprintln!("{said}");
+        }
+        (url, said.is_some())
+    };
     let Some(path) = key_file else {
-        let client = resolve(cli, stored)?;
-        let key = first_source(cli, stored)
-            .and_then(|s| s.key.cloned())
-            .ok_or_else(|| missing(NO_PAIR))?;
-        return Ok((client, key));
+        return match first_source(cli, stored) {
+            Some(Source {
+                url,
+                key: Some(key),
+                ..
+            }) => {
+                let (url, defaulted) = beside(url);
+                Ok((Client::new(url, Some(key.clone())), key.clone(), defaulted))
+            }
+            Some(source) => Err(missing(&source.half())),
+            None => Err(missing(NO_PAIR)),
+        };
     };
     if cli.start.flag_key.is_some() {
         return Err(CliError::local(
             "refused: --key-file with --api-key, which each name the key; nothing was sent",
         ));
     }
-    let url = cli.start.flag_url.clone().ok_or_else(|| {
-        CliError::local(
-            "refused: --key-file is set without --url, and a key is sent only to the URL given \
-             beside it; nothing was sent (ADR-0039 d15)",
-        )
-    })?;
     let text = std::fs::read_to_string(path)
         .map_err(|e| CliError::local(format!("cannot read {}: {e}", path.display())))?;
     let key = text.trim_end_matches(['\n', '\r']);
@@ -2604,7 +2616,12 @@ fn setup_pair(
             path.display()
         )));
     }
-    Ok((Client::new(url, Some(key.to_owned())), key.to_owned()))
+    let (url, defaulted) = beside(cli.start.flag_url.as_ref());
+    Ok((
+        Client::new(url, Some(key.to_owned())),
+        key.to_owned(),
+        defaulted,
+    ))
 }
 
 /// `oml setup claude-code` (ADR-0041 d7): check the key through whoami and
@@ -2618,8 +2635,12 @@ fn run_setup_claude_code(
     args: &SetupClaudeCodeArgs,
 ) -> Result<ExitCode, CliError> {
     use oml_cli::setup;
-    let (client, key) = setup_pair(cli, stored, args.key_file.as_deref())?;
-    let me = client.whoami()?;
+    let (client, key, defaulted) = setup_pair(cli, stored, args.key_file.as_deref())?;
+    let me = client.whoami().inspect_err(|_| {
+        if defaulted {
+            eprintln!("{}", setup::DEFAULT_REFUSED);
+        }
+    })?;
     let role = me["role"].as_str().unwrap_or_default();
     if setup::refuses_role(role) {
         return Err(CliError::local(format!(

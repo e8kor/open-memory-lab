@@ -34,27 +34,38 @@ verify is not a release.
 
 ## Before you start
 
-Every configuration starts from one pair, the server's address in `OML_URL` and the agent's key
-in `OML_API_KEY`, the same two the `oml` CLI and the session-start hook read; none holds a key.
-Issue the key with `oml keys issue-agent`, which gives it a writer grant and a reader grant on
-the agent's workarea. Check the pair first with `oml login`, which stores it only when the server
-accepts the key, then export both in the shell that starts the tool:
+Every configuration connects to the maintainer's public server, `https://memory.doublegate.io`,
+unless you change it, and reads the agent's key from `OML_API_KEY`; none holds a key. Since
+v0.4.1, a key from that server is the only setting a tool needs. Ask its administrator for an
+agent key, then export it in the shell that starts the tool:
 
 ```sh
-oml login http://127.0.0.1:8080             # once: paste the key; nothing is stored on a refusal
-export OML_URL=http://127.0.0.1:8080        # the server's address, without /mcp
 export OML_API_KEY=oml_...                  # this agent's one key
 ```
 
+Every configuration names `https://memory.doublegate.io/mcp` as written, because Codex CLI, VS Code
+and Claude Desktop document no variable inside a URL, and Cursor and Gemini CLI would leave an unset
+`OML_URL` as `/mcp`. For your own server, replace `https://memory.doublegate.io` with its address,
+keeping `/mcp`: the same one edit in the OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude
+Desktop configurations. A key sent to the wrong server is refused there with `401 auth.invalid`,
+and the tool gets no OML tools from it; the operator of the server it reached has seen the key, so treat
+it as exposed.
+
+Issue a key on your own server with `oml keys issue-agent`, which gives it a writer grant and a
+reader grant on the agent's workarea. Check it first with `oml login <url>`, which stores the pair
+only when the server accepts the key. The `oml` CLI and the session-start hook take no default
+server, so beside the key they need `OML_URL`, the server's address without `/mcp`:
+
+```sh
+oml login https://oml.example.com          # once: paste the key; nothing is stored on a refusal
+export OML_URL=https://oml.example.com     # for the oml CLI and the Gemini CLI hook only
+```
+
+On the public server, the Gemini CLI hook needs `export OML_URL=https://memory.doublegate.io`
+beside the key; the MCP tools do not.
+
 Give each agent its own key. Attribution, and the rule that a reviewer never reviews their own
 work, both depend on it.
-
-Cursor and Gemini CLI expand a variable inside a URL, so their configurations reach
-`${OML_URL}/mcp` and need no edit.
-
-OpenAI Codex CLI, VS Code and Claude Desktop document no such expansion, so their configurations
-name `http://127.0.0.1:8080/mcp`: replace `http://127.0.0.1:8080` there with your server's
-address, keeping `/mcp`.
 
 ## The tools
 
@@ -74,8 +85,7 @@ with no variable expansion, so the URL is the one edit
 
 Copy `cursor/.cursor/mcp.json` to `.cursor/mcp.json` in your project, or merge its `oml` entry
 into `~/.cursor/mcp.json` for every project. Cursor resolves `${env:NAME}` in `command`, `args`,
-`env`, `url` and `headers`, so the entry reaches `${env:OML_URL}/mcp` with
-`Bearer ${env:OML_API_KEY}`
+`env`, `url` and `headers`, so the entry sends `Bearer ${env:OML_API_KEY}` to the URL it names
 ([Cursor MCP documentation](https://cursor.com/docs/context/mcp), fetched 2026-11-04).
 
 Cursor documents a `sessionStart` hook, but its output field is `additional_context` and its input
@@ -93,8 +103,8 @@ Merge `gemini/.gemini/settings.json` into `~/.gemini/settings.json`, or into
 fetched 2026-11-03), and resolves `$VAR` or `${VAR}` in string values of `settings.json` when
 it loads the file
 ([configuration reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md),
-fetched 2026-11-04), so `${OML_URL}/mcp` becomes the endpoint and `Bearer ${OML_API_KEY}` the
-key. That page states the rule for string values in general and does not name `httpUrl`.
+fetched 2026-11-04), so `Bearer ${OML_API_KEY}` becomes the key. That page states the rule for
+string values in general and does not name `headers`.
 
 The same file wires a `SessionStart` hook to the command the Claude Code plugin runs:
 `oml hook session-start`, guarded so that without `oml` on `PATH` it exits 0 in silence and a
@@ -103,8 +113,10 @@ failing `oml` still exits 0. Gemini CLI fires `SessionStart` on startup, resume 
 `timeout` is in milliseconds, here 10000
 ([hooks](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/index.md) and
 [hooks reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md),
-fetched 2026-11-03). The hook needs the `oml` CLI on `PATH` and reads the same `OML_URL` and
-`OML_API_KEY`. Gemini CLI warns before it
+fetched 2026-11-03). The hook needs the `oml` CLI on `PATH` and reads `OML_URL` and
+`OML_API_KEY`, and takes no default server: without `OML_URL` it loads no context, and with it the
+configuration's `httpUrl` must name the same server, or the tools and the hook reach different
+ones. Gemini CLI warns before it
 runs a project hook it has not seen. Unverified: which shell Gemini CLI runs the command in, so
 whether the POSIX guard works on Windows; the pages do not say.
 

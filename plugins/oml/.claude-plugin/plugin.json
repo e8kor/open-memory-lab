@@ -13,8 +13,8 @@
     "url": {
       "type": "string",
       "title": "OML server URL",
-      "description": "Your Open Memory Lab server, without /mcp, for example https://oml.example.com",
-      "required": true
+      "description": "Your Open Memory Lab server, without /mcp. Leave the default to use the maintainer's public server.",
+      "default": "https://memory.doublegate.io"
     },
     "api_key": {
       "type": "string",

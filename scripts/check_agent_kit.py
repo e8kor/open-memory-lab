@@ -1,5 +1,6 @@
 """The release's agent artifacts package what the repository holds, and the
-kit's configurations reach /mcp with a bearer key from the environment.
+kit's configurations reach the default server's /mcp with a bearer key from
+the environment.
 
 Run by .github/workflows/ci.yml (job plugin). Builds every artifact
 scripts/package_agent_artifacts.py writes into a temporary directory, reads
@@ -18,12 +19,14 @@ each archive back, and fails with every disagreement found:
 - every configuration declares exactly one server, oml, whose URL ends in
   /mcp, and whose bearer key is OML_API_KEY taken from the environment in that
   tool's documented form; no file in either archive holds a literal key;
-- every configuration reads its URL from OML_URL, as `<expansion>/mcp`, where
-  the tool documents expanding a variable in a URL (Cursor and Gemini CLI),
-  and names the literal http://127.0.0.1:8080/mcp where it does not (Codex,
-  VS Code and Claude Desktop) (ADR-0039 d15);
-- the kit README's "Before you start" exports OML_URL and OML_API_KEY and
-  names the URL edit only for the tools that cannot expand it;
+- every configuration names the maintainer's public server,
+  https://memory.doublegate.io/mcp, the default of every integration a
+  release ships, which is DEFAULT_URL in crates/bins/oml-cli/src/setup.rs
+  with /mcp, and none reads OML_URL, which an unset variable would leave as
+  /mcp (ADR-0043 d1, d6);
+- the kit README's "Before you start" exports OML_API_KEY, exports no
+  OML_URL with /mcp, and names the one URL edit for every tool in one
+  paragraph;
 - the AGENTS.md block is, section for section, the text of the oml plugin's
   skill;
 - the Gemini CLI SessionStart hook runs the oml plugin's own SessionStart
@@ -48,16 +51,16 @@ KEY = pkg.KEY_VAR
 # An OML key's shape: `oml_` and a long run of key characters. A tool name
 # such as oml_workarea breaks the run at its underscores.
 LITERAL_KEY = re.compile(r"\boml_[A-Za-z0-9-]{16,}")
-LITERAL_URL = "http://127.0.0.1:8080/mcp"
-# Each configuration's URL, by the tool's documentation as kit/README.md cites
-# it: Cursor resolves ${env:NAME} in `url`, Gemini CLI resolves ${VAR} in every
-# string of settings.json, and Codex, VS Code and Claude Desktop (through
-# mcp-remote) document no expansion in a URL. Written out here, not read from
-# package_agent_artifacts.py, so the check does not agree with itself.
+# The default server's endpoint, which every configuration names (ADR-0043
+# d6). Written out here, not read from package_agent_artifacts.py, so the
+# check does not agree with itself; the_default_url_is_the_clis checks it
+# against setup.rs.
+LITERAL_URL = "https://memory.doublegate.io/mcp"
+SETUP_RS = Path(__file__).resolve().parent.parent / "crates/bins/oml-cli/src/setup.rs"
 EXPECTED_URL = {
     "codex/config.toml": LITERAL_URL,
-    "cursor/.cursor/mcp.json": "${env:OML_URL}/mcp",
-    "gemini/.gemini/settings.json": "${OML_URL}/mcp",
+    "cursor/.cursor/mcp.json": LITERAL_URL,
+    "gemini/.gemini/settings.json": LITERAL_URL,
     "vscode/.vscode/mcp.json": LITERAL_URL,
     "claude-desktop/claude_desktop_config.json": LITERAL_URL,
 }
@@ -91,6 +94,7 @@ def main() -> int:
         for path, data in files.items():
             if LITERAL_KEY.search(data.decode("utf-8", "replace")):
                 errors.append(f"{name} archive: {path} holds what looks like a literal key")
+    the_default_url_is_the_clis(errors)
     check_plugins(errors, plugins)
     check_pinned(errors, pinned, version)
     check_kit(errors, kit)
@@ -208,8 +212,8 @@ def check_kit(errors: list[str], files: dict) -> None:
     if "env" in desktop.get("oml", {}):
         errors.append("claude_desktop_config.json: the oml entry sets env, where a key would be literal")
 
-    every_configuration_reads_its_url_from_oml_url_where_the_tool_expands_a_variable_in_a_url(errors, text)
-    the_kit_readme_names_the_url_edit_only_for_tools_that_cannot_expand_it(errors, files["README.md"].decode())
+    every_configuration_names_the_default_server(errors, text)
+    the_kit_readme_names_the_one_url_edit_for_every_tool(errors, files["README.md"].decode())
     check_agents(errors, files["AGENTS.md"].decode())
     check_gemini_hook(errors, json.loads(text["gemini/.gemini/settings.json"]))
 
@@ -218,7 +222,7 @@ def server_checks(errors: list[str], path: str, servers: dict, url_field: str) -
     if list(servers) != ["oml"]:
         errors.append(f"{path}: declares {sorted(servers)}, not exactly the one server oml")
     url = str(servers.get("oml", {}).get(url_field, ""))
-    if not re.fullmatch(r"(https?://[^/\s]+|\$\{(env:)?OML_URL\})/mcp", url):
+    if not re.fullmatch(r"https://[^/\s]+/mcp", url):
         errors.append(f"{path}: {url_field} {url!r} is not a server's /mcp endpoint")
 
 
@@ -238,15 +242,23 @@ def config_url(path: str, text: str) -> str | None:
     return json.loads(text)[top].get("oml", {}).get(field)
 
 
-def every_configuration_reads_its_url_from_oml_url_where_the_tool_expands_a_variable_in_a_url(
-    errors: list[str], text: dict
-) -> None:
+def the_default_url_is_the_clis(errors: list[str]) -> None:
+    """The kit's endpoint is DEFAULT_URL in setup.rs with /mcp, the server the
+    plugin, the hooks and `oml setup claude-code` default to (ADR-0043 d1)."""
+    match = re.search(r'pub const DEFAULT_URL: &str = "([^"]*)";', SETUP_RS.read_text())
+    if not match:
+        errors.append("DEFAULT_URL not found in crates/bins/oml-cli/src/setup.rs")
+    elif f"{match.group(1)}/mcp" != LITERAL_URL:
+        errors.append(f"setup.rs DEFAULT_URL {match.group(1)!r} with /mcp is not the kit's {LITERAL_URL!r} (ADR-0043 d1)")
+
+
+def every_configuration_names_the_default_server(errors: list[str], text: dict) -> None:
     for path, expected in sorted(EXPECTED_URL.items()):
         got = config_url(path, text[path])
         if got != expected:
-            errors.append(f"{path}: the server URL is {got!r}, not {expected!r} (ADR-0039 d15)")
-        if expected != LITERAL_URL and LITERAL_URL in text[path]:
-            errors.append(f"{path}: names the literal {LITERAL_URL} although the tool expands OML_URL")
+            errors.append(f"{path}: the server URL is {got!r}, not {expected!r} (ADR-0043 d6)")
+        if "OML_URL" in text[path]:
+            errors.append(f"{path}: reads OML_URL, which an unset variable leaves as /mcp (ADR-0043 d6)")
 
 
 def readme_section(readme: str, heading: str) -> str:
@@ -254,29 +266,24 @@ def readme_section(readme: str, heading: str) -> str:
     return match.group(1) if match else ""
 
 
-def the_kit_readme_names_the_url_edit_only_for_tools_that_cannot_expand_it(errors: list[str], readme: str) -> None:
+def the_kit_readme_names_the_one_url_edit_for_every_tool(errors: list[str], readme: str) -> None:
     where = "kit README"
     start = readme_section(readme, "Before you start")
     if not start:
         errors.append(f"{where}: has no 'Before you start' section")
         return
-    for var in ("OML_URL", KEY):
-        if not re.search(rf"^export {var}=", start, re.M):
-            errors.append(f"{where}: 'Before you start' does not export {var}")
+    if not re.search(rf"^export {KEY}=", start, re.M):
+        errors.append(f"{where}: 'Before you start' does not export {KEY}")
     edits = [p for p in re.split(r"\n\s*\n", start) if LITERAL_URL in p]
     if len(edits) != 1:
         errors.append(f"{where}: 'Before you start' names {LITERAL_URL} in {len(edits)} paragraphs, not one")
         return
-    edit = edits[0]
-    for path, expected in sorted(EXPECTED_URL.items()):
+    for path in sorted(EXPECTED_URL):
         tool = TOOL_NAME[path]
-        named = re.search(rf"(?<![\w-]){re.escape(tool)}(?![\w-])", edit) is not None
-        if expected == LITERAL_URL and not named:
-            errors.append(f"{where}: the URL edit does not name {tool}, which cannot expand OML_URL")
-        if expected != LITERAL_URL and named:
-            errors.append(f"{where}: the URL edit names {tool}, which reads OML_URL")
+        if re.search(rf"(?<![\w-]){re.escape(tool)}(?![\w-])", edits[0]) is None:
+            errors.append(f"{where}: the URL edit does not name {tool}, whose configuration names the default")
     if re.search(r"OML_URL=\S*/mcp\b", start):
-        errors.append(f"{where}: exports OML_URL with /mcp, which every configuration appends itself")
+        errors.append(f"{where}: exports OML_URL with /mcp, which the CLI and the hook append themselves")
 
 
 def check_agents(errors: list[str], text: str) -> None:
@@ -312,8 +319,8 @@ def report(errors: list[str]) -> int:
     if not errors:
         print(
             "agent kit check: the plugin archive installs offline, the pinned marketplace names the tag,"
-            " and every kit configuration reaches /mcp with OML_API_KEY from the environment,"
-            " from OML_URL where its tool expands a variable in a URL"
+            " and every kit configuration reaches the default server's /mcp with OML_API_KEY from the"
+            " environment"
         )
     return 1 if errors else 0
 
