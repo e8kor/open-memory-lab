@@ -62,8 +62,9 @@ OML sits between your crews and their memory and makes the write path accountabl
   tracked.
 
 Agents connect over a standard HTTP plugin interface; humans administer the system entirely from
-a command-line tool. There is no web console — that is a deliberate choice, examined in the
-[review guide](review-guide.md).
+a command-line tool. There is no web console today — that is a deliberate choice, examined in the
+[review guide](review-guide.md). Two web pages, one where people sign in to manage their own keys
+and memories and one for administrators, are planned for v0.5.0 ([releases](product/releases.md)).
 
 ## Honest status
 

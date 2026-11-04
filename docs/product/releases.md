@@ -41,8 +41,8 @@ Nothing in this section is released. Each row is the plan of 2026-11-03.
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
-| **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. A workarea of one's own for each person, created when their first key is issued, where their keys write, read and make workareas, so two people can each have a `project`; the organisation's shared area above them, read by everyone and written only by curators an administrator chooses, each copy reviewed by someone else and shown without its author or its source. Workareas and keys made before then stay where they are. | ADR-0037 (proposed); [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
-| **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. | ADR-0030 (proposed) |
+| **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. A workarea of one's own for each person, created when their first key is issued, where their keys write, read and make workareas, so two people can each have a `project`; the organisation's shared area above them, read by everyone and written only by curators an administrator chooses, each copy reviewed by someone else and shown without its author or its source. Workareas and keys made before then stay where they are. Two web pages on the server's own address, for people and never for agents: sign in with Google or GitHub, if an administrator has put the address on the organisation's list; on the user page, see and make your own agent keys and connect codes, read the setup steps for each agent tool, browse your memories and the shared area's, and make workareas of your own; on the admin page, keep the list, choose who reviews and who curates, see how many memories wait and for how long, and review, curate and replace memories, each act done by the person's own reviewer or curator identity, never the administrator's. | ADR-0037 (proposed); [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
+| **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. On the admin page, who wrote, derived and reviewed any one memory, without its text, and demoting a memory, which keeps it. | ADR-0030 (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part (proposed) |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
 Proposed records live on branches and draft pull requests until they are accepted:
@@ -50,7 +50,7 @@ ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0035
 ([#17](https://github.com/e8kor/open-memory-lab/pull/17)), ADR-0036
 ([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0037
-([#20](https://github.com/e8kor/open-memory-lab/pull/20)); ADR-0044 is on the branch `feat/user-roots`. The number ADR-0032 is not used by any record.
+([#20](https://github.com/e8kor/open-memory-lab/pull/20)); ADR-0044 is on the branch `feat/user-roots`, and ADR-0045 on `feat/web-console`. The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
@@ -63,7 +63,7 @@ them; revoking, rotating and expiring keys, and changing a key's grants after is
 policies per workarea and held writes that expire unreviewed; moving a workarea in the tree;
 the evidence export and checking the history against a running server; settings managed
 through the command line; plugins for checks, embedding models and export formats; and writing
-many memories in one request. A web console is declined, not deferred.
+many memories in one request. A web console beyond the two pages of ADR-0045 is declined, not deferred.
 
 ## Feature index
 
@@ -114,6 +114,9 @@ many memories in one request. A web console is declined, not deferred.
 | Labelled links between memories | planned for v0.5.0 |
 | A workarea of one's own for each person, and a curated shared area above them | built for v0.5.0 |
 | A brief for each workarea | planned for v0.5.0 |
+| Sign-in with Google or GitHub to a user page and an admin page | planned for v0.5.0 |
+| Review, curation and replacing memories from the admin page | planned for v0.5.0 |
+| Who wrote, derived and reviewed a memory, and demotion, on the admin page | planned for v0.6.0 |
 | In-progress workareas | planned for v0.6.0 |
 | Ontology crews, shared vocabularies | parked |
 | Deliverables and files on any memory | parked |
@@ -171,3 +174,4 @@ which part is still decided, not built.
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
 | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | proposed | Built for v0.5.0; accepted at that release. |
+| [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | proposed | Planned for v0.5.0 in part: sign-in, sessions, the email list, the user page, and review, curation and replacing memories on the admin page. The admin page's attribution view and demotion are planned for v0.6.0, since each waits for a verb that is not built. Decided, not built. |

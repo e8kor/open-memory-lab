@@ -109,7 +109,10 @@ What OML does not do, each by decision rather than omission, each with its alter
   audit export — is a command-line tool, and every command has machine-readable output for
   teams that want their own dashboards on top. The [review guide](../review-guide.md)
   examines the choice, and the cost is acknowledged plainly: an operator who expects to click
-  will not find anything to click.
+  will not find anything to click. Release 0.5.0 is planned to add two pages, not built: one where
+  people sign in with Google or GitHub to manage their own keys and memories, and one where
+  administrators keep the list of who may sign in and review; every administrative task keeps
+  its command ([releases](releases.md)).
 - **No automatic extraction.** OML never watches a conversation and decides what to remember.
   A memory exists because an agent explicitly submitted a claim and stands as its attributed
   author — automatic extraction would put the provider itself in the author's seat, with no one

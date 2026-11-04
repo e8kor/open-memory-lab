@@ -75,7 +75,7 @@ flowchart LR
   over HTTP. Who may review what: [roles-and-keys.md](roles-and-keys.md); how a verdict is bound
   to what was served: [cli/reference.md](../cli/reference.md) and [admission.md](admission.md).
 - **Admins and the operator** use the `oml` CLI, which speaks the same HTTP API with
-  admin/operator keys. There is no web UI (§6). CLI verbs: [cli/reference.md](../cli/reference.md).
+  admin/operator keys. There is no web UI today (§6); a user page and an admin page are planned for v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed). CLI verbs: [cli/reference.md](../cli/reference.md).
 
 Tenancy is derived server-side from the API key, never from the request; everything below is
 per-tenant ([security.md](security.md)).
@@ -301,9 +301,11 @@ service; lineage exclusion is exactly as good as the declared graph.
 
 ## 6. What is deliberately not here
 
-- **No web UI.** Administration is the `oml` CLI against the same HTTP API; a web console was
+- **No web UI, beyond two planned pages.** Administration is the `oml` CLI against the same HTTP API; a web console was
   considered and declined ([cli/reference.md](../cli/reference.md),
-  [ADR-0015](../adr/ADR-0015-cli-administration.md)).
+  [ADR-0015](../adr/ADR-0015-cli-administration.md)). The proposed [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) amends that
+  to a user page and an admin page with a closed set of routes, planned for v0.5.0 and not built;
+  dashboards, recall views and graph pictures stay declined.
 - **No grounded Q&A.** Clients are agents that recall and reason themselves; OML returns
   memories, not answers. Out of scope for v1, recorded in [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) and
   [retrieval.md](retrieval.md).

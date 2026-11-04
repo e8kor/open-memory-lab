@@ -11,9 +11,12 @@ answers: every administrative CLI verb, its flags and refusals; oml write, oml r
 
 **Release:** the verbs below arrived in v0.1.0 to v0.3.1, as each section says ([releases](../product/releases.md)).
 
-`oml` is the administration surface of Open Memory Lab. There is no web UI: every administrative
+`oml` is the administration surface of Open Memory Lab. There is no web UI today: every administrative
 ceremony — key issuance, review, mass operations, settings — is a CLI verb, a decision recorded in
-ADR-0015. The CLI is a lab client: it speaks the same [HTTP API](../api/http-api.md) as every
+ADR-0015. A user page and an admin page for people signed in with Google or GitHub are planned for
+v0.5.0 and not built ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed); every ceremony keeps its verb here, and
+`oml web allow`, `oml web list` and `oml web remove` will keep the email allowlist that lets the
+first admin in. The CLI is a lab client: it speaks the same [HTTP API](../api/http-api.md) as every
 agent — every ceremony rides the lab ring (`/v2`,
 [ADR-0022](../adr/ADR-0022-two-ring-api.md)); the CLI holds no verb the API lacks — authenticated
 by operator, admin or dreamer keys, and holds no authority of its own; the `oml hook` verbs,

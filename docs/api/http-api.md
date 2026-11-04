@@ -561,6 +561,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v2/settings` · `POST /v2/settings/validate` · `POST /v2/settings/apply` | admin (key role) | designed |
 | `POST /v2/tenants` | operator (key role) | designed |
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
+| `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *planned for v0.5.0, not built* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | designed |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints and
 edge ratify of either kind — and status-transition ratify, with
@@ -577,6 +578,17 @@ rings, and routed only where the deployment sets `oauth.issuer`
 | `GET /.well-known/oauth-protected-resource/mcp` · `GET /.well-known/oauth-authorization-server` | none, unauthenticated; no tenant data | served |
 | `GET /oauth/authorize` · `POST /oauth/authorize` | none; the person proves authority with the connect code | served |
 | `POST /oauth/token` · `POST /oauth/register` | none; public clients only | served |
+
+*Planned for v0.5.0, not built ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed):* the web pages are unversioned, outside both
+rings, routed only by the lead and only where the deployment sets `oauth.issuer` and a sign-in
+provider, and authenticated by a session cookie alone, never by a key
+([Web pages](#web-pages-the-user-page-and-the-admin-page)):
+
+| Endpoint | Verb ceiling (effective access unless noted) | Contract |
+|---|---|---|
+| `GET /web` · `POST /web` | none for the sign-in page; a session, acting as its `<user>-web` session key, for the user page | designed |
+| `POST /web/sign-in` · `GET /web/callback/{provider}` | none; the person proves a listed, verified email at the provider | designed |
+| `GET /web/admin` · `POST /web/admin` | a session whose allowlist entry is an admin's, acting as the session key each act needs | designed |
 
 Promote, sign and delete appear nowhere in these tables on purpose: promotion is an effect of
 ratification inside the admission pipeline, signing is `oml-server`'s alone, and deletion does not
@@ -1347,6 +1359,75 @@ follower forwards an `/mcp` request that carries an access token and reaches a w
 whole `/mcp` `POST` to the lead's `/mcp`, over the enrolled hop, with the token unchanged in
 `Authorization`; the lead re-resolves token → connection → key and authorizes against that key.
 This is the MCP request forwarded to the same endpoint, not a token passed to a ring route.
+
+## Web pages: the user page and the admin page
+
+*Planned for v0.5.0 in part, not built; the admin page's attribution view and demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed*
+
+Two server-rendered pages on the lead's own origin, for people, never for agents: the **user
+page**, where a person signed in with Google or GitHub sees and issues their own keys and connect
+codes, reads the setup steps, browses their memories and `universe`'s, and creates workareas in
+their root; and the **admin page**, where an admin keeps the email allowlist, grants review and
+curation, sees the review queue's depth and age, and reviews, curates and supersedes. Nothing
+below is routed yet.
+
+**Routes.** Six, a closed set the router serves exactly: `GET /web`, `POST /web`,
+`POST /web/sign-in`, `GET /web/callback/{provider}`, `GET /web/admin` and `POST /web/admin`.
+Each page is one `GET`, whose views are chosen by the query (`view`, `q`, `memory`,
+`workarea`), and one `POST`, whose form names one `action` from the page's closed set: on the
+user page `issue_key`, `connect_key`, `connect_code`, `cut_off`, `create_workarea` and
+`sign_out`; on the admin page `allow_email`, `remove_email`, `set_admin`, `grant_review`,
+`grant_curation`, `review_next`, `verdict`, `curate`, `supersede` and, in v0.6.0, `demote`. A
+follower routes none; without `oauth.issuer` and a provider every one is an unknown path.
+
+**Sign-in.** `POST /web/sign-in` (`provider=google|github`) passes the same-origin check of
+`POST /oauth/authorize`, seals `{provider, state, PKCE verifier, nonce}` into the cookie
+`__Host-oml_signin` (`Secure`, `HttpOnly`, `SameSite=Lax`, ten minutes), and answers `303` to the
+provider with S256 PKCE. `GET /web/callback/{provider}` makes no outbound call unless the cookie
+opens, names that provider and carries the query's `state`; it then redeems the code, admits only
+a verified email on the allowlist — Google's `email` with `email_verified: true` from an ID token
+whose `iss`, `aud`, `exp` and `nonce` it checks, GitHub's one address with `primary` and
+`verified` both true — refuses an entry's address arriving from another provider account than the
+one pinned at its first sign-in, stores no provider token, and answers `303 /web` with the cookie
+`__Host-oml_session` (`Secure`, `HttpOnly`, `SameSite=Lax`, the session's remaining life). Each
+refusal is a page answering `auth.invalid` with `details.reason` `not_allowed`, `email_unverified`,
+`state_mismatch`, `identity_changed` or `provider_refused`, or `limit.rate` past the provider-call
+cap. The callback URL is `<oauth.issuer>/web/callback/<provider>`.
+
+**Sessions.** A row on the server under the SHA-256 of a fresh 256-bit token, minted only when the
+callback admits, living `web.session_ttl` ([configuration](../operations/configuration.md)), with
+no idle timeout and no renewal in place; sign-out, expiry, and any change to or removal of its
+allowlist entry end it.
+
+**Who acts.** Every act runs as a **session key**: a key the server holds for the person, with
+`credential: session`, `held_by: human` and no value — `<user>-web` (a user key for the user
+page), `<user>-review`, `<user>-curate` and `<user>-admin`, each created by the act that first
+needs it ([roles and keys](../architecture/roles-and-keys.md)). The server picks the key from the
+session and the action; no field names who acts, and a field the action does not define is
+`request.validation`.
+A session key cannot be sent as a bearer key, has no connect code (`oauth.connect_refused`,
+`details.reason: session_key`) and is reachable only from a live session of an entry naming its
+user. Review runs as the person's `<user>-review` alone, R2 checked on that key and the row's
+lineage closure; the admin key is never offered a verdict. Content on the admin page is read
+through the reviewer or curator key's grants, never the admin key's role.
+
+**Every page and every `POST`.** The connect page's headers: a CSP of `default-src 'none'`, one
+hashed stylesheet, `form-action 'self'` plus the configured providers' origins,
+`frame-ancestors 'none'` and `base-uri 'none'`; `Cache-Control: no-store`;
+`Referrer-Policy: same-origin`; `nosniff`. No script. Every `POST` passes the same-origin check
+(`oauth.origin_refused` otherwise), and every form of a signed-in page carries `csrf_token`, which
+the server derives from the session token and compares in constant time (`request.validation`,
+`details.field: csrf_token`, journalling nothing). An `Authorization` header on any web route is
+`access.verb_ceiling` with `details.reason: web_is_human_only`, and `/v1`, `/v2` and `/mcp` never
+read the `Cookie` header, so a session cookie there is `auth.missing`. A key value or connect code
+issued on the user page is shown once, in the answering page, never in a redirect.
+
+**The allowlist on the API.** `GET /v2/web/emails`, `POST /v2/web/emails` (`{email, user,
+admin}`, adding or changing an entry) and `POST /v2/web/emails/remove` (`{email}`), admin key
+role: the CLI's `oml web allow`, `oml web list` and `oml web remove`, and how a tenant's first
+admin email gets in. An email is unique in the deployment (`name.taken`, kind `email`); a `user`
+a shared workarea holds, or whose composed key names a key holds, is `name.taken`. Removing an
+email ends its sessions and leaves the user's agent keys working.
 
 ## Bans
 
