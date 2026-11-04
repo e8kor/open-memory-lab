@@ -439,6 +439,13 @@ CREATE TABLE claim_edges (
         CHECK ((state = 'ratified') = (ratifier_key_id IS NOT NULL))
 );
 
+-- Statistics target 0 on every column, before any ANALYZE (FR-45).
+ALTER TABLE claim_edges
+    ALTER COLUMN id SET STATISTICS 0, ALTER COLUMN tenant_id SET STATISTICS 0,
+    ALTER COLUMN src_artifact_id SET STATISTICS 0, ALTER COLUMN dst_artifact_id SET STATISTICS 0,
+    ALTER COLUMN label SET STATISTICS 0, ALTER COLUMN state SET STATISTICS 0,
+    ALTER COLUMN proposer_key_id SET STATISTICS 0, ALTER COLUMN ratifier_key_id SET STATISTICS 0;
+
 CREATE INDEX claim_edges_src ON claim_edges (tenant_id, src_artifact_id);
 CREATE INDEX claim_edges_dst ON claim_edges (tenant_id, dst_artifact_id);
 CREATE INDEX claim_edges_ratified_label ON claim_edges (tenant_id, label)
@@ -458,9 +465,19 @@ CREATE INDEX claim_edges_ratified_label ON claim_edges (tenant_id, label)
 - **Fence.** Row-level security is enabled and forced, under the `tenant_isolation` policy
   `memories` carries ([Row-level security](#row-level-security)); the serving role holds
   `SELECT`, `INSERT` and `UPDATE`, and no `DELETE` ([Privileges](#privileges)).
-- **Not partitioned.** ADR-0034 d11 partitions `memories` alone, for its FTS index's
-  statistics; `claim_edges` holds no indexed text. This is a reading 0011's header records, not
-  a decision of d11.
+- **Not partitioned; no column statistics.** A label is tenant text: the domain admits any
+  non-empty NFC label outside `oml:` ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) d5),
+  such as `acme:merger_target`. In one unpartitioned table a column's statistics span every
+  tenant, and EXPLAIN's estimate reads them under row security, since `texteq` and `uuid_eq` are
+  leakproof, so a session set to tenant A would learn whether another tenant uses a label or
+  holds an endpoint id: the FR-45 channel ADR-0034 d11 closed for `memories` with partitions.
+  0011 sets statistics target 0 on every column before any `ANALYZE`; ANALYZE then collects
+  nothing, and each predicate takes PostgreSQL's default selectivity whatever any tenant stores
+  (`under_tenant_a_explain_estimates_tenant_bs_edge_label_as_it_estimates_an_unused_one`, with
+  the default target as its control). The cost: edge reads plan on defaults, never on a label's
+  or an endpoint's skew. **Stays open** (FR-45): `pg_class`'s `reltuples` and `relpages` count
+  every tenant's edges together. This is a reading 0011's header records, not a decision of
+  ADR-0034, which lists target 0 as an FR-45 candidate.
 
 ## api_keys, grants, key_denials, bans
 
