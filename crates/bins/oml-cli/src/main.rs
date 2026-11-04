@@ -3357,6 +3357,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // that cannot is warned about (ADR-0044 d14).
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
+    let mut default_node: Option<Value> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -3372,6 +3373,17 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     Err(CliError::Refused { .. }) => false,
                     Err(other) => return Err(other),
                 });
+            }
+            // The default workarea's brief and waiting transitions, which a
+            // session start and a ratifier depend on (ADR-0046 d9).
+            if let Some(Ok(v)) = &me
+                && let Some(id) = v["default_workarea"]["id"].as_str()
+                && let Ok(segment) = segment(id)
+            {
+                default_node = client
+                    .get(&format!("/v2/workareas/{segment}"))
+                    .ok()
+                    .map(|(_, n)| n);
             }
             head_seq = client
                 .get("/v2/events?after_seq=0&limit=1")
@@ -3432,6 +3444,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "whoami": whoami,
             "chain_head_seq": head_seq,
             "reads_universe": reads_universe,
+            "default_workarea": default_node.as_ref().map(|n| json!({
+                "path": n["path"],
+                "brief_items": n["brief"]["items"].as_array().map_or(0, Vec::len),
+                "brief_truncated": n["brief"]["budget"]["truncated"],
+                "pending_transitions": n["pending_transitions"].as_array().map_or(0, Vec::len),
+            })),
             "oauth_discovery": oauth,
             "web": web,
             "client_version": env!("CARGO_PKG_VERSION"),
@@ -3481,6 +3499,32 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         if reads_universe == Some(false) {
             println!("universe    : warn: this key does not read universe's claims");
+        }
+        if let Some(n) = &default_node {
+            let items = n["brief"]["items"].as_array().map_or(0, Vec::len);
+            if items == 0 {
+                println!(
+                    "brief       : empty: no ratified brief edge on {}; a dreamer proposes one with oml edges propose brief",
+                    field(n, "path")
+                );
+            } else {
+                println!(
+                    "brief       : {items} item(s) on {}{}",
+                    field(n, "path"),
+                    if n["brief"]["budget"]["truncated"] == true {
+                        ", more cut by brief.max_tokens"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            let waiting = n["pending_transitions"].as_array().map_or(0, Vec::len);
+            if waiting > 0 {
+                println!(
+                    "transitions : {waiting} waiting for a second identity; oml workareas status pending {}",
+                    field(n, "path")
+                );
+            }
         }
         match head_seq {
             Some(seq) => println!("chain head  : seq {seq}"),
