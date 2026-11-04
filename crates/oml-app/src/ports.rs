@@ -29,6 +29,7 @@ use crate::types::{
     TransitionRecord,
     ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord,
     ClaimEdgeSelection,
+    BriefEdgeRecord,
 };
 use oml_domain::web::Provider;
 
@@ -393,6 +394,21 @@ pub enum MetadataFold {
     /// The edge is already in every closure it joins, pending, so the fold
     /// widens none (audit-and-lineage.md, pending and ratified alike).
     ClaimEdgeRatified {
+        edge_id: Uuid,
+        ratifier_key_id: Uuid,
+    },
+    /// `brief_edge.proposed`: the edge row, pending with no ratifier, its
+    /// `created_at` the event's `at`. The store refuses a claim, workarea or
+    /// proposer key its tenant does not hold, an id it holds already, and
+    /// an edge that is not pending. It widens no lineage closure
+    /// (postgres-schema.md `brief_edges`; ADR-0046 d7).
+    BriefEdgeProposed(BriefEdgeRecord),
+    /// `review.ratify` with `subject_kind: "brief_edge"`: the edge turns
+    /// ratified, names `ratifier_key_id` and takes this commit's seq as its
+    /// `ratified_seq`. A lost compare-and-set on the pending state writes
+    /// nothing, the event included, and is [`StoreError::EdgeNotPending`];
+    /// a ratifier equal to the proposer is the store's refusal too.
+    BriefEdgeRatified {
         edge_id: Uuid,
         ratifier_key_id: Uuid,
     },
@@ -920,6 +936,22 @@ pub trait JournalStore: Send + Sync {
     /// [`StoreError::SeqConflict`] and the transport's head retry re-reads
     /// the edges: the cycle check is a transaction-time check with no lock
     /// of its own (ADR-0021 d5; ADR-0002, one chain head).
+    /// One brief edge of the tenant by id, pending or ratified.
+    fn brief_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> impl Future<Output = Result<Option<BriefEdgeRecord>, StoreError>> + Send;
+
+    /// Every brief edge into `workarea_id`, pending and ratified, newest
+    /// first by `created_at`, then by edge id (ADR-0046 d7). Unpaged: the
+    /// count per workarea is unbounded, tracked as FR-77.
+    fn brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send;
+
     fn ratified_term_edges(
         &self,
         tenant_id: Uuid,

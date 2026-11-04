@@ -2877,8 +2877,31 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
             json!(info.my_effective_verbs),
         );
         obj.insert("permission_epoch".to_owned(), json!(info.permission_epoch));
+        obj.insert("policy".to_owned(), info.policy.clone());
+        obj.insert(
+            "pending_transitions".to_owned(),
+            info.pending_transitions
+                .iter()
+                .map(transition_json)
+                .collect(),
+        );
     }
     value
+}
+
+/// One transition in the openapi `Transition` shape: the proposing key only
+/// where the read names it, and a ratified row's ratifier
+/// (ADR-0046 d3; workareas.md, the status read).
+#[must_use]
+pub fn transition_json(t: &oml_app::types::TransitionView) -> Value {
+    json!({
+        "transition_id": t.transition_id,
+        "workarea_id": t.workarea_id,
+        "from": t.from.as_str(),
+        "to": t.to.as_str(),
+        "state": t.state.as_str(),
+        "proposed_by_key_id": t.proposed_by_key_id,
+    })
 }
 
 /// The event-catalog envelope as the tail serves it (digest-only payloads by

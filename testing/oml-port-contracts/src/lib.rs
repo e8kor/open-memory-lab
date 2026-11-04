@@ -44,6 +44,7 @@ use oml_app::types::{
     RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
     TransitionRecord, TransitionState,
     ClaimEdgeSelection,
+    BriefEdgeRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -6053,6 +6054,113 @@ pub async fn ratifying_an_edge_already_ratified_writes_nothing_and_is_refused_ed
     );
 }
 
+/// A brief edge folds pending with no ratifier and widens no closure, its
+/// ratification records the ratifier and the commit's seq as the brief's
+/// order key, and a second ratification writes nothing and is refused
+/// `EdgeNotPending` (postgres-schema.md `brief_edges`; ADR-0046 d7, d8).
+pub async fn a_brief_edge_folds_pending_and_its_ratification_records_the_ratifier_and_its_seq<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 391).await;
+    let root = world.root;
+    let claim = world
+        .hold(store, root, Uuid::from_u128(0x391A), "alice", &[])
+        .await;
+    let edge = BriefEdgeRecord {
+        edge_id: Uuid::from_u128(0x391E),
+        tenant_id: world.rig.tenant_id,
+        artifact_id: claim.memory_id,
+        workarea_id: root,
+        state: EdgeState::Pending,
+        proposer_key_id: world.proposer.key_id,
+        proposer_principal: world.proposer.principal.clone(),
+        ratifier_key_id: None,
+        created_at: ChainRig::at(world.rig.n + 1),
+        ratified_seq: None,
+    };
+    world
+        .rig
+        .commit(
+            store,
+            event_types::BRIEF_EDGE_PROPOSED,
+            json!({ "edge_id": edge.edge_id.to_string() }),
+            MetadataFold::BriefEdgeProposed(edge.clone()),
+            None,
+        )
+        .await
+        .expect("propose");
+    let tenant = world.rig.tenant_id;
+    assert_eq!(
+        store.brief_edge(tenant, edge.edge_id).await.expect("read"),
+        Some(edge.clone()),
+        "the edge reads back pending as proposed"
+    );
+    let unwidened = store
+        .memory(tenant, claim.memory_id)
+        .await
+        .expect("read")
+        .expect("the claim");
+    assert_eq!(unwidened.lineage_principals, claim.lineage_principals);
+
+    let ratifier = world.ratifier(store, Uuid::from_u128(0x391D)).await;
+    let receipt = world
+        .rig
+        .commit(
+            store,
+            event_types::REVIEW_RATIFY,
+            json!({ "subject_kind": "brief_edge", "edge_id": edge.edge_id.to_string() }),
+            MetadataFold::BriefEdgeRatified {
+                edge_id: edge.edge_id,
+                ratifier_key_id: ratifier.key_id,
+            },
+            None,
+        )
+        .await
+        .expect("ratify");
+    let ratified = store
+        .brief_edge(tenant, edge.edge_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(ratified.state, EdgeState::Ratified);
+    assert_eq!(ratified.ratifier_key_id, Some(ratifier.key_id));
+    assert_eq!(ratified.ratified_seq, Some(receipt.seq));
+    assert_eq!(
+        store.brief_edges(tenant, root).await.expect("read"),
+        vec![ratified.clone()],
+        "the workarea's brief edges"
+    );
+
+    let head = store.chain_head(tenant).await.expect("head");
+    let second = world.ratifier(store, Uuid::from_u128(0x391C)).await;
+    let head_after_issue = store.chain_head(tenant).await.expect("head");
+    assert_ne!(head, head_after_issue);
+    assert_eq!(
+        world
+            .rig
+            .commit(
+                store,
+                event_types::REVIEW_RATIFY,
+                json!({ "subject_kind": "brief_edge", "edge_id": edge.edge_id.to_string() }),
+                MetadataFold::BriefEdgeRatified {
+                    edge_id: edge.edge_id,
+                    ratifier_key_id: second.key_id,
+                },
+                None,
+            )
+            .await,
+        Err(StoreError::EdgeNotPending {
+            edge_id: edge.edge_id
+        })
+    );
+    assert_eq!(
+        store.chain_head(tenant).await.expect("head"),
+        head_after_issue
+    );
+}
+
 /// A tenant's pending edge `a -> b` between two held versions, and the
 /// journal head after its proposal.
 async fn pending_edge_world<S: JournalStore>(
@@ -6499,6 +6607,10 @@ where
     .await;
     a_claim_edge_whose_created_at_is_not_its_events_at_commits_nothing(&new_store().await).await;
     ratifying_a_pending_edge_records_its_ratifier_and_state(&new_store().await).await;
+    a_brief_edge_folds_pending_and_its_ratification_records_the_ratifier_and_its_seq(
+        &new_store().await,
+    )
+    .await;
     ratifying_an_edge_already_ratified_writes_nothing_and_is_refused_edge_not_pending(
         &new_store().await,
     )
