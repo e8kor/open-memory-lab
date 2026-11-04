@@ -315,9 +315,9 @@ refusal below covers acquiring new children in any form). Lake rows keep
 **Status:** built for v0.5.2, not released, in `oml-domain`, `oml-app` and `oml-pg` with
 `migrations/0017_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
 second identity, the status read) and the freeze checks on submit, supersede, approval and child
-create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · no HTTP route, CLI verb or
-MCP tool serves the transitions yet; the routes, the `oml workareas status` verbs and the workarea
-read's `policy` and `pending_transitions` fields are [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3's, proposed · its Postgres checks run only where a superuser mints the suites' role
+create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · served by `POST /v2/workareas/{workarea}/transitions` and its ratify route, the
+`oml workareas status` verbs and the workarea read's `policy` and `pending_transitions`, which
+`oml_workarea` serves; no MCP tool proposes or ratifies ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3, proposed) · its Postgres checks run only where a superuser mints the suites' role
 pairs, CI's `cargo test (Postgres)` · reassignment, re-parent, demote, erasure and the simulation
 fence are decided, not built.
 
@@ -438,8 +438,10 @@ the rule it follows; none is a new decision about the ladder.
   ladder, and inside a user root the user's own dreamer keys propose and ratify, independence
   being per key and principal; `universe` stays `committed`
   ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2, proposed, after the proposed ADR-0044 d1 and d8). Whether a user
-  root may reach `validated`, and whether two keys of one user are independent enough, are open
-  questions 1 and 2 of that record.
+  root may reach `validated`: no, it climbs to `committed` at most and is refused `user_root`;
+  a ratification by another key of the same user is admitted and marked `same_user`
+  (ADR-0046 d1, d2, answered on 2026-11-04). Both read facts ADR-0044 adds, so on this build
+  no node is a user root and `same_user` is `false`.
 - **No simulation is fenced, vacuously.** Simulations are not built, so "no
   simulation is fenced on the subtree" holds of every subtree today; the build
   says so in a comment where the check would sit, and the check lands with
@@ -481,15 +483,15 @@ are the ones implementers get wrong:
   writes, promotions into it, reassignment in or out, child creation,
   re-parenting, and any further status change.
 
-**Open, not decided: a reject verdict in a `validated` area.** d5's closed list
+**Decided on 2026-11-04: a reject verdict in a `validated` area is admitted.** d5's closed list
 of three mutations names no reject verdict, and a freeze can leave a held row
 behind. The proposed reading refuses approve and reject alike with
 `workarea.frozen`, and `review/next` serves no row whose workarea is
 `validated`, so a held row left by a freeze stays held, visible to its author.
 The alternative admits reject, because a rejection promotes nothing. The
 operator decides before the build refuses verdicts by status
-([ADR-0009](../adr/ADR-0009-status-ladder.md) d5; question 9 of [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)). Until then
-the build refuses approve and admits reject.
+([ADR-0009](../adr/ADR-0009-status-ladder.md) d5; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d10). The build
+refuses approve and admits reject, so a held row left by a freeze can still be drained.
 
 ## Medallion words name lake zones only
 

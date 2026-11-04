@@ -487,6 +487,38 @@ CREATE INDEX claim_edges_listing ON claim_edges (tenant_id, created_at DESC, id 
   every tenant's edges together. This is a reading 0018's header records, not a decision of
   ADR-0034, which lists target 0 as an FR-45 candidate.
 
+### brief_edges
+
+**Status:** built in `migrations/0019_brief_edges.sql` for v0.5.2, not released
+([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d7, d8) · its checks run only where a superuser mints the suites'
+role pairs, CI's `cargo test (Postgres)`.
+
+```sql
+CREATE TABLE brief_edges (
+    id              uuid NOT NULL PRIMARY KEY,
+    tenant_id       uuid NOT NULL,
+    artifact_id     uuid NOT NULL,              -- the member claim's version
+    workarea_id     uuid NOT NULL,              -- the workarea whose brief it joins
+    state           text NOT NULL CHECK (state IN ('pending', 'ratified')),
+    proposer_key_id uuid NOT NULL,
+    ratifier_key_id uuid,
+    ratified_seq    bigint,                     -- the review.ratify's seq: the brief's order
+    created_at      timestamptz(6) NOT NULL,    -- brief_edge.proposed's at: the listing's order
+    -- keys carry tenant_id into tenants, memories, workareas and api_keys;
+    -- ratifier <> proposer; ratified <=> a ratifier <=> a ratified_seq
+);
+CREATE INDEX brief_edges_workarea ON brief_edges (tenant_id, workarea_id, created_at DESC, id DESC);
+```
+
+- **Apart from `claim_edges`.** A brief edge joins a claim to a workarea, not two claims, and its
+  fold widens no lineage closure: membership in a brief says where a claim is read first, not
+  what it derives from. Its label is `brief`, fixed, and not stored.
+- **Fence, keys and statistics** as `claim_edges`: row security forced under
+  `tenant_isolation`, `SELECT`, `INSERT` and `UPDATE` granted and no `DELETE`, every key carrying
+  `tenant_id`, statistics target 0 on every column.
+- **Limit.** The brief and the listing read a workarea's edges whole; the count per workarea is
+  unbounded, tracked with the brief's budget as FR-77.
+
 ## api_keys, grants, key_denials, bans
 
 Authorization state. Key values are never stored — only their hash; issuance is journalled as
@@ -1268,6 +1300,7 @@ serving role until that migration grants its row here, under the sync rule.
 | `oauth_authorizations` | ✓ | ✓ | | ✓ | |
 | `workarea_transitions` | ✓ | ✓ | ✓ | | |
 | `claim_edges` | ✓ | ✓ | ✓ | | |
+| `brief_edges` | ✓ | ✓ | ✓ | | |
 | `_sqlx_migrations` | | | | | |
 
 - **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on

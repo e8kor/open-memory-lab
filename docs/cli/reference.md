@@ -184,7 +184,7 @@ from the file ([security](../architecture/security.md)).
 | Verb | Does |
 |---|---|
 | `oml login <url>` | Prompt for the key on the terminal and read it without echo, or read the first line of stdin when stdin is not a terminal, so the key never reaches argv. Call `GET /v2/whoami` under it, and only on success write `url` and `api_key`, nothing else, to the [owner-only](#installing-oml-and-what-differs-on-windows) credentials file, replacing what it held, and print the key's name, role, tenant and default workarea. A refusal writes nothing and exits `1` with the envelope's code; an empty key sends nothing (exit `2`). The flags and the environment still win over the stored pair. |
-| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)); and the server's version, from `/readyz`'s `build.version`, since v0.4.1. |
+| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)); and the server's version, from `/readyz`'s `build.version`, since v0.4.1; and the default workarea's brief, `empty` when it has no ratified member, and the status transitions waiting there for a second identity (*built for v0.5.2, not released*; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)). |
 
 ## `oml setup claude-code` and `oml quickstart` — the quick start
 
@@ -619,7 +619,7 @@ shows it ([FR-33](../product/roadmap.md)).
 
 | Verb | Does |
 |---|---|
-| `oml hook session-start` | Reads the SessionStart JSON object on stdin, sends `GET /v1/memories?own=true&limit=10`, then `POST /v1/memories/recall` with `{"query": <query>, "k": 10, "include_text": true, "include_unreviewed": true, "max_tokens": <budget>}` on the key's default workarea, and prints one SessionStart hook document on stdout. It sends no other request, and exits `0` on every failure below. |
+| `oml hook session-start` | Reads the SessionStart JSON object on stdin, sends `GET /v1/memories?own=true&limit=10`, then `POST /v1/memories/recall` with `{"query": <query>, "k": 10, "include_text": true, "include_unreviewed": true, "max_tokens": <budget>}` on the key's default workarea, then, for the default workarea's brief, `GET /v2/whoami` and `GET /v2/workareas/{default}` (*built for v0.5.2, not released*; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d9), and prints one SessionStart hook document on stdout. It sends no other request, and exits `0` on every failure below; a failure of the two brief reads drops only the brief. The brief, when it has a member, is the section `Brief of this workarea, agreed by its reviewers:` before the steering, one `- <claim_key>: <text>` line per member. |
 
 **Its environment**, and nothing else:
 
