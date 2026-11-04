@@ -162,7 +162,7 @@ which part is still decided, not built.
 | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) the server serves as an account that owns nothing | accepted | Partly in v0.3.1: the two accounts, the startup refusal, the per-organisation search index and the keys that carry the organisation. Its spike groundwork shipped in v0.3.0. The separate bootstrap workload and the health check for the split are not scheduled; one further hardening step waits on search measurements. |
 | ADR-0035 deliverables | proposed | Parked. |
 | ADR-0036 time | proposed | Parked. |
-| ADR-0037 guardrails | proposed | Planned for v0.5.0. |
+| ADR-0037 guardrails | proposed | Planned for v0.5.1. |
 | [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) turn context | accepted | Introduced in v0.4.0. |
 | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) the API rewrite | accepted | Introduced in v0.4.0. |
 | [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) plugin setup | accepted | Introduced in v0.4.0. |

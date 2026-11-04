@@ -234,5 +234,5 @@ verify-chain` exists and is refused while the server serves no chain export.
   the request.
 
 Guardrails, the reviewed rules every session loads and each tool call is checked against, are
-planned for v0.5.0 ([ADR-0037](../product/releases.md#planned-releases), proposed); no guardrail
+planned for v0.5.1 ([ADR-0037](../product/releases.md#planned-releases), proposed); no guardrail
 setting exists in v0.4.0.
