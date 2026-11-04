@@ -188,14 +188,15 @@ pub enum FrozenOp {
     Erase,
     /// A crew-metadata update, journalled.
     CrewUpdate,
-    /// A further status transition.
-    Transition,
 }
 
 /// Whether `status` refuses `op` because the area is frozen
 /// (`workarea.frozen`): a `validated` area admits exactly demote, erasure
 /// and crew-metadata update, and every other status refuses none of these
-/// operations by status (ADR-0009 d5).
+/// operations by status (ADR-0009 d5). A status transition is not one of
+/// these operations: [`propose_check`] and [`ratify_check`] alone refuse it,
+/// as `workarea.transition_refused` with `backward` or `same` from
+/// `validated` (errors.md).
 #[must_use]
 pub fn frozen_refuses(status: WorkareaStatus, op: FrozenOp) -> bool {
     status == WorkareaStatus::Validated
