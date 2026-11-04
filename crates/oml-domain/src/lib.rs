@@ -59,8 +59,8 @@ pub use keys::{
     verify_rotation_cross_sig,
 };
 pub use ladder::{
-    FrozenOp, LadderRefusal, WorkareaStatus, frozen_refuses, propose_check, ratifier_is_proposer,
-    ratify_check, transition_preconditions,
+    FrozenOp, LadderNode, LadderRefusal, WorkareaStatus, frozen_refuses, propose_check,
+    ratifier_is_proposer, ratify_check, same_user, transition_preconditions,
 };
 pub use model::{
     DERIVED_CLAIM_KEY_PREFIX, HeldBy, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role,
