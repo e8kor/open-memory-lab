@@ -32,6 +32,21 @@ implementation milestone where it changes what the repository holds.
 Entries for the guardrails record and its build, kept apart from the released revisions until
 the release that carries them, newest first.
 
+### 2026-11-04 — ADR-0037's ten open questions answered by the maintainer
+
+[ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+stays proposed; d18 now records the maintainer's answers and the "reading to confirm" marks go.
+The scope defaults to `ancestors`, changes only by rotation and folds as `ancestors` for older
+keys; a guardrail never self-signs; a user-page key takes the default; a `universe` guardrail is
+served with its verdicts; the listings serve the kind and recall refuses `kinds: ["guardrail"]`;
+`oml write` takes the guardrail fields; `info.version` moves once at release; and the rule
+grammar, matcher, check and cache codec move into a leaf crate, `oml-guardrail`, that
+`oml-domain` and `oml-cli` both link, amending ADR-0006 d6 by that leaf. The rejected options are
+in the record's rejected alternatives.
+
+- **Pages:** the record, its register row, the [workspace plan](engineering/workspace-plan.md)
+  and this entry.
+
 ### 2026-11-04 — Guardrails S1 and S2 on the wire, and the CLI's flags (implementation, ADR-0037, proposed)
 
 An implementation milestone on the v0.5.1 branch, on top of v0.4.1; no decision changes, and the

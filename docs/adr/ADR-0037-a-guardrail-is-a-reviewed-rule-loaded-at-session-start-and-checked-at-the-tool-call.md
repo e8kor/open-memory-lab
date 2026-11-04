@@ -11,7 +11,7 @@ answers: what a guardrail is and how it differs from steering; how it composes w
 
 **Release:** planned for v0.5.1 ([releases](../product/releases.md#decisions))
 
-**Amends:** ADR-0001 (d5), ADR-0012 (d5), ADR-0013 (d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0022 (d2), ADR-0025 (d2, d11), ADR-0026 (d9), ADR-0028 (d1), ADR-0029 (d7), ADR-0039 (d2, d3, d15); and the proposed ADR-0044 (d10) and ADR-0045 (d9), when each is accepted
+**Amends:** ADR-0001 (d5), ADR-0006 (d6), ADR-0012 (d5), ADR-0013 (d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0022 (d2), ADR-0025 (d2, d11), ADR-0026 (d9), ADR-0028 (d1), ADR-0029 (d7), ADR-0039 (d2, d3, d15); and the proposed ADR-0044 (d10) and ADR-0045 (d9), when each is accepted
 
 ## Context
 
@@ -56,8 +56,8 @@ without reopening a decision above:
 The maintainer's decisions above stand as they were taken: guardrail is its own claim kind; no
 reach-down; the scope is set on the key at issuance, `workarea` or `ancestors`, never by the
 client; the review policy decides with no human floor; no cache means allow and warn. Where
-this revision meets a question those decisions do not settle, d18 lists it as open rather than
-deciding it.
+this revision met a question those decisions did not settle, d18 listed it; the maintainer
+answered all ten on 2026-11-04, and d18 records the answers.
 
 ## Decision
 
@@ -99,17 +99,17 @@ deciding it.
       ([ADR-0022](ADR-0022-two-ring-api.md) d5). An admin sets it with the flag
       `--guardrail-scope <workarea|ancestors>` on `oml keys issue` and `oml keys issue-agent`,
       sent in `POST /v2/keys` and journalled in `key.issued` (amends ADR-0025 d2,
-      [ADR-0028](ADR-0028-agent-key-issuance.md) d1); the default is `ancestors`, *the
-      maintainer's reading to confirm*. Issuance is a journalled act
+      [ADR-0028](ADR-0028-agent-key-issuance.md) d1); the default is `ancestors` (decided
+      by the maintainer, d18 Q1). Issuance is a journalled act
       ([ADR-0010](ADR-0010-roles-and-keys.md) d3) and "There is no in-place re-key"
       ([key lifecycle](../architecture/roles-and-keys.md#key-lifecycle)), so only a rotation
-      changes it, *the maintainer's reading to confirm*: `oml keys rotate --guardrail-scope` sets
+      changes it (decided by the maintainer, d18 Q2): `oml keys rotate --guardrail-scope` sets
       the successor's, which otherwise keeps its predecessor's, journalled in `key.rotated`, the
       successor's stand-in for `key.issued` (amends ADR-0026 d9). Rotation is decided, not built;
       until then, revoke and reissue. A `key.issued` or `key.rotated` without `guardrail_scope`,
       every key issued before the build included, folds as `ancestors`, the issuance default, and
-      `api_keys` holds that value for it; nothing in the journal is rewritten, *the maintainer's
-      reading to confirm*.
+      `api_keys` holds that value for it; nothing in the journal is rewritten (decided by the
+      maintainer, d18 Q3).
     - **Never on the client.** `GET /v1/guardrails` takes no scope parameter, the hooks read no
       scope setting, and the `workarea` query field (ADR-0039 d7) picks N within the key's
       grants, never the scope. No
@@ -263,7 +263,7 @@ deciding it.
       its author or its lineage closure counts. A workarea that wants a person on every rule
       names kind `guardrail` in `human_required_classes`. The cost: where the policy names no
       person, agents' verdicts alone make a rule bind.
-    - **Never self-signed, *the maintainer's reading to confirm*,** whatever the tenant's policy:
+    - **Never self-signed (decided by the maintainer, d18 Q4),** whatever the tenant's policy:
       a rule can stop every agent below it, so it needs one identity other than its author's. In
       a `development` workarea it waits for a non-author verdict, as ADR-0025 d17 makes a
       reviewed tip's successor wait (amends ADR-0001 d5). The serve of a held guardrail adds
@@ -357,8 +357,9 @@ deciding it.
       guardrails, crews' included (ADR-0044 d13), are its tenant writers', as before.
     - **What is served.** A guardrail on `universe` is served to every key outside its authoring
       key set under ADR-0044 d9: `workarea_path` `universe`, nothing below it, and d5 serves no
-      author in any case; the hook's line names its origin `universe`. Whether its `verdicts`
-      count is served is open (d18, Q6).
+      author in any case; the hook's line names its origin `universe`. Its `verdicts`, attestation
+      and time, are served as on every guardrail, since they name no key (decided by the
+      maintainer, d18 Q6).
     - **Tenant keys.** A key issued without `user`, every key before v0.5.0 included, is a
       tenant key (ADR-0044 d12) and walks d4's ancestry exactly as before.
 
@@ -377,34 +378,33 @@ deciding it.
       written on the HTTP API and the CLI (d10), and ADR-0045's acts are its own list. Built as
       S6, after ADR-0045's W3.
 
-- **d18 — Questions this revision does not settle, held open for the maintainer.** Each is
-  marked where it bears; until answered the build takes the reading in brackets, and the record
-  stays proposed.
-    - **Q1** The issuance default, `ancestors` (d4). [`ancestors`]
-    - **Q2** Only a rotation changes a key's scope, and rotation is not built (d4). [revoke and
-      reissue]
-    - **Q3** A key issued before the build folds as `ancestors` (d4). [`ancestors`]
-    - **Q4** Never self-signed, even in a `development` workarea (d10). [never]
-    - **Q5** The scope of a key a person issues on the user page (ADR-0045 d9 `issue_key`),
-      which no admin issues. [the issuance default; the page offers no choice]
-    - **Q6** Whether a `universe` guardrail's `verdicts` (reviewer count and attestations) are
-      served to user keys, given ADR-0044 d9 serves no curator and no source. [served: they name
-      no key]
-    - **Q7** Whether the listing (`oml_read` with `own` or `GET /v1/memories`) serves kind
-      `guardrail`, and whether recall's `kinds: ["guardrail"]` is refused or answers nothing
-      (d5 rules recall only). [the listing serves it like any kind; recall refuses the value with
-      `details.field: kinds`]
-    - **Q8** Whether `oml write` on the CLI takes `--severity` and `--rule`, since d10 limits
-      writing to the HTTP API against MCP and the CLI is an HTTP client. [yes]
-    - **Q9** The spec revision v0.5.1 carries: `info.version` moves with S1's contract change,
-      after whatever v0.5.0 moves it to. [one step past v0.5.0's]
-    - **Q10** Where the rule check lives for the hooks. S3 and S4 run in `oml`, and the
-      check, the glob and the cache codec are in `oml-domain`'s `guardrail` module, but
-      [ADR-0006](ADR-0006-pure-rust.md) d6 and the
-      [workspace plan](../engineering/workspace-plan.md) give `oml-cli` "no inward edge": it
-      links no domain crate. Either `oml-cli` links `oml-domain` for this module alone (amending
-      ADR-0006 d6), or the module moves into a leaf crate of its own that both link, or the CLI
-      keeps a second copy held equal by shared test vectors. [none taken: S3 and S4 wait]
+- **d18 — The maintainer's answers of 2026-11-04 to this revision's ten questions.** Each is
+  folded into the decision it governs; this list is where each answer is found.
+    - **Q1 — The issuance default is `ancestors`** (d4).
+    - **Q2 — Only a rotation changes a key's scope** (d4); until rotation is built, an admin
+      revokes and reissues.
+    - **Q3 — A key issued before the build folds as `ancestors`** (d4), its row holding that
+      value and its journal unchanged.
+    - **Q4 — A guardrail is never self-signed**, in a `development` workarea included (d10).
+    - **Q5 — A key a person issues on the user page takes the issuance default**, and the page
+      offers no choice (d17): only an admin issuing a key sets `workarea`.
+    - **Q6 — A `universe` guardrail is served with its verdicts' attestations and times** (d5,
+      d16), which name no key, curator or source.
+    - **Q7 — The listings serve kind `guardrail` like any kind, and recall refuses
+      `kinds: ["guardrail"]`** with `request.validation`, `details.field: /kinds` (d5): recall
+      never serves a guardrail, and a filter that names one is refused, never answered empty.
+    - **Q8 — `oml write` takes `--severity` and `--rule`** (d10): the CLI is an HTTP client, and
+      d10 keeps guardrails off MCP alone.
+    - **Q9 — `info.version` moves once, at the release that carries this record,** one step past
+      the revision v0.5.0 sets; the build does not move it.
+    - **Q10 — The rule grammar, the matcher, the check and the rule cache's types live in a leaf
+      crate of their own, `oml-guardrail`,** which `oml-domain` and `oml-cli` both link and
+      which links no workspace crate. `oml-domain`'s `guardrail` module re-exports it and keeps
+      what only the server needs: the guardrail scope, admission and its caps' canonical
+      measure, the set's order, conflicts and digest. `oml-cli` links `oml-guardrail` and no
+      other inward crate, so the hooks and the server cannot disagree on what a rule means.
+      This amends [ADR-0006](ADR-0006-pure-rust.md) d6's "no inward edge" for `oml-cli` by this
+      one leaf, and the [workspace plan](../engineering/workspace-plan.md) states it.
 
 ## Consequences
 
@@ -446,4 +446,8 @@ deciding it.
 | **d9 — Fail closed with no cache at all** | Rejected by the maintainer on 2026-10-31: with no cache the hook knows no rule, and denying everything would stop every user whose server was down at session start. |
 | **d10 — A human verdict on every guardrail version that no policy removes, amending ADR-0012 d3** (the earlier reading) | Rejected by the maintainer on 2026-10-31: the workarea's review policy decides, and a workarea that wants a person names kind `guardrail` in `human_required_classes`. |
 | **d10 — A guardrail crew or a curator profile owning guardrails** | A new profile in the grant algebra for a kind the review policy already governs, and a crew that writes and reviews its own rules works against R2. |
+| **d18 Q5 — The user page offers the scope** | A person could issue their agents keys that skip `universe`'s admin-curated guardrails; the scope is the issuing admin's to set. |
+| **d18 Q7 — Recall answers `kinds: ["guardrail"]` with nothing** | An empty answer reads as "no guardrail applies"; a refusal names where the set is served. |
+| **d18 Q10 — `oml-cli` links `oml-domain` for the guardrail module alone** | The CLI would then link the whole pure core, chain signing types included, and "no inward edge" would no longer say what the CLI cannot do. |
+| **d18 Q10 — A second copy of the check in the CLI, held equal by shared vectors** | Two implementations of a deny rule drift between test vectors, and a drift is a bypass or a block of every call. |
 | **d11 — Render rules into Claude Code `permissions.deny` or managed settings** | Writing harness settings is an admin act on the user's machine, not the agent key's (R1); left to the catalogue, unbuilt. |
