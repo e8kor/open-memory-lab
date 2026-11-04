@@ -318,7 +318,7 @@ the rule under the version's DEK waits for the encrypted body store.
 **Status:** built for the status ladder: `workareas.status` is one stored column, written at
 create (`development`, and `committed` on the universe root), moved by a ratified transition and
 served back by every workarea read; `workarea_transitions` is built in
-`migrations/0016_workarea_transitions.sql`, which also adds `workareas_universe_committed`, so a
+`migrations/0017_workarea_transitions.sql`, which also adds `workareas_universe_committed`, so a
 root on any other rung is refused; a proposal inserts its pending row and a ratification turns it
 `ratified` and writes the node's status in the commit that journals the event, after the chain
 lock's re-checks ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4) · its checks run only
@@ -396,7 +396,7 @@ CREATE TABLE workarea_edges (
     CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id)
 );
 
--- Built in migrations/0016_workarea_transitions.sql: status-ladder proposals (ADR-0009
+-- Built in migrations/0017_workarea_transitions.sql: status-ladder proposals (ADR-0009
 -- d3), the build's reading on architecture/workareas.md. Several pending rows may share a workarea; ratification,
 -- under the chain lock, re-checks from_status against workareas.status (a stale row is
 -- refused) and, for a step to validated, that every child is validated. A stale row stays
@@ -441,7 +441,7 @@ and hyphens" up to 1000 characters per label
 
 ### claim_edges
 
-**Status:** built in `migrations/0017_claim_edges.sql` · its checks run only where a superuser
+**Status:** built in `migrations/0018_claim_edges.sql` · its checks run only where a superuser
 mints the suites' role pairs, CI's `cargo test (Postgres)`
 ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8). `oml-pg`'s
 claim-edge statements and `oml-app`'s proposal, ratification and page use cases that write and
@@ -511,12 +511,12 @@ CREATE INDEX claim_edges_listing ON claim_edges (tenant_id, created_at DESC, id 
   tenant, and EXPLAIN's estimate reads them under row security, since `texteq` and `uuid_eq` are
   leakproof, so a session set to tenant A would learn whether another tenant uses a label or
   holds an endpoint id: the FR-45 channel ADR-0034 d11 closed for `memories` with partitions.
-  0011 sets statistics target 0 on every column before any `ANALYZE`; ANALYZE then collects
+  0018 sets statistics target 0 on every column before any `ANALYZE`; ANALYZE then collects
   nothing, and each predicate takes PostgreSQL's default selectivity whatever any tenant stores
   (`under_tenant_a_explain_estimates_tenant_bs_edge_label_as_it_estimates_an_unused_one`, with
   the default target as its control). The cost: edge reads plan on defaults, never on a label's
   or an endpoint's skew. **Stays open** (FR-45): `pg_class`'s `reltuples` and `relpages` count
-  every tenant's edges together. This is a reading 0011's header records, not a decision of
+  every tenant's edges together. This is a reading 0018's header records, not a decision of
   ADR-0034, which lists target 0 as an FR-45 candidate.
 
 ## api_keys, grants, key_denials, bans
@@ -660,8 +660,8 @@ constraint (ADR-0034 d12). The keys built this way:
 | `workareas.namespace_root_id` | `(tenant_id, namespace_root_id)` | `workareas (tenant_id, id)` |
 | `memories.created_event_id` | `(tenant_id, created_event_id)` | `journal (tenant_id, event_id)` |
 | `review_queue.memory_id` | `(tenant_id, memory_id)` | `memories (tenant_id, id)` |
-| `claim_edges.src_artifact_id`, `dst_artifact_id` | `(tenant_id, src_artifact_id)`, `(tenant_id, dst_artifact_id)` | `memories (tenant_id, id)` (0011) |
-| `claim_edges.proposer_key_id`, `ratifier_key_id` | `(tenant_id, proposer_key_id)`, `(tenant_id, ratifier_key_id)` | `api_keys (tenant_id, id)` (0011) |
+| `claim_edges.src_artifact_id`, `dst_artifact_id` | `(tenant_id, src_artifact_id)`, `(tenant_id, dst_artifact_id)` | `memories (tenant_id, id)` (0018) |
+| `claim_edges.proposer_key_id`, `ratifier_key_id` | `(tenant_id, proposer_key_id)`, `(tenant_id, ratifier_key_id)` | `api_keys (tenant_id, id)` (0018) |
 
 - **The targets.** 0008 adds `UNIQUE (tenant_id, event_id)` on `journal` and `UNIQUE (tenant_id,
   id)` on `memories`; `workareas` and `api_keys` have theirs from 0004. Each key keeps its 0001
@@ -1374,7 +1374,7 @@ serving role until that migration grants its row here, under the sync rule.
   after a row lapses unused (0013). An `oauth_authorizations` row is never updated.
 - **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the
   `bigserial` sequence.
-- **`workarea_transitions`** is granted by its own migration, 0016, in 0007's form: the
+- **`workarea_transitions`** is granted by its own migration, 0017, in 0007's form: the
   proposal's `INSERT`, the ratification's `UPDATE` and the status read's `SELECT`.
 - **No table** grants `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`, whole-table operations
   row security does not bind.

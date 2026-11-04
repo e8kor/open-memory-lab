@@ -5504,7 +5504,7 @@ async fn a_key_issued_before_users_folds_as_a_tenant_key() {
 }
 
 // ---------------------------------------------------------------------------
-// Status-ladder proposals (migrations/0016_workarea_transitions.sql;
+// Status-ladder proposals (migrations/0017_workarea_transitions.sql;
 // ADR-0009 d1, d3)
 // ---------------------------------------------------------------------------
 
@@ -6160,7 +6160,7 @@ async fn a_concurrent_child_create_and_a_validated_ratification_never_leave_a_va
 }
 
 // ---------------------------------------------------------------------------
-// claim_edges (0011): the keys, the checks, the fence and the grant
+// claim_edges (0018): the keys, the checks, the fence and the grant
 // ---------------------------------------------------------------------------
 
 /// One tenant's two memories and two writer keys, under its `universe`, for
@@ -6345,7 +6345,7 @@ async fn a_claim_edge_naming_tenant_bs_memory_is_refused_as_one_naming_no_memory
     drop_dbs(&created).await;
 }
 
-/// 0011 grants `claim_edges` SELECT, INSERT and UPDATE alone: nothing
+/// 0018 grants `claim_edges` SELECT, INSERT and UPDATE alone: nothing
 /// deletes an edge, so the serving role's DELETE fails on privilege
 /// (`42501`) while its insert, ratifying update and read succeed
 /// (postgres-schema.md "Privileges"; ADR-0034 d3).
@@ -6557,7 +6557,7 @@ async fn edge_estimates(
 
 /// Under tenant A, EXPLAIN estimates as many claim edges for a label only
 /// tenant B's edges carry, and for one of tenant B's endpoints, as for a
-/// label and an id no tenant holds: 0011 keeps no column statistics on
+/// label and an id no tenant holds: 0018 keeps no column statistics on
 /// `claim_edges`, whose labels are tenant text, so the estimate cannot tell
 /// tenant A whether another tenant uses an edge label (FR-45; ADR-0034 d1,
 /// d11; spike 3's S3.4/estimate). The control restores the default target,
@@ -6635,7 +6635,7 @@ async fn under_tenant_a_explain_estimates_tenant_bs_edge_label_as_it_estimates_a
     }
 
     // Control: with the default statistics target the same estimates differ,
-    // so the law above measures 0011's setting, not an empty table.
+    // so the law above measures 0018's setting, not an empty table.
     for column in ["label", "src_artifact_id", "state", "tenant_id"] {
         owner
             .execute(

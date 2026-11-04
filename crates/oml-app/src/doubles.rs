@@ -688,7 +688,7 @@ fn one_rung(from: WorkareaStatus, to: WorkareaStatus) -> bool {
 /// refuses — a node or proposing key the tenant does not hold, a proposer
 /// principal other than the one that key's row holds, a step other than
 /// one rung forward, a record that is not pending, and an id already held
-/// (0016_workarea_transitions.sql; ADR-0010 R2).
+/// (0017_workarea_transitions.sql; ADR-0010 R2).
 fn propose_transition_fold(
     state: &mut TenantState,
     seq: u64,
