@@ -10482,12 +10482,12 @@ async fn a_supersede_whose_target_lies_in_a_validated_workarea_is_frozen() {
         assert_frozen(&err, crew, FrozenOp::Write);
     }
 
-    // An `X-OML-Workarea` other than the target's is answered before freeze.
+    // A body `workarea` other than the target's is answered before freeze.
     let err = app
         .supersede(
             &writer.value,
             &SupersedeRequest {
-                workarea_id: Some(open.into()),
+                workarea: Some(open.into()),
                 ..supersede_req("s5", target, "x")
             },
         )
