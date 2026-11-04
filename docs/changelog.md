@@ -45,10 +45,11 @@ and v0.4.0 adds no migration.
 | Three tools, `oml_write`, `oml_read` and `oml_workarea`, replace the eight of v0.3.0 | `permissions.allow` rules naming the v0.3.0 read tools, which now allow nothing | allow `mcp__plugin_oml_oml__oml_read` and `mcp__plugin_oml_oml__oml_workarea`, or the server-wide `mcp__plugin_oml_oml`; the plugin README and the root README carry both |
 | The events tail leaves MCP | callers of `oml_events_tail` | `oml_read` with `state` for an agent's own writes; `GET /v2/events`, the SDKs' `events` or `oml events` to audit |
 | The plugin takes `url` and `api_key` as its own settings, and its cached skill and hook name the old tools | plugin 0.3 installs, which serve no tools after the update until configured | `claude plugin update oml@open-memory-lab`, then `/plugin configure oml@open-memory-lab` or `claude plugin configure --values-stdin`; install the v0.4.0 CLI for the hook |
-| One `workarea` field replaces the `X-OML-Workarea` header and the `workarea_id` filter; `include_unreviewed` replaces `include_own_held`; recall takes `include_text`; a sent `auto-` claim key is refused | HTTP callers, the CLI, the hook | upgrade the CLI with the server; a renamed spelling is refused with `request.validation` naming the new one in `details.renamed_to`, and an `auto-` key naming `/claim_key` |
+| One `workarea` field replaces the `X-OML-Workarea` header and the `workarea_id` filter; `include_unreviewed` replaces `include_own_held`; recall takes `include_text` for `include_bodies`; a sent `auto-` claim key is refused | HTTP callers, the CLI, the hook | upgrade the CLI with the server; a renamed spelling is refused with `request.validation` naming the new one in `details.renamed_to`, and an `auto-` key naming `/claim_key` |
+| The admin routes' request fields are named after the kind they reference: `POST /v2/keys` takes `default_workarea` for `default_workarea_id`, `tenant` for `tenant_id`, each grant's `workarea` for `workarea_node_id` and `deny[].workarea` for `deny[].subtree_node_id`; `POST /v2/keys/{key}/denials` takes `workarea` for `workarea_node_id`; `POST /v2/workareas` takes `parent` for `parent_id`; and the `scope` of v0.3.0's `oml_recall` and `oml_events_tail` is `workarea` on `oml_read` and `GET /v2/events` | admin scripts, HTTP callers, MCP clients, the CLI | send the new spelling: each admin route field above is refused with `request.validation` naming its successor in `details.renamed_to`, the CLI sends the new spellings, and the two v0.3.0 tools still take `scope` through the alias window |
 | A served claim's `body` is `text` | HTTP readers, the SDKs | read `text` |
 | A submission with `derives_from` and no `verb` is journalled `submission.learn` | journal readers | none; an explicit `verb: "remember"` keeps the old event |
-| The SDKs' verbs are `write`, `read`, `workarea`, `events`, `review_next`, `approve` and `reject`, at `0.2.0`; openapi.yaml declares only the 23 routed operations, so the unrouted ones leave the generated modules for the designed annex | SDK users | the wrapper's `write` and `read`; the removed generated calls never reached a route |
+| The SDKs' verbs are `write`, `read`, `workarea`, `events`, `review_next`, `approve` and `reject`, at `0.2.0`; openapi.yaml declares only the 23 routed operations, so the unrouted ones leave the generated modules for the designed annex; three operationIds are renamed, `searchMemories` to `listMemories`, `proposeSupersession` to `supersedeMemory` and `updateCrewMetadata` to `setWorkareaCrew`, and the generated calls with them | SDK users | the wrapper's `write` and `read`; call a renamed generated operation by its new name; the removed generated calls never reached a route |
 | CLI verbs, flags and variables renamed: `oml write`, `oml read`, `oml events`, `oml review approve` and `reject`, `--url` and `--api-key`, `OML_URL` and `OML_API_KEY`; the bootstrap secret's argv flag removed | scripts, shell profiles | the new names; `oml login <url>` once; `oml bootstrap claim … --token-stdin` |
 | `oml.doublegate.io` on a v0.3 release | the maintainer's deployment | upgrade the server, the CLI and the plugin together, configure the plugin, replace the permission rules, and record the upgrade with its date in [upgrades](operations/upgrades.md#server-cli-and-plugin-together-the-upgrade-to-v040); not run yet |
 
@@ -69,8 +70,13 @@ default separators, the measure that gives the 18,893 ADR-0039 records.
 
 `scripts/check_contract_sync.py` now fails a start page, the READMEs, the plugin skills, the
 agent kit's README, the docs index, `llms.txt`, [SDKs](engineering/sdks.md), the operations
-pages and the scripts, that names a v0.3.0 spelling outside a section headed "Upgrading
-from …", and the quickstart's own CLI URL variable is `OML_CLI_URL`.
+pages and the scripts, that names a v0.3.0 spelling of ADR-0039 d10 outside a section headed
+"Upgrading from …": any of the eight tool names, read from the facade's alias table,
+`X-OML-Workarea`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, `--token`, `--server`,
+`--key`, `oml submit`, `oml recall`, `oml supersede`, `oml review verdict`, or the release
+0.3.2 written with or without its `v`. The pattern is first run against one probe line per
+spelling and against the v0.4.0 spellings it must let through. The quickstart's own CLI URL
+variable is `OML_CLI_URL`.
 
 - **Pages touched:** the root README's quickstart (the server, `oml login`, the plugin, `oml
   write` and `oml read`, the permission rules), the `oml-memory` skill's mode rules and its file

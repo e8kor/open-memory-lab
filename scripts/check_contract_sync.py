@@ -40,9 +40,13 @@ This script extracts each surface and fails with a diff on any disagreement:
     and changelog.md): `oml login` with one credentials file per identity
     replaces it, and a page that still runs it contradicts the reference
     (ADR-0039 d15)
-  * a v0.3.0 name, `oml_remember`, `oml_recall`, `X-OML-Workarea`,
-    `include_own_held`, `OML_CLI_SERVER`, the `--token` flag or the release
-    0.3.2, on a start page (README.md, a plugin or SDK README, a plugin skill,
+  * a v0.3.0 spelling from d10's table on a start page: the eight tool names
+    (ALIASES in crates/transports/oml-transport-http/src/mcp/alias.rs),
+    `X-OML-Workarea`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, the
+    `--token`, `--server` and `--key` flags, the verbs `oml submit`, `oml recall`,
+    `oml supersede` and `oml review verdict`, or the release 0.3.2 or v0.3.2,
+    the pattern first checked against probe lines it must catch and pass, on a
+    start page (README.md, a plugin or SDK README, a plugin skill,
     kit/README.md, docs/index.md, docs/llms.txt, docs/engineering/sdks.md,
     docs/operations/ or a script under scripts/) outside a section headed
     "Upgrading from …": the migration names the old spelling, a start page
@@ -104,9 +108,27 @@ MEMORY_READ_RE = re.compile(r"\bmemory\??\.([a-z_]+)\b")
 CONTRACT_MARKS = {"served", "designed"}
 RETIRED_VERB_RE = re.compile(r"\boml context (?:add|use|list|show|remove)\b")
 RETIRED_VERB_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "docs" / "changelog.md"]
+ALIAS_RS = MCP_RS.parent / "mcp" / "alias.rs"
+
+
+def v0_3_0_tools() -> list[str]:
+    """The eight v0.3.0 tool names, the first of each pair of `ALIASES` in alias.rs."""
+    match = re.search(r"ALIASES: \[\(&str, &str\); \d+\] = \[(.*?)\];",
+                      ALIAS_RS.read_text(encoding="utf-8"), re.S)
+    if not match:
+        sys.exit(f"ALIASES not found in {ALIAS_RS.relative_to(ROOT)}")
+    return re.findall(r'\(\s*"([^"]+)"\s*,', match.group(1))
+
+
+# d10's v0.3.0 column: the tool names, the header, the recall flag, the
+# variables, the flags, the CLI verbs, and the release 0.3.2 the rewrite
+# replaced with v0.4.0, spelled with or without a "v" and at a sentence's end.
 RETIRED_NAME_RE = re.compile(
-    r"\boml_remember\b|\boml_recall\b|X-OML-Workarea|\binclude_own_held\b|\bOML_CLI_SERVER\b"
-    r"|--token(?![-\w])|(?<![\w.])0\.3\.2(?![\w.])"
+    "|".join(rf"\b{re.escape(tool)}\b" for tool in v0_3_0_tools())
+    + r"|X-OML-Workarea|\binclude_own_held\b|\bOML_CLI_(?:SERVER|KEY)\b"
+    r"|(?<![-\w])--(?:token|server|key)(?![-\w])"
+    r"|\boml (?:submit|recall|supersede|review verdict)\b"
+    r"|(?<![\w.])v?0\.3\.2(?!\.?\w)"
 )
 MIGRATION_HEADING_RE = re.compile(r"^(#+) Upgrading from ")
 
@@ -397,6 +419,35 @@ def start_pages() -> list[Path]:
             *sorted((ROOT / "scripts").glob("*.sh"))]
 
 
+# One line per v0.3.0 spelling d10 and d13 retire, which RETIRED_NAME_RE must
+# catch, and the v0.4.0 spellings and look-alikes it must let through: the
+# pattern is checked against these before it reads a page.
+RETIRED_NAME_CATCHES = [
+    "call oml_remember", "call oml_learn", "call oml_recall", "call oml_get",
+    "call oml_supersede", "call oml_my_work", "call oml_workarea_info",
+    "call oml_events_tail", "send X-OML-Workarea", "set include_own_held",
+    "export OML_CLI_SERVER=x", "export OML_CLI_KEY=x", "oml bootstrap claim ci --token s",
+    "oml --server https://x", "oml --key k", "oml submit --claim t", "oml recall --query q",
+    "oml supersede a", "oml review verdict --approve", "tag v0.3.2", "ships in 0.3.2.",
+    "0.3.2 ships",
+]
+RETIRED_NAME_PASSES = [
+    "call oml_write", "call oml_read", "call oml_workarea", "oml write t", "oml read --query q",
+    "oml review approve", "oml --url https://x --api-key k", "--token-stdin", "--key-file k",
+    "--server-url x", "OML_URL and OML_API_KEY", "include_unreviewed", "tag v0.3.1",
+    "0.3.20", "10.3.2", "0.3.2.1", "oml recalls", "oml submitted",
+]
+
+
+def retired_name_pattern_problems() -> list[str]:
+    """Each probe line RETIRED_NAME_RE misreads: a retired spelling it misses or
+    a v0.4.0 spelling it fails."""
+    missed = [f"misses {line!r}" for line in RETIRED_NAME_CATCHES
+              if not RETIRED_NAME_RE.search(line)]
+    return missed + [f"fails {line!r}" for line in RETIRED_NAME_PASSES
+                     if RETIRED_NAME_RE.search(line)]
+
+
 def retired_name_problems() -> list[str]:
     """Each line of a start page that names a v0.3.0 spelling ADR-0039 d13 breaks,
     outside a section headed "Upgrading from …", whose migration names it."""
@@ -585,6 +636,10 @@ def main() -> int:
     retired = retired_verb_problems()
     if retired:
         failures.append(("a reader page runs a CLI verb ADR-0039 d15 retired", retired))
+
+    pattern_problems = retired_name_pattern_problems()
+    if pattern_problems:
+        failures.append(("the v0.3.0 spelling pattern misreads a probe line", pattern_problems))
 
     retired_names = retired_name_problems()
     if retired_names:
