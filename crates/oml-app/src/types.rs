@@ -1898,10 +1898,11 @@ pub enum AppError {
     /// edges (errors.md `vocab.cycle_refused`; ADR-0021 d5).
     #[error(transparent)]
     CycleRefused(#[from] CycleRefused),
-    /// A term endpoint of an `oml:is_a` or `oml:replaced_by` edge whose
-    /// `claim_key` is not a CURIE, or an endpoint of one that is not a
-    /// term: the cycle check cannot run, so the ratification fails closed
-    /// and journals nothing (ADR-0021 d2, d5).
+    /// A stored endpoint of a ratified or ratifying `oml:is_a` edge whose
+    /// `claim_key` is not a CURIE, or that is not a term: the label check
+    /// refuses such an edge at proposal and at ratification, so only a row
+    /// that defies it reaches here; the cycle check cannot run, and the
+    /// ratification fails closed and journals nothing (ADR-0021 d2, d5).
     #[error("claim_key {claim_key:?} of a term edge's endpoint is not a term's CURIE")]
     TermEndpoint { claim_key: String },
     #[error(

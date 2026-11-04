@@ -11186,30 +11186,97 @@ async fn ratifying_an_is_a_edge_that_closes_a_cycle_is_refused_vocab_cycle_refus
 }
 
 #[tokio::test]
-async fn a_replaced_by_loop_is_refused_vocab_cycle_refused() {
+async fn a_pending_successor_or_about_edge_is_never_ratified_apart_from_its_deprecation_and_journals_nothing()
+ {
     let t = term_fixture().await;
-    let pending = |edge_id: u128, src, dst| ClaimEdgeRecord {
-        edge_id: Uuid::from_u128(edge_id),
-        label: "oml:replaced_by".to_owned(),
-        ..pending_edge(t.boot.tenant_id, &t.pat, src, dst)
-    };
-    let xy = 0xED6E_0000_0000_0000_0000_0000_0000_0101;
-    let yx = 0xED6E_0000_0000_0000_0000_0000_0000_0102;
-    commit_pending_edge(&t.store, pending(xy, t.x, t.y), 0xEE01).await;
-    commit_pending_edge(&t.store, pending(yx, t.y, t.x), 0xEE02).await;
-    t.app
-        .ratify_claim_edge(&t.rita.value, Uuid::from_u128(xy), None)
-        .await
-        .expect("x replaced_by y");
+    let cases = [
+        (
+            0xED6E_0000_0000_0000_0000_0000_0000_0101_u128,
+            OmlLabel::ReplacedBy,
+            LabelRefusal::SuccessorOutsideDeprecation,
+        ),
+        (
+            0xED6E_0000_0000_0000_0000_0000_0000_0102,
+            OmlLabel::Consider,
+            LabelRefusal::SuccessorOutsideDeprecation,
+        ),
+        (
+            0xED6E_0000_0000_0000_0000_0000_0000_0103,
+            OmlLabel::About,
+            LabelRefusal::AboutNotBuilt,
+        ),
+    ];
+    for (n, (edge_id, label, _)) in cases.iter().enumerate() {
+        let edge = ClaimEdgeRecord {
+            edge_id: Uuid::from_u128(*edge_id),
+            label: label.as_str().to_owned(),
+            ..pending_edge(t.boot.tenant_id, &t.pat, t.x, t.y)
+        };
+        commit_pending_edge(&t.store, edge, 0xEE01 + n as u128).await;
+    }
     let before = journal(&t.store, t.boot.tenant_id).await.len();
 
-    let err = t
-        .app
-        .ratify_claim_edge(&t.rita.value, Uuid::from_u128(yx), None)
-        .await
-        .unwrap_err();
-    assert!(is_cycle_refused(&err, OmlLabel::ReplacedBy), "{err:?}");
+    for (edge_id, label, reason) in cases {
+        let edge_id = Uuid::from_u128(edge_id);
+        let err = t
+            .app
+            .ratify_claim_edge(&t.rita.value, edge_id, Some(label.as_str()))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                AppError::ClaimEdgeLabel { field: EdgeField::Label, reason: refused }
+                    if *refused == reason
+            ),
+            "{label:?}: {err:?}"
+        );
+        let edge = t
+            .store
+            .claim_edge(t.boot.tenant_id, edge_id)
+            .await
+            .expect("read")
+            .expect("the edge");
+        assert_eq!(edge.state, EdgeState::Pending, "{label:?} waits");
+    }
     assert_eq!(journal(&t.store, t.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn an_is_a_proposal_between_two_terms_whose_claim_keys_are_not_curies_is_refused_request_validation_and_journals_nothing()
+ {
+    let t = term_fixture().await;
+    let store = &t.store;
+    let admin = &t.boot.admin_key.value;
+    let crew = store
+        .memory(t.boot.tenant_id, t.x)
+        .await
+        .expect("read")
+        .expect("x")
+        .workarea_id;
+    let alice = agent(&t.app, admin, "alice-2", crew).await;
+    let dana = issue(&t.app, admin, Role::Dreamer, "dana-2", crew).await;
+    let plain = term(&t.app, &alice.value, &dana.value, "t-plain", "claim-plain").await;
+    let before = journal(store, t.boot.tenant_id).await.len();
+
+    for (from, to, field) in [(plain, t.x, EdgeField::From), (t.x, plain, EdgeField::To)] {
+        for label in [OmlLabel::IsA, OmlLabel::PartOf] {
+            let err = t
+                .app
+                .propose_claim_edge(&t.pat.value, &edge_req(from, to, label.as_str()), None)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    AppError::ClaimEdgeLabel { field: f, reason: LabelRefusal::EndpointNotCurie { field: r } }
+                        if *f == field && *r == field
+                ),
+                "{label:?}: {err:?}"
+            );
+        }
+    }
+    assert_eq!(journal(store, t.boot.tenant_id).await.len(), before);
 }
 
 #[tokio::test]
