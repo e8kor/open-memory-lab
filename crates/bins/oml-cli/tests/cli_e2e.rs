@@ -4765,6 +4765,62 @@ async fn each_old_cli_verb_runs_its_new_verb_and_names_it_on_stderr() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_v0_3_0_cli_verbs_are_unknown_subcommands() {
+    // Removed in v0.5.1, each v0.3.0 verb and start flag is clap's usage
+    // error: exit 2, the error naming it, and nothing sent (ADR-0039 d12).
+    let (server, seen, task) = canned_stub().await;
+    let (dir, _) = stub_paths("v030-removed");
+    let verbs: [(&[&str], &str); 4] = [
+        (
+            &["submit", "--claim", "Accra Metals quoted 412 USD/t."],
+            "unrecognized subcommand 'submit'",
+        ),
+        (
+            &["recall", "--query", "Accra Metals"],
+            "unrecognized subcommand 'recall'",
+        ),
+        (
+            &[
+                "supersede",
+                "--target",
+                STUB_ARTIFACT,
+                "--claim",
+                "Now 399 USD/t.",
+            ],
+            "unrecognized subcommand 'supersede'",
+        ),
+        (
+            &["review", "verdict", "--memory", STUB_ARTIFACT, "--approve"],
+            "unrecognized subcommand 'verdict'",
+        ),
+    ];
+    for (args, message) in verbs {
+        let (code, out, err) = stub_text(&server, &dir, args);
+        assert_eq!(code, 2, "{args:?}: {err}");
+        assert!(err.contains(message), "{args:?}: {err}");
+        assert_eq!(out, "", "{args:?}");
+        assert!(taken(&seen).is_empty(), "{args:?} sends no request");
+    }
+    for flag in ["--server", "--key"] {
+        let (code, out, err) = stub_text(
+            &server,
+            &dir,
+            &[flag, "oml_old_value", "read", "--query", "Accra Metals"],
+        );
+        assert_eq!(code, 2, "{flag}: {err}");
+        assert!(
+            err.contains(&format!("unexpected argument '{flag}' found")),
+            "{flag}: {err}"
+        );
+        assert!(!err.contains("oml_old_value"), "no value on stderr: {err}");
+        assert_eq!(out, "", "{flag}");
+        assert!(taken(&seen).is_empty(), "{flag} sends no request");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bootstrap_claim_reads_the_secret_from_stdin_and_takes_no_token_flag() {
     let (server, seen, task) = canned_stub().await;
     let (dir, _) = stub_paths("token-stdin");

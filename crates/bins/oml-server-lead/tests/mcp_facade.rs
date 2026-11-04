@@ -917,6 +917,44 @@ async fn a_tool_that_is_not_served_answers_json_rpc_32602() {
     drop_db(&db).await;
 }
 
+/// The eight tool names v0.3.0 served, which v0.5.1 removed (ADR-0039 d12).
+const V0_3_0_TOOL_NAMES: [&str; 8] = [
+    "oml_remember",
+    "oml_learn",
+    "oml_recall",
+    "oml_get",
+    "oml_supersede",
+    "oml_my_work",
+    "oml_workarea_info",
+    "oml_events_tail",
+];
+
+#[tokio::test]
+async fn the_v0_3_0_tool_names_answer_unknown_tool() {
+    // Removed in v0.5.1, each old name is a name the server does not serve:
+    // a JSON-RPC -32602 with the unknown-tool message and no tool result,
+    // whatever arguments it carries (ADR-0039 d11, d12).
+    let router = doubles_router();
+    let (agent, _, _, _) = agent_crew(&router).await;
+    for (id, name) in (1..).zip(V0_3_0_TOOL_NAMES) {
+        let body = rpc(
+            &router,
+            &agent,
+            id,
+            "tools/call",
+            json!({"name": name, "arguments": {}}),
+        )
+        .await;
+        assert!(body.get("result").is_none(), "{name}: {body}");
+        assert_eq!(body["error"]["code"], -32602, "{name}: {body}");
+        let message = body["error"]["message"].as_str().expect("message");
+        assert!(
+            message.starts_with(&format!("Unknown tool: {name}.")),
+            "{name}: {body}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn tools_list_names_three_tools_each_with_its_annotations() {
     let Some((router, db)) = fresh_router().await else {
