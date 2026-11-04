@@ -12,7 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import metrics  # noqa: E402
 
 ORDER = ["oml", "oml_keywords", "pg_simple_and", "pg_simple_or", "pg_simple_and_or",
-         "pg_english_or", "pg_english_or_trgm", "bm25", "dense", "hybrid_rrf"]
+         "pg_english_or", "pg_english_or_trgm", "bm25", "dense", "hybrid_rrf",
+         # The served search pipelines through oml_read (ADR-0049), and the
+         # failure hook's shape on two of them.
+         "served_keyword_all", "served_keyword_any", "served_bm25", "served_bm25_trigram",
+         "hook_keyword_all", "hook_bm25_trigram"]
 
 
 def main():

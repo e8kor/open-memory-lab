@@ -296,6 +296,30 @@ that never returns empty.
    alone") would help a little, but it is a workaround for the AND, not a
    fix.
 
+## Served pipelines (ADR-0049), 2026-11-04
+
+The recommendations below were built as search pipelines behind a port and measured through the
+served `oml_read`, the same harness as `oml` above, by `served.sh` on a release build
+(`results/served_*.json`). `keyword-all` is v0.5.0's recall and reproduces `oml` on every query.
+
+| pipeline | success@1 | success@5 | recall@10 | nDCG@10 | zero-result | median ms | p95 ms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `keyword-all` | 0.17 | 0.17 | 0.12 | 0.16 | 0.83 | 15.9 | 18.8 |
+| `keyword-any` | 0.65 | 0.81 | 0.73 | 0.69 | 0.03 | 19.4 | 29.6 |
+| `bm25` | 0.82 | 0.91 | 0.91 | 0.86 | 0.00 | 33.9 | 52.1 |
+| `bm25-trigram` | 0.78 | 0.94 | 0.93 | 0.86 | 0.00 | 73.9 | 100.6 |
+
+Every pipeline passes its gate (ADR-0048 d1), so the default is `bm25-trigram`, the highest
+success@5. `bm25`, served in SQL over the readable rows, lands on the offline BM25 baseline
+(0.92); fusing trigrams lifts partial and typo to 1.00 each and costs latency, since the trigram
+list scans the tenant's partition under row security. A second run moved each of the last three
+by about one query (0.83, 0.92, 0.95 on a debug build): ties break by artifact ids a fresh load
+draws anew.
+
+The failure hook's own shape, the query minus stop words with `k` 3 under 200 tokens
+(`results/hook_*.json`): success@3 0.24 and 75% empty under `keyword-all`, 0.88 and none empty
+under `bm25-trigram`.
+
 ## Limits of this eval
 
 - **One model wrote the corpus, the queries and the labels.** Their wording

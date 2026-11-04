@@ -74,10 +74,14 @@ class Client:
             except ValueError:
                 return e.code, raw
 
-    def recall(self, query, k, max_tokens, workarea):
+    def recall(self, query, k, max_tokens, workarea, search=None, match=None):
         args = {"query": query, "k": k, "max_tokens": max_tokens}
         if workarea:
             args["workarea"] = workarea
+        if search:
+            args["search"] = search
+        if match:
+            args["match"] = match
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                 "params": {"name": "oml_read", "arguments": args}}
         t0 = time.perf_counter()
@@ -151,6 +155,11 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--keywords", action="store_true",
                     help="send each query minus stop words; writes oml_keywords.json")
+    ap.add_argument("--search", default=None,
+                    help="the pipeline oml_read runs (ADR-0049); writes served_<search>.json")
+    ap.add_argument("--match", default=None, choices=["any", "all"],
+                    help="oml_read's match field; omitted, the server's default (any)")
+    ap.add_argument("--name", default=None, help="the result file's name, without .json")
     a = ap.parse_args()
 
     out = Path(a.out)
@@ -166,11 +175,13 @@ def main():
         idmap = load(writer, reviewer, memories, a.workarea)
         idmap_path.write_text(json.dumps(idmap, indent=1))
 
-    writer.recall("warm up", a.k, a.max_tokens, a.workarea)
+    writer.recall("warm up", a.k, a.max_tokens, a.workarea, a.search, a.match)
     per_query = {}
+    served_by = set()
     for q in queries:
         sent = keywords(q["query"]) if a.keywords else q["query"]
-        res, ms = writer.recall(sent, a.k, a.max_tokens, a.workarea)
+        res, ms = writer.recall(sent, a.k, a.max_tokens, a.workarea, a.search, a.match)
+        served_by.add(res.get("search", {}).get("pipeline"))
         ranked = [idmap.get(hit_id(h), "?") for h in res.get("hits", [])]
         per_query[q["id"]] = {
             "sent": sent,
@@ -179,15 +190,25 @@ def main():
             "steering": len(res.get("steering", [])),
             "budget": res.get("budget"),
             "latency_ms": round(ms, 2),
+            "fallback": res.get("search", {}).get("fallback"),
         }
     summary = metrics.aggregate(per_query, queries)
-    name = "oml_keywords" if a.keywords else "oml"
+    if a.name:
+        name = a.name
+    elif a.search:
+        name = "served_" + a.search.replace("-", "_") + ("_keywords" if a.keywords else "")
+    else:
+        name = "oml_keywords" if a.keywords else "oml"
+    if a.search and served_by != {a.search}:
+        raise SystemExit(f"asked for {a.search}, the server answered {sorted(map(str, served_by))}")
+    pipeline = a.search or (served_by.pop() if len(served_by) == 1 else None)
     result = {
         "method": name,
-        "description": "OML recall as served: oml_read over /mcp, plainto_tsquery('simple') AND "
-                       "semantics, ts_rank normalization 0"
+        "description": f"OML recall as served: oml_read over /mcp, search pipeline {pipeline}"
+                       + (f", match {a.match}" if a.match else "")
                        + ("; query sent minus stop words" if a.keywords else ""),
-        "params": {"k": a.k, "max_tokens": a.max_tokens},
+        "pipeline": pipeline,
+        "params": {"k": a.k, "max_tokens": a.max_tokens, "match": a.match, "keywords": a.keywords},
         "summary": summary,
         "per_query": per_query,
     }
