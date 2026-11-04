@@ -1466,11 +1466,31 @@ pub struct ClaimEdgeRecord {
 pub struct ClaimEdgeFilter {
     /// Only edges with this version at either endpoint.
     pub artifact_id: Option<Uuid>,
-    /// Only edges with an endpoint version in this workarea.
+    /// Only edges with an endpoint version in this workarea's subtree, as
+    /// every other `workarea_id` filter in http-api.md narrows (search, the
+    /// events tail).
     // reading: http-api.md names `workarea_id` on the graph read but not
     // which endpoint it constrains; an edge is a connection either way, so
     // it matches as `artifact_id` does, at either endpoint.
     pub workarea_id: Option<Uuid>,
+}
+
+/// What the store's claim-edge page selects: the read's [`ClaimEdgeFilter`]
+/// resolved against the key's read scope, so the keyset `LIMIT` counts only
+/// edges the key may be served (http-api.md claim edges; roles-and-keys.md
+/// footnote 5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEdgeSelection {
+    /// Only edges with this version at either endpoint.
+    pub artifact_id: Option<Uuid>,
+    /// Only edges with an endpoint version in one of these workareas: the
+    /// filter's subtree where reader is effective; `None` narrows nothing.
+    pub within: Option<Vec<Uuid>>,
+    /// Both endpoint versions lie in these workareas, every node where
+    /// reader is effective for the key...
+    pub readable_nodes: Vec<Uuid>,
+    /// ...and each is promoted or authored by this key.
+    pub reader_key_id: Uuid,
 }
 
 /// Where a claim-edge page resumes: the `created_at` and id of the last
