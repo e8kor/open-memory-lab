@@ -15,15 +15,18 @@ use uuid::Uuid;
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
-use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
+use oml_domain::{
+    ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, WorkareaStatus, key_fingerprint,
+};
 
-use crate::types::{AdminSearch, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth};
 use crate::types::{
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
+    AdminSearch, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord,
+    ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess,
     KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
-    RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
+    PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,
+    WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use oml_domain::web::Provider;
 
@@ -40,6 +43,42 @@ pub enum StoreError {
     /// commit wrote nothing (ADR-0025 d10).
     #[error("version {replaced} is no longer the served tip its successor replaces")]
     TipMoved { replaced: Uuid },
+    /// A ratification's in-transaction re-check found its proposal no
+    /// longer live: the row is already ratified, or its `from` is no longer
+    /// the node's status. The commit wrote nothing, its event included;
+    /// answered `workarea.transition_refused`, `details.reason` `stale`
+    /// (errors.md; workareas.md, ratification re-checks; ADR-0009 d3).
+    #[error("transition {transition_id} on workarea {workarea_id} is stale")]
+    TransitionStale {
+        transition_id: Uuid,
+        workarea_id: Uuid,
+        /// The proposal's `from` and `to`, as the row holds them.
+        from: WorkareaStatus,
+        to: WorkareaStatus,
+    },
+    /// A ratification of a step to `validated` found, inside its
+    /// transaction and after the chain lock, a direct child of the node
+    /// that is not `validated`: a child created, or a subtree reparented
+    /// in, since the proposal. The commit wrote nothing; answered
+    /// `workarea.transition_refused`, `details.reason`
+    /// `children_not_validated` (errors.md; ADR-0009 d4).
+    #[error("transition {transition_id}: workarea {workarea_id} has a child not validated")]
+    ChildrenNotValidated {
+        transition_id: Uuid,
+        workarea_id: Uuid,
+    },
+    /// A ratification's ratifying key is the proposing key, or holds the
+    /// proposer's principal, read from the key row inside the transaction.
+    /// The commit wrote nothing; answered `review.ratifier_is_proposer`
+    /// (errors.md; ADR-0010 R2).
+    #[error("transition {transition_id}'s ratifier is its proposer")]
+    RatifierIsProposer { transition_id: Uuid },
+    /// A claim-edge ratification's compare-and-set found `edge_id` no
+    /// longer pending, ratified by a commit before it, or not an edge the
+    /// tenant holds: the commit wrote nothing, its event included
+    /// (postgres-schema.md `claim_edges`; ADR-0021 d5).
+    #[error("claim edge {edge_id} is not a pending edge of this tenant")]
+    EdgeNotPending { edge_id: Uuid },
     /// A commit's idempotency record found its scope already recorded: a
     /// concurrent attempt under the same Idempotency-Key committed first,
     /// and this commit wrote nothing (http-api.md idempotency).
@@ -289,6 +328,87 @@ pub enum MetadataFold {
     /// `memory.admin_read`: an admin key read memories' text; nothing
     /// changes but the journal (ADR-0045 d21).
     AdminRead,
+    /// `workarea.status_proposed`: the proposal's row, `pending` with no
+    /// ratifier, its `proposed_seq` this commit's seq. The store refuses a
+    /// node or proposing key its tenant does not hold, a proposer principal
+    /// other than the one the proposing key's row holds, a step other than
+    /// one rung forward, and a record that is not pending (postgres-schema.md
+    /// `workarea_transitions`; ADR-0009 d3; ADR-0010 R2). Whether the step
+    /// may be proposed is the ladder's, decided before the commit.
+    TransitionProposed(TransitionRecord),
+    /// `workarea.status_transition`: the pending row `transition_id` on
+    /// `workarea_id` becomes `ratified` by `ratifier_key_id`, its
+    /// `ratified_seq` this commit's seq, and the node's status becomes `to`
+    /// in the same transaction. The store re-checks the proposal inside
+    /// that transaction, under the chain lock with the node and the row
+    /// locked, so a child created or a subtree reparented in since the
+    /// proposal is seen: a row already ratified or whose `from` is no
+    /// longer the node's status is [`StoreError::TransitionStale`]; a
+    /// ratifier that is the proposing key or holds the proposer's
+    /// principal, read from its key row, is
+    /// [`StoreError::RatifierIsProposer`]; a step to `validated` with a
+    /// direct child not `validated` is [`StoreError::ChildrenNotValidated`].
+    /// A row that is not a proposal on this node with this `to`, a ratifier
+    /// key the tenant does not hold, and a universe root moved off
+    /// `committed` are defects. Every refusal refuses the commit, which
+    /// writes nothing, its event included (ADR-0009 d1, d3, d4; ADR-0010
+    /// R2; workareas.md, ratification re-checks).
+    TransitionRatified {
+        transition_id: Uuid,
+        workarea_id: Uuid,
+        to: WorkareaStatus,
+        ratifier_key_id: Uuid,
+    },
+    /// `claim_edge.proposed`: the edge row, pending with no ratifier. The
+    /// store refuses an endpoint or a proposer key its tenant does not hold,
+    /// an edge id it holds already, an edge that is not pending, and a
+    /// `created_at` that is not the event's `at`.
+    ///
+    /// A pending edge enters the lineage closure (audit-and-lineage.md, the
+    /// derivation graph: pending and ratified alike; ADR-0001 d2), and the
+    /// closure is flattened onto `lineage_principals` and `lineage_key_ids`,
+    /// which the review queue and the verdict read; so this fold widens them
+    /// in the same transaction. The reading: let C be the versions connected
+    /// to either endpoint through claim edges, the new one included, since
+    /// `vocab_edges::lineage_artifacts` follows a claim edge from either end
+    /// and no rejected edge is stored in this build. Every version in C, and
+    /// every version that reaches one in C through `derives_from` ancestry
+    /// and claim edges, gains the union of C's flattened principals and key
+    /// ids. The proposer enters no closure: R2 against the proposer is the
+    /// ratification's check (ADR-0012; errors.md
+    /// `review.ratifier_is_proposer`).
+    ClaimEdgeProposed(ClaimEdgeRecord),
+    /// `review.ratify` with `subject_kind: "claim_edge"`: the edge turns
+    /// ratified and names `ratifier_key_id` (event-catalog.md, the
+    /// claim-edge family). The store compare-and-sets that the edge is
+    /// still a pending edge of the commit's tenant; on a lost
+    /// compare-and-set it writes nothing, the event included, and refuses
+    /// with [`StoreError::EdgeNotPending`], as [`Self::TipSuperseded`]
+    /// refuses with [`StoreError::TipMoved`]. It refuses a ratifier key the
+    /// tenant does not hold and one equal to the proposer's
+    /// (`claim_edges_ratifier_is_not_proposer`); R2 against the proposer's
+    /// principal and the endpoints' closures is the use case's (ADR-0012).
+    /// The edge is already in every closure it joins, pending, so the fold
+    /// widens none (audit-and-lineage.md, pending and ratified alike).
+    ClaimEdgeRatified {
+        edge_id: Uuid,
+        ratifier_key_id: Uuid,
+    },
+    /// `brief_edge.proposed`: the edge row, pending with no ratifier, its
+    /// `created_at` the event's `at`. The store refuses a claim, workarea or
+    /// proposer key its tenant does not hold, an id it holds already, and
+    /// an edge that is not pending. It widens no lineage closure
+    /// (postgres-schema.md `brief_edges`; ADR-0046 d7).
+    BriefEdgeProposed(BriefEdgeRecord),
+    /// `review.ratify` with `subject_kind: "brief_edge"`: the edge turns
+    /// ratified, names `ratifier_key_id` and takes this commit's seq as its
+    /// `ratified_seq`. A lost compare-and-set on the pending state writes
+    /// nothing, the event included, and is [`StoreError::EdgeNotPending`];
+    /// a ratifier equal to the proposer is the store's refusal too.
+    BriefEdgeRatified {
+        edge_id: Uuid,
+        ratifier_key_id: Uuid,
+    },
 }
 
 /// The outbox row written in the same transaction as the event; the lake
@@ -748,10 +868,92 @@ pub trait JournalStore: Send + Sync {
         workarea_id: Uuid,
     ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send;
 
+    /// The status-ladder proposal `transition_id`, pending or ratified;
+    /// `None` for one this tenant does not hold (ADR-0009 d3).
+    fn transition(
+        &self,
+        tenant_id: Uuid,
+        transition_id: Uuid,
+    ) -> impl Future<Output = Result<Option<TransitionRecord>, StoreError>> + Send;
+
+    /// Every `pending` proposal on the node, in the order they were
+    /// proposed (`proposed_seq`); empty for a node this tenant does not
+    /// hold. A proposal another's ratification made stale is still listed
+    /// here, as its row is still pending: the status read drops the ones
+    /// whose `from` is no longer the node's status (workareas.md, the status
+    /// read lists only live proposals).
+    fn pending_transitions(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<TransitionRecord>, StoreError>> + Send;
+
     fn idempotency_get(
         &self,
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send;
+
+    /// One claim edge of the tenant, pending or ratified; `None` for an edge
+    /// it does not hold (postgres-schema.md `claim_edges`).
+    fn claim_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ClaimEdgeRecord>, StoreError>> + Send;
+
+    /// One page of the tenant's claim edges, pending and ratified, that
+    /// `selection` selects — `artifact_id` matching either endpoint,
+    /// `within` holding either endpoint's workarea, and both endpoints rows
+    /// whose workarea is in `readable_nodes` and which are promoted or
+    /// authored by `reader_key_id` — newest first, `created_at` descending
+    /// then `edge_id` descending, strictly after `after`, at most `limit` of
+    /// them (http-api.md pagination and claim edges). An edge with an
+    /// endpoint the tenant does not hold is absent.
+    fn claim_edges(
+        &self,
+        tenant_id: Uuid,
+        selection: &ClaimEdgeSelection,
+        after: Option<&ClaimEdgePosition>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<ClaimEdgeRecord>, StoreError>> + Send;
+
+    /// The tenant's ratified claim edges labelled `label` whose endpoints
+    /// are both of kind `term`, each as its (source, target) endpoints'
+    /// `claim_key`s, a term's CURIE (ontologies.md), in that pair's byte
+    /// order ascending; a pending edge, an edge of another label and an
+    /// edge with any other kind at an end are absent. The read behind the
+    /// ADR-0021 d5 cycle refusal: the application parses each with
+    /// `Curie::parse` and builds the `TermEdge`s it checks the candidate
+    /// against.
+    ///
+    /// The use case reads the chain head before it calls this, and seals its
+    /// ratification on that head. A commit that changes these edges between
+    /// the read and the ratification's commit moves the head, so the head
+    /// compare-and-set refuses the ratification with
+    /// [`StoreError::SeqConflict`] and the transport's head retry re-reads
+    /// the edges: the cycle check is a transaction-time check with no lock
+    /// of its own (ADR-0021 d5; ADR-0002, one chain head).
+    /// One brief edge of the tenant by id, pending or ratified.
+    fn brief_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> impl Future<Output = Result<Option<BriefEdgeRecord>, StoreError>> + Send;
+
+    /// Every brief edge into `workarea_id`, pending and ratified, newest
+    /// first by `created_at`, then by edge id (ADR-0046 d7). Unpaged: the
+    /// count per workarea is unbounded, tracked as FR-77.
+    fn brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send;
+
+    fn ratified_term_edges(
+        &self,
+        tenant_id: Uuid,
+        label: &str,
+    ) -> impl Future<Output = Result<Vec<(String, String)>, StoreError>> + Send;
 }
 
 /// The web pages' rows (ADR-0045 d2, d4, d5; postgres-schema.md "web"):

@@ -20,11 +20,15 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_domain::access::{
-    AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
-    admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
-    tail_visible,
+    AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, LabelledGrant, TailCaller,
+    TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_issuance, effective_access,
+    effective_roles, effective_verbs, resolve, resolve_verb, tail_visible,
 };
+use oml_domain::brief::{brief_cut, brief_order};
 use oml_domain::budget::{budget_tokens, cut, hit_order};
+use oml_domain::claim_edges::{
+    LabelRefusal, Ratifier, RatifyRefusal, check_label, check_ratifier, check_term_curies,
+};
 use oml_domain::guardrail::{
     self, GuardrailScope, LOAD_WARNING, OWN_HELD_MAX_LINES, SET_CAP, Severity, conflicts,
     guardrail_order, set_digest,
@@ -44,13 +48,17 @@ use oml_domain::oauth::{
     decide_refresh, open_request, refresh_token_digest, select_redirect, token_kind,
     validate_document, validate_registration,
 };
+use oml_domain::vocab::{Curie, OmlLabel};
+use oml_domain::vocab_edges::{EdgeState, TermEdge, check_acyclic, edge_transition};
 use oml_domain::{
-    ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, HeldBy, KeySet,
-    MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, canonical_bytes, check_reviewer,
-    derive_claim_key, event_types, next_envelope, nfc, sha256_digest_string, transition,
+    ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, HeldBy, KeySet,
+    LadderNode, LadderRefusal, LineageClosure, MemoryKind, MemoryStatus, Role, Sha256Hash,
+    SignedEnvelope, WorkareaStatus, canonical_bytes, check_reviewer, derive_claim_key, event_types,
+    frozen_refuses, next_envelope, nfc, propose_check, ratifier_is_proposer, ratify_check,
+    same_user, sha256_digest_string, transition,
 };
 
-use crate::cursor::{ListingCursor, NameCursor, PathCursor};
+use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
@@ -59,22 +67,36 @@ use crate::ports::{
 };
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
-    Bearer, BootstrapRequest, BootstrapResult, ClientAuthentication, ClientDescription, ClientKind,
-    CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView,
-    ConnectCode, ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
-    ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
-    CrewUpdate, DenialRecord, ExchangeForm, GrantRecord, GuardrailFields, GuardrailRequest,
-    GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
-    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage,
-    MemoryRecord, MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OwnHeldGuardrail,
-    PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
-    RegisteredClient, ServedGuardrail, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
-    TenantRow, TokenPair, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest,
-    VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
+    Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage, BriefEdgeProposalOutcome,
+    BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView, ClaimEdgeFilter, ClaimEdgePage,
+    ClaimEdgePosition, ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeQuery,
+    ClaimEdgeRatification, ClaimEdgeRecord, ClaimEdgeSelection, ClientAuthentication,
+    ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome,
+    ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued, ConnectCodeRecord,
+    ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest,
+    CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification, ExchangeForm, GrantRecord,
+    GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest,
+    IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter,
+    ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
+    OAuthClientRecord, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge,
+    RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient,
+    ServedGuardrail, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb,
+    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow,
+    TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows,
+    Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
+    WorkareaStatusView,
 };
 
 const EVENTS_PAGE: usize = 512;
+
+/// The review policy in force: the one PoC constant `{k: 1,
+/// required_roles: ["dreamer"]}`. A verdict's ratification and a status
+/// transition's `policy_snapshot` both read it here, so the two cannot
+/// disagree (admission.md review and ratification; workareas.md, the policy
+/// snapshot is the policy in force plus the precondition; ADR-0009 d3).
+fn review_policy() -> Value {
+    json!({ "k": 1, "required_roles": ["dreamer"] })
+}
 
 /// The fixed reason a failed issuance's `key.revoked` digests
 /// (roles-and-keys.md issuance order; ADR-0025 d2).
@@ -126,6 +148,9 @@ pub struct App<J, S, C, I, Sc> {
     /// Told what each request resolved, for its log line; it decides
     /// nothing (ADR-0042 d2, d14).
     observer: Arc<dyn RequestObserver>,
+    /// `brief.max_tokens`: the budget a workarea's brief is cut to
+    /// (ADR-0046 d8; FR-77).
+    brief_max_tokens: u64,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -531,6 +556,114 @@ impl RecordedVerdict {
     }
 }
 
+/// What `node` is to the ladder (ADR-0046 d1): the universe root, a user
+/// root (ADR-0044 d1), or an ordinary node.
+fn ladder_node(node: &WorkareaRecord) -> LadderNode {
+    if node.parent_id.is_none() {
+        LadderNode::Universe
+    } else if node.user_root {
+        LadderNode::UserRoot
+    } else {
+        LadderNode::Ordinary
+    }
+}
+
+/// The request digest of a claim-edge proposal: SHA-256 over the RFC 8785
+/// JSON of the method, the route template, no path parameters and the body
+/// as sent, `kind: claim` included, since ADR-0039 d9 merges the claim-edge
+/// and workarea-edge families into `/v2/edges` (http-api.md idempotency).
+fn claim_edge_request_digest(req: &ProposeClaimEdge) -> Result<String, AppError> {
+    let doc = json!({
+        "method": "POST",
+        "route": "/v2/edges",
+        "path_params": {},
+        "body": {
+            "kind": "claim",
+            "from_artifact_id": req.from_artifact_id.to_string(),
+            "to_artifact_id": req.to_artifact_id.to_string(),
+            "label": req.label,
+        },
+    });
+    Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// The request digest of a brief-edge proposal: the `/v2/edges` family's,
+/// `kind: brief`, the workarea as sent (http-api.md idempotency).
+fn brief_edge_request_digest(req: &ProposeBriefEdge) -> Result<String, AppError> {
+    let doc = json!({
+        "method": "POST",
+        "route": "/v2/edges",
+        "path_params": {},
+        "body": {
+            "kind": "brief",
+            "from_artifact_id": req.artifact_id.to_string(),
+            "to_workarea_id": req.workarea.to_string(),
+        },
+    });
+    Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// The idempotency record a commit writes beside its event, storing
+/// `response`, when the request named a scope.
+fn idempotency_put<T: serde::Serialize>(
+    scope: Option<&IdempotencyScope>,
+    request_digest: &str,
+    response: &T,
+) -> Result<Option<IdempotencyPut>, AppError> {
+    scope
+        .map(|scope| {
+            Ok(IdempotencyPut {
+                scope: scope.clone(),
+                record: IdempotencyRecord {
+                    request_digest: request_digest.to_owned(),
+                    response: serde_json::to_value(response)
+                        .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+                },
+            })
+        })
+        .transpose()
+}
+
+/// The request digest of a claim-edge ratification: SHA-256 over the RFC
+/// 8785 JSON of the method, the route template, the edge id as its path
+/// parameter and a `null` body, as the route takes none (http-api.md
+/// idempotency, claim edges).
+fn claim_edge_ratify_request_digest(edge_id: Uuid) -> Result<String, AppError> {
+    let doc = json!({
+        "method": "POST",
+        "route": "/v2/edges/{edge_id}/ratify",
+        "path_params": { "edge_id": edge_id.to_string() },
+        "body": Value::Null,
+    });
+    Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// A claim edge's label against its endpoints: [`check_label`] on their
+/// kinds, then [`check_term_curies`] on their `claim_key`s, each refusal
+/// naming its body field (errors.md `request.validation`; ADR-0021 d2, d5).
+fn check_edge_label(label: &str, src: &MemoryRecord, dst: &MemoryRecord) -> Result<(), AppError> {
+    let refused = |reason: LabelRefusal| AppError::ClaimEdgeLabel {
+        field: reason.field(),
+        reason,
+    };
+    check_label(label, src.kind, dst.kind).map_err(refused)?;
+    check_term_curies(label, &src.claim_key, &dst.claim_key).map_err(refused)
+}
+
+/// A term endpoint's CURIE, its `claim_key` (ADR-0021 d2); anything else
+/// fails the cycle check closed. The label check at proposal and at
+/// ratification refuses a non-CURIE endpoint first, so this answers only a
+/// stored row that defies it.
+fn term_curie(kind: MemoryKind, claim_key: &str) -> Result<Curie, AppError> {
+    let refused = || AppError::TermEndpoint {
+        claim_key: claim_key.to_owned(),
+    };
+    if kind != MemoryKind::Term {
+        return Err(refused());
+    }
+    Curie::parse(claim_key).map_err(|_| refused())
+}
+
 /// A recall's `query_digest`: SHA-256 over the RFC 8785 JSON of an object
 /// whose members are always present, defaults applied — `kinds` sorted by
 /// code point with duplicates removed, `max_tokens` null when absent, and
@@ -820,6 +953,17 @@ where
             oauth_issuer: None,
             connect_code_failures: AtomicU64::new(0),
             observer: Arc::new(NoObserver),
+            brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        }
+    }
+
+    /// The app whose workarea briefs are cut to `max_tokens`, the
+    /// deployment's `brief.max_tokens` (ADR-0046 d8; FR-77).
+    #[must_use]
+    pub fn with_brief_max_tokens(self, max_tokens: u64) -> Self {
+        Self {
+            brief_max_tokens: max_tokens,
+            ..self
         }
     }
 
@@ -1117,6 +1261,29 @@ where
             .map_err(|refusal| access_refusal(refusal, node, verb))
     }
 
+    /// Freeze as admission policy: `workarea.frozen` when the stored status
+    /// of `node` refuses `op` (ADR-0009 d5). It reads the node's status and
+    /// nothing else, never a grant, so freezing moves no permission epoch
+    /// (ADR-0009 d2). Every caller reads the chain head before calling it,
+    /// so a ratification that lands between this read and the commit moves
+    /// the head and the commit conflicts rather than writing into an area
+    /// validated since. Reassign, re-parent, demote and erasure are not
+    /// built; their checks join here when they are.
+    async fn refuse_frozen(
+        &self,
+        tenant_id: Uuid,
+        node: Uuid,
+        op: FrozenOp,
+    ) -> Result<(), AppError> {
+        match self.journal.workarea(tenant_id, node).await? {
+            Some(w) if frozen_refuses(w.status, op) => Err(AppError::WorkareaFrozen {
+                workarea_id: node,
+                op,
+            }),
+            _ => Ok(()),
+        }
+    }
+
     /// Whether the caller can read `memory`: its own row in any state,
     /// unless a global denial masks the row's workarea, or a promoted version
     /// within its reader effective access (roles-and-keys.md#own; ADR-0025
@@ -1269,15 +1436,21 @@ where
     /// its dreamer grants' subtrees, a row outside which is never served
     /// (ADR-0025 d1).
     async fn dreamer_nodes(&self, caller: &Caller) -> Result<Vec<Uuid>, AppError> {
+        self.nodes_holding(caller, Role::Dreamer).await
+    }
+
+    /// Every node where `role` is effective for the caller: the union over
+    /// its `role` grants' subtrees, each node judged by [`Self::nodes_with`].
+    async fn nodes_holding(&self, caller: &Caller, role: Role) -> Result<Vec<Uuid>, AppError> {
         let roots: BTreeSet<Uuid> = caller
             .grants
             .iter()
-            .filter(|g| g.role == Role::Dreamer)
+            .filter(|g| g.role == role)
             .map(|g| g.node)
             .collect();
         let mut nodes = BTreeSet::new();
         for root in roots {
-            nodes.extend(self.nodes_with(caller, root, Role::Dreamer).await?);
+            nodes.extend(self.nodes_with(caller, root, role).await?);
         }
         Ok(nodes.into_iter().collect())
     }
@@ -1652,6 +1825,7 @@ where
             tenant_id: issuer.tenant_id,
             parent_id: Some(user.universe),
             name: user.name.clone(),
+            status: WorkareaStatus::Development,
             crew: None,
             crew_id: None,
             user_root: true,
@@ -1678,7 +1852,7 @@ where
             "workarea_id": workarea.workarea_id.to_string(),
             "parent_id": workarea.parent_id.map(|p| p.to_string()),
             "name": workarea.name.as_str(),
-            "status": workarea.status(),
+            "status": workarea.status.as_str(),
             "crew_id": workarea.crew_id.map(|c| c.to_string()),
             "prefix": Value::Null,
             "user_root": workarea.user_root,
@@ -1756,6 +1930,8 @@ where
             tenant_id,
             parent_id: None,
             name: Name::parse(UNIVERSE).expect("universe is a name (ADR-0026 d6)"),
+            // The universe root is permanently committed (ADR-0009 d1).
+            status: WorkareaStatus::Committed,
             crew: None,
             crew_id: None,
             user_root: false,
@@ -1771,7 +1947,7 @@ where
                 "workarea_id": root_workarea_id.to_string(),
                 "parent_id": Value::Null,
                 "name": workarea.name.as_str(),
-                "status": workarea.status(),
+                "status": workarea.status.as_str(),
                 "crew_id": Value::Null,
                 "prefix": Value::Null,
             }),
@@ -2247,7 +2423,9 @@ where
     /// parent inside its own root where its effective access confers
     /// writer, the root itself when `parent` is omitted, by the refusal
     /// order on the parent; the node's name lands in that root's namespace
-    /// (ADR-0044 d5, d6).
+    /// (ADR-0044 d5, d6). A parent that is `validated` refuses the child as
+    /// `workarea.frozen` after both lookups and before the name, so a frozen
+    /// node never acquires an unfrozen descendant (ADR-0009 d4, d5).
     pub async fn create_workarea(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -2286,6 +2464,9 @@ where
         let crew_id = self
             .resolve_opt(key, NamedKind::Crew, crew.as_ref())
             .await?;
+        // The head before the parent's status: a ratification landing in
+        // between moves it, and this commit conflicts (ADR-0009 d4).
+        let prev = self.head_event(key.tenant_id).await?;
         let ancestors = match parent_id {
             Some(parent) => self
                 .journal
@@ -2303,6 +2484,14 @@ where
             ),
             None => None,
         };
+        if let Some(parent) = ancestors.first()
+            && frozen_refuses(parent.status, FrozenOp::CreateChild)
+        {
+            return Err(AppError::WorkareaFrozen {
+                workarea_id: parent.workarea_id,
+                op: FrozenOp::CreateChild,
+            });
+        }
         // A node beneath a user root takes its name in that root's
         // namespace, where `universe` and the user's own name are reserved
         // (ADR-0044 d5).
@@ -2322,12 +2511,12 @@ where
             tenant_id: key.tenant_id,
             parent_id,
             name: name.clone(),
+            status: WorkareaStatus::Development,
             crew: None,
             crew_id,
             user_root: false,
             namespace,
         };
-        let prev = self.head_event(key.tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -2397,8 +2586,22 @@ where
             Some(crew_id) => self.journal.crew(tenant_id, crew_id).await?,
             None => None,
         };
+        let pending_transitions = self.live_transitions(&caller.key, &workarea).await?;
+        // An admin key reads structure and never claim content, so its
+        // brief is empty (roles-and-keys.md permission matrix, footnote 6).
+        let brief = if structure {
+            Brief {
+                items: Vec::new(),
+                budget: brief_cut(&[], self.brief_max_tokens),
+            }
+        } else {
+            self.brief(&caller, node).await?
+        };
         Ok(WorkareaInfo {
             path: derived_path(&ancestry),
+            policy: review_policy(),
+            pending_transitions,
+            brief,
             workarea,
             crew,
             children,
@@ -2801,8 +3004,9 @@ where
     /// role: the journalled crew-metadata update `workarea.crew_updated`,
     /// carrying the record's `crew_id`. A workarea the tenant does not hold
     /// is absent, and so, checked after it, is a crew (http-api.md
-    /// workareas; ADR-0026 d8). No status transition is built, so no
-    /// workarea is `validated` and none refuses it.
+    /// workareas; ADR-0026 d8). A `validated` workarea admits it: the
+    /// crew-metadata update is one of the three mutations freeze allows
+    /// (ADR-0009 d5; workareas.md refusal matrix).
     pub async fn set_workarea_crew(
         &self,
         api_key: &str,
@@ -2846,6 +3050,385 @@ where
         Ok(WorkareaRecord {
             crew_id: Some(crew_id),
             ..workarea
+        })
+    }
+
+    /// The user a key of the tenant names, read from its key row; `None`
+    /// for a tenant key or a key the tenant does not hold (ADR-0044 d2;
+    /// ADR-0046 d2).
+    async fn key_user(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<Uuid>, AppError> {
+        Ok(self
+            .journal
+            .key(tenant_id, key_id)
+            .await?
+            .and_then(|k| k.user))
+    }
+
+    /// A user key's edge with an endpoint in `universe` is refused
+    /// `access.grant_refused` naming that endpoint's workarea, before
+    /// anything is journalled: users neither write nor propose to
+    /// `universe` (ADR-0046 d5; ADR-0044 Context, decision 3). A tenant key
+    /// passes.
+    async fn refuse_user_edge_into_universe(
+        &self,
+        key: &KeyRecord,
+        workareas: &[Uuid],
+    ) -> Result<(), AppError> {
+        if key.user.is_none() {
+            return Ok(());
+        }
+        for workarea_id in workareas {
+            let node = self.journal.workarea(key.tenant_id, *workarea_id).await?;
+            if node.is_some_and(|n| n.parent_id.is_none()) {
+                return Err(AppError::GrantRefused {
+                    workarea_id: *workarea_id,
+                    needed_role: Role::Dreamer,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The live proposals on `node` as `key` may see them: the pending rows
+    /// whose `from` is the node's status, in proposal order, each naming its
+    /// proposing key only to that key (workareas.md, the status read lists
+    /// only live proposals; ADR-0025 d15).
+    async fn live_transitions(
+        &self,
+        key: &KeyRecord,
+        node: &WorkareaRecord,
+    ) -> Result<Vec<TransitionView>, AppError> {
+        Ok(self
+            .journal
+            .pending_transitions(key.tenant_id, node.workarea_id)
+            .await?
+            .into_iter()
+            .filter(|t| t.from == node.status)
+            .map(|t| {
+                // The own key set is the calling key alone until rotation
+                // is built (roles-and-keys.md#own), as on the tail.
+                let own = t.proposer_key_id == key.key_id;
+                TransitionView {
+                    transition_id: t.transition_id,
+                    workarea_id: t.workarea_id,
+                    from: t.from,
+                    to: t.to,
+                    state: t.state,
+                    proposed_by_key_id: own.then_some(t.proposer_key_id),
+                }
+            })
+            .collect())
+    }
+
+    /// The brief of `workarea` as `caller` reads it: its ratified brief
+    /// edges, each claim once, in ratification order, kept only while the
+    /// claim is a promoted served tip the caller reads, and cut by
+    /// `brief.max_tokens` under recall's prefix rule (ADR-0046 d8, d9). A
+    /// superseded or retired member drops out by itself.
+    async fn brief(&self, caller: &Caller, workarea: Uuid) -> Result<Brief, AppError> {
+        let mut ratified: Vec<(u64, Uuid)> = self
+            .journal
+            .brief_edges(caller.key.tenant_id, workarea)
+            .await?
+            .into_iter()
+            .filter(|e| e.state == EdgeState::Ratified)
+            .filter_map(|e| e.ratified_seq.map(|seq| (seq, e.artifact_id)))
+            .collect();
+        brief_order(&mut ratified, |r| *r);
+        let mut seen = BTreeSet::new();
+        let mut members = Vec::new();
+        for (_, artifact_id) in ratified {
+            if !seen.insert(artifact_id) {
+                continue;
+            }
+            let Some(memory) = self
+                .journal
+                .memory(caller.key.tenant_id, artifact_id)
+                .await?
+            else {
+                continue;
+            };
+            if memory.status == MemoryStatus::Promoted
+                && memory.is_tip
+                && self.readable(caller, &memory).await?
+            {
+                members.push(memory);
+            }
+        }
+        let tokens: Vec<u64> = members
+            .iter()
+            .map(|m| budget_tokens(m.body_bytes))
+            .collect();
+        let budget = brief_cut(&tokens, self.brief_max_tokens);
+        let mut items = Vec::with_capacity(budget.hits_served);
+        for memory in members.into_iter().take(budget.hits_served) {
+            items.push(self.served(caller, memory).await?);
+        }
+        Ok(Brief { items, budget })
+    }
+
+    /// The status read of the node, by id or name: its stored rung, the
+    /// review policy in force and its live proposals in proposal order, the
+    /// pending rows whose `from` is the node's status (workareas.md, the
+    /// status read lists only live proposals; ADR-0009 d3), each naming its
+    /// proposing key only to that key and never its principal (ADR-0025
+    /// d15). The refusal
+    /// order: (1) the key role, an admin key passing on its role and any
+    /// other key needing reader among its admissible grant roles; (2) the
+    /// node resolves; (3) a non-admin key needs reader effective access on
+    /// it, `access.not_found` outside it. An admin key reads the pending
+    /// transitions as structure, tenant-wide and with no grant
+    /// (roles-and-keys.md permission matrix, footnote 6; ADR-0026 d15).
+    pub async fn workarea_status(
+        &self,
+        api_key: &str,
+        workarea: Reference,
+    ) -> Result<WorkareaStatusView, AppError> {
+        const VERB: &str = "workarea_status";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        let structure = key.role == Role::Admin;
+        if !structure {
+            require_admissible(key, Role::Reader, VERB)?;
+        }
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        if !structure {
+            self.require_access(&caller, workarea_id, Role::Reader, VERB)
+                .await?;
+        }
+        let node = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let pending = self.live_transitions(key, &node).await?;
+        Ok(WorkareaStatusView {
+            workarea_id,
+            status: node.status,
+            policy: review_policy(),
+            pending,
+        })
+    }
+
+    /// Proposes a forward status transition of the node, by id or name, to
+    /// `to`: the proposal is a pending `workarea_transitions` row, and the
+    /// node keeps its status until a second identity ratifies it (ADR-0009
+    /// d3). The refusal order: (1) the key role, before any lookup, an admin
+    /// key passing on its role and any other key needing dreamer among its
+    /// admissible grant roles, so a reader, writer or operator key is
+    /// `access.verb_ceiling`; (2) the node resolves; (3) a dreamer key needs
+    /// dreamer effective access on it, `access.not_found` outside read access
+    /// and `access.grant_refused` within it; (4) the ladder, on the node and
+    /// its immediate children as read now: `workarea.transition_refused` with
+    /// its reason, nothing journalled (ADR-0009 d1, d3, d4); (5) one
+    /// `workarea.status_proposed` is sealed and committed with the row. A
+    /// `held_by: service` key may propose: roles-and-keys.md bars it from
+    /// ratification alone (ADR-0010). The ratifying transaction re-checks the
+    /// node, so a proposal admitted here may still be refused there
+    /// (workareas.md, ratification re-checks).
+    pub async fn propose_transition(
+        &self,
+        api_key: &str,
+        workarea: Reference,
+        to: WorkareaStatus,
+    ) -> Result<TransitionRecord, AppError> {
+        const VERB: &str = "propose_transition";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        if key.role != Role::Admin {
+            require_admissible(key, Role::Dreamer, VERB)?;
+        }
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        if key.role != Role::Admin {
+            self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+                .await?;
+        }
+        let node = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let children: Vec<WorkareaStatus> = self
+            .journal
+            .workarea_children(key.tenant_id, workarea_id)
+            .await?
+            .iter()
+            .map(|child| child.status)
+            .collect();
+        // "No simulation is fenced on the subtree" holds vacuously while
+        // simulations are unbuilt, and lands in the ladder's preconditions
+        // with them (workareas.md, readings the build takes).
+        propose_check(ladder_node(&node), node.status, to, &children).map_err(|reason| {
+            AppError::TransitionRefused {
+                workarea_id,
+                from: node.status,
+                to,
+                reason,
+            }
+        })?;
+        let proposal = TransitionRecord {
+            transition_id: self.ids.new_id(),
+            tenant_id: key.tenant_id,
+            workarea_id,
+            from: node.status,
+            to,
+            state: TransitionState::Pending,
+            proposer_key_id: key.key_id,
+            proposer_principal: key.principal.clone(),
+            ratifier_key_id: None,
+        };
+        let prev = self.head_event(key.tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::WORKAREA_STATUS_PROPOSED,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "transition_id": proposal.transition_id.to_string(),
+                "proposed_by_key_id": key.key_id.to_string(),
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::TransitionProposed(proposal.clone()),
+            None,
+        )
+        .await?;
+        Ok(proposal)
+    }
+
+    /// Ratifies the pending proposal `transition_id` on the node, by id or
+    /// name, as a second identity: the node's status becomes the proposal's
+    /// `to`, journalled as one `workarea.status_transition` signed by the
+    /// ratifier's principal and key, with the policy snapshot (ADR-0009 d3,
+    /// d4). The refusal order: (1) the key role, before any lookup, an admin
+    /// key passing on its role and any other key needing dreamer among its
+    /// admissible grant roles, `access.verb_ceiling`; (2) a `held_by:
+    /// service` key, also `access.verb_ceiling` before any lookup
+    /// (roles-and-keys.md; ADR-0010); (3) the node resolves; (4) a dreamer
+    /// key needs dreamer effective access on it; (5) the transition: one
+    /// this tenant does not hold, or one on another workarea, is
+    /// `access.not_found`; (6) R2, a ratifier holding the proposer's key or
+    /// principal, `review.ratifier_is_proposer`; (7) the ladder against the
+    /// node and its children as read now, a proposal already ratified or
+    /// whose `from` is no longer the node's status being
+    /// `workarea.transition_refused` with reason `stale`. Every read happens
+    /// after the chain head is read and before a commit that compare-and-sets
+    /// it, so a child created between the check and the commit fails the
+    /// commit with `PrevHashConflict`, retryable, and is never journalled
+    /// over a stale check; the store re-checks under the chain lock besides
+    /// (workareas.md, ratification re-checks).
+    pub async fn ratify_transition(
+        &self,
+        api_key: &str,
+        workarea: Reference,
+        transition_id: Uuid,
+    ) -> Result<WorkareaRecord, AppError> {
+        const VERB: &str = "ratify_transition";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        if key.role != Role::Admin {
+            require_admissible(key, Role::Dreamer, VERB)?;
+        }
+        refuse_service(key, VERB)?;
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        if key.role != Role::Admin {
+            self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+                .await?;
+        }
+        let prev = self.head_event(key.tenant_id).await?;
+        let proposal = self
+            .journal
+            .transition(key.tenant_id, transition_id)
+            .await?
+            .filter(|t| t.workarea_id == workarea_id)
+            .ok_or(AppError::NotFound)?;
+        if ratifier_is_proposer(
+            proposal.proposer_key_id,
+            &proposal.proposer_principal,
+            key.key_id,
+            &key.principal,
+        ) {
+            return Err(AppError::RatifierIsProposer);
+        }
+        let node = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let children: Vec<WorkareaStatus> = self
+            .journal
+            .workarea_children(key.tenant_id, workarea_id)
+            .await?
+            .iter()
+            .map(|child| child.status)
+            .collect();
+        let refused = |reason| AppError::TransitionRefused {
+            workarea_id,
+            from: proposal.from,
+            to: proposal.to,
+            reason,
+        };
+        if proposal.state == TransitionState::Ratified {
+            return Err(refused(LadderRefusal::Stale));
+        }
+        // ADR-0030 d12 (proposed) joins its held_remaining test, no
+        // unreviewed memory left in the subtree, to transition_preconditions
+        // on the commit step, which ratify_check runs. "No simulation is
+        // fenced on the subtree" would sit there too and holds vacuously
+        // while simulations are unbuilt (workareas.md, readings the build
+        // takes).
+        ratify_check(
+            proposal.from,
+            ladder_node(&node),
+            node.status,
+            proposal.to,
+            &children,
+        )
+        .map_err(refused)?;
+        let mut policy_snapshot = review_policy();
+        if proposal.to == WorkareaStatus::Validated {
+            // A false one was refused above and is never journalled.
+            policy_snapshot["children_all_validated"] = Value::Bool(true);
+        }
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::WORKAREA_STATUS_TRANSITION,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "transition_id": transition_id.to_string(),
+                "proposed_by_key_id": proposal.proposer_key_id.to_string(),
+                "ratified_by_key_id": key.key_id.to_string(),
+                "policy_snapshot": policy_snapshot,
+                "same_user": same_user(
+                    self.key_user(key.tenant_id, proposal.proposer_key_id).await?,
+                    key.user,
+                ),
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::TransitionRatified {
+                transition_id,
+                workarea_id,
+                to: proposal.to,
+                ratifier_key_id: key.key_id,
+            },
+            None,
+        )
+        .await?;
+        Ok(WorkareaRecord {
+            status: proposal.to,
+            ..node
         })
     }
 
@@ -3078,7 +3661,10 @@ where
     /// d18), derived from the author and the text when omitted, and a
     /// verb defaulted from `derives_from` (ADR-0039 d3, d6); held on arrival
     /// as the claim's version 1, idempotency record honored (admission.md,
-    /// http-api.md).
+    /// http-api.md). A `validated` workarea refuses the write as
+    /// `workarea.frozen` after effective access, so a key without access gets
+    /// its access refusal first, and after the idempotency replay, before the
+    /// scan (ADR-0009 d5; workareas.md refusal matrix).
     pub async fn submit_memory(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -3146,6 +3732,15 @@ where
             });
         }
 
+        // The head first, then the node's status, the ancestors' closures,
+        // which a claim edge's proposal widens, and the claim_key read: a
+        // ratification, an edge proposal or a capture that commits in between
+        // moves the head, so this commit conflicts and its retry reads them
+        // all again (ADR-0001 d2; ADR-0009 d5; ADR-0025 d10, ordinals; d18).
+        let prev = self.head_event(key.tenant_id).await?;
+        self.refuse_frozen(key.tenant_id, workarea_id, FrozenOp::Write)
+            .await?;
+
         // Capture normalizes first: the digest, the scan and the byte count
         // all see the NFC text (admission.md capture; ADR-0025 d6).
         let body = nfc(&req.body);
@@ -3184,10 +3779,6 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
-        // The head first, then the claim_key read: a capture that commits
-        // in between moves the head, so this commit conflicts and its retry
-        // reads the key again (ADR-0025 d10, ordinals; d18).
-        let prev = self.head_event(key.tenant_id).await?;
         if self
             .journal
             .claim_key_state(key.tenant_id, workarea_id, &claim_key)
@@ -3424,6 +4015,12 @@ where
         recording: Option<VerdictRecording>,
     ) -> Result<VerdictOutcome, AppError> {
         let key = &caller.key;
+        // The head first, then every read R2 and the compare-and-set judge:
+        // the row's closure, which a claim edge's proposal widens while the
+        // row is held, its rivals and its target. A commit landing after the
+        // head moves it, so the verdict conflicts and its retry reads them
+        // again (ADR-0001 d2; ADR-0025 d10).
+        let prev = self.head_event(key.tenant_id).await?;
         let memory = self
             .journal
             .memory(key.tenant_id, memory_id)
@@ -3455,10 +4052,15 @@ where
         // row refuses here (admission.md lifecycle).
         let new_status = transition(memory.status, target_status)?;
 
-        // The head first, then the compare-and-set read: a commit landing
-        // in between moves the head, so the verdict conflicts and its retry
-        // reads the target again.
-        let prev = self.head_event(key.tenant_id).await?;
+        // Nothing new promotes into a `validated` area: an approval is
+        // refused before its verdict is sealed, so nothing is journalled and
+        // the row stays held (ADR-0009 d5). Whether a reject is refused too,
+        // and whether review_next serves such a row, is open in workareas.md
+        // and waits on the operator.
+        if verdict == Verdict::Approve {
+            self.refuse_frozen(key.tenant_id, memory.workarea_id, FrozenOp::Promote)
+                .await?;
+        }
         let replaced = match (verdict, memory.replaces) {
             (Verdict::Approve, Some(target_id)) => {
                 let target = self.journal.memory(key.tenant_id, target_id).await?;
@@ -3524,7 +4126,7 @@ where
                 // the approving verdict is the ratifying act, so
                 // ratification_event_id names it. Nothing is self-signed in
                 // the PoC (ADR-0025 d17).
-                let policy = json!({ "k": 1, "required_roles": ["dreamer"] });
+                let policy = review_policy();
                 let (event_type, payload, fold) = match replaced {
                     None => (
                         event_types::LIFECYCLE_PROMOTE,
@@ -4034,11 +4636,13 @@ where
     /// (step 3), or a dreamer's dreamer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
-    /// and from `oml_write` the vocabulary-kind check (step 5); then the
-    /// checks every submit runs. The successor takes the next ordinal of the
-    /// claim_key and journals `submission.remember` (`submission.learn` for
-    /// a `derived_fact`) naming what it replaces, with the idempotency record
-    /// in the same transaction; a commit that finds the record already
+    /// and from `oml_write` the vocabulary-kind check, and last the
+    /// workarea not `validated`, else `workarea.frozen` (step 5; ADR-0009
+    /// d5); then the checks every submit runs. The successor takes the next
+    /// ordinal of the claim_key and journals `submission.remember`
+    /// (`submission.learn` for a `derived_fact`) naming what it replaces,
+    /// with the idempotency record in the same transaction; a commit that
+    /// finds the record already
     /// written by a concurrent attempt under the same key writes nothing and
     /// answers that attempt's receipt as a replay ([`IdempotencyPut`] says
     /// what the slice does not claim).
@@ -4081,6 +4685,12 @@ where
                 replayed: true,
             });
         }
+
+        // The head first, then the target, whose closure a claim edge's
+        // proposal widens, the ancestors and the ordinal: a commit landing in
+        // between moves the head, and the retry reads them all again
+        // (ADR-0001 d2; ADR-0025 d10, ordinals).
+        let prev = self.head_event(key.tenant_id).await?;
 
         // Step 2: an unreadable target is indistinguishable from none.
         let target = self
@@ -4140,6 +4750,11 @@ where
         if req.refuse_vocabulary_target && target.kind == MemoryKind::Guardrail {
             return Err(AppError::GuardrailTarget);
         }
+        // Step 5's last check, after the head read above: a ratification
+        // that validates the area in between moves the head and the commit
+        // conflicts (roles-and-keys.md supersede; ADR-0009 d5).
+        self.refuse_frozen(key.tenant_id, target.workarea_id, FrozenOp::Write)
+            .await?;
 
         // The checks every submit runs: NFC first, then the scan, whose veto
         // journals nothing, then every declared ancestor readable
@@ -4183,11 +4798,10 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
-        // The head first, then the ordinal: 1 + the greatest version of the
-        // claim_key in the workarea, whatever its state; a capture that
-        // commits in between moves the head, and the retry reads both again
-        // (ADR-0025 d10, ordinals).
-        let prev = self.head_event(key.tenant_id).await?;
+        // The head was read above, then the ordinal: 1 + the greatest
+        // version of the claim_key in the workarea, whatever its state; a
+        // capture that commits in between moves the head, and the retry
+        // reads both again (ADR-0025 d10, ordinals).
         let version = self
             .journal
             .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)
@@ -4322,6 +4936,821 @@ where
         Ok(SupersedeOutcome {
             receipt,
             replayed: false,
+        })
+    }
+
+    /// Propose a claim edge `from_artifact_id -> to_artifact_id` carrying
+    /// `label`: journalled `claim_edge.proposed`, stored pending, and in its
+    /// own commit widening the lineage closure of every version it connects,
+    /// so R2 counts the edge while it waits (ADR-0008 d5; ADR-0012;
+    /// audit-and-lineage.md, pending and ratified alike). The refusal order:
+    /// the verb ceiling, the idempotency record, each endpoint present and in
+    /// read scope, dreamer on at least one endpoint's workarea, then the
+    /// label (workareas.md, edge authority; ADR-0021 d5). A `held_by:
+    /// service` key may propose: only ratification is review-class
+    /// (roles-and-keys.md).
+    pub async fn propose_claim_edge(
+        &self,
+        api_key: &str,
+        req: &ProposeClaimEdge,
+        idempotency_key: Option<&str>,
+    ) -> Result<ClaimEdgeProposalOutcome, AppError> {
+        const VERB: &str = "claim_edge.propose";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Dreamer, VERB)?;
+
+        // A claim-edge POST names no workarea, so the scope's workarea is
+        // nil (http-api.md idempotency); the record replays whatever the
+        // endpoints or the key's access now, as it names only the caller's
+        // own edge.
+        let request_digest = claim_edge_request_digest(req)?;
+        let scope = idempotency_key.map(|idem_key| IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: idem_key.to_owned(),
+        });
+        if let Some(scope) = &scope
+            && let Some(proposal) = self.recorded(scope, &request_digest).await?
+        {
+            return Ok(ClaimEdgeProposalOutcome {
+                proposal,
+                replayed: true,
+            });
+        }
+
+        // The head before the endpoints: a commit landing in between moves
+        // it, and the retry reads them again (ADR-0001 d2).
+        let prev = self.head_event(key.tenant_id).await?;
+
+        let grants: Vec<LabelledGrant> = caller
+            .grants
+            .iter()
+            .cloned()
+            .map(LabelledGrant::from)
+            .collect();
+        let mut endpoints = Vec::with_capacity(2);
+        for id in [req.from_artifact_id, req.to_artifact_id] {
+            let memory = self
+                .journal
+                .memory(key.tenant_id, id)
+                .await?
+                .ok_or(AppError::NotFound)?;
+            endpoints.push(memory);
+        }
+        let mut proposable = Vec::with_capacity(2);
+        for memory in &endpoints {
+            let ancestry = self.ancestry(key.tenant_id, memory.workarea_id).await?;
+            let access = effective_access(&grants, &caller.denials, &ancestry);
+            // Edge authority asks reader on both ends, and a claim endpoint
+            // is a row, so the row must also be in the key's read scope: its
+            // own in any state, or promoted (roles-and-keys.md footnote 5;
+            // `readable`). Another author's held, rejected, demoted or
+            // erased row is outside it and indistinguishable from absent.
+            let in_scope =
+                access.roles.contains(&Role::Reader) && self.readable(&caller, memory).await?;
+            if !in_scope {
+                return Err(AppError::NotFound);
+            }
+            proposable.push(resolve_verb(key.role, &access, Verb::ClaimEdge(&req.label)));
+        }
+        if let [Err(refusal), Err(_)] = proposable.as_slice() {
+            // Both ends are readable, so the first end's refusal is
+            // `access.grant_refused` naming its workarea.
+            return Err(match refusal {
+                VerbRefusal::VerbCeiling { role, .. } => AppError::VerbCeiling {
+                    role: *role,
+                    verb: VERB,
+                },
+                VerbRefusal::GrantRefused { needed_role, .. } => AppError::GrantRefused {
+                    workarea_id: endpoints[0].workarea_id,
+                    needed_role: *needed_role,
+                },
+                VerbRefusal::NotFound => AppError::NotFound,
+            });
+        }
+        let (src, dst) = (&endpoints[0], &endpoints[1]);
+        self.refuse_user_edge_into_universe(key, &[src.workarea_id, dst.workarea_id])
+            .await?;
+        check_edge_label(&req.label, src, dst)?;
+
+        let edge_id = self.ids.new_id();
+        let payload = json!({
+            "edge_id": edge_id.to_string(),
+            "src_artifact_id": src.memory_id.to_string(),
+            "dst_artifact_id": dst.memory_id.to_string(),
+            "label": req.label,
+            "proposer_key_id": key.key_id.to_string(),
+        });
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::CLAIM_EDGE_PROPOSED,
+            &key.principal,
+            Some(key.key_id),
+            payload,
+        )?;
+        let edge = ClaimEdgeRecord {
+            edge_id,
+            tenant_id: key.tenant_id,
+            src_artifact_id: src.memory_id,
+            dst_artifact_id: dst.memory_id,
+            label: req.label.clone(),
+            state: EdgeState::Pending,
+            proposer_key_id: key.key_id,
+            proposer_principal: key.principal.clone(),
+            ratifier_key_id: None,
+            created_at: event.envelope.at.clone(),
+        };
+        let proposal = ClaimEdgeProposal::from(&edge);
+        let idempotency = match &scope {
+            Some(scope) => Some(IdempotencyPut {
+                scope: scope.clone(),
+                record: IdempotencyRecord {
+                    request_digest: request_digest.clone(),
+                    response: serde_json::to_value(&proposal)
+                        .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+                },
+            }),
+            None => None,
+        };
+        let committed = self
+            .commit(event, MetadataFold::ClaimEdgeProposed(edge), idempotency)
+            .await;
+        if let (Err(AppError::Store(StoreError::IdempotencyRecorded)), Some(scope)) =
+            (&committed, &scope)
+        {
+            // A concurrent attempt under the same key committed first and
+            // this one wrote nothing: its record answers (http-api.md
+            // idempotency).
+            let proposal = self
+                .recorded(scope, &request_digest)
+                .await?
+                .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
+            return Ok(ClaimEdgeProposalOutcome {
+                proposal,
+                replayed: true,
+            });
+        }
+        committed?;
+        Ok(ClaimEdgeProposalOutcome {
+            proposal,
+            replayed: false,
+        })
+    }
+
+    /// Propose that the promoted claim `artifact_id` join `workarea`'s
+    /// brief: journalled `brief_edge.proposed` and stored pending (ADR-0046
+    /// d7, d8). The refusal order: the verb ceiling, the idempotency record,
+    /// the workarea resolved and dreamer effective access on it
+    /// (`access.not_found` outside read access, `access.grant_refused`
+    /// within it), the claim present and readable (`access.not_found`
+    /// otherwise), then the claim promoted and its claim's served tip
+    /// (`request.validation` naming `from_artifact_id`). A `held_by: service`
+    /// key may propose; only ratification is review-class.
+    pub async fn propose_brief_edge(
+        &self,
+        api_key: &str,
+        req: &ProposeBriefEdge,
+        idempotency_key: Option<&str>,
+    ) -> Result<BriefEdgeProposalOutcome, AppError> {
+        const VERB: &str = "brief_edge.propose";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Dreamer, VERB)?;
+        let request_digest = brief_edge_request_digest(req)?;
+        let scope = idempotency_key.map(|idem_key| IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: idem_key.to_owned(),
+        });
+        if let Some(scope) = &scope
+            && let Some(proposal) = self.recorded(scope, &request_digest).await?
+        {
+            return Ok(BriefEdgeProposalOutcome {
+                proposal,
+                replayed: true,
+            });
+        }
+        let prev = self.head_event(key.tenant_id).await?;
+        let workarea_id = self
+            .resolve(key, NamedKind::Workarea, &req.workarea)
+            .await?;
+        self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+            .await?;
+        let memory = self
+            .journal
+            .memory(key.tenant_id, req.artifact_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if !self.readable(&caller, &memory).await? {
+            return Err(AppError::NotFound);
+        }
+        self.refuse_user_edge_into_universe(key, &[memory.workarea_id, workarea_id])
+            .await?;
+        if memory.status != MemoryStatus::Promoted || !memory.is_tip {
+            return Err(AppError::BriefMemberNotServed {
+                artifact_id: memory.memory_id,
+            });
+        }
+        let edge_id = self.ids.new_id();
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::BRIEF_EDGE_PROPOSED,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "edge_id": edge_id.to_string(),
+                "artifact_id": memory.memory_id.to_string(),
+                "workarea_id": workarea_id.to_string(),
+                "proposer_key_id": key.key_id.to_string(),
+            }),
+        )?;
+        let edge = BriefEdgeRecord {
+            edge_id,
+            tenant_id: key.tenant_id,
+            artifact_id: memory.memory_id,
+            workarea_id,
+            state: EdgeState::Pending,
+            proposer_key_id: key.key_id,
+            proposer_principal: key.principal.clone(),
+            ratifier_key_id: None,
+            created_at: event.envelope.at.clone(),
+            ratified_seq: None,
+        };
+        let proposal = BriefEdgeView::from(&edge);
+        let idempotency = idempotency_put(scope.as_ref(), &request_digest, &proposal)?;
+        let committed = self
+            .commit(event, MetadataFold::BriefEdgeProposed(edge), idempotency)
+            .await;
+        if let (Err(AppError::Store(StoreError::IdempotencyRecorded)), Some(scope)) =
+            (&committed, &scope)
+        {
+            let proposal = self
+                .recorded(scope, &request_digest)
+                .await?
+                .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
+            return Ok(BriefEdgeProposalOutcome {
+                proposal,
+                replayed: true,
+            });
+        }
+        committed?;
+        Ok(BriefEdgeProposalOutcome {
+            proposal,
+            replayed: false,
+        })
+    }
+
+    /// Ratify the pending brief edge `edge_id`: journalled `review.ratify`
+    /// with `subject_kind: "brief_edge"` and stored ratified at that event's
+    /// seq, the brief's order (ADR-0046 d8). The refusal order: the verb
+    /// ceiling, a `held_by: service` key, the idempotency record, the edge
+    /// present and its workarea within the key's dreamer effective access
+    /// (`access.not_found` outside read access), R2 against the proposer's
+    /// key and principal (`review.ratifier_is_proposer`), then the edge's
+    /// state (`review.serve_invalid`, `consumed`).
+    pub async fn ratify_brief_edge(
+        &self,
+        api_key: &str,
+        edge_id: Uuid,
+        idempotency_key: Option<&str>,
+    ) -> Result<BriefEdgeRatification, AppError> {
+        const VERB: &str = "brief_edge.ratify";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Dreamer, VERB)?;
+        refuse_service(key, VERB)?;
+        let request_digest = claim_edge_ratify_request_digest(edge_id)?;
+        let scope = idempotency_key.map(|idem_key| IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: idem_key.to_owned(),
+        });
+        if let Some(scope) = &scope
+            && let Some(edge) = self.recorded(scope, &request_digest).await?
+        {
+            return Ok(BriefEdgeRatification {
+                edge,
+                journal_seq: None,
+                replayed: true,
+            });
+        }
+        let prev = self.head_event(key.tenant_id).await?;
+        let edge = self
+            .journal
+            .brief_edge(key.tenant_id, edge_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        self.require_access(&caller, edge.workarea_id, Role::Dreamer, VERB)
+            .await?;
+        if ratifier_is_proposer(
+            edge.proposer_key_id,
+            &edge.proposer_principal,
+            key.key_id,
+            &key.principal,
+        ) {
+            return Err(AppError::RatifierIsProposer);
+        }
+        if edge.state != EdgeState::Pending {
+            return Err(AppError::EdgeConsumed { edge_id });
+        }
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::REVIEW_RATIFY,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "subject_kind": "brief_edge",
+                "artifact_id": edge.artifact_id.to_string(),
+                "version": Value::Null,
+                "edge_id": edge_id.to_string(),
+                "workarea_id": edge.workarea_id.to_string(),
+                "verdict_event_ids": [],
+                "ratifier_key_id": key.key_id.to_string(),
+                "same_user": same_user(
+                    self.key_user(key.tenant_id, edge.proposer_key_id).await?,
+                    key.user,
+                ),
+                "policy_snapshot": review_policy(),
+            }),
+        )?;
+        let seq = event.envelope.seq;
+        let ratified = BriefEdgeView::from(&BriefEdgeRecord {
+            state: EdgeState::Ratified,
+            ratifier_key_id: Some(key.key_id),
+            ratified_seq: Some(seq),
+            ..edge
+        });
+        let idempotency = idempotency_put(scope.as_ref(), &request_digest, &ratified)?;
+        let committed = self
+            .commit(
+                event,
+                MetadataFold::BriefEdgeRatified {
+                    edge_id,
+                    ratifier_key_id: key.key_id,
+                },
+                idempotency,
+            )
+            .await;
+        match (committed, &scope) {
+            (Err(AppError::Store(StoreError::IdempotencyRecorded)), Some(scope)) => {
+                let edge = self
+                    .recorded(scope, &request_digest)
+                    .await?
+                    .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
+                Ok(BriefEdgeRatification {
+                    edge,
+                    journal_seq: None,
+                    replayed: true,
+                })
+            }
+            (Err(AppError::Store(StoreError::EdgeNotPending { edge_id })), _) => {
+                Err(AppError::EdgeConsumed { edge_id })
+            }
+            (Err(e), _) => Err(e),
+            (Ok(_), _) => Ok(BriefEdgeRatification {
+                edge: ratified,
+                journal_seq: Some(seq),
+                replayed: false,
+            }),
+        }
+    }
+
+    /// `POST /v2/edges/{edge_id}/ratify` for either kind: the edge's kind
+    /// follows from its id (ADR-0039 d9). An id the tenant holds as a claim
+    /// edge is ratified as one; any other id is ratified as a brief edge,
+    /// which answers `access.not_found` when the tenant holds none.
+    pub async fn ratify_edge(
+        &self,
+        api_key: &str,
+        edge_id: Uuid,
+        idempotency_key: Option<&str>,
+    ) -> Result<EdgeRatification, AppError> {
+        let caller = self.authenticate(api_key).await?;
+        let is_claim = self
+            .journal
+            .claim_edge(caller.key.tenant_id, edge_id)
+            .await?
+            .is_some();
+        if is_claim {
+            Ok(EdgeRatification::Claim(
+                self.ratify_claim_edge(api_key, edge_id, idempotency_key)
+                    .await?,
+            ))
+        } else {
+            Ok(EdgeRatification::Brief(
+                self.ratify_brief_edge(api_key, edge_id, idempotency_key)
+                    .await?,
+            ))
+        }
+    }
+
+    /// `GET /v2/edges?kind=brief`: one page of `workarea`'s brief edges,
+    /// pending and ratified, newest first, each served only when the key
+    /// reads its claim, at reader effective access on the workarea
+    /// (`access.not_found` outside it) (ADR-0046 d7). The cursor is the
+    /// claim-edge listing's, bound to the key and the workarea.
+    pub async fn brief_edges(
+        &self,
+        api_key: &str,
+        workarea: Reference,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<BriefEdgePage, AppError> {
+        const VERB: &str = "brief_edge.list";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Reader, VERB)?;
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        self.require_access(&caller, workarea_id, Role::Reader, VERB)
+            .await?;
+        let filter = ClaimEdgeFilter {
+            artifact_id: None,
+            workarea_id: Some(workarea_id),
+        };
+        let now = self.clock.now();
+        let after = cursor
+            .map(|cursor| ClaimEdgeCursor::resume(cursor, key.key_id, &filter, &now))
+            .transpose()?;
+        let position = |e: &BriefEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);
+        let mut served = Vec::new();
+        for edge in self.journal.brief_edges(key.tenant_id, workarea_id).await? {
+            if let Some(after) = &after
+                && position(&edge) >= (after.created_at.as_str().to_owned(), after.edge_id)
+            {
+                continue;
+            }
+            let Some(memory) = self.journal.memory(key.tenant_id, edge.artifact_id).await? else {
+                continue;
+            };
+            if self.readable(&caller, &memory).await? {
+                served.push(edge);
+            }
+            if served.len() > limit {
+                break;
+            }
+        }
+        let more = served.len() > limit;
+        served.truncate(limit);
+        let next_cursor = served.last().filter(|_| more).map(|last| {
+            ClaimEdgeCursor {
+                key_id: key.key_id,
+                position: ClaimEdgePosition {
+                    created_at: last.created_at.clone(),
+                    edge_id: last.edge_id,
+                },
+                filter,
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        Ok(BriefEdgePage {
+            items: served.iter().map(BriefEdgeView::from).collect(),
+            next_cursor,
+        })
+    }
+
+    /// Ratify the pending claim edge `edge_id`: journalled `review.ratify`
+    /// with `subject_kind: "claim_edge"`, the edge's one review act at k = 1,
+    /// and stored ratified naming the ratifier (event-catalog.md; ADR-0008
+    /// d5). The refusal order: the verb ceiling, a `held_by: service` key
+    /// before any lookup, the idempotency record, the edge and both its
+    /// endpoints present and in read scope, dreamer on both endpoints'
+    /// workareas, the proposal's label check, R2 — the proposer's key or
+    /// principal, then either endpoint's lineage closure — then the edge's
+    /// state, then for `oml:is_a` the cycle invariant over that label's
+    /// ratified edges (roles-and-keys.md; ADR-0012; ADR-0021 d5). The
+    /// `oml:replaced_by` cycle check belongs to the deprecation verdict that
+    /// carries the pointer (ADR-0021 d3).
+    /// The head is read before the edges the cycle check reads, so a
+    /// ratification committing between them conflicts this one and the
+    /// transport's head retry reads them again (ADR-0002).
+    // reading: the docs state each refusal but not their order; this is
+    // propose_claim_edge's order with review's service refusal after the
+    // ceiling, and edge authority's dreamer on both ends, which also reads
+    // ADR-0021 d6's both-vocabularies rule for a term mapping.
+    pub async fn ratify_claim_edge(
+        &self,
+        api_key: &str,
+        edge_id: Uuid,
+        idempotency_key: Option<&str>,
+    ) -> Result<ClaimEdgeRatification, AppError> {
+        const VERB: &str = "claim_edge.ratify";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Dreamer, VERB)?;
+        refuse_service(key, VERB)?;
+
+        // The route names no workarea, so the scope's workarea is nil
+        // (http-api.md idempotency), as for the proposal.
+        let request_digest = claim_edge_ratify_request_digest(edge_id)?;
+        let scope = idempotency_key.map(|idem_key| IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: idem_key.to_owned(),
+        });
+        if let Some(scope) = &scope
+            && let Some(edge) = self.recorded(scope, &request_digest).await?
+        {
+            return Ok(ClaimEdgeRatification {
+                edge,
+                journal_seq: None,
+                replayed: true,
+            });
+        }
+
+        let prev = self.head_event(key.tenant_id).await?;
+
+        let edge = self
+            .journal
+            .claim_edge(key.tenant_id, edge_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let mut endpoints = Vec::with_capacity(2);
+        for id in [edge.src_artifact_id, edge.dst_artifact_id] {
+            let memory = self
+                .journal
+                .memory(key.tenant_id, id)
+                .await?
+                .ok_or(AppError::NotFound)?;
+            // An endpoint outside read scope answers as an absent edge
+            // (roles-and-keys.md footnote 5; `readable`).
+            let ancestry = self.ancestry(key.tenant_id, memory.workarea_id).await?;
+            if !(caller.effective(&ancestry).contains(&Role::Reader)
+                && self.readable(&caller, &memory).await?)
+            {
+                return Err(AppError::NotFound);
+            }
+            endpoints.push(memory);
+        }
+        for memory in &endpoints {
+            self.require_access(&caller, memory.workarea_id, Role::Dreamer, VERB)
+                .await?;
+        }
+        let (src, dst) = (&endpoints[0], &endpoints[1]);
+        // The proposal's label check again: an `oml:replaced_by` or
+        // `oml:consider` edge is ratified only inside its deprecation's
+        // verdict, and `oml:about` only once classification is built, so a
+        // pending one of either is refused as its proposal is (ADR-0021 d3).
+        check_edge_label(&edge.label, src, dst)?;
+
+        // R2 against both endpoints' flattened closures plus their authors,
+        // pending and ratified edges alike (http-api.md, claim edges).
+        let mut principals = BTreeSet::new();
+        let mut key_ids = BTreeSet::new();
+        for memory in &endpoints {
+            principals.insert(memory.author_principal.clone());
+            principals.extend(memory.lineage_principals.iter().cloned());
+            key_ids.insert(memory.author_key_id);
+            key_ids.extend(memory.lineage_key_ids.iter().copied());
+        }
+        let mut closure = LineageClosure::new();
+        for principal in &principals {
+            closure.add_principal(principal.clone());
+        }
+        for key_id in &key_ids {
+            closure.add_key_id(*key_id);
+        }
+        check_ratifier(
+            &Ratifier {
+                role: key.role,
+                principal: &key.principal,
+                key_id: key.key_id,
+            },
+            edge.proposer_key_id,
+            &edge.proposer_principal,
+            &closure,
+        )
+        .map_err(|refusal| match refusal {
+            RatifyRefusal::NotDreamer(role) => AppError::VerbCeiling { role, verb: VERB },
+            RatifyRefusal::RatifierIsProposer => AppError::RatifierIsProposer,
+            RatifyRefusal::AuthorInLineage => AppError::AuthorInLineage,
+        })?;
+
+        let state = edge_transition(&edge.label, edge.state, EdgeState::Ratified)
+            .map_err(|_| AppError::EdgeConsumed { edge_id })?;
+
+        if let Some(label @ OmlLabel::IsA) = OmlLabel::parse(&edge.label) {
+            let candidate = TermEdge {
+                label,
+                from: term_curie(src.kind, &src.claim_key)?,
+                to: term_curie(dst.kind, &dst.claim_key)?,
+            };
+            let mut ratified = Vec::new();
+            for (from, to) in self
+                .journal
+                .ratified_term_edges(key.tenant_id, &edge.label)
+                .await?
+            {
+                ratified.push(TermEdge {
+                    label,
+                    from: term_curie(MemoryKind::Term, &from)?,
+                    to: term_curie(MemoryKind::Term, &to)?,
+                });
+            }
+            check_acyclic(&ratified, &candidate)?;
+        }
+
+        let closure_doc = json!({
+            "principals": principals.iter().collect::<Vec<_>>(),
+            "key_ids": key_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        });
+        let payload = json!({
+            "subject_kind": "claim_edge",
+            "artifact_id": Value::Null,
+            "version": Value::Null,
+            "edge_id": edge_id.to_string(),
+            // At k = 1 the ratify call is the edge's one review act, so no
+            // verdict precedes it.
+            "verdict_event_ids": [],
+            "ratifier_key_id": key.key_id.to_string(),
+            "same_user": same_user(
+                    self.key_user(key.tenant_id, edge.proposer_key_id).await?,
+                    key.user,
+                ),
+            "policy_snapshot": {
+                "k": 1,
+                "required_roles": ["dreamer"],
+                "independence_axis": "principal",
+                "human_required": false,
+            },
+            "lineage_closure_digest": sha256_digest_string(&canonical_bytes(&closure_doc)?),
+        });
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::REVIEW_RATIFY,
+            &key.principal,
+            Some(key.key_id),
+            payload,
+        )?;
+        let seq = event.envelope.seq;
+        let ratified_edge = ClaimEdgeProposal::from(&ClaimEdgeRecord {
+            state,
+            ratifier_key_id: Some(key.key_id),
+            ..edge
+        });
+        let idempotency = match &scope {
+            Some(scope) => Some(IdempotencyPut {
+                scope: scope.clone(),
+                record: IdempotencyRecord {
+                    request_digest: request_digest.clone(),
+                    response: serde_json::to_value(&ratified_edge)
+                        .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+                },
+            }),
+            None => None,
+        };
+        let committed = self
+            .commit(
+                event,
+                MetadataFold::ClaimEdgeRatified {
+                    edge_id,
+                    ratifier_key_id: key.key_id,
+                },
+                idempotency,
+            )
+            .await;
+        match (committed, &scope) {
+            (Err(AppError::Store(StoreError::IdempotencyRecorded)), Some(scope)) => {
+                // A concurrent attempt under the same key committed first
+                // and this one wrote nothing: its record answers.
+                let edge = self
+                    .recorded(scope, &request_digest)
+                    .await?
+                    .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
+                Ok(ClaimEdgeRatification {
+                    edge,
+                    journal_seq: None,
+                    replayed: true,
+                })
+            }
+            // A commit before this one decided the edge: nothing was
+            // written, this event included.
+            (Err(AppError::Store(StoreError::EdgeNotPending { .. })), _) => {
+                Err(AppError::EdgeConsumed { edge_id })
+            }
+            (committed, _) => {
+                committed?;
+                Ok(ClaimEdgeRatification {
+                    edge: ratified_edge,
+                    journal_seq: Some(seq),
+                    replayed: false,
+                })
+            }
+        }
+    }
+
+    /// `GET /v2/edges?kind=claim` (http-api.md edges and pagination;
+    /// ADR-0008 d5): one page of the tenant's claim edges, pending and
+    /// ratified, newest first, narrowed to `query`'s workarea, by id or name
+    /// (ADR-0026), whose subtree holds either endpoint, and its version at
+    /// either endpoint. A reader key is needed: an admin key answers
+    /// `access.verb_ceiling`, since an edge joins content and an admin
+    /// structure read never includes it (ADR-0026 d15). A named workarea
+    /// asks reader effective there by the refusal order. An edge is served
+    /// only when both its endpoints are in the key's read scope, a row in a
+    /// node where reader is effective that is promoted or the key's own
+    /// (`readable`), so the read never names an unreadable version's id.
+    /// The store selects by that scope, so one keyset page of at most
+    /// `limit + 1` edges answers the call. The cursor is bound to the key,
+    /// to `api.cursor_ttl` and to the filter, its workarea resolved, so
+    /// either spelling of the workarea resumes it.
+    pub async fn claim_edges(
+        &self,
+        api_key: &str,
+        query: ClaimEdgeQuery,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<ClaimEdgePage, AppError> {
+        const VERB: &str = "claim_edge.list";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        let tenant_id = key.tenant_id;
+        require_admissible(key, Role::Reader, VERB)?;
+        let workarea_id = self
+            .resolve_opt(key, NamedKind::Workarea, query.workarea.as_ref())
+            .await?;
+        if let Some(node) = workarea_id {
+            self.require_access(&caller, node, Role::Reader, VERB)
+                .await?;
+        }
+        let filter = ClaimEdgeFilter {
+            artifact_id: query.artifact_id,
+            workarea_id,
+        };
+        let now = self.clock.now();
+        let after = cursor
+            .map(|cursor| ClaimEdgeCursor::resume(cursor, key.key_id, &filter, &now))
+            .transpose()?;
+
+        // reading: the read scope is pushed into the store's query, not
+        // filtered after it, so the keyset LIMIT counts only servable edges
+        // and a page is one bounded store read whatever the tenant holds.
+        // The cost left is the scope itself: every reader node of the key,
+        // one subtree read per reader grant, bound into the query as an
+        // array that grows with the tenant's workareas, unmeasured (FR-7,
+        // FR-25).
+        let readable_nodes = self.nodes_holding(&caller, Role::Reader).await?;
+        let within = match workarea_id {
+            None => None,
+            Some(node) => {
+                let subtree: BTreeSet<Uuid> = self
+                    .journal
+                    .workarea_subtree(tenant_id, node)
+                    .await?
+                    .into_iter()
+                    .map(|w| w.workarea_id)
+                    .collect();
+                Some(
+                    readable_nodes
+                        .iter()
+                        .copied()
+                        .filter(|n| subtree.contains(n))
+                        .collect(),
+                )
+            }
+        };
+        let selection = ClaimEdgeSelection {
+            artifact_id: filter.artifact_id,
+            within,
+            readable_nodes,
+            reader_key_id: key.key_id,
+        };
+        // One edge past the page says whether another page exists.
+        let mut served = self
+            .journal
+            .claim_edges(
+                tenant_id,
+                &selection,
+                after.as_ref(),
+                limit.saturating_add(1),
+            )
+            .await?;
+        let more = served.len() > limit;
+        served.truncate(limit);
+        let next_cursor = served.last().filter(|_| more).map(|last| {
+            ClaimEdgeCursor {
+                key_id: key.key_id,
+                position: ClaimEdgePosition {
+                    created_at: last.created_at.clone(),
+                    edge_id: last.edge_id,
+                },
+                filter,
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        Ok(ClaimEdgePage {
+            items: served.iter().map(ClaimEdgeProposal::from).collect(),
+            next_cursor,
         })
     }
 

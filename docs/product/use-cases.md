@@ -342,7 +342,7 @@ who runs the `oml` command
 
 ### Link two memories
 
-**Designed** · planned for v0.5.2 · an agent
+**Built** · since v0.5.2, on HTTP and the command line; no agent tool proposes a link yet · an agent
 
 - **Goal:** connect two memories with a labelled link, and browse memories through their links
   and sources.
@@ -557,7 +557,7 @@ person in a development workarea
 
 ### A workarea grows up
 
-**Designed** · planned for v0.5.2 · an admin
+**Built** · since v0.5.2 · an admin
 
 - **Goal:** move a workarea from development to committed to validated, proposed by one person
   and confirmed by another. Validated freezes it.
@@ -706,11 +706,15 @@ How it works: [ontologies](../architecture/ontologies.md).
 **Planned** · an agent in Claude Code
 
 - **Goal:** on entering an area, get its short brief: what it is for, key decisions, conventions
-  and where things are (planned for v0.5.2); read an approved summary of a whole area that names
+  and where things are (since v0.5.2); read an approved summary of a whole area that names
   every memory it draws on (parked); leave a note for the next session on what was done and what
   is open; be asked to meet the area's agreed definition of done before ending a turn; and load
   instructions for particular files only when touching them (these three not scheduled). Today
   the nearest is the standing instructions and the session-start context.
+- **How it plays out:** a reviewer proposes a reviewed memory into the area's brief and a second
+  reviewer confirms it. Each session that starts in the area then sees the brief first, before
+  the standing instructions, and an agent that moves to another area reads that area's brief
+  with `oml_workarea`. The brief is kept short by a size limit the server sets.
 
 ## Files and deliverables
 

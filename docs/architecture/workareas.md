@@ -9,7 +9,7 @@ answers: how the workarea algebra works — universe tree, node-id grants, deny-
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; edges and the status ladder planned for v0.5.2 ([releases](../product/releases.md)).
+**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; the status ladder since v0.5.2; workarea edges not scheduled ([releases](../product/releases.md)).
 
 This page is the single declaration site for the workarea algebra (D7) and the
 workarea status ladder (D8). Every other page that mentions a workarea, a grant,
@@ -268,7 +268,7 @@ refused are answered from status and policy snapshots alone.
 
 ## Edges
 
-*Planned for v0.5.2 · [releases](../product/releases.md)*
+*Workarea edges not scheduled; claim edges and the brief since v0.5.2, on the [HTTP API](../api/http-api.md#edges) · [releases](../product/releases.md)*
 
 ### Edge kinds
 
@@ -372,7 +372,16 @@ refusal below covers acquiring new children in any form). Lake rows keep
 
 ## The status ladder (D8)
 
-*Planned for v0.5.2 · [releases](../product/releases.md)*
+*Available since v0.5.2 · [releases](../product/releases.md)*
+
+**Status:** built in v0.5.2, in `oml-domain`, `oml-app` and `oml-pg` with
+`migrations/0017_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
+second identity, the status read) and the freeze checks on submit, supersede, approval and child
+create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · served by `POST /v2/workareas/{workarea}/transitions` and its ratify route, the
+`oml workareas status` verbs and the workarea read's `policy` and `pending_transitions`, which
+`oml_workarea` serves; no MCP tool proposes or ratifies ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3) · its Postgres checks run only where a superuser mints the suites' role
+pairs, CI's `cargo test (Postgres)` · reassignment, re-parent, demote, erasure and the simulation
+fence are decided, not built.
 
 Statuses: `development` → `committed` → `validated` (frozen). Transitions are
 **forward only**; backward transitions do not exist in the design — there is no
@@ -409,7 +418,7 @@ stateDiagram-v2
 | Transition | Proposed by | Ratified by | Preconditions | Journalled with |
 |---|---|---|---|---|
 | `development` → `committed` | admin or dreamer with effective access on the node | a **second, non-proposing** dreamer or admin (R2 applies to transitions) | — | transition event + policy snapshot |
-| `committed` → `validated` | admin or dreamer with effective access on the node | a second, non-proposing dreamer or admin | **every child of the node is already `validated`, and no simulation is fenced on the subtree** — a live simulation must be [ended](simulations.md) first, since taint can never enter a `validated` area | transition event + policy snapshot |
+| `committed` → `validated` | admin or dreamer with effective access on the node | a second, non-proposing dreamer or admin | **every child of the node is already `validated`, and no simulation is fenced on the subtree** — a live simulation must be [ended](simulations.md) first, since taint can never enter a `validated` area (the build's reading: the simulation clause holds vacuously while simulations are unbuilt, [below](#readings-the-build-takes)) | transition event + policy snapshot |
 | `committed` → `development` | — | — | **does not exist** | — |
 | `validated` → anything | — | — | **does not exist** | — |
 
@@ -417,6 +426,90 @@ The policy snapshot in the transition event records the review policy in force
 at the moment of transition, so later audit of any promotion can be answered
 against the policy that actually governed it, not the policy in force at read
 time.
+
+#### Readings the build takes
+
+[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave eight points open
+that code cannot leave open. Each line below is **the build's reading**, with
+the rule it follows; none is a new decision about the ladder.
+
+- **A pending proposal is a row.** A proposal is a row of `workarea_transitions`
+  (id, tenant, workarea, `from` and `to` status, state `pending` or `ratified`,
+  proposer key and principal, ratifier key, and the journal seqs of the proposal
+  and the ratification), the shape `workarea_edges` already gives a
+  propose-then-ratify object ([schema](../data/postgres-schema.md#workareas-and-edges)).
+  It follows d3: a transition is two journalled acts by two identities, so
+  something must hold the first act until the second.
+- **Several proposals may wait on one node; ratification re-checks.** The
+  status read lists "pending transitions", plural
+  ([HTTP API](../api/http-api.md)), so a proposal never blocks another.
+  Ratification re-checks the proposal against the node as it is at that
+  moment, on two counts: its `from` must be the node's status, and a step to
+  `validated` must still find every child `validated`. Both checks run inside
+  the ratifying transaction, after it takes the tenant's chain lock (the
+  `pg_advisory_xact_lock` every capture takes,
+  [schema](../data/postgres-schema.md)) and with the node row locked, before
+  the status write and the `workarea.status_transition` capture in that same
+  transaction; a child created, or a subtree reparented in, between proposal
+  and ratification is therefore seen. A proposal whose `from` is no longer the
+  node's status, one already ratified included, is refused with
+  `workarea.transition_refused`, reason `stale`; a step to `validated` that
+  finds a child not `validated` is refused with reason
+  `children_not_validated`. It follows d3's forward-only rule, a ratification
+  acts on the node as it is, never on the node as the proposer saw it, and
+  d4's "by construction": nothing can arrive between the test and the write.
+- **The status read lists only live proposals.** "Pending transitions" are the
+  rows with state `pending` whose `from` equals the node's current status. A
+  proposal made stale by another's ratification drops out of the read without
+  any row write and stays `pending` in the table, since the ladder is forward
+  only and nothing can ratify it; the row and its `workarea.status_proposed`
+  event remain as history. The read uses the index on
+  `(tenant_id, workarea_id, state)`. It follows d3: a proposal is something a
+  second identity can still act on, and a stale one is not. **Limit:** the
+  number of pending proposals on one node is unbounded and none can be
+  withdrawn; one key can add rows on a node without end, bounded only by the
+  key's write quota.
+- **The status read names the proposing key only to its own key set.** Each
+  live proposal is served with the fields of the `Transition` schema
+  ([OpenAPI](../api/openapi.yaml)) a pending row has, `transition_id`,
+  `workarea_id`, `to`, `state` and `proposed_by_key_id`, and the `from` rung
+  the live-proposal filter reads. The proposer's principal and the
+  tenant are never served, and `proposed_by_key_id` is null to every key
+  outside the proposer's own key set, an admin key reading structure
+  included, as it is on `workarea.status_proposed` in the
+  [events tail](../api/http-api.md#events-tail). It follows the tail's rule
+  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d15): a reader
+  learns that a proposal waits on a node it reads, never which identity made
+  it, so the two reads of one proposal never disagree.
+- **The policy snapshot is the policy in force plus the precondition.**
+  `policy_snapshot` holds the review policy in force, which the PoC fixes as the
+  one constant `{k: 1, required_roles: ["dreamer"]}`, and the precondition the
+  ratification evaluated, `children_all_validated`
+  ([event catalog](../data/event-catalog.md#workareastatus_transition)). The
+  verdict path and the snapshot read that one constant, so the two cannot
+  disagree. It follows d3: the snapshot answers a later promotion audit against
+  the policy that governed it.
+- **A refusal names its reason.** `workarea.transition_refused` carries
+  `details: {workarea_id, from, to, reason}`, `reason` one of `backward`,
+  `skipped`, `same`, `universe`, `children_not_validated`, `stale`
+  ([errors](../api/errors.md#workarea-structure-and-status-refusals)). It
+  follows the taxonomy's rule that a refusal names the rule it enforces: d3's
+  forward-only ladder gives the first three, the root's permanence the fourth,
+  d4 the fifth, and the re-check above the sixth.
+- **A user root is a node like any other.** A user root and every workarea under it climb the
+  ladder, and inside a user root the user's own dreamer keys propose and ratify, independence
+  being per key and principal; `universe` stays `committed`
+  ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2, after ADR-0044 d1 and d8). Whether a user
+  root may reach `validated`: no, it climbs to `committed` at most and is refused `user_root`;
+  a ratification by another key of the same user is admitted and marked `same_user`
+  (ADR-0046 d1, d2, answered on 2026-11-04), read from the workarea row's `user_root` and
+  the keys' `user`.
+- **No simulation is fenced, vacuously.** Simulations are not built, so "no
+  simulation is fenced on the subtree" holds of every subtree today; the build
+  says so in a comment where the check would sit, and the check lands with
+  simulations ([simulations](simulations.md)). It follows d4's purpose: taint
+  cannot enter a `validated` area, and while no simulation exists there is no
+  taint.
 
 ### Refusal matrix
 
@@ -451,6 +544,16 @@ are the ones implementers get wrong:
   freeze), and keeps its crew record correctable. The refusals are exactly: new
   writes, promotions into it, reassignment in or out, child creation,
   re-parenting, and any further status change.
+
+**Decided on 2026-11-04: a reject verdict in a `validated` area is admitted.** d5's closed list
+of three mutations names no reject verdict, and a freeze can leave a held row
+behind. The proposed reading refuses approve and reject alike with
+`workarea.frozen`, and `review/next` serves no row whose workarea is
+`validated`, so a held row left by a freeze stays held, visible to its author.
+The alternative admits reject, because a rejection promotes nothing. The
+operator decides before the build refuses verdicts by status
+([ADR-0009](../adr/ADR-0009-status-ladder.md) d5; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d10). The build
+refuses approve and admits reject, so a held row left by a freeze can still be drained.
 
 ## Medallion words name lake zones only
 

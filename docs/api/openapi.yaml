@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
-  version: 0.5.1-design
+  version: 0.5.2-design
   summary: >-
     The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
     /v2 the memory lab.
@@ -68,6 +68,7 @@ tags:
   - name: memories
   - name: workareas
   - name: crews
+  - name: edges
   - name: events
   - name: review
   - name: keys
@@ -692,6 +693,175 @@ paths:
               schema: { $ref: '#/components/schemas/Crew' }
         '404': { $ref: '#/components/responses/NotFound' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/workareas/{workarea}/transitions:
+    post:
+      tags: [workareas]
+      operationId: proposeTransition
+      summary: Propose a forward status transition; pending until a second party ratifies.
+      description: 'Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused).'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              to: committed
+            schema: { $ref: '#/components/schemas/TransitionProposal' }
+      responses:
+        '202':
+          description: Pending transition.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              example:
+                transition_id: tr_01JB2YF7H9K2M4P6R8TA1CV3EY
+                workarea_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
+                from: development
+                to: committed
+                state: pending
+                proposed_by_key_id: d405428e-4c99-426d-8826-76d28436e423
+                ratified_by_key_id: null
+              schema: { $ref: '#/components/schemas/Transition' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/workareas/{workarea}/transitions/{transition_id}/ratify:
+    post:
+      tags: [workareas]
+      operationId: ratifyTransition
+      summary: Ratify a pending transition; journalled with the policy snapshot.
+      description: 'Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
+      parameters:
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { name: transition_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Ratified transition.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              example:
+                transition_id: tr_01JB2YF7H9K2M4P6R8TA1CV3EY
+                workarea_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
+                from: development
+                to: committed
+                state: ratified
+                proposed_by_key_id: null
+                ratified_by_key_id: null
+              schema: { $ref: '#/components/schemas/Transition' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/edges:
+    get:
+      tags: [edges]
+      operationId: listEdges
+      summary: Paginated edge read of one kind, pending and ratified, scoped to read access.
+      description: 'kind claim reads the claim graph and requires reader effective access; workarea_id is a subtree filter and artifact_id narrows to the edges touching one claim. kind brief reads the brief edges into the workarea workarea_id names, required then, at reader effective access on it, each served only when the key reads its claim (ADR-0046 d7). kind workarea, designed and not served, reads the labelled related edges touching the node workarea_id names, required then, and requires reader effective access on it, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero access. One family for both kinds, each keeping its authority, refusal codes and journal events (ADR-0039 d9).'
+      parameters:
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [claim, brief] }, description: 'workarea is designed and refused with request.validation naming kind (ADR-0046 d4).' }
+        - { name: workarea_id, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' }, description: 'kind claim: a subtree filter. kind brief: the workarea whose brief edges are read, required.' }
+        - { name: artifact_id, in: query, schema: { type: string }, description: kind claim only. }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of edges of the one kind.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              example:
+                items:
+                - kind: claim
+                  edge_id: ce_01JB2YA1C3E5G7J9L2N4Q6S8UW
+                  from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  to_artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                  label: supports
+                  state: pending
+                  proposer_key_id: d405428e-4c99-426d-8826-76d28436e423
+                  ratifier_key_id: null
+                next_cursor: null
+              schema: { $ref: '#/components/schemas/EdgePage' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [edges]
+      operationId: proposeEdge
+      summary: Propose a claim-to-claim edge or a claim's place in a workarea's brief; pending until ratified.
+      description: 'kind claim requires dreamer(propose); its label is open, with supports, contradicts, relates_to and continues recommended and oml: reserved (ADR-0046 d6). kind brief requires dreamer effective access on the workarea and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8). kind workarea, designed and not served, requires dreamer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act here holds a separate dreamer key, since a key never combines admin with dreamer grants (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            examples:
+              claim:
+                value:
+                  kind: claim
+                  from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  to_artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                  label: supports
+              brief:
+                value:
+                  kind: brief
+                  from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                  to_workarea_id: procurement
+            schema: { $ref: '#/components/schemas/EdgeProposal' }
+      responses:
+        '202':
+          description: Pending edge.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              example:
+                kind: brief
+                edge_id: 0f9a2c4e-7d1b-4e3a-9c5f-2b8d6e1a4c70
+                from_artifact_id: 3b6e8f1a-2c4d-4e5f-8a9b-1c2d3e4f5a6b
+                to_workarea_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
+                label: brief
+                state: pending
+                proposer_key_id: d405428e-4c99-426d-8826-76d28436e423
+                ratifier_key_id: null
+              schema: { $ref: '#/components/schemas/Edge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/edges/{edge_id}/ratify:
+    post:
+      tags: [edges]
+      operationId: ratifyEdge
+      summary: Ratify a proposed edge of either kind.
+      description: 'The edge''s kind follows from edge_id. kind brief requires dreamer effective access on the workarea and refuses the proposer (review.ratifier_is_proposer); a decided edge is review.serve_invalid consumed (ADR-0046 d8). kind claim requires dreamer(review), and refuses the proposer (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind workarea requires dreamer(review) effective access on BOTH endpoints and refuses the proposer (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). Each kind journals its own ratification event (ADR-0039 d9).'
+      parameters:
+        - { name: edge_id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Ratified edge.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              example:
+                kind: claim
+                edge_id: ce_01JB2YA1C3E5G7J9L2N4Q6S8UW
+                from_artifact_id: art_01JB2XF2R7M9W4K6T8Y1QZ3VH5
+                to_artifact_id: art_01JB2M4N6P8R1T3V5X7Z9BD2FH
+                label: supports
+                state: ratified
+                proposer_key_id: d405428e-4c99-426d-8826-76d28436e423
+                ratifier_key_id: 54b2d035-b438-47f7-9055-67199237d5d7
+              schema: { $ref: '#/components/schemas/Edge' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/events:
@@ -2421,7 +2591,7 @@ components:
       allOf:
         - { $ref: '#/components/schemas/Workarea' }
         - type: object
-          required: [children, edges, my_effective_verbs, permission_epoch]
+          required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief]
           properties:
             children:
               type: array
@@ -2452,6 +2622,121 @@ components:
               description: The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, writer and dreamer rows, each left to right) without duplicates; the access conferred, not what this server build serves.
               items: { type: string, enum: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose, review] }
             permission_epoch: { type: integer, description: 'The calling key''s permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14).' }
+            policy: { $ref: '#/components/schemas/ReviewPolicy' }
+            pending_transitions:
+              type: array
+              description: The node's live proposals in proposal order, the pending rows whose from is the node's status (ADR-0039 d9; ADR-0046 d3).
+              items: { $ref: '#/components/schemas/Transition' }
+            brief: { $ref: '#/components/schemas/Brief' }
+
+    TransitionProposal:
+      type: object
+      additionalProperties: false
+      required: [to]
+      properties:
+        to: { type: string, enum: [committed, validated], description: 'Forward only; backward transitions do not exist, and a user root climbs to committed at most (ADR-0046 d1).' }
+
+    Transition:
+      type: object
+      required: [transition_id, workarea_id, from, to, state, proposed_by_key_id, ratified_by_key_id]
+      properties:
+        transition_id: { type: string }
+        workarea_id: { type: string }
+        from: { type: string, enum: [development, committed] }
+        to: { type: string, enum: [committed, validated] }
+        state: { type: string, enum: [pending, ratified] }
+        proposed_by_key_id: { type: [string, 'null'], description: 'The proposing key, served only to that key; null to every other reader, an admin key included (ADR-0025 d15).' }
+        ratified_by_key_id: { type: [string, 'null'], description: 'Null on this build''s answers; the journal''s workarea.status_transition names the ratifier.' }
+
+    ReviewPolicy:
+      type: object
+      description: The review policy in force, the one a transition's policy_snapshot records (ADR-0009 d3).
+      properties:
+        k: { type: integer }
+        required_roles: { type: array, items: { type: string } }
+
+    Brief:
+      type: object
+      additionalProperties: false
+      description: The workarea's ratified brief as this key reads it, in ratification order, cut by brief.max_tokens; empty for an admin key (ADR-0046 d8, d9).
+      required: [items, budget]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Memory' } }
+        budget: { $ref: '#/components/schemas/RecallBudget' }
+
+    ClaimEdgeProposal:
+      type: object
+      additionalProperties: false
+      required: [kind, from_artifact_id, to_artifact_id, label]
+      properties:
+        kind: { type: string, const: claim }
+        from_artifact_id: { type: string }
+        to_artifact_id: { type: string }
+        label: { type: string, description: 'Open; supports, contradicts, relates_to and continues are recommended, and oml: labels join terms only (ADR-0046 d6).' }
+
+    BriefEdgeProposal:
+      type: object
+      additionalProperties: false
+      required: [kind, from_artifact_id, to_workarea_id]
+      properties:
+        kind: { type: string, const: brief }
+        from_artifact_id: { type: string }
+        to_workarea_id: { $ref: '#/components/schemas/WorkareaRef' }
+
+    EdgeProposal:
+      description: One proposal body for the served edge kinds, chosen by kind (ADR-0039 d9; ADR-0046 d7).
+      oneOf:
+        - { $ref: '#/components/schemas/ClaimEdgeProposal' }
+        - { $ref: '#/components/schemas/BriefEdgeProposal' }
+      discriminator:
+        propertyName: kind
+        mapping:
+          claim: '#/components/schemas/ClaimEdgeProposal'
+          brief: '#/components/schemas/BriefEdgeProposal'
+
+    ClaimEdge:
+      type: object
+      required: [kind, edge_id, from_artifact_id, to_artifact_id, label, state, proposer_key_id, ratifier_key_id]
+      properties:
+        kind: { type: string, const: claim }
+        edge_id: { type: string }
+        from_artifact_id: { type: string }
+        to_artifact_id: { type: string }
+        label: { type: string }
+        state: { type: string, enum: [pending, ratified] }
+        proposer_key_id: { type: string }
+        ratifier_key_id: { type: [string, 'null'] }
+
+    BriefEdge:
+      type: object
+      required: [kind, edge_id, from_artifact_id, to_workarea_id, label, state, proposer_key_id, ratifier_key_id]
+      properties:
+        kind: { type: string, const: brief }
+        edge_id: { type: string }
+        from_artifact_id: { type: string }
+        to_workarea_id: { type: string }
+        label: { type: string, const: brief }
+        state: { type: string, enum: [pending, ratified] }
+        proposer_key_id: { type: string }
+        ratifier_key_id: { type: [string, 'null'] }
+
+    Edge:
+      description: An edge of a served kind, carrying its kind (ADR-0039 d9; ADR-0046 d7).
+      oneOf:
+        - { $ref: '#/components/schemas/ClaimEdge' }
+        - { $ref: '#/components/schemas/BriefEdge' }
+      discriminator:
+        propertyName: kind
+        mapping:
+          claim: '#/components/schemas/ClaimEdge'
+          brief: '#/components/schemas/BriefEdge'
+
+    EdgePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Edge' }, description: Edges of the one kind the read named. }
+        next_cursor: { type: [string, 'null'] }
 
     WorkareaCreate:
       type: object

@@ -216,6 +216,7 @@ async fn lead(store: &PgStore, key: &SigningKey, providers: &MemSignIn) -> Route
             vec![(Provider::GitHub, "github-client".to_owned())],
             providers.clone(),
         )),
+        oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
     )
     .await
     .expect("the lead starts")

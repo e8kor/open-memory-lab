@@ -21,28 +21,29 @@ use oml_domain::oauth::{
     TokenKind, UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
     connection_transition,
 };
+use oml_domain::vocab_edges::EdgeState;
 use oml_domain::{
     ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
-    event_types,
+    WorkareaStatus, event_types, ratifier_is_proposer,
 };
 
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyRecord,
     IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
-    ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
-};
-use crate::ports::{SignInExchange, WebStore};
-use crate::types::{
-    AdminSearch, AdminState, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
+    ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent, TailScan,
+    WebStore, claim_subject,
 };
 use crate::types::{
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord,
-    ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord,
-    DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
+    AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
+    ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind,
+    ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew,
+    CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
+    KeyReferences, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
+    OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
+    TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
+    WorkareaRef,
 };
 use oml_domain::web::Provider;
 
@@ -112,6 +113,9 @@ struct QueueEntry {
 #[derive(Debug, Clone)]
 struct UnnamedWorkarea {
     parent_id: Option<Uuid>,
+    /// The status the PoC stored: `committed` on the root, `development`
+    /// on every other node, the only statuses its `workarea.create` wrote.
+    status: WorkareaStatus,
     crew: Option<Crew>,
 }
 
@@ -141,6 +145,9 @@ struct TenantState {
     /// Per key id, in commit order — which is epoch order.
     access: BTreeMap<Uuid, KeyAccess>,
     queue: Vec<QueueEntry>,
+    /// Each status-ladder proposal with the seq of the event that proposed
+    /// it, as `workarea_transitions.proposed_seq` holds it (ADR-0009 d3).
+    transitions: BTreeMap<Uuid, (u64, TransitionRecord)>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
     /// The web allowlist by the email's digest (postgres-schema.md
@@ -149,6 +156,10 @@ struct TenantState {
     /// Web sessions by their token's digest (postgres-schema.md
     /// `web_sessions`; ADR-0045 d5).
     web_sessions: BTreeMap<[u8; 32], WebSessionRecord>,
+    /// Claim edges by id.
+    claim_edges: BTreeMap<Uuid, ClaimEdgeRecord>,
+    /// Brief edges by id (ADR-0046 d7).
+    brief_edges: BTreeMap<Uuid, BriefEdgeRecord>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -179,6 +190,8 @@ pub struct MemStore {
     refuse_partition: Arc<Mutex<Option<StoreError>>>,
     /// What runs before the next chain-head read answers, then forgotten.
     before_head_read: Arc<Mutex<Option<Interleaved>>>,
+    /// The commit landed just before the next head read, then forgotten.
+    before_next_head: Arc<Mutex<Option<HeadInterleave>>>,
 }
 
 /// Work a test lands between a use case's reads and its commit: run once,
@@ -188,6 +201,19 @@ pub struct Interleaved(std::pin::Pin<Box<dyn Future<Output = ()> + Send>>);
 impl std::fmt::Debug for Interleaved {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Interleaved")
+    }
+}
+
+/// A commit built from the head it finds: the one a concurrent writer lands
+/// between a use-case's earlier reads and its head read.
+type HeadCommit = Box<dyn FnOnce(Option<&SignedEnvelope>) -> CommitRequest + Send>;
+
+/// [`MemStore::commit_before_next_head`]'s armed commit.
+struct HeadInterleave(HeadCommit);
+
+impl std::fmt::Debug for HeadInterleave {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HeadInterleave(..)")
     }
 }
 
@@ -262,12 +288,40 @@ impl MemStore {
         })
     }
 
+    /// Commits what `build` makes of the head it finds just before the next
+    /// `chain_head` read, then reads that head normally: a concurrent
+    /// writer's commit landing between a use-case's earlier reads and its
+    /// head read, which a single-task test cannot otherwise interleave. A
+    /// refusal of that commit is the head read's.
+    pub fn commit_before_next_head(
+        &self,
+        build: impl FnOnce(Option<&SignedEnvelope>) -> CommitRequest + Send + 'static,
+    ) {
+        *self.before_next_head.lock().expect("interleave lock") =
+            Some(HeadInterleave(Box::new(build)));
+    }
+
     /// Answers the next idempotency lookup with no record, whatever is
     /// stored, then reads normally again: the lookup of an attempt that ran
     /// before a concurrent attempt under the same key committed, armed on
     /// any handle after that commit.
     pub fn miss_next_idempotency_lookup(&self) {
         self.miss_next_lookup.store(true, Ordering::SeqCst);
+    }
+
+    /// Sets a stored row's status, journalling nothing: the demoted or
+    /// erased row a test needs, which no use case in this build produces.
+    /// A row the tenant does not hold is left absent.
+    pub fn set_status(&self, tenant_id: Uuid, memory_id: Uuid, status: MemoryStatus) {
+        if let Some(tenant) = self.tenant_existing(tenant_id)
+            && let Some(memory) = tenant
+                .lock()
+                .expect("tenant lock")
+                .memories
+                .get_mut(&memory_id)
+        {
+            memory.status = status;
+        }
     }
 
     fn tenant(&self, tenant_id: Uuid) -> Arc<Mutex<TenantState>> {
@@ -417,6 +471,11 @@ fn fold_poc_event(
                 poc_required_id(payload, "workarea_id")?,
                 UnnamedWorkarea {
                     parent_id: poc_id(payload, "parent_id"),
+                    status: if poc_id(payload, "parent_id").is_none() {
+                        WorkareaStatus::Committed
+                    } else {
+                        WorkareaStatus::Development
+                    },
                     crew,
                 },
             );
@@ -540,6 +599,8 @@ fn require_free_name<'a>(
 /// `workareas_universe_is_root` refuses otherwise: a non-root `universe` is
 /// refused with `NameTaken`, as errors.md answers it, and a root of another
 /// name as the backend's (postgres-schema.md `workareas`; ADR-0026 d6).
+/// The root is stored `committed` or refused as the backend's, as
+/// `workareas_universe_committed` refuses it (ADR-0009 d1).
 fn require_universe_root(workarea: &WorkareaRecord) -> Result<(), StoreError> {
     match (workarea.parent_id, workarea.name.as_str() == UNIVERSE) {
         (Some(_), true) => Err(StoreError::NameTaken {
@@ -551,6 +612,15 @@ fn require_universe_root(workarea: &WorkareaRecord) -> Result<(), StoreError> {
             workarea.workarea_id,
             workarea.name.as_str()
         ))),
+        // The root is permanently committed, as the schema's
+        // workareas_universe_committed CHECK holds (ADR-0009 d1).
+        (None, true) if workarea.status != WorkareaStatus::Committed => {
+            Err(StoreError::Backend(format!(
+                "the universe root {} is permanently committed, not {}",
+                workarea.workarea_id,
+                workarea.status.as_str()
+            )))
+        }
         _ => Ok(()),
     }
 }
@@ -601,6 +671,157 @@ fn require_parent(state: &TenantState, parent_id: Option<Uuid>) -> Result<(), St
         )),
         _ => Ok(()),
     }
+}
+
+/// The one step forward from each rung, as `workarea_transitions_one_rung`
+/// admits it (ADR-0009 d1).
+fn one_rung(from: WorkareaStatus, to: WorkareaStatus) -> bool {
+    matches!(
+        (from, to),
+        (WorkareaStatus::Development, WorkareaStatus::Committed)
+            | (WorkareaStatus::Committed, WorkareaStatus::Validated)
+    )
+}
+
+/// `workarea.status_proposed`'s fold: what the store refuses, the double
+/// refuses — a node or proposing key the tenant does not hold, a proposer
+/// principal other than the one that key's row holds, a step other than
+/// one rung forward, a record that is not pending, and an id already held
+/// (0017_workarea_transitions.sql; ADR-0010 R2).
+fn propose_transition_fold(
+    state: &mut TenantState,
+    seq: u64,
+    proposal: TransitionRecord,
+) -> Result<(), StoreError> {
+    require_held(state, proposal.proposer_key_id, proposal.workarea_id)?;
+    if key_principal(state, proposal.proposer_key_id)? != proposal.proposer_principal {
+        return Err(StoreError::Backend(format!(
+            "transition {}'s proposer principal is not its proposing key's",
+            proposal.transition_id
+        )));
+    }
+    if !one_rung(proposal.from, proposal.to) {
+        return Err(StoreError::Backend(format!(
+            "a transition is one rung forward, never {} to {}",
+            proposal.from.as_str(),
+            proposal.to.as_str()
+        )));
+    }
+    if proposal.state != TransitionState::Pending || proposal.ratifier_key_id.is_some() {
+        return Err(StoreError::Backend(format!(
+            "transition {} is proposed pending, with no ratifier",
+            proposal.transition_id
+        )));
+    }
+    if state.transitions.contains_key(&proposal.transition_id) {
+        return Err(StoreError::Backend(format!(
+            "transition {} is already held",
+            proposal.transition_id
+        )));
+    }
+    state
+        .transitions
+        .insert(proposal.transition_id, (seq, proposal));
+    Ok(())
+}
+
+/// `workarea.status_transition`'s fold, as the ratifying transaction
+/// applies it once the chain lock is held: a row that is not a proposal on
+/// this node with this `to`, a ratifier key the tenant does not hold, and a
+/// universe root moved off `committed` are defects; a row already ratified
+/// or whose `from` is no longer the node's status is
+/// [`StoreError::TransitionStale`]; a ratifier that is the proposing key or
+/// holds the proposer's principal is [`StoreError::RatifierIsProposer`];
+/// and a step to `validated` with a direct child not `validated` is
+/// [`StoreError::ChildrenNotValidated`]. Any refusal refuses the commit,
+/// which writes nothing (ADR-0009 d1, d3, d4; ADR-0010 R2; workareas.md,
+/// ratification re-checks).
+fn ratify_transition_fold(
+    state: &mut TenantState,
+    transition_id: Uuid,
+    workarea_id: Uuid,
+    to: WorkareaStatus,
+    ratifier_key_id: Uuid,
+) -> Result<(), StoreError> {
+    let defect = || {
+        StoreError::Backend(format!(
+            "transition {transition_id} is not a proposal on workarea {workarea_id} to {}",
+            to.as_str()
+        ))
+    };
+    let Some((_, row)) = state.transitions.get(&transition_id) else {
+        return Err(defect());
+    };
+    let Some(node) = state.workareas.get(&workarea_id) else {
+        return Err(defect());
+    };
+    if row.workarea_id != workarea_id || row.to != to {
+        return Err(defect());
+    }
+    if row.state != TransitionState::Pending || node.status != row.from {
+        return Err(StoreError::TransitionStale {
+            transition_id,
+            workarea_id,
+            from: row.from,
+            to: row.to,
+        });
+    }
+    require_held(state, ratifier_key_id, workarea_id)?;
+    let ratifier_principal = key_principal(state, ratifier_key_id)?;
+    if ratifier_is_proposer(
+        row.proposer_key_id,
+        &row.proposer_principal,
+        ratifier_key_id,
+        ratifier_principal,
+    ) {
+        return Err(StoreError::RatifierIsProposer { transition_id });
+    }
+    if to == WorkareaStatus::Validated && child_not_validated(state, workarea_id) {
+        return Err(StoreError::ChildrenNotValidated {
+            transition_id,
+            workarea_id,
+        });
+    }
+    if node.parent_id.is_none() && to != WorkareaStatus::Committed {
+        return Err(StoreError::Backend(
+            "the universe root is permanently committed".to_owned(),
+        ));
+    }
+    if let Some(node) = state.workareas.get_mut(&workarea_id) {
+        node.status = to;
+    }
+    if let Some((_, row)) = state.transitions.get_mut(&transition_id) {
+        row.state = TransitionState::Ratified;
+        row.ratifier_key_id = Some(ratifier_key_id);
+    }
+    Ok(())
+}
+
+/// The principal the tenant's key row `key_id` holds, revoked or not.
+fn key_principal(state: &TenantState, key_id: Uuid) -> Result<&str, StoreError> {
+    state
+        .keys
+        .get(&key_id)
+        .map(|k| k.principal.as_str())
+        .ok_or_else(|| StoreError::Backend(format!("key {key_id} is not held by this tenant")))
+}
+
+/// Whether any direct child of `workarea_id`, named or not, stands on a
+/// rung other than `validated` (ADR-0009 d4).
+fn child_not_validated(state: &TenantState, workarea_id: Uuid) -> bool {
+    state
+        .workareas
+        .values()
+        .filter(|w| w.parent_id == Some(workarea_id))
+        .map(|w| w.status)
+        .chain(
+            state
+                .unnamed_workareas
+                .values()
+                .filter(|w| w.parent_id == Some(workarea_id))
+                .map(|w| w.status),
+        )
+        .any(|status| status != WorkareaStatus::Validated)
 }
 
 /// Names the tenant at its genesis, as the `tenants` row does: a tenant
@@ -1138,8 +1359,224 @@ fn apply_fold(
             }
             state.queue.retain(|e| e.memory_id != successor);
         }
+        MetadataFold::TransitionProposed(proposal) => {
+            propose_transition_fold(state, seq, proposal)?;
+        }
+        MetadataFold::TransitionRatified {
+            transition_id,
+            workarea_id,
+            to,
+            ratifier_key_id,
+        } => {
+            ratify_transition_fold(state, transition_id, workarea_id, to, ratifier_key_id)?;
+        }
+        MetadataFold::ClaimEdgeProposed(edge) => {
+            require_proposable(state, tenant_id, &edge, at)?;
+            let (src, dst) = (edge.src_artifact_id, edge.dst_artifact_id);
+            state.claim_edges.insert(edge.edge_id, edge);
+            widen_lineage(state, src, dst);
+        }
+        MetadataFold::ClaimEdgeRatified {
+            edge_id,
+            ratifier_key_id,
+        } => {
+            // The compare-and-set: a pending edge of this tenant, else the
+            // commit writes nothing, its event included (postgres-schema.md
+            // `claim_edges`; ADR-0021 d5).
+            let Some(edge) = state
+                .claim_edges
+                .get(&edge_id)
+                .filter(|e| e.state == EdgeState::Pending)
+            else {
+                return Err(StoreError::EdgeNotPending { edge_id });
+            };
+            if edge.proposer_key_id == ratifier_key_id {
+                return Err(StoreError::Backend(format!(
+                    "claim edge {edge_id}'s ratifier is its proposer"
+                )));
+            }
+            if !state.keys.contains_key(&ratifier_key_id) {
+                return Err(StoreError::Backend(format!(
+                    "key {ratifier_key_id} is not held by this tenant"
+                )));
+            }
+            if let Some(edge) = state.claim_edges.get_mut(&edge_id) {
+                edge.state = EdgeState::Ratified;
+                edge.ratifier_key_id = Some(ratifier_key_id);
+            }
+        }
+        MetadataFold::BriefEdgeProposed(edge) => {
+            // What `brief_edges`' keys and checks refuse, the double
+            // refuses (postgres-schema.md `brief_edges`).
+            let refuse = |why: String| Err(StoreError::Backend(why));
+            if edge.tenant_id != tenant_id || state.brief_edges.contains_key(&edge.edge_id) {
+                return refuse(format!(
+                    "brief edge {} is not a new edge of this tenant",
+                    edge.edge_id
+                ));
+            }
+            if !state.memories.contains_key(&edge.artifact_id)
+                || !state.workareas.contains_key(&edge.workarea_id)
+                || !state.keys.contains_key(&edge.proposer_key_id)
+            {
+                return refuse(format!(
+                    "brief edge {} names a row this tenant does not hold",
+                    edge.edge_id
+                ));
+            }
+            if edge.state != EdgeState::Pending
+                || edge.ratifier_key_id.is_some()
+                || edge.ratified_seq.is_some()
+                || edge.created_at != *at
+            {
+                return refuse(format!(
+                    "brief edge {} is proposed pending at its event's at",
+                    edge.edge_id
+                ));
+            }
+            state.brief_edges.insert(edge.edge_id, edge);
+        }
+        MetadataFold::BriefEdgeRatified {
+            edge_id,
+            ratifier_key_id,
+        } => {
+            let Some(edge) = state
+                .brief_edges
+                .get(&edge_id)
+                .filter(|e| e.state == EdgeState::Pending)
+            else {
+                return Err(StoreError::EdgeNotPending { edge_id });
+            };
+            if edge.proposer_key_id == ratifier_key_id || !state.keys.contains_key(&ratifier_key_id)
+            {
+                return Err(StoreError::Backend(format!(
+                    "brief edge {edge_id}'s ratifier is its proposer or not this tenant's key"
+                )));
+            }
+            if let Some(edge) = state.brief_edges.get_mut(&edge_id) {
+                edge.state = EdgeState::Ratified;
+                edge.ratifier_key_id = Some(ratifier_key_id);
+                edge.ratified_seq = Some(seq);
+            }
+        }
     }
     Ok(())
+}
+
+/// A proposed edge the schema admits: one of this tenant's, an id it does
+/// not hold yet, both endpoints and the proposer key its own, pending with
+/// no ratifier, created at its event's `at` (postgres-schema.md
+/// `claim_edges`).
+fn require_proposable(
+    state: &TenantState,
+    tenant_id: Uuid,
+    edge: &ClaimEdgeRecord,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    let refuse = |why: String| Err(StoreError::Backend(why));
+    if edge.tenant_id != tenant_id {
+        return refuse(format!("claim edge {} names another tenant", edge.edge_id));
+    }
+    if state.claim_edges.contains_key(&edge.edge_id) {
+        return refuse(format!("claim edge {} is already held", edge.edge_id));
+    }
+    for endpoint in [edge.src_artifact_id, edge.dst_artifact_id] {
+        if !state.memories.contains_key(&endpoint) {
+            return refuse(format!("version {endpoint} is not held by this tenant"));
+        }
+    }
+    if !state.keys.contains_key(&edge.proposer_key_id) {
+        return refuse(format!(
+            "key {} is not held by this tenant",
+            edge.proposer_key_id
+        ));
+    }
+    if edge.state != EdgeState::Pending || edge.ratifier_key_id.is_some() {
+        return refuse(format!(
+            "claim edge {} is proposed pending, with no ratifier",
+            edge.edge_id
+        ));
+    }
+    if edge.created_at != *at {
+        return refuse(format!(
+            "claim edge {} is created at its claim_edge.proposed event's at",
+            edge.edge_id
+        ));
+    }
+    Ok(())
+}
+
+/// The versions one claim edge away from `node`, either way, over every
+/// held edge that is not rejected.
+fn edge_neighbours(state: &TenantState, node: Uuid) -> impl Iterator<Item = Uuid> + '_ {
+    state
+        .claim_edges
+        .values()
+        .filter(|e| e.state != EdgeState::Rejected)
+        .filter_map(move |e| {
+            if e.src_artifact_id == node {
+                Some(e.dst_artifact_id)
+            } else if e.dst_artifact_id == node {
+                Some(e.src_artifact_id)
+            } else {
+                None
+            }
+        })
+}
+
+/// The lineage widening of a proposed edge between `src` and `dst`, the
+/// reading [`MetadataFold::ClaimEdgeProposed`] names: C is every version
+/// connected to either endpoint through claim edges, the new one included;
+/// every version that reaches C through `derives_from` ancestry and claim
+/// edges, C included, gains the union of C's flattened closures. Each
+/// version's stored closure is already the authors of its lineage, so that
+/// union is the authors the new edge joins.
+fn widen_lineage(state: &mut TenantState, src: Uuid, dst: Uuid) {
+    let mut component = BTreeSet::from([src, dst]);
+    let mut frontier = vec![src, dst];
+    while let Some(node) = frontier.pop() {
+        let next: Vec<Uuid> = edge_neighbours(state, node).collect();
+        for n in next {
+            if component.insert(n) {
+                frontier.push(n);
+            }
+        }
+    }
+    let mut principals = BTreeSet::new();
+    let mut key_ids = BTreeSet::new();
+    for id in &component {
+        if let Some(m) = state.memories.get(id) {
+            principals.extend(m.lineage_principals.iter().cloned());
+            key_ids.extend(m.lineage_key_ids.iter().copied());
+        }
+    }
+    // Downstream of C: a version's closure holds C once it derives from a
+    // version that does, or shares a claim edge with one.
+    let mut reached = component.clone();
+    let mut frontier: Vec<Uuid> = component.into_iter().collect();
+    while let Some(node) = frontier.pop() {
+        let children = state
+            .memories
+            .values()
+            .filter(|m| m.derives_from.contains(&node))
+            .map(|m| m.memory_id);
+        let next: Vec<Uuid> = children.chain(edge_neighbours(state, node)).collect();
+        for n in next {
+            if reached.insert(n) {
+                frontier.push(n);
+            }
+        }
+    }
+    for id in reached {
+        if let Some(m) = state.memories.get_mut(&id) {
+            let mut p: BTreeSet<String> = m.lineage_principals.drain(..).collect();
+            p.extend(principals.iter().cloned());
+            m.lineage_principals = p.into_iter().collect();
+            let mut k: BTreeSet<Uuid> = m.lineage_key_ids.drain(..).collect();
+            k.extend(key_ids.iter().copied());
+            m.lineage_key_ids = k.into_iter().collect();
+        }
+    }
 }
 
 /// The fold of `system.names_assigned` within the tenant: each crew record,
@@ -1188,6 +1625,7 @@ fn assign_names_fold(
                     tenant_id,
                     parent_id: unnamed.parent_id,
                     name: assignment.name.clone(),
+                    status: unnamed.status,
                     crew: unnamed.crew,
                     crew_id: crew_of.remove(&id),
                     user_root: false,
@@ -1380,6 +1818,17 @@ impl JournalStore for MemStore {
             .take();
         if let Some(Interleaved(work)) = interleaved {
             work.await;
+        }
+        let armed = self
+            .before_next_head
+            .lock()
+            .expect("interleave lock")
+            .take();
+        if let Some(HeadInterleave(build)) = armed {
+            let head = self
+                .tenant_existing(tenant_id)
+                .and_then(|t| t.lock().expect("tenant lock").events.last().cloned());
+            self.commit_chain(vec![build(head.as_ref())]).await?;
         }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
@@ -2079,6 +2528,41 @@ impl JournalStore for MemStore {
         Ok(children)
     }
 
+    async fn transition(
+        &self,
+        tenant_id: Uuid,
+        transition_id: Uuid,
+    ) -> Result<Option<TransitionRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .transitions
+            .get(&transition_id)
+            .map(|(_, row)| row.clone()))
+    }
+
+    async fn pending_transitions(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<TransitionRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut pending: Vec<&(u64, TransitionRecord)> = state
+            .transitions
+            .values()
+            .filter(|(_, row)| {
+                row.workarea_id == workarea_id && row.state == TransitionState::Pending
+            })
+            .collect();
+        pending.sort_by_key(|(seq, _)| *seq);
+        Ok(pending.into_iter().map(|(_, row)| row.clone()).collect())
+    }
+
     async fn idempotency_get(
         &self,
         scope: &IdempotencyScope,
@@ -2094,6 +2578,120 @@ impl JournalStore for MemStore {
             .idempotency
             .get(&(scope.key_id, scope.workarea_id, scope.idem_key.clone()))
             .cloned())
+    }
+
+    async fn brief_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> Result<Option<BriefEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.brief_edges.get(&edge_id).cloned())
+    }
+
+    async fn brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut edges: Vec<BriefEdgeRecord> = state
+            .brief_edges
+            .values()
+            .filter(|e| e.workarea_id == workarea_id)
+            .cloned()
+            .collect();
+        edges.sort_by_key(|e| std::cmp::Reverse((e.created_at.as_str().to_owned(), e.edge_id)));
+        Ok(edges)
+    }
+
+    async fn claim_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> Result<Option<ClaimEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.claim_edges.get(&edge_id).cloned())
+    }
+
+    async fn claim_edges(
+        &self,
+        tenant_id: Uuid,
+        selection: &ClaimEdgeSelection,
+        after: Option<&ClaimEdgePosition>,
+        limit: usize,
+    ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let node_of = |id: Uuid| state.memories.get(&id).map(|m| m.workarea_id);
+        let in_scope = |id: Uuid| {
+            state.memories.get(&id).is_some_and(|m| {
+                selection.readable_nodes.contains(&m.workarea_id)
+                    && (m.status == MemoryStatus::Promoted
+                        || m.author_key_id == selection.reader_key_id)
+            })
+        };
+        let position = |e: &ClaimEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);
+        let mut edges: Vec<&ClaimEdgeRecord> = state.claim_edges.values().collect();
+        edges.sort_by_key(|e| std::cmp::Reverse(position(e)));
+        Ok(edges
+            .into_iter()
+            .filter(|e| {
+                after.is_none_or(|p| position(e) < (p.created_at.as_str().to_owned(), p.edge_id))
+            })
+            .filter(|e| in_scope(e.src_artifact_id) && in_scope(e.dst_artifact_id))
+            .filter(|e| {
+                selection
+                    .artifact_id
+                    .is_none_or(|a| e.src_artifact_id == a || e.dst_artifact_id == a)
+            })
+            .filter(|e| {
+                selection.within.as_ref().is_none_or(|within| {
+                    [e.src_artifact_id, e.dst_artifact_id]
+                        .into_iter()
+                        .any(|id| node_of(id).is_some_and(|w| within.contains(&w)))
+                })
+            })
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    async fn ratified_term_edges(
+        &self,
+        tenant_id: Uuid,
+        label: &str,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let term_key = |id: Uuid| {
+            state
+                .memories
+                .get(&id)
+                .filter(|m| m.kind == MemoryKind::Term)
+                .map(|m| m.claim_key.clone())
+        };
+        let mut edges: Vec<(String, String)> = state
+            .claim_edges
+            .values()
+            .filter(|e| e.state == EdgeState::Ratified && e.label == label)
+            .filter_map(|e| Some((term_key(e.src_artifact_id)?, term_key(e.dst_artifact_id)?)))
+            .collect();
+        edges.sort();
+        Ok(edges)
     }
 }
 

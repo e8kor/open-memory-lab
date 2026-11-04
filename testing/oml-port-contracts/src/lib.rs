@@ -23,9 +23,11 @@ use oml_app::domain::oauth::{
     RefreshDecision, RefreshInvalid, RevokedCause, TokenKind, UNUSED_REGISTRATIONS_MAX,
     decide_refresh,
 };
+use oml_app::domain::vocab_edges::{ClaimEdge, DerivesFrom, EdgeState, lineage_artifacts};
 use oml_app::domain::{
-    EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
-    event_types, key_fingerprint, next_envelope, sha256_digest_string, sign, verify_chain,
+    ChainHead, EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role,
+    SignedEnvelope, WorkareaStatus, event_types, key_fingerprint, next_envelope,
+    sha256_digest_string, sign, verify_chain,
 };
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
@@ -34,11 +36,13 @@ use oml_app::ports::{
     Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
-    ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
-    GrantRecord, GuardrailFields, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
-    ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts,
-    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
+    ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
+    GuardrailFields, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
+    MemoryRecord, MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome,
+    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -180,6 +184,70 @@ impl ChainRig {
             (self.head, self.n) = (head, n);
         }
         receipt
+    }
+
+    /// Commit one `workarea.status_proposed` folding `proposal`, its
+    /// payload the event catalog's.
+    pub async fn propose_transition<S: JournalStore>(
+        &mut self,
+        store: &S,
+        proposal: TransitionRecord,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.commit(
+            store,
+            event_types::WORKAREA_STATUS_PROPOSED,
+            json!({
+                "workarea_id": proposal.workarea_id.to_string(),
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "transition_id": proposal.transition_id.to_string(),
+                "proposed_by_key_id": proposal.proposer_key_id.to_string(),
+            }),
+            MetadataFold::TransitionProposed(proposal),
+            None,
+        )
+        .await
+    }
+
+    /// The `workarea.status_transition` link that ratifies `transition_id`
+    /// on `workarea_id` to `to` by `ratifier_key_id`, for [`Self::commit`]
+    /// or [`Self::commit_chain`].
+    #[must_use]
+    pub fn ratification(
+        transition_id: Uuid,
+        workarea_id: Uuid,
+        to: WorkareaStatus,
+        ratifier_key_id: Uuid,
+    ) -> (&'static str, Value, MetadataFold) {
+        (
+            event_types::WORKAREA_STATUS_TRANSITION,
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "to": to.as_str(),
+                "transition_id": transition_id.to_string(),
+                "ratified_by_key_id": ratifier_key_id.to_string(),
+            }),
+            MetadataFold::TransitionRatified {
+                transition_id,
+                workarea_id,
+                to,
+                ratifier_key_id,
+            },
+        )
+    }
+
+    /// Commit one `workarea.status_transition` ratifying `transition_id`.
+    pub async fn ratify_transition<S: JournalStore>(
+        &mut self,
+        store: &S,
+        transition_id: Uuid,
+        workarea_id: Uuid,
+        to: WorkareaStatus,
+        ratifier_key_id: Uuid,
+    ) -> Result<CommitReceipt, StoreError> {
+        let (event_type, payload, fold) =
+            Self::ratification(transition_id, workarea_id, to, ratifier_key_id);
+        self.commit(store, event_type, payload, fold, None).await
     }
 
     /// Commit one `workarea.create` folding `workarea`.
@@ -468,7 +536,8 @@ pub fn name(value: &str) -> Name {
     Name::parse(value).expect("a fixture name the creation grammar admits")
 }
 
-/// A fixture workarea node with no crew.
+/// A fixture workarea node with no crew, at the status `workarea.create`
+/// stores: `committed` for a root, `development` for every other node.
 #[must_use]
 pub fn workarea_record(
     tenant_id: Uuid,
@@ -481,6 +550,11 @@ pub fn workarea_record(
         tenant_id,
         parent_id,
         name: name(workarea_name),
+        status: if parent_id.is_none() {
+            WorkareaStatus::Committed
+        } else {
+            WorkareaStatus::Development
+        },
         crew: None,
         crew_id: None,
         user_root: false,
@@ -2344,6 +2418,862 @@ pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes<S: Journa
             .expect("children")
             .is_empty(),
         "an unknown node has no children"
+    );
+}
+
+/// The status is one stored column, not a value derived from the node's
+/// place in the tree: every workarea read serves the status its row
+/// stores, a child stored `committed` or `validated` among them
+/// (ADR-0009 d1; postgres-schema.md `workareas.status`).
+pub async fn a_workarea_read_serves_the_status_its_row_stores<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(47);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0xB410), None, "universe");
+    let committed = WorkareaRecord {
+        status: WorkareaStatus::Committed,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0xB411),
+            Some(universe.workarea_id),
+            "procurement",
+        )
+    };
+    let validated = WorkareaRecord {
+        status: WorkareaStatus::Validated,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0xB412),
+            Some(committed.workarea_id),
+            "metals",
+        )
+    };
+    let development = workarea_record(
+        t,
+        Uuid::from_u128(0xB413),
+        Some(committed.workarea_id),
+        "redline",
+    );
+    for w in [&universe, &committed, &validated, &development] {
+        rig.create_workarea(store, w.clone()).await;
+    }
+    let statuses = |rows: Vec<WorkareaRecord>| -> Vec<(Uuid, WorkareaStatus)> {
+        rows.into_iter()
+            .map(|w| (w.workarea_id, w.status))
+            .collect()
+    };
+
+    for w in [&universe, &committed, &validated, &development] {
+        assert_eq!(
+            store
+                .workarea(t, w.workarea_id)
+                .await
+                .expect("read")
+                .as_ref(),
+            Some(w),
+            "the read serves {:?} as stored",
+            w.status
+        );
+    }
+    assert_eq!(
+        statuses(
+            store
+                .workarea_ancestry(t, validated.workarea_id)
+                .await
+                .expect("ancestry")
+                .expect("held")
+        ),
+        vec![
+            (validated.workarea_id, WorkareaStatus::Validated),
+            (committed.workarea_id, WorkareaStatus::Committed),
+            (universe.workarea_id, WorkareaStatus::Committed),
+        ]
+    );
+    assert_eq!(
+        statuses(
+            store
+                .workarea_children(t, committed.workarea_id)
+                .await
+                .expect("children")
+        ),
+        vec![
+            (validated.workarea_id, WorkareaStatus::Validated),
+            (development.workarea_id, WorkareaStatus::Development),
+        ]
+    );
+    assert_eq!(
+        statuses(
+            store
+                .workarea_subtree(t, committed.workarea_id)
+                .await
+                .expect("subtree")
+        ),
+        vec![
+            (committed.workarea_id, WorkareaStatus::Committed),
+            (validated.workarea_id, WorkareaStatus::Validated),
+            (development.workarea_id, WorkareaStatus::Development),
+        ]
+    );
+}
+
+/// The universe root is permanently `committed`: a root created at any
+/// other status is refused at its commit, no event and no row, so no later
+/// write can leave a tenant whose root sits on another rung (ADR-0009 d1;
+/// postgres-schema.md `workareas_universe_committed`).
+pub async fn a_universe_root_created_at_any_status_but_committed_is_refused<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(48);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let head = store.chain_head(t).await.expect("head");
+
+    for (case, raw, status) in [
+        ("development", 0xB420, WorkareaStatus::Development),
+        ("validated", 0xB421, WorkareaStatus::Validated),
+    ] {
+        let root = WorkareaRecord {
+            status,
+            ..workarea_record(t, Uuid::from_u128(raw), None, "universe")
+        };
+        let refused = rig
+            .commit(
+                store,
+                event_types::WORKAREA_CREATE,
+                json!({ "workarea_id": root.workarea_id.to_string(), "name": "universe" }),
+                MetadataFold::WorkareaCreated(root.clone()),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "a universe root stored {case} is refused, got {refused:?}"
+        );
+        assert_eq!(
+            store.workarea(t, root.workarea_id).await.expect("read"),
+            None,
+            "a universe root stored {case} writes no row"
+        );
+    }
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "a refused root journals nothing"
+    );
+}
+
+/// A fixture pending proposal of one rung forward from `from` on
+/// `workarea_id` by `proposer_key_id`, under the principal [`key_record`]
+/// gives that key.
+#[must_use]
+pub fn pending_transition(
+    tenant_id: Uuid,
+    transition_id: Uuid,
+    workarea_id: Uuid,
+    from: WorkareaStatus,
+    proposer_key_id: Uuid,
+) -> TransitionRecord {
+    TransitionRecord {
+        transition_id,
+        tenant_id,
+        workarea_id,
+        from,
+        to: match from {
+            WorkareaStatus::Development => WorkareaStatus::Committed,
+            WorkareaStatus::Committed | WorkareaStatus::Validated => WorkareaStatus::Validated,
+        },
+        state: TransitionState::Pending,
+        proposer_key_id,
+        proposer_principal: format!("fixture/{proposer_key_id}"),
+        ratifier_key_id: None,
+    }
+}
+
+/// A rig with a universe root, `node` under it in `development`, and two
+/// admin keys, `proposer` and `ratifier`: the ground every transition law
+/// stands on.
+async fn transition_ground<S: JournalStore>(
+    store: &S,
+    seed: u64,
+    node: Uuid,
+    keys: (Uuid, Uuid),
+) -> ChainRig {
+    let mut rig = ChainRig::new(seed);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let root = Uuid::from_u128(node.as_u128() + 0x100);
+    rig.create_workarea(store, workarea_record(t, root, None, "universe"))
+        .await;
+    rig.create_workarea(
+        store,
+        workarea_record(t, node, Some(root), &format!("area-{seed}")),
+    )
+    .await;
+    for key in [keys.0, keys.1] {
+        rig.issue_key(store, key_record(t, key, Role::Admin, None))
+            .await;
+    }
+    rig
+}
+
+/// A proposal is a pending row the store serves back whole, by its id and
+/// in its node's pending list, which lists the node's proposals in the
+/// order they were proposed, not in id order, and no other node's
+/// (ADR-0009 d3; workareas.md, several proposals may wait on one node).
+pub async fn a_proposed_transition_is_pending_and_listed_by_its_workarea_in_proposal_order<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB490);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD490), Uuid::from_u128(0xD491));
+    let mut rig = transition_ground(store, 49, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let other = Uuid::from_u128(0xB491);
+    rig.create_workarea(
+        store,
+        workarea_record(t, other, Some(Uuid::from_u128(0xB590)), "area-49-other"),
+    )
+    .await;
+
+    // The later proposal on `node` carries the smaller id.
+    let first = pending_transition(
+        t,
+        Uuid::from_u128(0xE492),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    let elsewhere = pending_transition(
+        t,
+        Uuid::from_u128(0xE493),
+        other,
+        WorkareaStatus::Development,
+        ratifier,
+    );
+    let second = pending_transition(
+        t,
+        Uuid::from_u128(0xE491),
+        node,
+        WorkareaStatus::Development,
+        ratifier,
+    );
+    for proposal in [&first, &elsewhere, &second] {
+        rig.propose_transition(store, proposal.clone())
+            .await
+            .expect("a pending proposal one rung forward commits");
+    }
+
+    assert_eq!(
+        store
+            .transition(t, first.transition_id)
+            .await
+            .expect("read"),
+        Some(first.clone()),
+        "the proposal reads back whole and pending"
+    );
+    assert_eq!(
+        store.pending_transitions(t, node).await.expect("pending"),
+        vec![first.clone(), second.clone()],
+        "the node's proposals, in proposal order"
+    );
+    assert_eq!(
+        store.pending_transitions(t, other).await.expect("pending"),
+        vec![elsewhere],
+        "another node's list holds only its own"
+    );
+    assert_eq!(
+        store
+            .transition(t, Uuid::from_u128(0xE49F))
+            .await
+            .expect("read"),
+        None,
+        "an id no proposal carries reads as none"
+    );
+    assert_eq!(
+        store
+            .pending_transitions(t, Uuid::from_u128(0xB49F))
+            .await
+            .expect("pending"),
+        Vec::<TransitionRecord>::new(),
+        "a node the tenant does not hold lists none"
+    );
+    let stranger = ChainRig::new(52).tenant_id;
+    assert_eq!(
+        store
+            .transition(stranger, first.transition_id)
+            .await
+            .expect("read"),
+        None,
+        "another tenant reads none of this tenant's proposals"
+    );
+    assert_eq!(
+        store
+            .pending_transitions(stranger, node)
+            .await
+            .expect("pending"),
+        Vec::<TransitionRecord>::new(),
+        "another tenant lists none of this tenant's proposals"
+    );
+}
+
+/// A ratification is one commit: the row turns `ratified` with its
+/// ratifier and the node takes the row's `to`, both with the
+/// `workarea.status_transition` event at the head; a chain whose later link
+/// is refused leaves the row pending and the node where it was. A
+/// proposal another ratification overtook stays pending as history
+/// (ADR-0002 d1; ADR-0009 d3; workareas.md, ratification re-checks).
+pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commit_as_its_event<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB500);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD500), Uuid::from_u128(0xD501));
+    let mut rig = transition_ground(store, 50, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let proposal = pending_transition(
+        t,
+        Uuid::from_u128(0xE500),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    let overtaken = pending_transition(
+        t,
+        Uuid::from_u128(0xE501),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    for p in [&proposal, &overtaken] {
+        rig.propose_transition(store, p.clone())
+            .await
+            .expect("proposal");
+    }
+
+    // The ratification and a link the store refuses, as one chain.
+    let head = store.chain_head(t).await.expect("head");
+    let refused = rig
+        .commit_chain(
+            store,
+            vec![
+                ChainRig::ratification(
+                    proposal.transition_id,
+                    node,
+                    WorkareaStatus::Committed,
+                    ratifier,
+                ),
+                (
+                    event_types::KEY_REVOKED,
+                    json!({ "key_id": Uuid::from_u128(0xD50F).to_string() }),
+                    MetadataFold::KeyRevoked {
+                        key_id: Uuid::from_u128(0xD50F),
+                    },
+                ),
+            ],
+        )
+        .await;
+    assert!(
+        refused.is_err(),
+        "a chain with a refused link commits nothing"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Development),
+        "the refused chain moved no status"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        Some(proposal.clone()),
+        "the refused chain ratified nothing"
+    );
+
+    let receipt = rig
+        .ratify_transition(
+            store,
+            proposal.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            ratifier,
+        )
+        .await
+        .expect("a pending proposal whose from is the node's status ratifies");
+    let head = store.chain_head(t).await.expect("head").expect("a head");
+    assert_eq!(head.seq, receipt.seq, "the ratification is the head");
+    let event = store
+        .events_range(t, receipt.seq, 1)
+        .await
+        .expect("range")
+        .pop()
+        .expect("the ratification's event");
+    assert_eq!(
+        event.envelope.event_type,
+        event_types::WORKAREA_STATUS_TRANSITION
+    );
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Committed),
+        "the node stands on the row's to"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        Some(TransitionRecord {
+            state: TransitionState::Ratified,
+            ratifier_key_id: Some(ratifier),
+            ..proposal.clone()
+        }),
+        "the row is ratified by its ratifier"
+    );
+    assert_eq!(
+        store.pending_transitions(t, node).await.expect("pending"),
+        vec![overtaken],
+        "the overtaken proposal stays pending as history; the ratified one is no longer listed"
+    );
+}
+
+/// Every ratification whose guard matches no row is refused at its
+/// commit: one whose `from` is no longer the node's status and one already
+/// ratified as [`StoreError::TransitionStale`], one by the proposing key as
+/// [`StoreError::RatifierIsProposer`], and one naming another node, another
+/// `to`, no proposal at all or a key the tenant does not hold as a defect.
+/// None journals its event, moves the node, or changes the row (ADR-0009
+/// d3; ADR-0010 R2; workareas.md, ratification re-checks).
+pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_moves_nothing<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB510);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD510), Uuid::from_u128(0xD511));
+    let mut rig = transition_ground(store, 51, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let sibling = Uuid::from_u128(0xB511);
+    rig.create_workarea(
+        store,
+        workarea_record(t, sibling, Some(Uuid::from_u128(0xB610)), "area-51-sibling"),
+    )
+    .await;
+    let ratified = pending_transition(
+        t,
+        Uuid::from_u128(0xE510),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    let stale = pending_transition(
+        t,
+        Uuid::from_u128(0xE511),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    let live = pending_transition(
+        t,
+        Uuid::from_u128(0xE512),
+        sibling,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    for p in [&ratified, &stale, &live] {
+        rig.propose_transition(store, p.clone())
+            .await
+            .expect("proposal");
+    }
+    rig.ratify_transition(
+        store,
+        ratified.transition_id,
+        node,
+        WorkareaStatus::Committed,
+        ratifier,
+    )
+    .await
+    .expect("the first ratification");
+    let head = store.chain_head(t).await.expect("head");
+
+    let stale_as = |row: &TransitionRecord| {
+        Some(StoreError::TransitionStale {
+            transition_id: row.transition_id,
+            workarea_id: row.workarea_id,
+            from: row.from,
+            to: row.to,
+        })
+    };
+    // `None` expects the defect path, `StoreError::Backend`.
+    let cases = [
+        (
+            "a proposal whose from is no longer the node's status",
+            stale.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            ratifier,
+            stale_as(&stale),
+        ),
+        (
+            "a proposal already ratified",
+            ratified.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            ratifier,
+            stale_as(&ratified),
+        ),
+        (
+            "a ratification naming another node",
+            live.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            ratifier,
+            None,
+        ),
+        (
+            "a ratification naming another to",
+            live.transition_id,
+            sibling,
+            WorkareaStatus::Validated,
+            ratifier,
+            None,
+        ),
+        (
+            "a ratification naming no proposal",
+            Uuid::from_u128(0xE51F),
+            sibling,
+            WorkareaStatus::Committed,
+            ratifier,
+            None,
+        ),
+        (
+            "a ratification by the proposing key",
+            live.transition_id,
+            sibling,
+            WorkareaStatus::Committed,
+            proposer,
+            Some(StoreError::RatifierIsProposer {
+                transition_id: live.transition_id,
+            }),
+        ),
+        (
+            "a ratification by a key the tenant does not hold",
+            live.transition_id,
+            sibling,
+            WorkareaStatus::Committed,
+            Uuid::from_u128(0xD51F),
+            None,
+        ),
+    ];
+    for (case, transition_id, workarea_id, to, by, expected) in cases {
+        let refused = rig
+            .ratify_transition(store, transition_id, workarea_id, to, by)
+            .await;
+        match expected {
+            Some(expected) => assert_eq!(refused, Err(expected), "{case} is refused by name"),
+            None => assert!(
+                matches!(refused, Err(StoreError::Backend(_))),
+                "{case} is refused as a defect, got {refused:?}"
+            ),
+        }
+        assert_eq!(
+            store.chain_head(t).await.expect("head"),
+            head,
+            "{case} journals nothing"
+        );
+    }
+    let statuses = [
+        (node, WorkareaStatus::Committed),
+        (sibling, WorkareaStatus::Development),
+    ];
+    for (id, status) in statuses {
+        assert_eq!(
+            store.workarea(t, id).await.expect("read").map(|w| w.status),
+            Some(status),
+            "no refused ratification moved {id}"
+        );
+    }
+    for (row, state, by) in [
+        (&ratified, TransitionState::Ratified, Some(ratifier)),
+        (&stale, TransitionState::Pending, None),
+        (&live, TransitionState::Pending, None),
+    ] {
+        assert_eq!(
+            store.transition(t, row.transition_id).await.expect("read"),
+            Some(TransitionRecord {
+                state,
+                ratifier_key_id: by,
+                ..row.clone()
+            }),
+            "no refused ratification changed row {}",
+            row.transition_id
+        );
+    }
+}
+
+/// Propose and ratify one rung of `node` from `from` in two commits, by
+/// two keys, for the laws that need a node already moved.
+async fn step_once<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    transition_id: Uuid,
+    node: Uuid,
+    from: WorkareaStatus,
+    (proposer, ratifier): (Uuid, Uuid),
+) {
+    let proposal = pending_transition(rig.tenant_id, transition_id, node, from, proposer);
+    let to = proposal.to;
+    rig.propose_transition(store, proposal)
+        .await
+        .expect("proposal");
+    rig.ratify_transition(store, transition_id, node, to, ratifier)
+        .await
+        .expect("ratification");
+}
+
+/// A step to `validated` is re-checked against the node's children inside
+/// the ratifying commit: a child created after the proposal and still
+/// short of `validated` refuses the ratification as
+/// [`StoreError::ChildrenNotValidated`], journalling nothing, moving
+/// nothing and leaving the row pending; once that child is `validated` the
+/// same proposal ratifies (ADR-0009 d4; workareas.md, ratification
+/// re-checks).
+pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_to_validated<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB530);
+    let keys = (Uuid::from_u128(0xD530), Uuid::from_u128(0xD531));
+    let mut rig = transition_ground(store, 53, node, keys).await;
+    let t = rig.tenant_id;
+    step_once(
+        &mut rig,
+        store,
+        Uuid::from_u128(0xE530),
+        node,
+        WorkareaStatus::Development,
+        keys,
+    )
+    .await;
+    let proposal = pending_transition(
+        t,
+        Uuid::from_u128(0xE531),
+        node,
+        WorkareaStatus::Committed,
+        keys.0,
+    );
+    rig.propose_transition(store, proposal.clone())
+        .await
+        .expect("a step to validated with no child is proposed");
+
+    let child = Uuid::from_u128(0xB532);
+    rig.create_workarea(
+        store,
+        workarea_record(t, child, Some(node), "area-53-child"),
+    )
+    .await;
+    let head = store.chain_head(t).await.expect("head");
+    let refused = rig
+        .ratify_transition(
+            store,
+            proposal.transition_id,
+            node,
+            WorkareaStatus::Validated,
+            keys.1,
+        )
+        .await;
+    assert_eq!(
+        refused,
+        Err(StoreError::ChildrenNotValidated {
+            transition_id: proposal.transition_id,
+            workarea_id: node,
+        }),
+        "a child created after the proposal refuses the step by name"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "the refused ratification journals nothing"
+    );
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Committed),
+        "the refused ratification moves nothing"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        Some(proposal.clone()),
+        "the refused ratification leaves the row pending"
+    );
+
+    step_once(
+        &mut rig,
+        store,
+        Uuid::from_u128(0xE532),
+        child,
+        WorkareaStatus::Development,
+        keys,
+    )
+    .await;
+    step_once(
+        &mut rig,
+        store,
+        Uuid::from_u128(0xE533),
+        child,
+        WorkareaStatus::Committed,
+        keys,
+    )
+    .await;
+    rig.ratify_transition(
+        store,
+        proposal.transition_id,
+        node,
+        WorkareaStatus::Validated,
+        keys.1,
+    )
+    .await
+    .expect("with every child validated the same proposal ratifies");
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Validated)
+    );
+}
+
+/// R2 holds on the principal, not only the key: a ratification by another
+/// key of the proposer's principal is refused in the ratifying commit as
+/// [`StoreError::RatifierIsProposer`], journalling nothing and moving
+/// nothing (ADR-0010 R2; errors.md `review.ratifier_is_proposer`).
+pub async fn a_ratification_by_another_key_of_the_proposers_principal_is_refused<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB540);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD540), Uuid::from_u128(0xD541));
+    let mut rig = transition_ground(store, 54, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let twin = Uuid::from_u128(0xD542);
+    rig.issue_key(
+        store,
+        KeyRecord {
+            principal: key_record(t, proposer, Role::Admin, None).principal,
+            ..key_record(t, twin, Role::Admin, None)
+        },
+    )
+    .await;
+    let proposal = pending_transition(
+        t,
+        Uuid::from_u128(0xE540),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    rig.propose_transition(store, proposal.clone())
+        .await
+        .expect("proposal");
+    let head = store.chain_head(t).await.expect("head");
+
+    let refused = rig
+        .ratify_transition(
+            store,
+            proposal.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            twin,
+        )
+        .await;
+    assert_eq!(
+        refused,
+        Err(StoreError::RatifierIsProposer {
+            transition_id: proposal.transition_id,
+        }),
+        "the proposer's principal under another key is the proposer"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "the refused ratification journals nothing"
+    );
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Development),
+        "the refused ratification moves nothing"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        Some(proposal),
+        "the refused ratification leaves the row pending"
+    );
+}
+
+/// A proposal carries its proposing key's own principal, the one the key
+/// row holds, or the store refuses it as a defect: a principal the key
+/// does not hold would defeat the ratifying commit's R2 check, so no row
+/// is written and nothing is journalled (ADR-0010 R2; ADR-0009 d3).
+pub async fn a_proposal_whose_principal_is_not_its_proposing_keys_is_refused<S: JournalStore>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB550);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD550), Uuid::from_u128(0xD551));
+    let mut rig = transition_ground(store, 55, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let proposal = TransitionRecord {
+        proposer_principal: key_record(t, ratifier, Role::Admin, None).principal,
+        ..pending_transition(
+            t,
+            Uuid::from_u128(0xE550),
+            node,
+            WorkareaStatus::Development,
+            proposer,
+        )
+    };
+    let head = store.chain_head(t).await.expect("head");
+    let refused = rig.propose_transition(store, proposal.clone()).await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "a principal the proposing key does not hold is refused, got {refused:?}"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "the refused proposal journals nothing"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        None,
+        "the refused proposal writes no row"
     );
 }
 
@@ -4218,6 +5148,1357 @@ pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_ro
     );
 }
 
+// ---------------------------------------------------------------------------
+// Claim edges
+// ---------------------------------------------------------------------------
+
+/// A tenant with its root workarea and a dreamer key that proposes edges.
+struct EdgeWorld {
+    rig: ChainRig,
+    root: Uuid,
+    proposer: KeyRecord,
+}
+
+impl EdgeWorld {
+    async fn new<S: JournalStore>(store: &S, seed: u64) -> Self {
+        let mut rig = ChainRig::new(seed);
+        rig.seed_chain(store, 0).await;
+        let root = Uuid::from_u128((u128::from(seed) << 32) | 0x01);
+        rig.create_workarea(
+            store,
+            workarea_record(rig.tenant_id, root, None, "universe"),
+        )
+        .await;
+        let proposer = key_record(
+            rig.tenant_id,
+            Uuid::from_u128((u128::from(seed) << 32) | 0x02),
+            Role::Dreamer,
+            None,
+        );
+        rig.issue_key(store, proposer.clone()).await;
+        Self {
+            rig,
+            root,
+            proposer,
+        }
+    }
+
+    /// Holds a version by `author` (key derived from the name) on `node`,
+    /// deriving from `parents`, its closure the author plus each parent's
+    /// stored closure, as capture computes it.
+    async fn hold<S: JournalStore>(
+        &mut self,
+        store: &S,
+        node: Uuid,
+        memory_id: Uuid,
+        author: &str,
+        parents: &[Uuid],
+    ) -> MemoryRecord {
+        let mut memory = held_memory(
+            self.rig.tenant_id,
+            node,
+            memory_id,
+            author,
+            author_key(author),
+            "edge body",
+        );
+        let mut principals: std::collections::BTreeSet<String> =
+            memory.lineage_principals.iter().cloned().collect();
+        let mut key_ids: std::collections::BTreeSet<Uuid> =
+            memory.lineage_key_ids.iter().copied().collect();
+        for parent in parents {
+            let p = store
+                .memory(self.rig.tenant_id, *parent)
+                .await
+                .expect("read")
+                .expect("parent held");
+            principals.extend(p.lineage_principals);
+            key_ids.extend(p.lineage_key_ids);
+        }
+        memory.derives_from = parents.to_vec();
+        memory.lineage_principals = principals.into_iter().collect();
+        memory.lineage_key_ids = key_ids.into_iter().collect();
+        hold(&mut self.rig, store, memory.clone())
+            .await
+            .expect("hold");
+        memory
+    }
+
+    /// A pending edge `src -> dst` by this world's proposer, its
+    /// `created_at` the `at` of the rig's next event, which
+    /// [`Self::propose`] stamps again when it commits it.
+    fn edge(&self, edge_id: Uuid, src: Uuid, dst: Uuid) -> ClaimEdgeRecord {
+        ClaimEdgeRecord {
+            edge_id,
+            tenant_id: self.rig.tenant_id,
+            src_artifact_id: src,
+            dst_artifact_id: dst,
+            label: "acme:supports".to_owned(),
+            state: EdgeState::Pending,
+            proposer_key_id: self.proposer.key_id,
+            proposer_principal: self.proposer.principal.clone(),
+            ratifier_key_id: None,
+            created_at: ChainRig::at(self.rig.n + 1),
+        }
+    }
+
+    /// Commits `claim_edge.proposed` folding `edge`, its `created_at` the
+    /// event's `at`; the edge as committed.
+    async fn propose<S: JournalStore>(
+        &mut self,
+        store: &S,
+        edge: ClaimEdgeRecord,
+    ) -> Result<ClaimEdgeRecord, StoreError> {
+        let edge = ClaimEdgeRecord {
+            created_at: ChainRig::at(self.rig.n + 1),
+            ..edge
+        };
+        self.propose_as_given(store, edge.clone()).await?;
+        Ok(edge)
+    }
+
+    /// Commits `claim_edge.proposed` folding `edge` exactly as given.
+    async fn propose_as_given<S: JournalStore>(
+        &mut self,
+        store: &S,
+        edge: ClaimEdgeRecord,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.rig
+            .commit(
+                store,
+                event_types::CLAIM_EDGE_PROPOSED,
+                json!({
+                    "edge_id": edge.edge_id.to_string(),
+                    "src_artifact_id": edge.src_artifact_id.to_string(),
+                    "dst_artifact_id": edge.dst_artifact_id.to_string(),
+                    "label": edge.label,
+                    "proposer_key_id": edge.proposer_key_id.to_string(),
+                }),
+                MetadataFold::ClaimEdgeProposed(edge),
+                None,
+            )
+            .await
+    }
+
+    /// Holds a term on `node` by `author`: kind `term`, its `claim_key` the
+    /// CURIE `curie` (ontologies.md, a term's `claim_key` is its CURIE).
+    async fn hold_term<S: JournalStore>(
+        &mut self,
+        store: &S,
+        node: Uuid,
+        memory_id: Uuid,
+        author: &str,
+        curie: &str,
+    ) -> MemoryRecord {
+        let memory = MemoryRecord {
+            kind: MemoryKind::Term,
+            claim_key: curie.to_owned(),
+            ..held_memory(
+                self.rig.tenant_id,
+                node,
+                memory_id,
+                author,
+                author_key(author),
+                "term body",
+            )
+        };
+        hold(&mut self.rig, store, memory.clone())
+            .await
+            .expect("hold term");
+        memory
+    }
+
+    /// Issues a dreamer key that is not the proposer, to ratify with.
+    async fn ratifier<S: JournalStore>(&mut self, store: &S, key_id: Uuid) -> KeyRecord {
+        let key = key_record(self.rig.tenant_id, key_id, Role::Dreamer, None);
+        self.rig.issue_key(store, key.clone()).await;
+        key
+    }
+
+    /// Commits `review.ratify` for the edge `edge_id` by `ratifier`,
+    /// folding [`MetadataFold::ClaimEdgeRatified`] (event-catalog.md,
+    /// `subject_kind: "claim_edge"`).
+    async fn ratify<S: JournalStore>(
+        &mut self,
+        store: &S,
+        edge_id: Uuid,
+        ratifier: Uuid,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.rig
+            .commit(
+                store,
+                event_types::REVIEW_RATIFY,
+                json!({
+                    "subject_kind": "claim_edge",
+                    "edge_id": edge_id.to_string(),
+                    "ratifier_key_id": ratifier.to_string(),
+                }),
+                MetadataFold::ClaimEdgeRatified {
+                    edge_id,
+                    ratifier_key_id: ratifier,
+                },
+                None,
+            )
+            .await
+    }
+
+    /// Proposes `src -> dst` labelled `label`; the edge as committed.
+    async fn propose_labelled<S: JournalStore>(
+        &mut self,
+        store: &S,
+        edge_id: Uuid,
+        src: Uuid,
+        dst: Uuid,
+        label: &str,
+    ) -> ClaimEdgeRecord {
+        let edge = ClaimEdgeRecord {
+            label: label.to_owned(),
+            ..self.edge(edge_id, src, dst)
+        };
+        self.propose(store, edge).await.expect("propose")
+    }
+
+    /// The stored flattened closure of `memory_id`, as sets.
+    async fn closure<S: JournalStore>(
+        &self,
+        store: &S,
+        memory_id: Uuid,
+    ) -> (
+        std::collections::BTreeSet<String>,
+        std::collections::BTreeSet<Uuid>,
+    ) {
+        let m = store
+            .memory(self.rig.tenant_id, memory_id)
+            .await
+            .expect("read")
+            .expect("held");
+        (
+            m.lineage_principals.into_iter().collect(),
+            m.lineage_key_ids.into_iter().collect(),
+        )
+    }
+}
+
+/// The fixture key id of an author, derived from its principal.
+fn author_key(author: &str) -> Uuid {
+    let digest = sha256_digest_string(author.as_bytes());
+    let hex = digest.trim_start_matches("sha256:");
+    Uuid::from_u128(u128::from_str_radix(&hex[..32], 16).expect("hex digest"))
+}
+
+/// A proposed edge reads back by its id exactly as proposed, pending with
+/// its proposer's key and principal and no ratifier; another tenant and an
+/// unknown id read nothing (postgres-schema.md `claim_edges`; event-catalog.md
+/// `claim_edge.proposed`).
+pub async fn a_proposed_claim_edge_reads_back_pending_with_its_proposer<S: JournalStore>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 301).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x301A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x301B), "bob", &[])
+        .await;
+    let edge = world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x301E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+
+    let read = store
+        .claim_edge(world.rig.tenant_id, edge.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge is held");
+    assert_eq!(read, edge, "the edge reads back as proposed");
+    assert_eq!(read.state, EdgeState::Pending);
+    assert_eq!(read.proposer_key_id, world.proposer.key_id);
+    assert_eq!(read.proposer_principal, world.proposer.principal);
+    assert_eq!(read.ratifier_key_id, None);
+
+    let other = EdgeWorld::new(store, 302).await;
+    assert_eq!(
+        store
+            .claim_edge(other.rig.tenant_id, edge.edge_id)
+            .await
+            .expect("read"),
+        None,
+        "another tenant reads no edge of this one"
+    );
+    assert_eq!(
+        store
+            .claim_edge(world.rig.tenant_id, Uuid::from_u128(0x301F))
+            .await
+            .expect("read"),
+        None,
+        "an unknown id reads nothing"
+    );
+}
+
+/// A proposal whose `created_at` is not its event's `at` commits nothing:
+/// the edge's listing time is its proposal's, never a caller's
+/// (http-api.md pagination; event-catalog.md `claim_edge.proposed`).
+pub async fn a_claim_edge_whose_created_at_is_not_its_events_at_commits_nothing<S: JournalStore>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 306).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x306A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x306B), "bob", &[])
+        .await;
+    let head = store
+        .chain_head(world.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+    let edge = ClaimEdgeRecord {
+        created_at: ChainRig::at(0),
+        ..world.edge(Uuid::from_u128(0x306E), a.memory_id, b.memory_id)
+    };
+    assert!(
+        world.propose_as_given(store, edge.clone()).await.is_err(),
+        "a created_at the event does not carry is refused"
+    );
+    assert_eq!(
+        store.chain_head(world.rig.tenant_id).await.expect("head"),
+        Some(head),
+        "nothing is journalled"
+    );
+    assert_eq!(
+        store
+            .claim_edge(world.rig.tenant_id, edge.edge_id)
+            .await
+            .expect("read"),
+        None,
+        "no edge is stored"
+    );
+    let (principals, _) = world.closure(store, a.memory_id).await;
+    assert!(!principals.contains("bob"), "no closure is widened");
+}
+
+/// A pending edge puts each endpoint's authors, principal and key id, in
+/// the other's stored closure, and its proposer in neither
+/// (audit-and-lineage.md, pending and ratified alike; ADR-0001 d2; ADR-0012).
+pub async fn a_pending_claim_edge_puts_each_endpoints_authors_in_the_others_lineage_closure<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 303).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x303A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x303B), "bob", &[])
+        .await;
+    world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x303E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+
+    for (row, other) in [(&a, "bob"), (&b, "alice")] {
+        let (principals, key_ids) = world.closure(store, row.memory_id).await;
+        assert!(
+            principals.contains(other) && key_ids.contains(&author_key(other)),
+            "{} holds {other}, the other endpoint's author",
+            row.author_principal
+        );
+        assert!(
+            principals.contains(&row.author_principal),
+            "a row keeps its own author"
+        );
+        assert!(
+            !principals.contains(&world.proposer.principal)
+                && !key_ids.contains(&world.proposer.key_id),
+            "the proposer enters no closure"
+        );
+    }
+}
+
+/// A held row deriving from an endpoint gains the other endpoint's authors
+/// when the edge is proposed after it, and the other endpoint does not gain
+/// the descendant's, as `derives_from` is followed toward ancestors only
+/// (audit-and-lineage.md, the derivation graph; ADR-0001 d2).
+pub async fn a_pending_claim_edge_reaches_the_closure_of_a_held_row_deriving_from_an_endpoint<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 304).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x304A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x304B), "bob", &[])
+        .await;
+    let d = world
+        .hold(
+            store,
+            root,
+            Uuid::from_u128(0x304D),
+            "carol",
+            &[a.memory_id],
+        )
+        .await;
+    world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x304E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+
+    let (principals, key_ids) = world.closure(store, d.memory_id).await;
+    assert_eq!(
+        principals,
+        ["alice", "bob", "carol"].map(str::to_owned).into(),
+        "the descendant holds both endpoints' authors and its own"
+    );
+    assert_eq!(
+        key_ids,
+        ["alice", "bob", "carol"].map(author_key).into(),
+        "and their key ids"
+    );
+    let (principals, _) = world.closure(store, b.memory_id).await;
+    assert!(
+        !principals.contains("carol"),
+        "the other endpoint does not gain its descendant's author"
+    );
+}
+
+/// A second edge from the far end of a first carries its far endpoint's
+/// authors to the first edge's near endpoint: a claim edge is followed
+/// transitively (audit-and-lineage.md, the transitive closure).
+pub async fn a_chain_of_two_edges_carries_the_far_endpoints_authors_to_the_near_one<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 305).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x305A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x305B), "bob", &[])
+        .await;
+    let c = world
+        .hold(store, root, Uuid::from_u128(0x305C), "carol", &[])
+        .await;
+    world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x305E1), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("first edge");
+    let (principals, _) = world.closure(store, a.memory_id).await;
+    assert!(!principals.contains("carol"), "no edge reaches carol yet");
+    world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x305E2), c.memory_id, b.memory_id),
+        )
+        .await
+        .expect("second edge");
+
+    for row in [&a, &b, &c] {
+        let (principals, key_ids) = world.closure(store, row.memory_id).await;
+        assert_eq!(
+            principals,
+            ["alice", "bob", "carol"].map(str::to_owned).into(),
+            "{} holds every author of the chain",
+            row.author_principal
+        );
+        assert_eq!(key_ids, ["alice", "bob", "carol"].map(author_key).into());
+    }
+}
+
+/// A small deterministic generator, so the random graph is reproducible.
+struct Lcg(u64);
+
+impl Lcg {
+    fn below(&mut self, n: u64) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.0 >> 33) % n
+    }
+}
+
+/// Two paths that must agree: over a random interleaving of held rows,
+/// each deriving from earlier ones, and pending edges between rows, every
+/// row's stored closure equals the authors of the domain's
+/// `lineage_artifacts` over the same `derives_from` and claim edges
+/// (audit-and-lineage.md; ADR-0001 d2).
+pub async fn the_stores_widened_closure_equals_the_authors_of_the_domains_lineage_artifacts<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    const AUTHORS: [&str; 5] = ["alice", "bob", "carol", "dave", "erin"];
+    for seed in 0..6_u64 {
+        let mut world = EdgeWorld::new(store, 310 + seed).await;
+        let root = world.root;
+        let mut rng = Lcg(seed.wrapping_mul(0x9E37_79B9) + 7);
+        let mut rows: Vec<MemoryRecord> = Vec::new();
+        let mut derives = Vec::new();
+        let mut edges = Vec::new();
+        for step in 0..24_u64 {
+            let id_base = (u128::from(310 + seed) << 32) | (u128::from(step) << 8);
+            if rows.len() < 2 || rng.below(3) != 0 {
+                let mut parents = Vec::new();
+                for row in &rows {
+                    if rng.below(4) == 0 {
+                        parents.push(row.memory_id);
+                    }
+                }
+                let author = AUTHORS[rng.below(AUTHORS.len() as u64) as usize];
+                let row = world
+                    .hold(
+                        store,
+                        root,
+                        Uuid::from_u128(id_base | 0xA),
+                        author,
+                        &parents,
+                    )
+                    .await;
+                for parent in &parents {
+                    derives.push(DerivesFrom {
+                        child: row.memory_id,
+                        parent: *parent,
+                    });
+                }
+                rows.push(row);
+            } else {
+                let n = rows.len() as u64;
+                let src = rows[rng.below(n) as usize].memory_id;
+                let dst = rows[rng.below(n) as usize].memory_id;
+                let edge = world.edge(Uuid::from_u128(id_base | 0xE), src, dst);
+                edges.push(ClaimEdge {
+                    edge_id: edge.edge_id,
+                    from: src,
+                    to: dst,
+                    label: edge.label.clone(),
+                    term_curie: None,
+                    state: EdgeState::Pending,
+                });
+                world.propose(store, edge).await.expect("propose");
+            }
+        }
+        let author_of: std::collections::BTreeMap<Uuid, &str> = rows
+            .iter()
+            .map(|r| (r.memory_id, r.author_principal.as_str()))
+            .collect();
+        for row in &rows {
+            let expected: std::collections::BTreeSet<String> =
+                lineage_artifacts(row.memory_id, &derives, &edges)
+                    .iter()
+                    .map(|id| author_of[id].to_owned())
+                    .collect();
+            let expected_keys: std::collections::BTreeSet<Uuid> =
+                expected.iter().map(|a| author_key(a)).collect();
+            let (principals, key_ids) = world.closure(store, row.memory_id).await;
+            assert_eq!(
+                principals, expected,
+                "seed {seed}: row {}'s stored principals are the domain closure's authors",
+                row.memory_id
+            );
+            assert_eq!(
+                key_ids, expected_keys,
+                "seed {seed}: row {}'s stored key ids are the domain closure's",
+                row.memory_id
+            );
+        }
+    }
+}
+
+/// A claim-edge page is newest first, `created_at` then edge id
+/// descending, resumes strictly after its cursor, and its artifact filter
+/// matches either endpoint, its `within` nodes either endpoint's node;
+/// another tenant lists nothing (http-api.md pagination and claim edges).
+pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_filters_by_either_endpoint<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 320).await;
+    let root = world.root;
+    let tenant = world.rig.tenant_id;
+    let side = Uuid::from_u128((320_u128 << 32) | 0x03);
+    world
+        .rig
+        .create_workarea(store, workarea_record(tenant, side, Some(root), "side"))
+        .await;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x320A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x320B), "bob", &[])
+        .await;
+    let c = world
+        .hold(store, side, Uuid::from_u128(0x320C), "carol", &[])
+        .await;
+    for row in [&a, &b, &c] {
+        promote(&mut world.rig, store, row.memory_id)
+            .await
+            .expect("promote");
+    }
+    // Proposed out of id order, so the page order is the proposals' time,
+    // newest first, and never the ids'.
+    let mut proposed = Vec::new();
+    for (id, src, dst) in [
+        (0x320E3, b.memory_id, c.memory_id),
+        (0x320E1, a.memory_id, b.memory_id),
+        (0x320E4, c.memory_id, a.memory_id),
+        (0x320E2, a.memory_id, a.memory_id),
+    ] {
+        let edge = world.edge(Uuid::from_u128(id), src, dst);
+        proposed.push(world.propose(store, edge).await.expect("propose"));
+    }
+    let [e3, e1, e4, e2] = <[ClaimEdgeRecord; 4]>::try_from(proposed).expect("four edges");
+    // Every endpoint is promoted on a node the selection reads, so its read
+    // scope keeps every edge and the page laws alone decide.
+    let select = |artifact_id: Option<Uuid>, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
+        artifact_id,
+        within,
+        readable_nodes: vec![root, side],
+        reader_key_id: world.proposer.key_id,
+    };
+    let all = select(None, None);
+    let at = |e: &ClaimEdgeRecord| ClaimEdgePosition {
+        created_at: e.created_at.clone(),
+        edge_id: e.edge_id,
+    };
+
+    let first = store
+        .claim_edges(tenant, &all, None, 2)
+        .await
+        .expect("page");
+    assert_eq!(
+        first,
+        vec![e2.clone(), e4.clone()],
+        "the first page, newest first"
+    );
+    let second = store
+        .claim_edges(tenant, &all, Some(&at(&first[1])), 2)
+        .await
+        .expect("page");
+    assert_eq!(
+        second,
+        vec![e1.clone(), e3.clone()],
+        "strictly after its cursor"
+    );
+    assert!(
+        store
+            .claim_edges(tenant, &all, Some(&at(&e3)), 2)
+            .await
+            .expect("page")
+            .is_empty(),
+        "nothing after the oldest edge"
+    );
+
+    let on_b = select(Some(b.memory_id), None);
+    assert_eq!(
+        store
+            .claim_edges(tenant, &on_b, None, 10)
+            .await
+            .expect("page"),
+        vec![e1.clone(), e3.clone()],
+        "b is e1's target and e3's source"
+    );
+    let on_c = select(Some(c.memory_id), None);
+    assert_eq!(
+        store
+            .claim_edges(tenant, &on_c, Some(&at(&e4)), 10)
+            .await
+            .expect("page"),
+        vec![e3.clone()],
+        "the filter and the cursor both hold"
+    );
+    let on_side = select(None, Some(vec![side]));
+    assert_eq!(
+        store
+            .claim_edges(tenant, &on_side, None, 10)
+            .await
+            .expect("page"),
+        vec![e4.clone(), e3.clone()],
+        "the within nodes match either endpoint's node"
+    );
+    let a_on_side = select(Some(a.memory_id), Some(vec![side]));
+    assert_eq!(
+        store
+            .claim_edges(tenant, &a_on_side, None, 10)
+            .await
+            .expect("page"),
+        vec![e4.clone()],
+        "two predicates both hold"
+    );
+
+    let other = EdgeWorld::new(store, 321).await;
+    assert!(
+        store
+            .claim_edges(other.rig.tenant_id, &all, None, 10)
+            .await
+            .expect("page")
+            .is_empty(),
+        "another tenant lists none of these edges"
+    );
+}
+
+/// A claim-edge page holds only the edges whose two endpoints are each a
+/// row on a node of `readable_nodes` that is promoted or authored by
+/// `reader_key_id`, and its limit counts only those, so a page is one
+/// bounded read whatever else the tenant holds (http-api.md claim edges;
+/// roles-and-keys.md footnote 5).
+pub async fn a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or_the_readers_own_on_its_readable_nodes<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 322).await;
+    let root = world.root;
+    let tenant = world.rig.tenant_id;
+    let side = Uuid::from_u128((322_u128 << 32) | 0x03);
+    world
+        .rig
+        .create_workarea(store, workarea_record(tenant, side, Some(root), "side"))
+        .await;
+    let p1 = world
+        .hold(store, root, Uuid::from_u128(0x322A), "alice", &[])
+        .await;
+    let p2 = world
+        .hold(store, root, Uuid::from_u128(0x322B), "bob", &[])
+        .await;
+    let held = world
+        .hold(store, root, Uuid::from_u128(0x322C), "alice", &[])
+        .await;
+    let far = world
+        .hold(store, side, Uuid::from_u128(0x322D), "carol", &[])
+        .await;
+    for row in [&p1, &p2, &far] {
+        promote(&mut world.rig, store, row.memory_id)
+            .await
+            .expect("promote");
+    }
+    let mut proposed = Vec::new();
+    for (id, src, dst) in [
+        (0x322E1, p1.memory_id, p2.memory_id),
+        (0x322E2, p1.memory_id, held.memory_id),
+        (0x322E3, far.memory_id, p2.memory_id),
+    ] {
+        let edge = world.edge(Uuid::from_u128(id), src, dst);
+        proposed.push(world.propose(store, edge).await.expect("propose"));
+    }
+    let [e1, e2, e3] = <[ClaimEdgeRecord; 3]>::try_from(proposed).expect("three edges");
+    let stranger = Uuid::from_u128(0x322F);
+    let select = |nodes: Vec<Uuid>, reader: Uuid, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
+        artifact_id: None,
+        within,
+        readable_nodes: nodes,
+        reader_key_id: reader,
+    };
+    let page = |selection: ClaimEdgeSelection, limit: usize| async move {
+        store
+            .claim_edges(tenant, &selection, None, limit)
+            .await
+            .expect("page")
+    };
+
+    assert_eq!(
+        page(select(vec![root], stranger, None), 10).await,
+        vec![e1.clone()],
+        "another author's held row and a row off the readable nodes are out of scope"
+    );
+    assert_eq!(
+        page(select(vec![root], stranger, None), 1).await,
+        vec![e1.clone()],
+        "the limit counts only the edges in scope"
+    );
+    assert_eq!(
+        page(select(vec![root], author_key("alice"), None), 10).await,
+        vec![e2.clone(), e1.clone()],
+        "the reader's own held row is in its scope"
+    );
+    assert_eq!(
+        page(select(vec![root, side], stranger, None), 10).await,
+        vec![e3.clone(), e1.clone()],
+        "both endpoints on readable nodes"
+    );
+    assert_eq!(
+        page(select(vec![root, side], stranger, Some(vec![side])), 10).await,
+        vec![e3.clone()],
+        "within narrows to either endpoint's node, after the scope holds"
+    );
+    assert!(
+        page(select(Vec::new(), author_key("alice"), None), 10)
+            .await
+            .is_empty(),
+        "no readable node reads no edge"
+    );
+}
+
+/// Ratifying a pending edge stores it ratified, naming its ratifier, and
+/// changes nothing else of it (postgres-schema.md `claim_edges`;
+/// event-catalog.md `review.ratify` with `subject_kind: "claim_edge"`).
+pub async fn ratifying_a_pending_edge_records_its_ratifier_and_state<S: JournalStore>(store: &S) {
+    let mut world = EdgeWorld::new(store, 330).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x330A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x330B), "bob", &[])
+        .await;
+    let edge = world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x330E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+    let ratifier = world.ratifier(store, Uuid::from_u128(0x330D)).await;
+
+    world
+        .ratify(store, edge.edge_id, ratifier.key_id)
+        .await
+        .expect("a pending edge ratifies");
+
+    let read = store
+        .claim_edge(world.rig.tenant_id, edge.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge is held");
+    assert_eq!(
+        read,
+        ClaimEdgeRecord {
+            state: EdgeState::Ratified,
+            ratifier_key_id: Some(ratifier.key_id),
+            ..edge
+        },
+        "the edge is ratified by its ratifier, everything else as proposed"
+    );
+}
+
+/// A second ratification of an edge finds it no longer pending: the commit
+/// writes nothing, its event included, and is refused by name, as a lost
+/// tip compare-and-set is (ADR-0025 d10's shape; ADR-0021 d5).
+pub async fn ratifying_an_edge_already_ratified_writes_nothing_and_is_refused_edge_not_pending<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 331).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x331A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x331B), "bob", &[])
+        .await;
+    let edge = world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x331E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+    let first = world.ratifier(store, Uuid::from_u128(0x331D)).await;
+    let second = world.ratifier(store, Uuid::from_u128(0x331C)).await;
+    world
+        .ratify(store, edge.edge_id, first.key_id)
+        .await
+        .expect("the first ratification");
+    let head = store
+        .chain_head(world.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+
+    assert_eq!(
+        world.ratify(store, edge.edge_id, second.key_id).await,
+        Err(StoreError::EdgeNotPending {
+            edge_id: edge.edge_id
+        }),
+        "an edge already ratified is refused by name"
+    );
+    assert_eq!(
+        store.chain_head(world.rig.tenant_id).await.expect("head"),
+        Some(head),
+        "the journal head is unchanged"
+    );
+    let read = store
+        .claim_edge(world.rig.tenant_id, edge.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge is held");
+    assert_eq!(
+        read.ratifier_key_id,
+        Some(first.key_id),
+        "the first ratifier stands"
+    );
+}
+
+/// A brief edge folds pending with no ratifier and widens no closure, its
+/// ratification records the ratifier and the commit's seq as the brief's
+/// order key, and a second ratification writes nothing and is refused
+/// `EdgeNotPending` (postgres-schema.md `brief_edges`; ADR-0046 d7, d8).
+pub async fn a_brief_edge_folds_pending_and_its_ratification_records_the_ratifier_and_its_seq<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 391).await;
+    let root = world.root;
+    let claim = world
+        .hold(store, root, Uuid::from_u128(0x391A), "alice", &[])
+        .await;
+    let edge = BriefEdgeRecord {
+        edge_id: Uuid::from_u128(0x391E),
+        tenant_id: world.rig.tenant_id,
+        artifact_id: claim.memory_id,
+        workarea_id: root,
+        state: EdgeState::Pending,
+        proposer_key_id: world.proposer.key_id,
+        proposer_principal: world.proposer.principal.clone(),
+        ratifier_key_id: None,
+        created_at: ChainRig::at(world.rig.n + 1),
+        ratified_seq: None,
+    };
+    world
+        .rig
+        .commit(
+            store,
+            event_types::BRIEF_EDGE_PROPOSED,
+            json!({ "edge_id": edge.edge_id.to_string() }),
+            MetadataFold::BriefEdgeProposed(edge.clone()),
+            None,
+        )
+        .await
+        .expect("propose");
+    let tenant = world.rig.tenant_id;
+    assert_eq!(
+        store.brief_edge(tenant, edge.edge_id).await.expect("read"),
+        Some(edge.clone()),
+        "the edge reads back pending as proposed"
+    );
+    let unwidened = store
+        .memory(tenant, claim.memory_id)
+        .await
+        .expect("read")
+        .expect("the claim");
+    assert_eq!(unwidened.lineage_principals, claim.lineage_principals);
+
+    let ratifier = world.ratifier(store, Uuid::from_u128(0x391D)).await;
+    let receipt = world
+        .rig
+        .commit(
+            store,
+            event_types::REVIEW_RATIFY,
+            json!({ "subject_kind": "brief_edge", "edge_id": edge.edge_id.to_string() }),
+            MetadataFold::BriefEdgeRatified {
+                edge_id: edge.edge_id,
+                ratifier_key_id: ratifier.key_id,
+            },
+            None,
+        )
+        .await
+        .expect("ratify");
+    let ratified = store
+        .brief_edge(tenant, edge.edge_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(ratified.state, EdgeState::Ratified);
+    assert_eq!(ratified.ratifier_key_id, Some(ratifier.key_id));
+    assert_eq!(ratified.ratified_seq, Some(receipt.seq));
+    assert_eq!(
+        store.brief_edges(tenant, root).await.expect("read"),
+        vec![ratified.clone()],
+        "the workarea's brief edges"
+    );
+
+    let head = store.chain_head(tenant).await.expect("head");
+    let second = world.ratifier(store, Uuid::from_u128(0x391C)).await;
+    let head_after_issue = store.chain_head(tenant).await.expect("head");
+    assert_ne!(head, head_after_issue);
+    assert_eq!(
+        world
+            .rig
+            .commit(
+                store,
+                event_types::REVIEW_RATIFY,
+                json!({ "subject_kind": "brief_edge", "edge_id": edge.edge_id.to_string() }),
+                MetadataFold::BriefEdgeRatified {
+                    edge_id: edge.edge_id,
+                    ratifier_key_id: second.key_id,
+                },
+                None,
+            )
+            .await,
+        Err(StoreError::EdgeNotPending {
+            edge_id: edge.edge_id
+        })
+    );
+    assert_eq!(
+        store.chain_head(tenant).await.expect("head"),
+        head_after_issue
+    );
+}
+
+/// A tenant's pending edge `a -> b` between two held versions, and the
+/// journal head after its proposal.
+async fn pending_edge_world<S: JournalStore>(
+    store: &S,
+    seed: u64,
+) -> (EdgeWorld, ClaimEdgeRecord, ChainHead) {
+    let mut world = EdgeWorld::new(store, seed).await;
+    let root = world.root;
+    let base = u128::from(seed) << 16;
+    let a = world
+        .hold(store, root, Uuid::from_u128(base | 0xA), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(base | 0xB), "bob", &[])
+        .await;
+    let edge = world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(base | 0xE), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+    let head = store
+        .chain_head(world.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+    (world, edge, head)
+}
+
+/// Asserts a refused ratification wrote nothing: `world`'s journal head is
+/// still `head` and `edge` reads back exactly as proposed, pending.
+async fn assert_ratification_wrote_nothing<S: JournalStore>(
+    store: &S,
+    world: &EdgeWorld,
+    edge: &ClaimEdgeRecord,
+    head: ChainHead,
+) {
+    assert_eq!(
+        store.chain_head(world.rig.tenant_id).await.expect("head"),
+        Some(head),
+        "the journal head is unchanged"
+    );
+    assert_eq!(
+        store
+            .claim_edge(world.rig.tenant_id, edge.edge_id)
+            .await
+            .expect("read"),
+        Some(edge.clone()),
+        "the edge is still pending, as proposed"
+    );
+}
+
+/// Ratifying an edge id the tenant does not hold, another tenant's or one
+/// no tenant holds, finds no pending edge of the commit's tenant: the
+/// commit writes nothing, its event included, and is refused by name, and
+/// the other tenant's edge stays pending (postgres-schema.md `claim_edges`,
+/// tenant-keyed; ADR-0021 d5).
+pub async fn ratifying_an_edge_the_tenant_does_not_hold_writes_nothing_and_is_refused_edge_not_pending<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut owner, edge, owner_head) = pending_edge_world(store, 340).await;
+    let mut other = EdgeWorld::new(store, 341).await;
+    let other_ratifier = other.ratifier(store, Uuid::from_u128(0x341D)).await;
+    let other_head = store
+        .chain_head(other.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+
+    assert_eq!(
+        other
+            .ratify(store, edge.edge_id, other_ratifier.key_id)
+            .await,
+        Err(StoreError::EdgeNotPending {
+            edge_id: edge.edge_id
+        }),
+        "another tenant's edge is refused by name"
+    );
+    assert_eq!(
+        store.chain_head(other.rig.tenant_id).await.expect("head"),
+        Some(other_head),
+        "the ratifying tenant's journal head is unchanged"
+    );
+    assert_ratification_wrote_nothing(store, &owner, &edge, owner_head).await;
+
+    let owner_ratifier = owner.ratifier(store, Uuid::from_u128(0x340D)).await;
+    let owner_head = store
+        .chain_head(owner.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+    let unknown = Uuid::from_u128(0x340F);
+    assert_eq!(
+        owner.ratify(store, unknown, owner_ratifier.key_id).await,
+        Err(StoreError::EdgeNotPending { edge_id: unknown }),
+        "an edge id no tenant holds is refused by name"
+    );
+    assert_ratification_wrote_nothing(store, &owner, &edge, owner_head).await;
+}
+
+/// Ratifying an edge with its proposer's own key is refused by the store
+/// and writes nothing, its event included: the proposer never ratifies its
+/// own edge (ADR-0012 R2's backstop, postgres-schema.md
+/// `claim_edges_ratifier_is_not_proposer`).
+pub async fn ratifying_an_edge_with_its_proposers_key_writes_nothing_and_is_refused<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut world, edge, head) = pending_edge_world(store, 342).await;
+
+    let refused = world
+        .ratify(store, edge.edge_id, edge.proposer_key_id)
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "the proposer's key is refused by the store, got {refused:?}"
+    );
+    assert_ratification_wrote_nothing(store, &world, &edge, head).await;
+}
+
+/// Ratifying with a key another tenant holds is refused by the store and
+/// writes nothing, its event included: a ratifier is a key of the edge's
+/// own tenant (postgres-schema.md `claim_edges`, the tenant-keyed foreign
+/// key into `api_keys`).
+pub async fn ratifying_with_another_tenants_key_writes_nothing_and_is_refused<S: JournalStore>(
+    store: &S,
+) {
+    let (mut world, edge, _) = pending_edge_world(store, 343).await;
+    let mut other = EdgeWorld::new(store, 344).await;
+    let foreign = other.ratifier(store, Uuid::from_u128(0x344D)).await;
+    let head = store
+        .chain_head(world.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+
+    let refused = world.ratify(store, edge.edge_id, foreign.key_id).await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "another tenant's key is refused by the store, got {refused:?}"
+    );
+    assert_ratification_wrote_nothing(store, &world, &edge, head).await;
+}
+
+/// A tenant with four terms on its root, and a ratifier.
+async fn term_world<S: JournalStore>(
+    store: &S,
+    seed: u64,
+) -> (EdgeWorld, [MemoryRecord; 4], KeyRecord) {
+    let mut world = EdgeWorld::new(store, seed).await;
+    let root = world.root;
+    let base = u128::from(seed) << 16;
+    let mut terms = Vec::new();
+    for (i, curie) in ["acme:Animal", "acme:Dog", "acme:Puppy", "acme:Cat"]
+        .into_iter()
+        .enumerate()
+    {
+        let author = format!("author-{i}");
+        terms.push(
+            world
+                .hold_term(
+                    store,
+                    root,
+                    Uuid::from_u128(base | (0xA0 + i as u128)),
+                    &author,
+                    curie,
+                )
+                .await,
+        );
+    }
+    let ratifier = world.ratifier(store, Uuid::from_u128(base | 0xD0)).await;
+    let terms: [MemoryRecord; 4] = terms.try_into().expect("four terms");
+    (world, terms, ratifier)
+}
+
+/// The ratified term edges of a label are each listed once by its
+/// endpoints' `claim_key`s, a term's CURIE (ontologies.md; ADR-0021 d5's
+/// cycle read), in the order (source, target) ascending.
+pub async fn the_ratified_term_edges_of_a_label_list_each_by_its_endpoints_claim_keys<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut world, [animal, dog, puppy, cat], ratifier) = term_world(store, 332).await;
+    let tenant = world.rig.tenant_id;
+    for (low, src, dst) in [
+        (0xE1, &dog, &animal),
+        (0xE2, &puppy, &dog),
+        (0xE3, &cat, &animal),
+    ] {
+        let edge = world
+            .propose_labelled(
+                store,
+                Uuid::from_u128((332_u128 << 16) | low),
+                src.memory_id,
+                dst.memory_id,
+                "oml:is_a",
+            )
+            .await;
+        world
+            .ratify(store, edge.edge_id, ratifier.key_id)
+            .await
+            .expect("ratify");
+    }
+
+    let pair = |s: &str, d: &str| (s.to_owned(), d.to_owned());
+    assert_eq!(
+        store
+            .ratified_term_edges(tenant, "oml:is_a")
+            .await
+            .expect("read"),
+        vec![
+            pair("acme:Cat", "acme:Animal"),
+            pair("acme:Dog", "acme:Animal"),
+            pair("acme:Puppy", "acme:Dog"),
+        ],
+        "each ratified is_a edge by its endpoints' CURIEs"
+    );
+    let other = EdgeWorld::new(store, 333).await;
+    assert!(
+        store
+            .ratified_term_edges(other.rig.tenant_id, "oml:is_a")
+            .await
+            .expect("read")
+            .is_empty(),
+        "another tenant reads none of these edges"
+    );
+}
+
+/// A pending edge and a ratified edge of another label are absent from a
+/// label's ratified term edges: the cycle check sees ratified edges of its
+/// own label alone (ADR-0021 d5).
+pub async fn a_pending_or_other_label_edge_is_absent_from_the_ratified_term_edges<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut world, [animal, dog, puppy, cat], ratifier) = term_world(store, 334).await;
+    let tenant = world.rig.tenant_id;
+    let ratified = world
+        .propose_labelled(
+            store,
+            Uuid::from_u128((334_u128 << 16) | 0xE1),
+            dog.memory_id,
+            animal.memory_id,
+            "oml:is_a",
+        )
+        .await;
+    world
+        .ratify(store, ratified.edge_id, ratifier.key_id)
+        .await
+        .expect("ratify");
+    world
+        .propose_labelled(
+            store,
+            Uuid::from_u128((334_u128 << 16) | 0xE2),
+            puppy.memory_id,
+            dog.memory_id,
+            "oml:is_a",
+        )
+        .await;
+    let part_of = world
+        .propose_labelled(
+            store,
+            Uuid::from_u128((334_u128 << 16) | 0xE3),
+            cat.memory_id,
+            animal.memory_id,
+            "oml:part_of",
+        )
+        .await;
+    world
+        .ratify(store, part_of.edge_id, ratifier.key_id)
+        .await
+        .expect("ratify");
+
+    assert_eq!(
+        store
+            .ratified_term_edges(tenant, "oml:is_a")
+            .await
+            .expect("read"),
+        vec![("acme:Dog".to_owned(), "acme:Animal".to_owned())],
+        "only the ratified is_a edge"
+    );
+    assert_eq!(
+        store
+            .ratified_term_edges(tenant, "oml:part_of")
+            .await
+            .expect("read"),
+        vec![("acme:Cat".to_owned(), "acme:Animal".to_owned())],
+        "only the ratified part_of edge"
+    );
+}
+
+/// A ratified edge with a memory at either end is absent from the ratified
+/// term edges, whatever its label: the read covers edges between two terms
+/// (ADR-0021 d5).
+pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_ratified_term_edges<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut world, [animal, dog, ..], ratifier) = term_world(store, 335).await;
+    let tenant = world.rig.tenant_id;
+    let root = world.root;
+    let note = world
+        .hold(store, root, Uuid::from_u128(0x335F), "alice", &[])
+        .await;
+    for (low, src, dst) in [
+        (0xE1, note.memory_id, animal.memory_id),
+        (0xE2, dog.memory_id, note.memory_id),
+    ] {
+        let edge = world
+            .propose_labelled(
+                store,
+                Uuid::from_u128((335_u128 << 16) | low),
+                src,
+                dst,
+                "oml:is_a",
+            )
+            .await;
+        world
+            .ratify(store, edge.edge_id, ratifier.key_id)
+            .await
+            .expect("ratify");
+    }
+
+    assert!(
+        store
+            .ratified_term_edges(tenant, "oml:is_a")
+            .await
+            .expect("read")
+            .is_empty(),
+        "an edge with a memory endpoint is no term edge"
+    );
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
@@ -4225,67 +6506,274 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = S>,
 {
-    journal_commit_and_head(&new_store().await).await;
-    journal_commit_refuses_conflicts(&new_store().await).await;
-    journal_events_range_pages(&new_store().await).await;
-    a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_with_it(&new_store().await)
+    // Each law runs boxed, so the suite's future holds a pointer per law
+    // rather than the largest law's state inline, and an unoptimized test
+    // build stays inside a test thread's default stack.
+    Box::pin(journal_commit_and_head(&new_store().await)).await;
+    Box::pin(journal_commit_refuses_conflicts(&new_store().await)).await;
+    Box::pin(journal_events_range_pages(&new_store().await)).await;
+    Box::pin(
+        a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_with_it(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(journal_memory_fold_and_lookup(&new_store().await)).await;
+    Box::pin(recall_serves_promoted_tips_only_within_the_readable_set(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(hits_that_tie_on_score_are_ordered_by_artifact_id(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(steering_is_never_returned_as_a_hit(&new_store().await)).await;
+    Box::pin(retired_claims_are_absent_from_recall_and_steering(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifact_id(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows(&new_store().await),
+    )
+    .await;
+    Box::pin(recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await))
         .await;
-    journal_memory_fold_and_lookup(&new_store().await).await;
-    recall_serves_promoted_tips_only_within_the_readable_set(&new_store().await).await;
-    hits_that_tie_on_score_are_ordered_by_artifact_id(&new_store().await).await;
-    steering_is_never_returned_as_a_hit(&new_store().await).await;
-    retired_claims_are_absent_from_recall_and_steering(&new_store().await).await;
-    steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifact_id(&new_store().await)
+    Box::pin(memories_reads_the_named_rows_in_the_order_named(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(journal_review_claim_laws(&new_store().await)).await;
+    Box::pin(journal_key_lookup_by_hash(&new_store().await)).await;
+    Box::pin(a_revoked_key_no_longer_resolves_by_its_hash(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(journal_idempotency_roundtrip(&new_store().await)).await;
+    Box::pin(a_second_record_under_one_idempotency_scope_commits_nothing(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(grants_and_denials_round_trip_through_their_folds_and_key_access(&new_store().await))
         .await;
-    guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows(&new_store().await).await;
-    recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await).await;
-    memories_reads_the_named_rows_in_the_order_named(&new_store().await).await;
-    journal_review_claim_laws(&new_store().await).await;
-    journal_key_lookup_by_hash(&new_store().await).await;
-    a_revoked_key_no_longer_resolves_by_its_hash(&new_store().await).await;
-    journal_idempotency_roundtrip(&new_store().await).await;
-    a_second_record_under_one_idempotency_scope_commits_nothing(&new_store().await).await;
-    grants_and_denials_round_trip_through_their_folds_and_key_access(&new_store().await).await;
-    a_grant_epoch_is_its_event_seq(&new_store().await).await;
-    a_grant_or_denial_the_schema_refuses_commits_nothing(&new_store().await).await;
-    a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epoch(&new_store().await).await;
-    workarea_ancestry_walks_parent_ids_to_the_root(&new_store().await).await;
-    a_workarea_under_another_tenants_node_is_refused_as_one_under_no_node(&new_store().await).await;
-    workarea_subtree_lists_every_descendant_once(&new_store().await).await;
-    workarea_children_are_immediate_and_ordered_by_name_bytes(&new_store().await).await;
-    crew_round_trips_through_workarea_created(&new_store().await).await;
-    kind_version_and_body_bytes_round_trip_through_memory_held(&new_store().await).await;
-    promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
+    Box::pin(a_grant_epoch_is_its_event_seq(&new_store().await)).await;
+    Box::pin(a_grant_or_denial_the_schema_refuses_commits_nothing(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epoch(&new_store().await),
+    )
+    .await;
+    Box::pin(workarea_ancestry_walks_parent_ids_to_the_root(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        a_workarea_under_another_tenants_node_is_refused_as_one_under_no_node(&new_store().await),
+    )
+    .await;
+    Box::pin(workarea_subtree_lists_every_descendant_once(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(workarea_children_are_immediate_and_ordered_by_name_bytes(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(crew_round_trips_through_workarea_created(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(a_workarea_read_serves_the_status_its_row_stores(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(a_universe_root_created_at_any_status_but_committed_is_refused(&new_store().await))
         .await;
-    a_second_served_tip_of_one_claim_commits_nothing(&new_store().await).await;
-    tip_superseded_refuses_when_the_target_is_no_longer_tip(&new_store().await).await;
-    a_chain_whose_ratification_loses_the_compare_and_set_journals_no_verdict(&new_store().await)
+    Box::pin(
+        a_proposed_transition_is_pending_and_listed_by_its_workarea_in_proposal_order(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        ratifying_a_transition_moves_the_workareas_status_in_the_same_commit_as_its_event(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        a_ratification_fold_whose_status_guard_fails_journals_nothing_and_moves_nothing(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        a_child_created_between_proposal_and_ratification_refuses_the_step_to_validated(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        a_ratification_by_another_key_of_the_proposers_principal_is_refused(&new_store().await),
+    )
+    .await;
+    Box::pin(a_proposal_whose_principal_is_not_its_proposing_keys_is_refused(&new_store().await))
         .await;
-    a_second_live_version_with_one_ordinal_commits_nothing(&new_store().await).await;
-    claim_key_state_counts_every_version_and_only_live_ones_hold_the_key(&new_store().await).await;
-    an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_nodes(&new_store().await)
+    Box::pin(kind_version_and_body_bytes_round_trip_through_memory_held(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(a_second_served_tip_of_one_claim_commits_nothing(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(tip_superseded_refuses_when_the_target_is_no_longer_tip(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        a_chain_whose_ratification_loses_the_compare_and_set_journals_no_verdict(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(a_second_live_version_with_one_ordinal_commits_nothing(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        claim_key_state_counts_every_version_and_only_live_ones_hold_the_key(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_nodes(&new_store().await),
+    )
+    .await;
+    Box::pin(a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await),
+    )
+    .await;
+    Box::pin(two_workareas_in_one_tenant_cannot_share_a_name(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(workarea_names_are_unique_per_namespace_and_resolve_in_their_own(&new_store().await))
         .await;
-    a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(&new_store().await).await;
-    a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await).await;
-    two_workareas_in_one_tenant_cannot_share_a_name(&new_store().await).await;
-    workarea_names_are_unique_per_namespace_and_resolve_in_their_own(&new_store().await).await;
-    the_root_and_only_the_root_workarea_is_named_universe(&new_store().await).await;
-    a_second_tenant_cannot_take_a_tenants_name(&new_store().await).await;
-    a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing_in_another_tenant(
+    Box::pin(the_root_and_only_the_root_workarea_is_named_universe(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(a_second_tenant_cannot_take_a_tenants_name(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing_in_another_tenant(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(a_revoked_keys_name_still_resolves(&new_store().await)).await;
+    Box::pin(a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it(&new_store().await))
+        .await;
+    Box::pin(a_crew_update_replaces_its_charter_and_manager_and_never_its_name(&new_store().await))
+        .await;
+    Box::pin(crews_lists_the_tenants_crew_records_in_name_byte_order(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        a_key_reads_by_its_id_in_its_tenant_a_revoked_one_with_the_at_of_its_key_revoked(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed(&new_store().await),
+    )
+    .await;
+    Box::pin(run_claim_edge_suite(&new_store)).await;
+}
+
+/// Every claim-edge law in one call, each against a fresh store: the edge
+/// row, the closure widening its proposal folds, the ratification's
+/// compare-and-set and the graph reads (postgres-schema.md `claim_edges`;
+/// ADR-0001 d2; ADR-0008 d5; ADR-0021). Part of
+/// [`run_journal_store_suite`], so every store that runs it runs these.
+pub async fn run_claim_edge_suite<S, F, Fut>(new_store: F)
+where
+    S: JournalStore,
+    F: Fn() -> Fut,
+    Fut: Future<Output = S>,
+{
+    a_proposed_claim_edge_reads_back_pending_with_its_proposer(&new_store().await).await;
+    a_pending_claim_edge_puts_each_endpoints_authors_in_the_others_lineage_closure(
         &new_store().await,
     )
     .await;
-    a_revoked_keys_name_still_resolves(&new_store().await).await;
-    a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it(&new_store().await).await;
-    a_crew_update_replaces_its_charter_and_manager_and_never_its_name(&new_store().await).await;
-    crews_lists_the_tenants_crew_records_in_name_byte_order(&new_store().await).await;
-    a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant(&new_store().await)
-        .await;
-    a_key_reads_by_its_id_in_its_tenant_a_revoked_one_with_the_at_of_its_key_revoked(
+    a_pending_claim_edge_reaches_the_closure_of_a_held_row_deriving_from_an_endpoint(
         &new_store().await,
     )
     .await;
-    every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed(&new_store().await).await;
+    a_chain_of_two_edges_carries_the_far_endpoints_authors_to_the_near_one(&new_store().await)
+        .await;
+    the_stores_widened_closure_equals_the_authors_of_the_domains_lineage_artifacts(
+        &new_store().await,
+    )
+    .await;
+    a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_filters_by_either_endpoint(
+        &new_store().await,
+    )
+    .await;
+    a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or_the_readers_own_on_its_readable_nodes(
+        &new_store().await,
+    )
+    .await;
+    a_claim_edge_whose_created_at_is_not_its_events_at_commits_nothing(&new_store().await).await;
+    ratifying_a_pending_edge_records_its_ratifier_and_state(&new_store().await).await;
+    a_brief_edge_folds_pending_and_its_ratification_records_the_ratifier_and_its_seq(
+        &new_store().await,
+    )
+    .await;
+    ratifying_an_edge_already_ratified_writes_nothing_and_is_refused_edge_not_pending(
+        &new_store().await,
+    )
+    .await;
+    ratifying_an_edge_the_tenant_does_not_hold_writes_nothing_and_is_refused_edge_not_pending(
+        &new_store().await,
+    )
+    .await;
+    ratifying_an_edge_with_its_proposers_key_writes_nothing_and_is_refused(&new_store().await)
+        .await;
+    ratifying_with_another_tenants_key_writes_nothing_and_is_refused(&new_store().await).await;
+    the_ratified_term_edges_of_a_label_list_each_by_its_endpoints_claim_keys(&new_store().await)
+        .await;
+    a_pending_or_other_label_edge_is_absent_from_the_ratified_term_edges(&new_store().await).await;
+    a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_ratified_term_edges(
+        &new_store().await,
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------

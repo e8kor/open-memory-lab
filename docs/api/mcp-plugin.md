@@ -251,7 +251,7 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
 |---|---|---|---|
 | [`oml_write`](#oml_write) | Store a claim, a derived claim, a new version or a retire-proposal — held on arrival | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false` | writer; with `replaces`, writer (own claims) or dreamer (propose) |
 | [`oml_read`](#oml_read) | Fetch one version, recall in a subtree, or list own work or a workarea's tips | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader, or the calling key for its own rows |
-| [`oml_workarea`](#oml_workarea) | One workarea: status, crew, the caller's effective verbs | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader |
+| [`oml_workarea`](#oml_workarea) | One workarea: status, crew, the caller's effective verbs, pending transitions and the brief | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader |
 
 The annotations are [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
 d5's: Claude Code runs read-only calls in parallel and may repeat a pending
@@ -432,7 +432,14 @@ key's default workarea (`request.workarea_unresolved` for a key with none).
 
 **Who may call:** keys with reader effective access on the workarea, or an
 admin key for its structure read. The output is
-[`oml_workarea_info`](#oml_workarea_info)'s, under the v0.4.0 name.
+[`oml_workarea_info`](#oml_workarea_info)'s, under the v0.4.0 name, and three
+fields more (*since v0.5.2*;
+[ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3, d9): `policy`, the review policy in force;
+`pending_transitions`, the status proposals waiting for a second identity;
+and `brief`, `{items, budget}`, the claims the workarea's reviewers agreed an
+agent entering it reads first, each the claim item every tool returns, with
+its text, cut by the server's `brief.max_tokens`. No tool proposes or ratifies a
+transition or an edge: those run on the HTTP API and the CLI.
 
 ## The prompt `guardrails`
 
@@ -522,7 +529,8 @@ workarea arguments are `workarea`, as on the served tools
 
 ### `oml_relate_propose`
 
-*Not built; links between memories are planned for v0.5.2 · [releases](../product/releases.md)*
+*Not built; links between memories arrived in v0.5.2 on HTTP and the CLI, and this tool is not
+part of them ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d4) · [releases](../product/releases.md)*
 
 Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
 journalled and **pending**; it confers nothing and changes no access until a
@@ -1540,7 +1548,7 @@ mismatched session from `oml_remember`. Example:
 
 ### `oml_graph`
 
-*Not built; links between memories are planned for v0.5.2 · [releases](../product/releases.md)*
+*Not built; links between memories arrived in v0.5.2 on HTTP and the CLI · [releases](../product/releases.md)*
 
 A scoped read of claims and their edges: the declared lineage
 (`derives_from`), claim↔claim connection edges with their pending/ratified

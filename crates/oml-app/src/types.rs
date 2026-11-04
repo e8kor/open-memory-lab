@@ -2,15 +2,18 @@
 
 use oml_domain::access::{Covers, Grant, KeyDenial};
 use oml_domain::budget::Budget;
+use oml_domain::claim_edges::{EdgeField, LabelRefusal};
 use oml_domain::guardrail::{GuardrailScope, Severity};
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
+use oml_domain::vocab_edges::{CycleRefused, EdgeState};
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
-    ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
-    Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
+    ChainError, EventTime, FrozenOp, HeldBy, JcsError, LadderRefusal, LineageClosure, MemoryKind,
+    MemoryStatus, Role, Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
+    WorkareaStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -722,8 +725,8 @@ pub struct Crew {
     pub external_manager: Option<String>,
 }
 
-/// A workarea node (the PoC slice: id, parent, name and crew — no status
-/// ladder yet).
+/// A workarea node: id, parent, name, its rung on the status ladder and
+/// its crew.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkareaRecord {
     pub workarea_id: Uuid,
@@ -732,6 +735,12 @@ pub struct WorkareaRecord {
     /// Unique in the tenant across the whole tree and never changed; the
     /// root's is `universe` (ADR-0026 d1, d6).
     pub name: Name,
+    /// The node's rung on the status ladder, as its row stores it: one
+    /// column, written at create and by a ratified transition alone
+    /// (ADR-0009 d1; workareas.md the status ladder). `workarea.create`
+    /// stores `development`, and a tenant's bootstrap stores `committed` on
+    /// the universe root, which never moves (http-api.md workareas).
+    pub status: WorkareaStatus,
     /// The crew object a PoC `workarea.create` copied in, kept as the
     /// history the naming of rows that predate names reads it from; `None`
     /// on every workarea created since crews are records (ADR-0026 d8, d11).
@@ -763,6 +772,94 @@ impl WorkareaRecord {
     }
 }
 
+/// Where a status-ladder proposal stands: `pending` until a second identity
+/// ratifies it, then `ratified` for good (ADR-0009 d3; postgres-schema.md
+/// `workarea_transitions.state`). A proposal made stale by another's
+/// ratification stays `pending` as history; the status read, not the row,
+/// tells it apart (workareas.md, the status read lists only live proposals).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransitionState {
+    Pending,
+    Ratified,
+}
+
+impl TransitionState {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TransitionState::Pending => "pending",
+            TransitionState::Ratified => "ratified",
+        }
+    }
+
+    /// The state an exact word spells; `None` for any other string.
+    #[must_use]
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "pending" => Some(TransitionState::Pending),
+            "ratified" => Some(TransitionState::Ratified),
+            _ => None,
+        }
+    }
+}
+
+/// One status-ladder proposal as its `workarea_transitions` row holds it:
+/// the node, the step from one rung to the next, the proposer's key and
+/// principal, and the ratifier's key once a second identity ratified it
+/// (ADR-0009 d3; workareas.md, a pending proposal is a row). The journal
+/// seqs of the proposal and the ratification are the store's, written from
+/// the events the folds commit with, never carried here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransitionRecord {
+    /// The events' `transition_id`.
+    pub transition_id: Uuid,
+    pub tenant_id: Uuid,
+    pub workarea_id: Uuid,
+    pub from: WorkareaStatus,
+    pub to: WorkareaStatus,
+    pub state: TransitionState,
+    pub proposer_key_id: Uuid,
+    /// The principal the proposing key's row holds, which the proposal's
+    /// fold checks; the ratifying transaction refuses this principal under
+    /// any of its keys, not only the proposing key (ADR-0010 R2).
+    pub proposer_principal: String,
+    /// `None` while pending; the ratifying key once ratified.
+    pub ratifier_key_id: Option<Uuid>,
+}
+
+/// A workarea's status read (http-api.md workareas, `GET
+/// /v2/workareas/{id}/status`): the rung its row stores, the review policy
+/// object in force, and its live proposals in proposal order, the pending
+/// rows whose `from` is that rung; a proposal another's ratification made
+/// stale is not listed (workareas.md, the status read lists only live
+/// proposals; ADR-0009 d3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkareaStatusView {
+    pub workarea_id: Uuid,
+    pub status: WorkareaStatus,
+    /// The policy a verdict's ratification and a transition's
+    /// `policy_snapshot` read, so the three never disagree.
+    pub policy: serde_json::Value,
+    pub pending: Vec<TransitionView>,
+}
+
+/// One live proposal as the status read serves it, the openapi
+/// `Transition` shape: never the proposer's principal nor the tenant, and
+/// the proposing key only to a key in the proposer's own key set, as the
+/// tail serves it (workareas.md, the status read names the proposing key
+/// only to its own key set; http-api.md#events-tail; ADR-0025 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransitionView {
+    pub transition_id: Uuid,
+    pub workarea_id: Uuid,
+    pub from: WorkareaStatus,
+    pub to: WorkareaStatus,
+    pub state: TransitionState,
+    /// The proposing key when it is in the reader's own key set; `None`
+    /// to every other reader, an admin key included.
+    pub proposed_by_key_id: Option<Uuid>,
+}
+
 /// A crew record: named, recorded and not operated — OML never contacts the
 /// external manager (workareas.md crews; postgres-schema.md `crews`;
 /// ADR-0026 d8). The name never changes.
@@ -774,21 +871,6 @@ pub struct CrewRecord {
     pub name: Name,
     pub charter_uri: Option<String>,
     pub external_manager: Option<String>,
-}
-
-impl WorkareaRecord {
-    /// The node's rung on the status ladder (workareas.md the status
-    /// ladder). No status transition is built, so a node keeps the status it
-    /// was created with: the universe root is permanently `committed`, and
-    /// every other node is created in `development` (http-api.md workareas).
-    #[must_use]
-    pub fn status(&self) -> &'static str {
-        if self.parent_id.is_none() {
-            "committed"
-        } else {
-            "development"
-        }
-    }
 }
 
 /// A node as `workarea.create` committed it, with the path derived from the
@@ -826,6 +908,15 @@ pub struct WorkareaInfo {
     /// The key's permission epoch as its access was read for this request
     /// (workareas.md permission epoch).
     pub permission_epoch: u64,
+    /// The review policy in force, the one a transition's `policy_snapshot`
+    /// records (ADR-0039 d9; ADR-0046 d3).
+    pub policy: serde_json::Value,
+    /// The node's live proposals in proposal order, as the status read lists
+    /// them (workareas.md, the status read lists only live proposals).
+    pub pending_transitions: Vec<TransitionView>,
+    /// The node's brief as this key may read it; empty for an admin key,
+    /// which reads no claim content (ADR-0046 d9).
+    pub brief: Brief,
 }
 
 /// One node of a workarea tree read, with its derived path and the crew
@@ -1454,6 +1545,99 @@ pub struct ListingPosition {
     pub artifact_id: Uuid,
 }
 
+/// One stored claim edge: a labelled connection from one of a tenant's
+/// versions to another, pending until a key that is not its proposer
+/// ratifies it (postgres-schema.md `claim_edges`; ADR-0008 d5; ADR-0021;
+/// ADR-0012). Nothing deletes one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEdgeRecord {
+    pub edge_id: Uuid,
+    pub tenant_id: Uuid,
+    /// The source version (`from_artifact_id` on the proposal).
+    pub src_artifact_id: Uuid,
+    /// The target version (`to_artifact_id` on the proposal).
+    pub dst_artifact_id: Uuid,
+    /// The label as proposed, admitted by the domain's label check.
+    pub label: String,
+    /// `pending` or `ratified`; this build stores no rejected edge, as
+    /// `oml:about` is refused at proposal (ADR-0027 is not accepted).
+    pub state: EdgeState,
+    pub proposer_key_id: Uuid,
+    /// The proposer key's principal, which R2 at ratification compares the
+    /// ratifier's against (errors.md `review.ratifier_is_proposer`).
+    pub proposer_principal: String,
+    /// The ratifying key; `None` while the edge is pending.
+    pub ratifier_key_id: Option<Uuid>,
+    /// The `at` of its `claim_edge.proposed` event, which the store refuses
+    /// any other value for: the listing's order key (http-api.md
+    /// pagination).
+    pub created_at: EventTime,
+}
+
+/// `GET /v2/edges?kind=claim`'s predicates, re-applied on every page; `None`
+/// narrows nothing, and two present predicates both hold (http-api.md,
+/// claim edges).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClaimEdgeFilter {
+    /// Only edges with this version at either endpoint.
+    pub artifact_id: Option<Uuid>,
+    /// Only edges with an endpoint version in this workarea's subtree, as
+    /// every other `workarea_id` filter in http-api.md narrows (search, the
+    /// events tail).
+    // reading: http-api.md names `workarea_id` on the graph read but not
+    // which endpoint it constrains; an edge is a connection either way, so
+    // it matches as `artifact_id` does, at either endpoint.
+    pub workarea_id: Option<Uuid>,
+}
+
+/// What the store's claim-edge page selects: the read's [`ClaimEdgeFilter`]
+/// resolved against the key's read scope, so the keyset `LIMIT` counts only
+/// edges the key may be served (http-api.md claim edges; roles-and-keys.md
+/// footnote 5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEdgeSelection {
+    /// Only edges with this version at either endpoint.
+    pub artifact_id: Option<Uuid>,
+    /// Only edges with an endpoint version in one of these workareas: the
+    /// filter's subtree where reader is effective; `None` narrows nothing.
+    pub within: Option<Vec<Uuid>>,
+    /// Both endpoint versions lie in these workareas, every node where
+    /// reader is effective for the key...
+    pub readable_nodes: Vec<Uuid>,
+    /// ...and each is promoted or authored by this key.
+    pub reader_key_id: Uuid,
+}
+
+/// Where a claim-edge page resumes: the `created_at` and id of the last
+/// edge the previous page served, in the order `created_at` descending,
+/// then `edge_id` descending, as [`ListingPosition`] is (http-api.md
+/// pagination: newest first on every list endpoint).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEdgePosition {
+    pub created_at: EventTime,
+    pub edge_id: Uuid,
+}
+
+/// `GET /v2/edges?kind=claim`'s query as the use case takes it: the workarea by
+/// id or name (ADR-0026), resolved to the [`ClaimEdgeFilter`] every page
+/// re-applies.
+#[derive(Debug, Clone, Default)]
+pub struct ClaimEdgeQuery {
+    /// Only edges with an endpoint version in this workarea.
+    pub workarea: Option<Reference>,
+    /// Only edges with this version at either endpoint.
+    pub artifact_id: Option<Uuid>,
+}
+
+/// One page of the claim-edge read, newest first, each edge as openapi.yaml's
+/// `ClaimEdge`, and the cursor of the next page, `None` once the read is
+/// exhausted (openapi.yaml `ClaimEdgePage`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEdgePage {
+    pub items: Vec<ClaimEdgeProposal>,
+    pub next_cursor: Option<String>,
+}
+
 /// `GET /v1/memories` as the use-case takes it (http-api.md search;
 /// ADR-0025 d13).
 #[derive(Debug, Clone)]
@@ -1607,6 +1791,168 @@ pub struct SupersedeReceipt {
     pub replaces: VersionRef,
     pub journal_seq: u64,
     pub body_digest: String,
+}
+
+/// `POST /v2/edges` with `kind: claim` as the use-case takes it: a labelled edge from
+/// one of the tenant's versions to another (http-api.md, claim edges;
+/// ADR-0008 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposeClaimEdge {
+    pub from_artifact_id: Uuid,
+    pub to_artifact_id: Uuid,
+    pub label: String,
+}
+
+/// A brief edge as the store holds it: one claim joined to one workarea's
+/// brief, pending until a key that is not its proposer ratifies it
+/// (postgres-schema.md `brief_edges`; ADR-0046 d7, d8). Nothing deletes one,
+/// and it widens no lineage closure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BriefEdgeRecord {
+    pub edge_id: Uuid,
+    pub tenant_id: Uuid,
+    /// The member claim's version (`from_artifact_id` on the proposal).
+    pub artifact_id: Uuid,
+    /// The workarea whose brief the claim joins (`to_workarea_id`).
+    pub workarea_id: Uuid,
+    /// `pending` or `ratified`.
+    pub state: EdgeState,
+    pub proposer_key_id: Uuid,
+    /// The proposer key's principal, which R2 at ratification compares.
+    pub proposer_principal: String,
+    pub ratifier_key_id: Option<Uuid>,
+    /// The `at` of its `brief_edge.proposed` event: the listing's order key.
+    pub created_at: EventTime,
+    /// The seq of the `review.ratify` that ratified it, the brief's order
+    /// key; `None` while pending.
+    pub ratified_seq: Option<u64>,
+}
+
+/// `POST /v2/edges` with `kind: brief` as the use case takes it.
+#[derive(Debug, Clone)]
+pub struct ProposeBriefEdge {
+    pub artifact_id: Uuid,
+    /// The workarea by id or name, as sent.
+    pub workarea: Reference,
+}
+
+/// A brief edge as openapi.yaml's `Edge` serves it with `kind: brief`, and
+/// the stored idempotent response of its proposal and ratification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BriefEdgeView {
+    pub edge_id: Uuid,
+    pub from_artifact_id: Uuid,
+    pub to_workarea_id: Uuid,
+    pub label: String,
+    pub state: String,
+    pub proposer_key_id: Uuid,
+    pub ratifier_key_id: Option<Uuid>,
+}
+
+impl From<&BriefEdgeRecord> for BriefEdgeView {
+    fn from(edge: &BriefEdgeRecord) -> Self {
+        Self {
+            edge_id: edge.edge_id,
+            from_artifact_id: edge.artifact_id,
+            to_workarea_id: edge.workarea_id,
+            label: oml_domain::brief::BRIEF_LABEL.to_owned(),
+            state: edge.state.as_str().to_owned(),
+            proposer_key_id: edge.proposer_key_id,
+            ratifier_key_id: edge.ratifier_key_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BriefEdgeProposalOutcome {
+    pub proposal: BriefEdgeView,
+    pub replayed: bool,
+}
+
+/// A brief edge's ratification: the ratified edge, and the seq of the
+/// `review.ratify` it committed, `None` on a replay.
+#[derive(Debug, Clone)]
+pub struct BriefEdgeRatification {
+    pub edge: BriefEdgeView,
+    pub journal_seq: Option<u64>,
+    pub replayed: bool,
+}
+
+/// `POST /v2/edges/{edge_id}/ratify` answered for either kind: the edge's
+/// kind follows from its id (ADR-0039 d9).
+#[derive(Debug, Clone)]
+pub enum EdgeRatification {
+    Claim(ClaimEdgeRatification),
+    Brief(BriefEdgeRatification),
+}
+
+/// One page of a workarea's brief edges, pending and ratified, newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BriefEdgePage {
+    pub items: Vec<BriefEdgeView>,
+    pub next_cursor: Option<String>,
+}
+
+/// A workarea's brief as the workarea read and the session-start hook
+/// serve it: the ratified members the key reads that are still served
+/// tips, in ratification order, cut by `brief.max_tokens` (ADR-0046 d8, d9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Brief {
+    pub items: Vec<ServedMemory>,
+    pub budget: oml_domain::budget::Budget,
+}
+
+/// The stored idempotent response of a claim-edge proposal, the committed
+/// edge as openapi.yaml's `ClaimEdge` serves it: a replay returns this byte
+/// for byte, naming only the caller's own edge (http-api.md idempotency,
+/// claim edges).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimEdgeProposal {
+    pub edge_id: Uuid,
+    /// The edge's source version, `src_artifact_id` as stored.
+    pub from_artifact_id: Uuid,
+    /// The edge's target version, `dst_artifact_id` as stored.
+    pub to_artifact_id: Uuid,
+    pub label: String,
+    /// `pending` on a proposal, which confers nothing until a key that is
+    /// not its proposer ratifies it, and `ratified` on that ratification
+    /// (ADR-0008 d5; ADR-0012 R2).
+    pub state: String,
+    pub proposer_key_id: Uuid,
+    /// `None` on a proposal; the ratifying key on a ratification.
+    pub ratifier_key_id: Option<Uuid>,
+}
+
+impl From<&ClaimEdgeRecord> for ClaimEdgeProposal {
+    fn from(edge: &ClaimEdgeRecord) -> Self {
+        Self {
+            edge_id: edge.edge_id,
+            from_artifact_id: edge.src_artifact_id,
+            to_artifact_id: edge.dst_artifact_id,
+            label: edge.label.clone(),
+            state: edge.state.as_str().to_owned(),
+            proposer_key_id: edge.proposer_key_id,
+            ratifier_key_id: edge.ratifier_key_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClaimEdgeProposalOutcome {
+    pub proposal: ClaimEdgeProposal,
+    pub replayed: bool,
+}
+
+/// `POST /v2/edges/{edge_id}/ratify` as the use-case answers it: the
+/// ratified edge as openapi.yaml's `ClaimEdge` serves it, which is also its
+/// stored idempotent response (http-api.md, claim edges and idempotency).
+#[derive(Debug, Clone)]
+pub struct ClaimEdgeRatification {
+    pub edge: ClaimEdgeProposal,
+    /// The seq of the `review.ratify` this call committed; `None` on a
+    /// replay, whose record holds the `ClaimEdge` alone.
+    pub journal_seq: Option<u64>,
+    pub replayed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1796,6 +2142,35 @@ pub enum AppError {
         "oml_write carries no vocabulary fields, so a {0:?} target is superseded on the HTTP API (mcp-plugin.md oml_write; ADR-0025 d12, request.validation)"
     )]
     VocabularyTarget(MemoryKind),
+    /// A claim-edge label the domain's label check refused; `field` is
+    /// `details.field` (errors.md `request.validation`; ADR-0021 d5).
+    #[error("{reason}")]
+    ClaimEdgeLabel {
+        field: EdgeField,
+        reason: LabelRefusal,
+    },
+    /// The ratifier's key or principal is in either endpoint's lineage
+    /// closure (errors.md `review.author_in_lineage`; ADR-0012 R2).
+    #[error("the ratifier is in an endpoint's lineage closure (review.author_in_lineage)")]
+    AuthorInLineage,
+    /// The edge is decided: ratified before this call, or by a commit that
+    /// won the store's compare-and-set. Nothing was journalled.
+    // reading: errors.md declares no edge-specific code; a verdict on a
+    // decided row answers `review.serve_invalid` with `details.reason`
+    // `consumed`, and a decided edge answers alike.
+    #[error("claim edge {edge_id} is already decided (review.serve_invalid, consumed)")]
+    EdgeConsumed { edge_id: Uuid },
+    /// Ratifying the edge would close a cycle over its label's ratified
+    /// edges (errors.md `vocab.cycle_refused`; ADR-0021 d5).
+    #[error(transparent)]
+    CycleRefused(#[from] CycleRefused),
+    /// A stored endpoint of a ratified or ratifying `oml:is_a` edge whose
+    /// `claim_key` is not a CURIE, or that is not a term: the label check
+    /// refuses such an edge at proposal and at ratification, so only a row
+    /// that defies it reaches here; the cycle check cannot run, and the
+    /// ratification fails closed and journals nothing (ADR-0021 d2, d5).
+    #[error("claim_key {claim_key:?} of a term edge's endpoint is not a term's CURIE")]
+    TermEndpoint { claim_key: String },
     #[error(
         "a sent claim_key starts auto-, the prefix only the server derives (ADR-0039 d6, request.validation)"
     )]
@@ -1861,6 +2236,36 @@ pub enum AppError {
         tenant_id: Uuid,
         refusal: NamingRefusal,
     },
+    /// The status ladder refused a proposal of `from` → `to` on the node,
+    /// before anything was sealed: nothing is journalled (errors.md
+    /// `workarea.transition_refused`, details `{workarea_id, from, to,
+    /// reason}`; ADR-0009 d1, d3, d4).
+    #[error(
+        "workarea {workarea_id}: {} to {} is refused: {reason} (errors.md workarea.transition_refused)",
+        .from.as_str(),
+        .to.as_str()
+    )]
+    TransitionRefused {
+        workarea_id: Uuid,
+        from: WorkareaStatus,
+        to: WorkareaStatus,
+        reason: LadderRefusal,
+    },
+    /// A `validated` node was asked for an operation freeze forbids
+    /// (errors.md `workarea.frozen`; ADR-0009 d5).
+    #[error("workarea {workarea_id} is validated and refuses {op:?} (errors.md workarea.frozen)")]
+    WorkareaFrozen { workarea_id: Uuid, op: FrozenOp },
+    /// The ratifying key is the proposing key or holds the proposer's
+    /// principal, of a status transition or a claim edge (errors.md
+    /// `review.ratifier_is_proposer`; ADR-0009 d3; ADR-0010 R2; ADR-0012).
+    #[error(
+        "the ratifier is the proposer: proposal and ratification are two identities (errors.md review.ratifier_is_proposer)"
+    )]
+    RatifierIsProposer,
+    /// A brief edge proposed for a claim that is not a promoted served tip:
+    /// a brief serves only what review promoted (ADR-0046 d8).
+    #[error("artifact {artifact_id} is not a promoted served tip, so it cannot join a brief")]
+    BriefMemberNotServed { artifact_id: Uuid },
     /// A listing cursor this server will not resume from (http-api.md
     /// pagination, request.validation).
     #[error(transparent)]

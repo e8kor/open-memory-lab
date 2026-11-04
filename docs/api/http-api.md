@@ -140,7 +140,7 @@ not built, like everything on this page.
 
 **Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
-(currently `0.5.1-design`), from which moment the covenant — and this section's definition of
+(currently `0.5.2-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization
@@ -536,17 +536,17 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | Endpoint | Verb ceiling (effective access unless noted) | Contract |
 |---|---|---|
 | `GET /v2/memories/{artifact_id}/lineage` | reader | designed |
-| `GET /v2/edges` | `kind=claim`: reader; `kind=workarea`: reader, or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | designed |
-| `POST /v2/edges` | `kind=claim`: dreamer(propose); `kind=workarea`: dreamer(propose) on ≥1 endpoint, reader on both (edge-authority rule, [workareas.md](../architecture/workareas.md)) | designed |
-| `POST /v2/edges/{edge_id}/ratify` | dreamer(review), on both endpoints for `kind=workarea`; never the proposer (R2) | designed |
+| `GET /v2/edges` | `kind=claim`: reader; `kind=brief`: reader on the workarea, each edge served only when its claim is read ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d7); `kind=workarea` designed: reader, or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)); *since v0.5.2* | served |
+| `POST /v2/edges` | `kind=claim`: dreamer(propose); `kind=brief`: dreamer on the workarea, a promoted served tip the key reads; `kind=workarea` designed: dreamer(propose) on ≥1 endpoint, reader on both (edge-authority rule, [workareas.md](../architecture/workareas.md)); *since v0.5.2* | served |
+| `POST /v2/edges/{edge_id}/ratify` | dreamer(review), on the workarea for `kind=brief`, on both endpoints for `kind=workarea`; never the proposer (R2); *since v0.5.2* | served |
 | `GET /v2/workareas/{workarea}` · `/tree` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | served |
 | `GET /v2/workareas` | reader; or admin (key role), structure only and tenant-wide | designed |
 | `POST /v2/workareas` | admin (key role) | served |
 | `POST /v2/workareas/{workarea}/reparent` | admin (key role) | designed |
 | `POST /v2/workareas/{workarea}/crew` | admin (key role) | served |
 | `GET /v2/crews` · `GET /v2/crews/{crew}` · `POST /v2/crews` · `POST /v2/crews/{crew}/update` | admin (key role) | served |
-| `POST /v2/workareas/{workarea}/transitions` | dreamer or admin | designed |
-| `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin | designed |
+| `POST /v2/workareas/{workarea}/transitions` | dreamer or admin; *since v0.5.2* | served |
+| `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin; *since v0.5.2* | served |
 | `GET /v2/events` | reader | served |
 | `GET /v2/vocab/suggest` · `GET /v2/vocab/terms/{curie}` · `GET /v2/vocab/terms/{curie}/hierarchy` · `GET /v2/vocab/mappings` | reader | designed |
 | `POST /v2/review/next` · `POST /v2/review/verdicts` | dreamer(review); refused per row by lineage-closure exclusion | served |
@@ -983,7 +983,7 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
-*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status and edges planned for v0.5.2 · [releases](../product/releases.md)*
+*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status transitions and the policy, pending transitions and brief fields since v0.5.2 · [releases](../product/releases.md)*
 
 Reads require reader effective access on the node, and nodes outside scope are absent
 (`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
@@ -996,13 +996,13 @@ edges touching a node are read, proposed and ratified on the [edges](#edges) fam
 | Endpoint | Returns / does |
 |---|---|
 | `GET /v2/workareas?path=<ltree>` | Resolve a node by derived path. Grants bind to node ids, never paths, and no reference field accepts a path ([names](#names-and-ids)); this is the lookup that bridges the two. |
-| `GET /v2/workareas/{workarea}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. The review policy in force and the pending transitions are designed fields of this read (`policy`, `pending_transitions` under `x-oml-designed-fields`); the status route `/v2/workareas/{workarea}/status`, which carried them as a second read of the same node, is removed ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
+| `GET /v2/workareas/{workarea}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. It also serves `policy`, the review policy in force, `pending_transitions`, the node's live proposals in proposal order, each naming its proposing key only to that key, and `brief`, `{items, budget}`: the workarea's ratified brief as the key reads it, in ratification order, cut by `brief.max_tokens` under recall's prefix rule, empty for an admin key (*since v0.5.2*; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3, d8, d9). The status route `/v2/workareas/{workarea}/status`, which carried the first two as a second read of the same node, is removed ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
 | `GET /v2/workareas/{workarea}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
 | `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent, name, crew?, prefix?}`, `parent_id` refused naming `parent` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7) — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `prefix` is a designed field, refused with `request.validation` until vocabulary workareas are built. Refused under a `validated` parent (`workarea.frozen`). *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d6):* a writer user key may also create, under a parent inside its own user root where its effective access confers `writer`, `parent` defaulting to that root, refused on the parent by the ordinary refusal order; `name` is then unique within the user's root; the `Workarea` object serves `user_root`. |
 | `POST /v2/workareas/{workarea}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
 | `POST /v2/workareas/{workarea}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the workarea. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
-| `POST /v2/workareas/{workarea}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
-| `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot ([workareas.md](../architecture/workareas.md) transition matrix). |
+| `POST /v2/workareas/{workarea}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`; any other `to` is `request.validation` naming `/to`. Backward does not exist; `validated` is refused while any child is not validated, and on a user root (`workarea.transition_refused`). → `202`, pending, the `Transition`. *Since v0.5.2.* |
+| `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot and `same_user` ([workareas.md](../architecture/workareas.md) transition matrix). → `200`, the ratified `Transition`. *Since v0.5.2.* |
 
 ## Crews
 
@@ -1024,7 +1024,7 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 
 ## Edges
 
-*Planned for v0.5.2 · [releases](../product/releases.md)*
+*Available since v0.5.2 for `kind` claim and brief; `kind` workarea designed · [releases](../product/releases.md) · [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d4, d7*
 
 Claim↔claim and workarea↔workarea connections are one designed family of three operations, keyed
 by `kind` ∈ `claim` | `workarea`, each kind keeping its own authority, refusal codes and journal

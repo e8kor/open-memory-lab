@@ -17,10 +17,11 @@ use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
     UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
 };
+use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, VerifyError, verify_chain,
+    SignedEnvelope, VerifyError, WorkareaStatus, ratifier_is_proposer, verify_chain,
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
@@ -28,14 +29,15 @@ use oml_app::ports::{
     JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, WebStore,
     claim_subject,
 };
-use oml_app::types::{AdminSearch, AdminState, PinOutcome, QueueDepth, WebEntry, WebSessionRecord};
 use oml_app::types::{
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
+    AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
+    ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
     DenialRecord, DocumentCaching, GrantRecord, GuardrailFields, HIT_KINDS, KeyAccess, KeyRecord,
     KeyReferences, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
-    OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport,
-    TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord, WorkareaRef,
+    OAuthClientRecord, PROVIDER_TENANT, PinOutcome, QueueDepth, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -473,6 +475,58 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
      ORDER BY score DESC, m.id ASC \
      LIMIT $6";
 
+/// The lineage widening a `claim_edge.proposed` fold runs after its
+/// INSERT, binding `$1` the tenant, `$2` the edge's source and `$3` its
+/// target (the reading [`MetadataFold::ClaimEdgeProposed`] names; ADR-0001
+/// d2). `component` is every version connected to either endpoint through
+/// the tenant's claim edges, followed from either end, the new edge
+/// included; `reached` is `component` and every version that reaches it
+/// through `derives_from`, child to parent, and claim edges; each version
+/// in `reached` gains the union of `component`'s flattened closures,
+/// sorted and deduplicated: principals in byte order, as the application
+/// sorts them, and key ids in uuid order. Every scan of `memories` names
+/// `m.tenant_id = $1`, so the plan keeps the tenant's partition alone
+/// (ADR-0034 d11, d13); row security stays the fence. The fold runs it
+/// under a custom plan, which prunes the UPDATE's targets too. Exported so
+/// the suite plans the statement the adapter runs.
+pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
+     edge_adjacent(a, b) AS ( \
+         SELECT e.src_artifact_id, e.dst_artifact_id FROM claim_edges e \
+          WHERE e.tenant_id = $1 \
+         UNION ALL \
+         SELECT e.dst_artifact_id, e.src_artifact_id FROM claim_edges e \
+          WHERE e.tenant_id = $1), \
+     component(id) AS ( \
+         SELECT unnest(ARRAY[$2::uuid, $3::uuid]) \
+         UNION \
+         SELECT j.b FROM component c JOIN edge_adjacent j ON j.a = c.id), \
+     joined AS ( \
+         SELECT \
+           ARRAY(SELECT p FROM memories m, unnest(m.lineage_principals) p \
+                  WHERE m.tenant_id = $1 AND m.id IN (SELECT id FROM component)) \
+             AS principals, \
+           ARRAY(SELECT k FROM memories m, unnest(m.lineage_key_ids) k \
+                  WHERE m.tenant_id = $1 AND m.id IN (SELECT id FROM component)) \
+             AS key_ids), \
+     reach_adjacent(a, b) AS ( \
+         SELECT parent, m.id FROM memories m, unnest(m.derives_from) parent \
+          WHERE m.tenant_id = $1 \
+         UNION ALL \
+         SELECT a, b FROM edge_adjacent), \
+     reached(id) AS ( \
+         SELECT id FROM component \
+         UNION \
+         SELECT j.b FROM reached r JOIN reach_adjacent j ON j.a = r.id) \
+     UPDATE memories m SET \
+       lineage_principals = ARRAY( \
+           SELECT p FROM unnest(m.lineage_principals || joined.principals) p \
+            GROUP BY p ORDER BY p COLLATE \"C\"), \
+       lineage_key_ids = ARRAY( \
+           SELECT k FROM unnest(m.lineage_key_ids || joined.key_ids) k \
+            GROUP BY k ORDER BY k) \
+     FROM joined \
+     WHERE m.tenant_id = $1 AND m.id IN (SELECT id FROM reached)";
+
 /// The Postgres `JournalStore`.
 #[derive(Debug, Clone)]
 pub struct PgStore {
@@ -659,11 +713,61 @@ impl PgStore {
         tx.commit().await.map_err(backend)?;
         rows.iter().map(workarea_from_row).collect()
     }
+
+    /// One transition read under the tenant's RLS context: `sql` binds the
+    /// tenant as `$1` and one id as `$2` and selects [`TRANSITION_COLUMNS`].
+    async fn transition_rows(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        sql: &str,
+    ) -> Result<Vec<TransitionRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(sql)
+            .bind(tenant_id)
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(transition_from_row).collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Small conversions between the port's types and the schema's columns
 // ---------------------------------------------------------------------------
+
+/// The `workarea_transitions` columns a transition read selects.
+const TRANSITION_COLUMNS: &str = "id, tenant_id, workarea_id, from_status, to_status, state, \
+     proposer_key_id, proposer_principal, ratifier_key_id";
+
+/// A `workarea_transitions` row as the port's record; a status or state
+/// word the record does not spell fails closed.
+fn transition_from_row(row: &PgRow) -> Result<TransitionRecord, StoreError> {
+    let transition_id: Uuid = row.try_get("id").map_err(backend)?;
+    let status = |column: &str| -> Result<WorkareaStatus, StoreError> {
+        let word: String = row.try_get(column).map_err(backend)?;
+        WorkareaStatus::parse(&word).ok_or_else(|| {
+            StoreError::Backend(format!("transition {transition_id} has {column} {word:?}"))
+        })
+    };
+    let state: String = row.try_get("state").map_err(backend)?;
+    Ok(TransitionRecord {
+        transition_id,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        workarea_id: row.try_get("workarea_id").map_err(backend)?,
+        from: status("from_status")?,
+        to: status("to_status")?,
+        state: TransitionState::parse(&state).ok_or_else(|| {
+            StoreError::Backend(format!("transition {transition_id} has state {state:?}"))
+        })?,
+        proposer_key_id: row.try_get("proposer_key_id").map_err(backend)?,
+        proposer_principal: row.try_get("proposer_principal").map_err(backend)?,
+        ratifier_key_id: row.try_get("ratifier_key_id").map_err(backend)?,
+    })
+}
 
 fn backend<E: std::fmt::Display>(e: E) -> StoreError {
     StoreError::Backend(e.to_string())
@@ -868,7 +972,7 @@ fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
 /// The workarea columns every workarea read selects (unqualified: the
 /// recursive walks select them from their CTE).
 const WORKAREA_COLUMNS: &str =
-    "id, tenant_id, parent_id, name, crew, crew_id, user_root, namespace_root_id";
+    "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id";
 
 /// A workarea row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it
@@ -888,6 +992,12 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
                  names before it serves (ADR-0026 d11)"
             ))
         })?,
+        status: {
+            let status: String = row.try_get("status").map_err(backend)?;
+            WorkareaStatus::parse(&status).ok_or_else(|| {
+                StoreError::Backend(format!("workarea {workarea_id} has status {status:?}"))
+            })?
+        },
         crew: crew
             .map(serde_json::from_value)
             .transpose()
@@ -905,6 +1015,76 @@ const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_work
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed";
+
+/// A claim edge's columns, `e` the edge and `k` its proposer's key row;
+/// `created_at` comes back through `to_char` in the fixed-width signed
+/// form, as a memory's does.
+const CLAIM_EDGE_COLUMNS: &str = "e.id, e.tenant_id, e.src_artifact_id, e.dst_artifact_id, \
+     e.label, e.state, e.proposer_key_id, k.principal AS proposer_principal, \
+     e.ratifier_key_id, \
+     to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS created_at_signed";
+
+/// A claim-edge row as the port's record; a state outside the schema's
+/// CHECK is the backend's refusal.
+fn claim_edge_from_row(row: &PgRow) -> Result<ClaimEdgeRecord, StoreError> {
+    let state: String = row.try_get("state").map_err(backend)?;
+    let created: String = row.try_get("created_at_signed").map_err(backend)?;
+    Ok(ClaimEdgeRecord {
+        edge_id: row.try_get("id").map_err(backend)?,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        src_artifact_id: row.try_get("src_artifact_id").map_err(backend)?,
+        dst_artifact_id: row.try_get("dst_artifact_id").map_err(backend)?,
+        label: row.try_get("label").map_err(backend)?,
+        state: match state.as_str() {
+            "pending" => EdgeState::Pending,
+            "ratified" => EdgeState::Ratified,
+            other => {
+                return Err(StoreError::Backend(format!(
+                    "unknown claim edge state {other:?}"
+                )));
+            }
+        },
+        proposer_key_id: row.try_get("proposer_key_id").map_err(backend)?,
+        proposer_principal: row.try_get("proposer_principal").map_err(backend)?,
+        ratifier_key_id: row.try_get("ratifier_key_id").map_err(backend)?,
+        created_at: EventTime::parse(&created).map_err(backend)?,
+    })
+}
+
+const BRIEF_EDGE_COLUMNS: &str = "e.id, e.tenant_id, e.artifact_id, e.workarea_id, e.state, \
+     e.proposer_key_id, k.principal AS proposer_principal, e.ratifier_key_id, e.ratified_seq, \
+     to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS created_at_signed";
+
+/// A brief-edge row as the port's record.
+fn brief_edge_from_row(row: &PgRow) -> Result<BriefEdgeRecord, StoreError> {
+    let state: String = row.try_get("state").map_err(backend)?;
+    let created: String = row.try_get("created_at_signed").map_err(backend)?;
+    let ratified_seq: Option<i64> = row.try_get("ratified_seq").map_err(backend)?;
+    Ok(BriefEdgeRecord {
+        edge_id: row.try_get("id").map_err(backend)?,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        artifact_id: row.try_get("artifact_id").map_err(backend)?,
+        workarea_id: row.try_get("workarea_id").map_err(backend)?,
+        state: match state.as_str() {
+            "pending" => EdgeState::Pending,
+            "ratified" => EdgeState::Ratified,
+            other => {
+                return Err(StoreError::Backend(format!(
+                    "unknown brief edge state {other:?}"
+                )));
+            }
+        },
+        proposer_key_id: row.try_get("proposer_key_id").map_err(backend)?,
+        proposer_principal: row.try_get("proposer_principal").map_err(backend)?,
+        ratifier_key_id: row.try_get("ratifier_key_id").map_err(backend)?,
+        created_at: EventTime::parse(&created).map_err(backend)?,
+        ratified_seq: ratified_seq
+            .map(|s| u64::try_from(s).map_err(backend))
+            .transpose()?,
+    })
+}
 
 /// A key row as the port's record. A provider-level row names no tenant
 /// (postgres-schema.md api_keys): it resolves under the provider tenant, so
@@ -1208,6 +1388,164 @@ async fn supersede_tip(
     promote_memory(tx, tenant_id, successor, at).await
 }
 
+/// The fold of `claim_edge.proposed`: the edge row, then the lineage
+/// widening, [`WIDEN_LINEAGE`], in the same transaction, so no edge is
+/// stored that the review queue's exclusion would not see (ADR-0001 d2).
+/// An edge that is not pending with no ratifier, or whose `created_at` is
+/// not its event's `at`, is refused before any write. An id the store
+/// holds, another tenant's row (row security's WITH CHECK), and an endpoint
+/// or proposer key the tenant does not hold (23503 from the tenant-keyed
+/// foreign keys) are the backend's refusals, as any fold's are (ADR-0034
+/// d12); the application has read both endpoints, so the last does not
+/// occur.
+async fn propose_claim_edge(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    edge: &ClaimEdgeRecord,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    if edge.state != EdgeState::Pending || edge.ratifier_key_id.is_some() {
+        return Err(StoreError::Backend(format!(
+            "claim edge {} is proposed pending, with no ratifier",
+            edge.edge_id
+        )));
+    }
+    if edge.created_at != *at {
+        return Err(StoreError::Backend(format!(
+            "claim edge {} is created at its claim_edge.proposed event's at",
+            edge.edge_id
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO claim_edges (id, tenant_id, src_artifact_id, dst_artifact_id, label, \
+         state, proposer_key_id, ratifier_key_id, created_at) \
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, NULL, ($7)::timestamptz)",
+    )
+    .bind(edge.edge_id)
+    .bind(edge.tenant_id)
+    .bind(edge.src_artifact_id)
+    .bind(edge.dst_artifact_id)
+    .bind(&edge.label)
+    .bind(edge.proposer_key_id)
+    .bind(at.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    // A custom plan prunes the UPDATE's targets to the tenant's partition
+    // at planning on every PostgreSQL version; a generic one, which the
+    // pool's prepared statement turns to after five runs, still names every
+    // partition as a target on PostgreSQL 17, opening them though it scans
+    // none (ADR-0034 d11).
+    sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    sqlx::query(WIDEN_LINEAGE)
+        .bind(tenant_id)
+        .bind(edge.src_artifact_id)
+        .bind(edge.dst_artifact_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    sqlx::query("SET LOCAL plan_cache_mode = DEFAULT")
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
+/// The fold of a claim-edge `review.ratify`: the compare-and-set turns a
+/// pending edge of this tenant ratified by `ratifier_key_id`; a zero row
+/// count refuses the commit with [`StoreError::EdgeNotPending`], and its
+/// transaction rolls back, journal row included, as [`supersede_tip`]'s
+/// does. A ratifier equal to the proposer (`claim_edges_ratifier_is_not_proposer`)
+/// and a key the tenant does not hold (23503) are the backend's refusals
+/// (postgres-schema.md `claim_edges`; ADR-0021 d5; ADR-0012).
+async fn ratify_claim_edge(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    edge_id: Uuid,
+    ratifier_key_id: Uuid,
+) -> Result<(), StoreError> {
+    let ratified = sqlx::query(
+        "UPDATE claim_edges SET state = 'ratified', ratifier_key_id = $3 \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'pending'",
+    )
+    .bind(tenant_id)
+    .bind(edge_id)
+    .bind(ratifier_key_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if ratified.rows_affected() != 1 {
+        return Err(StoreError::EdgeNotPending { edge_id });
+    }
+    Ok(())
+}
+
+/// The fold of `brief_edge.proposed`: the pending row, created at its
+/// event's `at`; the keys refuse a claim, workarea or proposer of another
+/// tenant (postgres-schema.md `brief_edges`; ADR-0046 d7).
+async fn propose_brief_edge(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    edge: &BriefEdgeRecord,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    if edge.state != EdgeState::Pending
+        || edge.ratifier_key_id.is_some()
+        || edge.ratified_seq.is_some()
+        || edge.created_at != *at
+    {
+        return Err(StoreError::Backend(format!(
+            "brief edge {} is proposed pending at its event's at",
+            edge.edge_id
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO brief_edges (id, tenant_id, artifact_id, workarea_id, state, \
+         proposer_key_id, ratifier_key_id, ratified_seq, created_at) \
+         VALUES ($1, $2, $3, $4, 'pending', $5, NULL, NULL, ($6)::timestamptz)",
+    )
+    .bind(edge.edge_id)
+    .bind(tenant_id)
+    .bind(edge.artifact_id)
+    .bind(edge.workarea_id)
+    .bind(edge.proposer_key_id)
+    .bind(at.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+/// The fold of a brief edge's `review.ratify`: the compare-and-set turns a
+/// pending edge of this tenant ratified at `seq`; a zero row count refuses
+/// the commit with [`StoreError::EdgeNotPending`] (ADR-0046 d8).
+async fn ratify_brief_edge(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    edge_id: Uuid,
+    ratifier_key_id: Uuid,
+    seq: i64,
+) -> Result<(), StoreError> {
+    let ratified = sqlx::query(
+        "UPDATE brief_edges SET state = 'ratified', ratifier_key_id = $3, ratified_seq = $4 \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'pending'",
+    )
+    .bind(tenant_id)
+    .bind(edge_id)
+    .bind(ratifier_key_id)
+    .bind(seq)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if ratified.rows_affected() != 1 {
+        return Err(StoreError::EdgeNotPending { edge_id });
+    }
+    Ok(())
+}
+
 /// The fold of `system.names_assigned` into the columns 0006 added: each
 /// crew record inserted, each listed row — the tenant, its workareas, its
 /// keys — named where its `name` is still NULL, each listed workarea
@@ -1341,12 +1679,11 @@ async fn apply_fold(
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
         MetadataFold::WorkareaCreated(w) => {
-            // No status transition is built, so the status stored is the one
-            // the workarea read serves: the universe root's permanent
-            // 'committed', every other node's 'development'. The path is the
-            // parent's with this node's name appended, the root's its name
-            // alone (ADR-0026 d7); a parent the lead has not named yet has
-            // no path, and neither does its child until the naming fold. A
+            // The status stored is the record's, the one column every
+            // workarea read serves (ADR-0009 d1). The path is the parent's
+            // with this node's name appended, the root's its name alone
+            // (ADR-0026 d7); a parent the lead has not named yet has no
+            // path, and neither does its child until the naming fold. A
             // parent the tenant does not hold, another tenant's node
             // included, meets the key (tenant_id, parent_id) and is the
             // backend's refusal, as any 23503 is (ADR-0034 d12).
@@ -1368,7 +1705,7 @@ async fn apply_fold(
             .bind(w.tenant_id)
             .bind(w.parent_id)
             .bind(w.name.as_str())
-            .bind(w.status())
+            .bind(w.status.as_str())
             .bind(crew)
             .bind(w.crew_id)
             .bind(w.user_root)
@@ -1704,7 +2041,211 @@ async fn apply_fold(
         } => {
             supersede_tip(tx, tenant_id, successor, replaced, at).await?;
         }
+        MetadataFold::TransitionProposed(p) => {
+            // The proposer principal must be the one the proposing key's
+            // row holds, or the ratifying commit's R2 check would compare
+            // against a principal no key holds (ADR-0010 R2). The schema
+            // refuses a step other than one rung forward, a ratified row
+            // with no ratifier or no seq, and a node or key of another
+            // tenant (0017_workarea_transitions.sql); the record's state is
+            // written as carried, so a record that is not pending meets
+            // those checks rather than being coerced.
+            let principal: Option<String> = sqlx::query_scalar(
+                "SELECT principal FROM api_keys WHERE tenant_id = $1 AND id = $2",
+            )
+            .bind(tenant_id)
+            .bind(p.proposer_key_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if principal.as_deref() != Some(p.proposer_principal.as_str()) {
+                return Err(StoreError::Backend(format!(
+                    "transition {}'s proposer principal is not its proposing key's",
+                    p.transition_id
+                )));
+            }
+            sqlx::query(
+                "INSERT INTO workarea_transitions (id, tenant_id, workarea_id, from_status, \
+                 to_status, state, proposer_key_id, proposer_principal, ratifier_key_id, \
+                 proposed_seq) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            )
+            .bind(p.transition_id)
+            .bind(tenant_id)
+            .bind(p.workarea_id)
+            .bind(p.from.as_str())
+            .bind(p.to.as_str())
+            .bind(p.state.as_str())
+            .bind(p.proposer_key_id)
+            .bind(&p.proposer_principal)
+            .bind(p.ratifier_key_id)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::TransitionRatified {
+            transition_id,
+            workarea_id,
+            to,
+            ratifier_key_id,
+        } => {
+            ratify_transition(
+                tx,
+                tenant_id,
+                seq,
+                transition_id,
+                workarea_id,
+                to,
+                ratifier_key_id,
+            )
+            .await?;
+        }
+        MetadataFold::ClaimEdgeProposed(edge) => {
+            propose_claim_edge(tx, tenant_id, &edge, at).await?;
+        }
+        MetadataFold::ClaimEdgeRatified {
+            edge_id,
+            ratifier_key_id,
+        } => {
+            ratify_claim_edge(tx, tenant_id, edge_id, ratifier_key_id).await?;
+        }
+        MetadataFold::BriefEdgeProposed(edge) => {
+            propose_brief_edge(tx, tenant_id, &edge, at).await?;
+        }
+        MetadataFold::BriefEdgeRatified {
+            edge_id,
+            ratifier_key_id,
+        } => {
+            ratify_brief_edge(tx, tenant_id, edge_id, ratifier_key_id, seq).await?;
+        }
     }
+    Ok(())
+}
+
+/// `workarea.status_transition`'s fold, under the chain lock the commit
+/// already holds. The node row and the proposal row are locked and read
+/// first, so nothing moves either between the re-checks and the writes
+/// (workareas.md, ratification re-checks). A row that is not a proposal on
+/// this node with this `to`, and a ratifier key the tenant does not hold,
+/// are defects; a row already ratified or whose `from` is no longer the
+/// node's status is [`StoreError::TransitionStale`]; a ratifier that is the
+/// proposing key or holds the proposer's principal, read from its key row
+/// here, is [`StoreError::RatifierIsProposer`]; and a step to `validated`
+/// that finds a direct child not `validated` is
+/// [`StoreError::ChildrenNotValidated`]. Any refusal refuses the commit,
+/// which writes nothing. The schema still refuses a ratifier that is the
+/// proposing key and a universe root moved off `committed` (ADR-0009 d1,
+/// d3, d4; ADR-0010 R2).
+async fn ratify_transition(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    seq: i64,
+    transition_id: Uuid,
+    workarea_id: Uuid,
+    to: WorkareaStatus,
+    ratifier_key_id: Uuid,
+) -> Result<(), StoreError> {
+    let defect = || {
+        StoreError::Backend(format!(
+            "transition {transition_id} is not a proposal on workarea {workarea_id} to {}",
+            to.as_str()
+        ))
+    };
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM workareas WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(workarea_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
+    let Some(current) = status else {
+        return Err(defect());
+    };
+    let row: Option<(Uuid, String, String, String, Uuid, String)> = sqlx::query_as(
+        "SELECT workarea_id, from_status, to_status, state, proposer_key_id, \
+         proposer_principal FROM workarea_transitions \
+         WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(transition_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
+    let Some((row_workarea, from, row_to, state, proposer_key_id, proposer_principal)) = row else {
+        return Err(defect());
+    };
+    if row_workarea != workarea_id || row_to != to.as_str() {
+        return Err(defect());
+    }
+    if state != TransitionState::Pending.as_str() || from != current {
+        let from = WorkareaStatus::parse(&from).ok_or_else(|| {
+            StoreError::Backend(format!("transition {transition_id} has from {from:?}"))
+        })?;
+        return Err(StoreError::TransitionStale {
+            transition_id,
+            workarea_id,
+            from,
+            to,
+        });
+    }
+    let ratifier_principal: Option<String> =
+        sqlx::query_scalar("SELECT principal FROM api_keys WHERE tenant_id = $1 AND id = $2")
+            .bind(tenant_id)
+            .bind(ratifier_key_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(backend)?;
+    let Some(ratifier_principal) = ratifier_principal else {
+        return Err(StoreError::Backend(format!(
+            "key {ratifier_key_id} is not held by this tenant"
+        )));
+    };
+    if ratifier_is_proposer(
+        proposer_key_id,
+        &proposer_principal,
+        ratifier_key_id,
+        &ratifier_principal,
+    ) {
+        return Err(StoreError::RatifierIsProposer { transition_id });
+    }
+    if to == WorkareaStatus::Validated {
+        // Under the chain lock every child create and reparent waits for
+        // this commit, so the read sees the subtree as it is (ADR-0009 d4).
+        let short: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM workareas WHERE tenant_id = $1 AND parent_id = $2 \
+             AND status <> 'validated' LIMIT 1",
+        )
+        .bind(tenant_id)
+        .bind(workarea_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(backend)?;
+        if short.is_some() {
+            return Err(StoreError::ChildrenNotValidated {
+                transition_id,
+                workarea_id,
+            });
+        }
+    }
+    sqlx::query(
+        "UPDATE workarea_transitions SET state = 'ratified', ratifier_key_id = $3, \
+         ratified_seq = $4 WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(transition_id)
+    .bind(ratifier_key_id)
+    .bind(seq)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    sqlx::query("UPDATE workareas SET status = $3 WHERE tenant_id = $1 AND id = $2")
+        .bind(tenant_id)
+        .bind(workarea_id)
+        .bind(to.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
     Ok(())
 }
 
@@ -3055,7 +3596,7 @@ impl JournalStore for PgStore {
                  SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
-                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, w.crew_id, \
+                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
                         w.user_root, w.namespace_root_id, up.depth + 1 \
                    FROM workareas w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
@@ -3089,7 +3630,7 @@ impl JournalStore for PgStore {
                  SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
-                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, w.crew_id, \
+                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
                         w.user_root, w.namespace_root_id, down.depth + 1 \
                    FROM workareas w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \
@@ -3111,6 +3652,36 @@ impl JournalStore for PgStore {
              ORDER BY name COLLATE \"C\" ASC, id ASC"
         );
         self.workarea_rows(tenant_id, workarea_id, &sql).await
+    }
+
+    async fn transition(
+        &self,
+        tenant_id: Uuid,
+        transition_id: Uuid,
+    ) -> Result<Option<TransitionRecord>, StoreError> {
+        let sql = format!(
+            "SELECT {TRANSITION_COLUMNS} FROM workarea_transitions \
+             WHERE tenant_id = $1 AND id = $2"
+        );
+        Ok(self
+            .transition_rows(tenant_id, transition_id, &sql)
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    async fn pending_transitions(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<TransitionRecord>, StoreError> {
+        // The index on (tenant_id, workarea_id, state) serves the filter.
+        let sql = format!(
+            "SELECT {TRANSITION_COLUMNS} FROM workarea_transitions \
+             WHERE tenant_id = $1 AND workarea_id = $2 AND state = 'pending' \
+             ORDER BY proposed_seq"
+        );
+        self.transition_rows(tenant_id, workarea_id, &sql).await
     }
 
     async fn idempotency_get(
@@ -3138,6 +3709,161 @@ impl JournalStore for PgStore {
             request_digest: String::from_utf8(digest_bytes).map_err(backend)?,
             response: response.unwrap_or(Value::Null),
         }))
+    }
+
+    async fn brief_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> Result<Option<BriefEdgeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {BRIEF_EDGE_COLUMNS} FROM brief_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             WHERE e.tenant_id = $1 AND e.id = $2"
+        ))
+        .bind(tenant_id)
+        .bind(edge_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(brief_edge_from_row).transpose()
+    }
+
+    async fn brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {BRIEF_EDGE_COLUMNS} FROM brief_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             WHERE e.tenant_id = $1 AND e.workarea_id = $2 \
+             ORDER BY e.created_at DESC, e.id DESC"
+        ))
+        .bind(tenant_id)
+        .bind(workarea_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(brief_edge_from_row).collect()
+    }
+
+    async fn claim_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> Result<Option<ClaimEdgeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {CLAIM_EDGE_COLUMNS} FROM claim_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             WHERE e.tenant_id = $1 AND e.id = $2"
+        ))
+        .bind(tenant_id)
+        .bind(edge_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(claim_edge_from_row).transpose()
+    }
+
+    async fn claim_edges(
+        &self,
+        tenant_id: Uuid,
+        selection: &ClaimEdgeSelection,
+        after: Option<&ClaimEdgePosition>,
+        limit: usize,
+    ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        // Each endpoint's row, its scan naming its tenant as every statement
+        // on memories does (ADR-0034 d13).
+        let mut sql = QueryBuilder::<Postgres>::new(format!(
+            "SELECT {CLAIM_EDGE_COLUMNS} FROM claim_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             JOIN memories s ON s.tenant_id = e.tenant_id AND s.id = e.src_artifact_id \
+             JOIN memories d ON d.tenant_id = e.tenant_id AND d.id = e.dst_artifact_id \
+             WHERE e.tenant_id = "
+        ));
+        sql.push_bind(tenant_id);
+        sql.push(" AND s.tenant_id = ")
+            .push_bind(tenant_id)
+            .push(" AND d.tenant_id = ")
+            .push_bind(tenant_id);
+        // Read scope: both endpoints in a reader node, each promoted or the
+        // key's own (roles-and-keys.md footnote 5).
+        for row in ["s", "d"] {
+            sql.push(format!(" AND {row}.workarea_id = ANY("))
+                .push_bind(selection.readable_nodes.clone())
+                .push(format!(
+                    "::uuid[]) AND ({row}.status = 'promoted' OR {row}.author_key_id = "
+                ))
+                .push_bind(selection.reader_key_id)
+                .push(")");
+        }
+        if let Some(artifact_id) = selection.artifact_id {
+            sql.push(" AND (e.src_artifact_id = ")
+                .push_bind(artifact_id)
+                .push(" OR e.dst_artifact_id = ")
+                .push_bind(artifact_id)
+                .push(")");
+        }
+        if let Some(within) = &selection.within {
+            sql.push(" AND (s.workarea_id = ANY(")
+                .push_bind(within.clone())
+                .push("::uuid[]) OR d.workarea_id = ANY(")
+                .push_bind(within.clone())
+                .push("::uuid[]))");
+        }
+        // Keyset: strictly after the position in the listing's order.
+        if let Some(after) = after {
+            sql.push(" AND (e.created_at, e.id) < ((")
+                .push_bind(after.created_at.as_str().to_owned())
+                .push(")::timestamptz, ")
+                .push_bind(after.edge_id)
+                .push(")");
+        }
+        sql.push(" ORDER BY e.created_at DESC, e.id DESC LIMIT ")
+            .push_bind(limit);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sql.build().fetch_all(&mut *tx).await.map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(claim_edge_from_row).collect()
+    }
+
+    async fn ratified_term_edges(
+        &self,
+        tenant_id: Uuid,
+        label: &str,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // Both endpoints are terms; each memories scan names its tenant
+        // (ADR-0034 d13). Byte order on the pair, as the port asks.
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT s.claim_key, d.claim_key FROM claim_edges e \
+             JOIN memories s ON s.tenant_id = $1 AND s.id = e.src_artifact_id \
+                            AND s.kind = 'term' \
+             JOIN memories d ON d.tenant_id = $1 AND d.id = e.dst_artifact_id \
+                            AND d.kind = 'term' \
+             WHERE e.tenant_id = $1 AND e.state = 'ratified' AND e.label = $2 \
+             ORDER BY s.claim_key COLLATE \"C\", d.claim_key COLLATE \"C\"",
+        )
+        .bind(tenant_id)
+        .bind(label)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(rows)
     }
 }
 

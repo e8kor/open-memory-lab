@@ -6,18 +6,22 @@
 //! structure reads (ADR-0026 d4–d6, d8, d9, d11, d15).
 
 use oml_app::App;
+use oml_app::cursor::CursorError;
 use oml_app::domain::access::{Covers, admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
+use oml_app::domain::claim_edges::{EdgeField, LabelRefusal};
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::oauth::{
     AuthorizationCodeInvalid, AuthorizationExpired, AuthorizationRequest, CLAUDE_CALLBACK,
     ConnectCode, ConnectRefused, ConnectionState, Issuer, RefreshInvalid, Refusal, RevokedCause,
     Token, Validation, open_request,
 };
+use oml_app::domain::vocab::OmlLabel;
+use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::{
-    EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, derive_claim_key, event_types, next_envelope, sha256_digest_string, sign,
-    verify_chain,
+    EventDraft, EventTime, FrozenOp, HeldBy, KeySet, LadderRefusal, MemoryKind, MemoryStatus, Role,
+    Sha256Hash, SignedEnvelope, WorkareaStatus, canonical_bytes, derive_claim_key, event_types,
+    next_envelope, sha256_digest_string, sign, verify_chain,
 };
 use oml_app::doubles::{
     FixedClock, MarkerScanner, MemDocuments, MemSigner, MemStore, PlainSealer, SeqIdGen,
@@ -29,11 +33,13 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     AppError, AuthorizationRecord, AuthorizeOutcome, AuthorizeParams, BootstrapRequest,
-    BootstrapResult, ClientAuthentication, ClientKind, CodeEntryOutcome, ConfirmAction,
-    ConfirmOutcome, ConfirmationView, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential,
-    CrewCreateRequest, CrewUpdate, ExchangeForm, GrantRequest, IssueKeyRequest, IssuedKey,
-    KeyRecord, ListRequest, MintedToken, NamingRefusal, RecallRequest, RecallResult, RefreshForm,
-    SubmitRequest, SubmitVerb, SupersedeRequest, TokenPair, Verdict, VerdictRequest, VersionRef,
+    BootstrapResult, ClaimEdgePage, ClaimEdgeQuery, ClaimEdgeRecord, ClientAuthentication,
+    ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationView, ConnectGrant,
+    ConnectOutcome, ConnectionRecord, Credential, CrewCreateRequest, CrewUpdate, EdgeRatification,
+    ExchangeForm, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest, IssuedKey,
+    KeyRecord, ListRequest, MintedToken, NamingRefusal, ProposeBriefEdge, ProposeClaimEdge,
+    RecallRequest, RecallResult, RefreshForm, SubmitRequest, SubmitVerb, SupersedeRequest,
+    TokenPair, TransitionState, TransitionView, Verdict, VerdictRequest, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -2413,7 +2419,7 @@ async fn workarea_info_lists_only_readable_children() {
     assert_eq!(
         info.children
             .iter()
-            .map(|c| (c.workarea_id, c.name.as_str(), c.status()))
+            .map(|c| (c.workarea_id, c.name.as_str(), c.status.as_str()))
             .collect::<Vec<_>>(),
         vec![
             (a_zulu, "a-zulu", "development"),
@@ -2506,6 +2512,56 @@ async fn an_omitted_workarea_resolves_to_the_default_only_after_the_verb_ceiling
     );
 }
 
+/// The status is one stored column: `workarea.create` stores `development`
+/// on a new node and the tenant's bootstrap stores `committed` on the
+/// universe root, the read serves what the row stores, and each create
+/// event's payload spells the status it stored (ADR-0009 d1).
+#[tokio::test]
+async fn a_created_workarea_is_development_and_the_universe_root_is_committed_as_stored() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let t = boot.tenant_id;
+
+    let root = store
+        .workarea(t, boot.root_workarea_id)
+        .await
+        .expect("read")
+        .expect("the root");
+    assert_eq!(root.status, WorkareaStatus::Committed);
+    let created = store
+        .workarea(t, crew)
+        .await
+        .expect("read")
+        .expect("the crew node");
+    assert_eq!(created.status, WorkareaStatus::Development);
+
+    let stored: Vec<(String, String)> = journal(&store, t)
+        .await
+        .iter()
+        .filter(|e| e.envelope.event_type == event_types::WORKAREA_CREATE)
+        .map(|e| {
+            (
+                e.envelope.payload["workarea_id"]
+                    .as_str()
+                    .expect("id")
+                    .to_owned(),
+                e.envelope.payload["status"]
+                    .as_str()
+                    .expect("status")
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        stored,
+        vec![
+            (boot.root_workarea_id.to_string(), "committed".to_owned()),
+            (crew.to_string(), "development".to_owned()),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn the_derived_path_follows_parent_ids_from_universe() {
     let app = app();
@@ -2521,7 +2577,7 @@ async fn the_derived_path_follows_parent_ids_from_universe() {
     assert_eq!(root.path, "universe");
     assert_eq!(root.workarea.parent_id, None);
     // The universe root is permanently committed (workareas.md).
-    assert_eq!(root.workarea.status(), "committed");
+    assert_eq!(root.workarea.status, WorkareaStatus::Committed);
 
     let leaf = app
         .workarea_info(&reader.value, Some(quarter.into()))
@@ -2529,7 +2585,7 @@ async fn the_derived_path_follows_parent_ids_from_universe() {
         .expect("the leaf");
     assert_eq!(leaf.path, "universe.crew.q1-2027");
     assert_eq!(leaf.workarea.parent_id, Some(crew));
-    assert_eq!(leaf.workarea.status(), "development");
+    assert_eq!(leaf.workarea.status, WorkareaStatus::Development);
     let middle = app
         .workarea_info(&reader.value, Some(crew.into()))
         .await
@@ -8619,7 +8675,6 @@ async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workarea_
 // ---------------------------------------------------------------------------
 
 use oml_app::domain::guardrail::{GuardrailScope, LOAD_WARNING, SET_CAP, Severity};
-use oml_app::types::{GuardrailRequest, GuardrailSet};
 
 fn deny_push() -> Value {
     json!({"rule": "oml-gr/1", "tool": "shell", "command": ["git", "push", "*"], "effect": "deny"})
@@ -9490,4 +9545,3610 @@ async fn the_read_logs_the_served_ids() {
         set.set_digest,
         oml_app::domain::guardrail::set_digest(&versions)
     );
+}
+
+// -- the status ladder: proposing a forward transition (ADR-0009 d3, d4;
+// ADR-0010) ----------------------------------------------------------------
+
+/// Ratifies `proposal` by `ratifier` straight through the store, sealing the
+/// `workarea.status_transition` on the journal's head with the test key: the
+/// ratify use case is a later step, and these tests need a node moved up the
+/// ladder to propose on.
+async fn ratify_in_store(
+    store: &MemStore,
+    proposal: &oml_app::types::TransitionRecord,
+    ratifier: Uuid,
+) {
+    let head = journal(store, proposal.tenant_id)
+        .await
+        .pop()
+        .expect("a chain to ratify on");
+    let draft = EventDraft {
+        tenant_id: proposal.tenant_id,
+        event_id: Uuid::from_u128(0xF000_0000 + u128::from(head.envelope.seq)),
+        event_type: event_types::WORKAREA_STATUS_TRANSITION.to_owned(),
+        principal: "fixture-ratifier".to_owned(),
+        api_key_id: Some(ratifier),
+        at: head.envelope.at.clone(),
+        payload: json!({
+            "workarea_id": proposal.workarea_id.to_string(),
+            "to": proposal.to.as_str(),
+            "transition_id": proposal.transition_id.to_string(),
+            "ratified_by_key_id": ratifier.to_string(),
+        }),
+    };
+    let envelope = next_envelope(Some(&head), draft).expect("a lawful draft");
+    let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+    store
+        .commit(oml_app::ports::CommitRequest {
+            outbox: oml_app::ports::OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
+            fold: oml_app::ports::MetadataFold::TransitionRatified {
+                transition_id: proposal.transition_id,
+                workarea_id: proposal.workarea_id,
+                to: proposal.to,
+                ratifier_key_id: ratifier,
+            },
+            idempotency: None,
+        })
+        .await
+        .expect("the ratification commits");
+}
+
+/// Moves `node` of `tenant` from its status to `to` one rung at a time: the
+/// admin proposes, a second identity ratifies.
+async fn climb(
+    app: &TestApp,
+    store: &MemStore,
+    (tenant, admin, ratifier): (Uuid, &str, Uuid),
+    node: Uuid,
+    to: WorkareaStatus,
+) {
+    let current = store
+        .workarea(tenant, node)
+        .await
+        .expect("read")
+        .expect("the node")
+        .status;
+    for rung in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+        if rung <= current || rung > to {
+            continue;
+        }
+        let proposal = app
+            .propose_transition(admin, node.into(), rung)
+            .await
+            .expect("a forward proposal");
+        ratify_in_store(store, &proposal, ratifier).await;
+    }
+}
+
+/// An admin proposes on its key role: the proposal is a pending row naming
+/// the admin as proposer, the node keeps its status until a second identity
+/// ratifies, and exactly one `workarea.status_proposed` is journalled with
+/// the event catalog's payload (ADR-0009 d3; event-catalog.md).
+#[tokio::test]
+async fn an_admin_proposes_development_to_committed_and_it_stays_pending_with_one_status_proposed_event()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let t = boot.tenant_id;
+    let before = journal(&store, t).await.len();
+
+    let proposal = app
+        .propose_transition(
+            &boot.admin_key.value,
+            by_name("crew"),
+            WorkareaStatus::Committed,
+        )
+        .await
+        .expect("an admin proposes");
+    assert_eq!(
+        (
+            proposal.workarea_id,
+            proposal.from,
+            proposal.to,
+            proposal.state,
+            proposal.proposer_key_id,
+            proposal.proposer_principal.as_str(),
+            proposal.ratifier_key_id,
+        ),
+        (
+            crew,
+            WorkareaStatus::Development,
+            WorkareaStatus::Committed,
+            oml_app::types::TransitionState::Pending,
+            boot.admin_key.key_id,
+            "alice-admin",
+            None,
+        )
+    );
+    let node = store.workarea(t, crew).await.expect("read").expect("node");
+    assert_eq!(node.status, WorkareaStatus::Development, "it stays pending");
+    assert_eq!(
+        store.pending_transitions(t, crew).await.expect("read"),
+        vec![proposal.clone()]
+    );
+
+    let events = journal(&store, t).await;
+    assert_eq!(events.len(), before + 1);
+    let event = events.last().expect("the proposal event");
+    assert_eq!(
+        event.envelope.event_type,
+        event_types::WORKAREA_STATUS_PROPOSED
+    );
+    assert_eq!(event.envelope.api_key_id, Some(boot.admin_key.key_id));
+    assert_eq!(
+        event.envelope.payload,
+        json!({
+            "workarea_id": crew.to_string(),
+            "from": "development",
+            "to": "committed",
+            "transition_id": proposal.transition_id.to_string(),
+            "proposed_by_key_id": boot.admin_key.key_id.to_string(),
+        })
+    );
+}
+
+/// A dreamer key passes the verb ceiling and proposes where its effective
+/// access holds dreamer, here inherited from a grant on the parent
+/// (ADR-0009 d3; ADR-0010; roles-and-keys.md refusal order).
+#[tokio::test]
+async fn a_dreamer_with_dreamer_access_on_the_node_proposes_a_transition() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+
+    let proposal = app
+        .propose_transition(&dreamer.value, quarter.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a dreamer proposes");
+    assert_eq!(proposal.proposer_key_id, dreamer.key_id);
+    assert_eq!(proposal.proposer_principal, "dora");
+    assert_eq!(proposal.workarea_id, quarter);
+    assert_eq!(
+        store
+            .pending_transitions(boot.tenant_id, quarter)
+            .await
+            .expect("read"),
+        vec![proposal]
+    );
+}
+
+/// Step 1 of the refusal order reads no node: a writer or reader key is
+/// refused `access.verb_ceiling` whether the node exists or not, before any
+/// name resolves, and nothing is journalled (roles-and-keys.md refusal
+/// order; ADR-0010).
+#[tokio::test]
+async fn a_writer_or_reader_key_proposing_a_transition_is_refused_by_the_verb_ceiling_before_any_lookup()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let lookups = store.name_lookups();
+
+    for (key, role) in [(&writer, Role::Writer), (&reader, Role::Reader)] {
+        for node in [by_name("crew"), by_name("no-such-node")] {
+            let err = app
+                .propose_transition(&key.value, node, WorkareaStatus::Committed)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, AppError::VerbCeiling { role: r, .. } if r == role),
+                "{err:?}"
+            );
+        }
+    }
+    assert_eq!(store.name_lookups(), lookups, "no name resolved");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A dreamer key that reads the node but holds no dreamer role on it is
+/// refused `access.grant_refused` naming the node and `dreamer`
+/// (roles-and-keys.md refusal order, step 3).
+#[tokio::test]
+async fn a_dreamer_reading_but_not_dreaming_on_the_node_is_refused_with_needed_role_dreamer() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dreamer = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dora",
+        vec![grant(crew, Role::Reader)],
+    )
+    .await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .propose_transition(&dreamer.value, by_name("crew"), WorkareaStatus::Committed)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::GrantRefused { workarea_id, needed_role: Role::Dreamer } if workarea_id == crew
+        ),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// Outside its read access a dreamer cannot tell the node from absence: a
+/// sibling it holds no grant on, and a name no row holds, both answer
+/// `access.not_found` (roles-and-keys.md refusal order, step 2).
+#[tokio::test]
+async fn a_dreamer_outside_read_access_gets_not_found() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for node in [other.into(), by_name("other"), by_name("no-such-node")] {
+        let err = app
+            .propose_transition(&dreamer.value, node, WorkareaStatus::Committed)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// The ladder refuses before anything is sealed: the same rung, a skipped
+/// rung, and any status on the universe root each answer
+/// `workarea.transition_refused` with its reason, and the journal is
+/// unchanged (ADR-0009 d1, d3; errors.md).
+#[tokio::test]
+async fn proposing_committed_on_a_committed_node_validated_from_development_or_anything_on_universe_is_transition_refused_and_journals_nothing()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let ratifier = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let fresh = workarea(&app, admin, "fresh", boot.root_workarea_id).await;
+    climb(
+        &app,
+        &store,
+        (boot.tenant_id, admin, ratifier.key_id),
+        crew,
+        WorkareaStatus::Committed,
+    )
+    .await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let root = boot.root_workarea_id;
+    let cases = [
+        (
+            crew,
+            WorkareaStatus::Committed,
+            WorkareaStatus::Committed,
+            LadderRefusal::Same,
+        ),
+        (
+            fresh,
+            WorkareaStatus::Development,
+            WorkareaStatus::Validated,
+            LadderRefusal::Skipped,
+        ),
+        (
+            root,
+            WorkareaStatus::Committed,
+            WorkareaStatus::Development,
+            LadderRefusal::Universe,
+        ),
+        (
+            root,
+            WorkareaStatus::Committed,
+            WorkareaStatus::Committed,
+            LadderRefusal::Universe,
+        ),
+        (
+            root,
+            WorkareaStatus::Committed,
+            WorkareaStatus::Validated,
+            LadderRefusal::Universe,
+        ),
+    ];
+    for (node, from, to, reason) in cases {
+        let err = app
+            .propose_transition(admin, node.into(), to)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::TransitionRefused { workarea_id, from: f, to: t, reason: r }
+                    if workarea_id == node && f == from && t == to && r == reason
+            ),
+            "{node} {to:?}: {err:?}"
+        );
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A step to `validated` needs every child `validated`: with a child
+/// `committed` the proposal is refused `children_not_validated` and
+/// journals nothing (ADR-0009 d4).
+#[tokio::test]
+async fn validated_is_refused_while_a_child_is_committed() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let ratifier = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    for node in [crew, quarter] {
+        climb(
+            &app,
+            &store,
+            (boot.tenant_id, admin, ratifier.key_id),
+            node,
+            WorkareaStatus::Committed,
+        )
+        .await;
+    }
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::TransitionRefused {
+                workarea_id,
+                from: WorkareaStatus::Committed,
+                to: WorkareaStatus::Validated,
+                reason: LadderRefusal::ChildrenNotValidated,
+            } if workarea_id == crew
+        ),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+
+    // With the child validated, the same proposal is admitted.
+    climb(
+        &app,
+        &store,
+        (boot.tenant_id, admin, ratifier.key_id),
+        quarter,
+        WorkareaStatus::Validated,
+    )
+    .await;
+    app.propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .await
+        .expect("every child validated");
+}
+
+// -- the status ladder: ratifying a transition by a second identity
+// (ADR-0009 d3, d4; ADR-0010 R2) ------------------------------------------
+
+/// A dreamer key, held by a service, on `node`.
+async fn service_dreamer(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> IssuedKey {
+    app.issue_key(
+        admin,
+        &IssueKeyRequest {
+            held_by: Some(HeldBy::Service),
+            ..issue_req(Role::Dreamer, principal, vec![grant(node, Role::Dreamer)])
+        },
+    )
+    .await
+    .expect("issue a service key")
+}
+
+/// Asserts `err` is `workarea.transition_refused` on `node` with `reason`.
+fn assert_refused(err: &AppError, node: Uuid, reason: LadderRefusal) {
+    assert!(
+        matches!(
+            err,
+            AppError::TransitionRefused { workarea_id, reason: r, .. }
+                if *workarea_id == node && *r == reason
+        ),
+        "{err:?}"
+    );
+}
+
+/// A dreamer other than the proposer ratifies: the node's status becomes
+/// `to`, and exactly one `workarea.status_transition` is journalled, signed
+/// by the ratifier's principal and key, carrying the catalog's payload with
+/// the policy in force; a step to `validated` adds the precondition it
+/// evaluated, `children_all_validated` (ADR-0009 d3, d4; event-catalog.md).
+#[tokio::test]
+async fn a_second_dreamer_ratifies_and_the_workarea_becomes_committed_with_the_policy_snapshot_journalled()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let t = boot.tenant_id;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+
+    let proposal = app
+        .propose_transition(admin, by_name("crew"), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let before = journal(&store, t).await.len();
+    let record = app
+        .ratify_transition(&dora.value, by_name("crew"), proposal.transition_id)
+        .await
+        .expect("a second identity ratifies");
+    assert_eq!(
+        (record.workarea_id, record.status),
+        (crew, WorkareaStatus::Committed)
+    );
+    let node = store.workarea(t, crew).await.expect("read").expect("node");
+    assert_eq!(node.status, WorkareaStatus::Committed);
+    assert!(
+        store
+            .pending_transitions(t, crew)
+            .await
+            .expect("read")
+            .is_empty()
+    );
+
+    let events = journal(&store, t).await;
+    assert_eq!(events.len(), before + 1);
+    let event = events.last().expect("the ratification");
+    assert_eq!(
+        event.envelope.event_type,
+        event_types::WORKAREA_STATUS_TRANSITION
+    );
+    assert_eq!(event.envelope.principal, "dora");
+    assert_eq!(event.envelope.api_key_id, Some(dora.key_id));
+    assert_eq!(
+        event.envelope.payload,
+        json!({
+            "workarea_id": crew.to_string(),
+            "from": "development",
+            "to": "committed",
+            "transition_id": proposal.transition_id.to_string(),
+            "proposed_by_key_id": boot.admin_key.key_id.to_string(),
+            "ratified_by_key_id": dora.key_id.to_string(),
+            "same_user": false,
+            "policy_snapshot": { "k": 1, "required_roles": ["dreamer"] },
+        })
+    );
+
+    // The step to validated snapshots the precondition it evaluated.
+    let proposal = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .await
+        .expect("a proposal");
+    app.ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+        .await
+        .expect("ratified");
+    let event = journal(&store, t).await.pop().expect("the ratification");
+    assert_eq!(
+        event.envelope.payload["policy_snapshot"],
+        json!({ "k": 1, "required_roles": ["dreamer"], "children_all_validated": true })
+    );
+}
+
+/// R2: the key that proposed cannot ratify, and nothing is journalled
+/// (ADR-0009 d3; errors.md `review.ratifier_is_proposer`).
+#[tokio::test]
+async fn the_proposing_key_cannot_ratify_its_own_transition() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let dora = issue(&app, &boot.admin_key.value, Role::Dreamer, "dora", crew).await;
+    let proposal = app
+        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let node = store.workarea(boot.tenant_id, crew).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkareaStatus::Development);
+}
+
+/// R2 compares principals too: a second key of the proposing principal is
+/// the same identity (ADR-0009 d3; ADR-0010 R2).
+#[tokio::test]
+async fn a_second_key_of_the_proposing_principal_cannot_ratify() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora_again = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let proposal = app
+        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .ratify_transition(&dora_again.value, crew.into(), proposal.transition_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A `held_by: service` key, and a reader or writer key, are refused
+/// `access.verb_ceiling` before any name resolves or any transition is
+/// looked up (roles-and-keys.md refusal order; ADR-0010).
+#[tokio::test]
+async fn a_service_key_is_refused_ratification_by_the_verb_ceiling_before_any_lookup() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let service = service_dreamer(&app, admin, "reconciler", crew).await;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let proposal = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let before = journal(&store, boot.tenant_id).await.len();
+    let lookups = store.name_lookups();
+
+    for (key, role) in [
+        (&service, Role::Dreamer),
+        (&writer, Role::Writer),
+        (&reader, Role::Reader),
+    ] {
+        for (node, id) in [
+            (by_name("crew"), proposal.transition_id),
+            (by_name("no-such-node"), Uuid::from_u128(0xDEAD)),
+        ] {
+            let err = app
+                .ratify_transition(&key.value, node, id)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, AppError::VerbCeiling { role: r, .. } if r == role),
+                "{err:?}"
+            );
+        }
+    }
+    assert_eq!(store.name_lookups(), lookups, "no name resolved");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// Ratification acts on the node as it is: a child created after a
+/// proposal to `validated` makes its ratification `transition_refused`
+/// with reason `children_not_validated`, journalling nothing (ADR-0009 d4;
+/// workareas.md, ratification re-checks).
+#[tokio::test]
+async fn a_child_created_after_the_validated_proposal_makes_its_ratification_transition_refused() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    climb(
+        &app,
+        &store,
+        (boot.tenant_id, admin, dora.key_id),
+        crew,
+        WorkareaStatus::Committed,
+    )
+    .await;
+    let proposal = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .await
+        .expect("no child yet");
+    workarea(&app, admin, "late-child", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+        .await
+        .unwrap_err();
+    assert_refused(&err, crew, LadderRefusal::ChildrenNotValidated);
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let node = store.workarea(boot.tenant_id, crew).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkareaStatus::Committed);
+}
+
+/// A ratified proposal is no longer live: a second ratification is
+/// `transition_refused` with reason `stale`, and journals nothing
+/// (workareas.md, ratification re-checks).
+#[tokio::test]
+async fn a_transition_ratified_once_is_refused_as_stale_the_second_time() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dan = issue(&app, admin, Role::Dreamer, "dan", crew).await;
+    let proposal = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    app.ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+        .await
+        .expect("the first ratification");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for key in [&dora, &dan] {
+        let err = app
+            .ratify_transition(&key.value, crew.into(), proposal.transition_id)
+            .await
+            .unwrap_err();
+        assert_refused(&err, crew, LadderRefusal::Stale);
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A transition is addressed under its node: an id that names another
+/// workarea's proposal, and an id no row holds, both answer
+/// `access.not_found` (roles-and-keys.md refusal order).
+#[tokio::test]
+async fn a_transition_id_of_another_workarea_is_not_found() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let proposal = app
+        .propose_transition(admin, quarter.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal on the child");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for id in [proposal.transition_id, Uuid::from_u128(0xDEAD)] {
+        let err = app
+            .ratify_transition(&dora.value, crew.into(), id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let node = store.workarea(boot.tenant_id, quarter).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkareaStatus::Development);
+}
+
+/// The ladder climbs development → committed → validated through the two
+/// verbs, and from `validated` every proposal is refused, backward or same:
+/// no verb moves a workarea down (ADR-0009 d3, d5).
+#[tokio::test]
+async fn no_verb_moves_a_workarea_down_the_ladder() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    for rung in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+        let proposal = app
+            .propose_transition(admin, crew.into(), rung)
+            .await
+            .expect("a forward proposal");
+        let record = app
+            .ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+            .await
+            .expect("ratified");
+        assert_eq!(record.status, rung);
+    }
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for (to, reason) in [
+        (WorkareaStatus::Development, LadderRefusal::Backward),
+        (WorkareaStatus::Committed, LadderRefusal::Backward),
+        (WorkareaStatus::Validated, LadderRefusal::Same),
+    ] {
+        for key in [admin.as_str(), dora.value.as_str()] {
+            let err = app
+                .propose_transition(key, crew.into(), to)
+                .await
+                .unwrap_err();
+            assert_refused(&err, crew, reason);
+        }
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let node = store.workarea(boot.tenant_id, crew).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkareaStatus::Validated);
+}
+
+/// A tenant whose one principal is its admin cannot freeze an area alone:
+/// the admin's own key, a second admin key of the same principal, and a
+/// dreamer key it issues to itself are each the proposer under R2
+/// (ADR-0009 d3; ADR-0010 R2).
+#[tokio::test]
+async fn a_one_admin_tenant_cannot_freeze_alone() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let second_admin = issue_with(&app, admin, Role::Admin, "alice-admin", Vec::new()).await;
+    let own_dreamer = issue(&app, admin, Role::Dreamer, "alice-admin", crew).await;
+    let proposal = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for key in [
+        admin.as_str(),
+        second_admin.value.as_str(),
+        own_dreamer.value.as_str(),
+    ] {
+        let err = app
+            .ratify_transition(key, crew.into(), proposal.transition_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let node = store.workarea(boot.tenant_id, crew).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkareaStatus::Development);
+}
+
+// -- freeze: a validated area refuses by admission policy, never by grant
+// resolution (ADR-0009 d2, d4, d5) ----------------------------------------
+
+/// Moves `node` to `validated` through the real verbs: the admin proposes
+/// each rung and `ratifier`, a second identity with dreamer access on the
+/// node, ratifies it.
+async fn freeze(app: &TestApp, admin: &str, ratifier: &str, node: Uuid) {
+    for rung in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+        let proposal = app
+            .propose_transition(admin, node.into(), rung)
+            .await
+            .expect("a forward proposal");
+        app.ratify_transition(ratifier, node.into(), proposal.transition_id)
+            .await
+            .expect("a second identity ratifies");
+    }
+}
+
+/// Asserts `err` is `workarea.frozen` on `node` for `op`.
+fn assert_frozen(err: &AppError, node: Uuid, op: FrozenOp) {
+    assert!(
+        matches!(
+            err,
+            AppError::WorkareaFrozen { workarea_id, op: o } if *workarea_id == node && *o == op
+        ),
+        "{err:?}"
+    );
+}
+
+/// A writer key holding writer and reader on the root reaches the crew area
+/// by inheritance, a second writer holds them on the crew itself with the
+/// crew as its default, and each submits with and without the header, the
+/// scan's veto marker included: every one is `workarea.frozen`, before the
+/// scan, and nothing is journalled or queued (ADR-0009 d5;
+/// workareas.md refusal matrix, new claim write).
+#[tokio::test]
+async fn a_submission_into_a_validated_workarea_is_frozen_for_every_holder_of_write_access_and_journals_nothing()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let on_crew = agent(&app, admin, "crew/agent-7", crew).await;
+    let on_root = issue_with(
+        &app,
+        admin,
+        Role::Writer,
+        "rooted",
+        vec![
+            grant(boot.root_workarea_id, Role::Writer),
+            grant(boot.root_workarea_id, Role::Reader),
+        ],
+    )
+    .await;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let outbox = store.outbox_len(boot.tenant_id);
+
+    let attempts = [
+        (&on_crew, submit_req("f1", "the canary drains first")),
+        (
+            &on_crew,
+            submit_to("f2", "the canary drains first", by_name("crew")),
+        ),
+        (
+            &on_crew,
+            submit_into("f3", "-----BEGIN PRIVATE KEY-----", crew),
+        ),
+        (&on_root, submit_into("f4", "the canary drains first", crew)),
+        (
+            &on_root,
+            submit_to("f5", "-----BEGIN PRIVATE KEY-----", by_name("crew")),
+        ),
+    ];
+    for (key, req) in &attempts {
+        let err = app.submit_memory(&key.value, req).await.unwrap_err();
+        assert_frozen(&err, crew, FrozenOp::Write);
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    assert_eq!(store.outbox_len(boot.tenant_id), outbox);
+    assert!(
+        app.review_next(&dora.value)
+            .await
+            .expect("review")
+            .is_none()
+    );
+}
+
+/// Effective access is consulted before status: a key the area is outside
+/// of is `access.not_found`, one that only reads it is
+/// `access.grant_refused`, and a reader key is `access.verb_ceiling`, as
+/// they would be on an open area (workareas.md refusal matrix preamble).
+#[tokio::test]
+async fn a_key_without_access_to_a_validated_workarea_still_gets_its_access_refusal_first() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let elsewhere = workarea(&app, admin, "elsewhere", boot.root_workarea_id).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let outsider = agent(&app, admin, "outsider", elsewhere).await;
+    let only_reads = issue_with(
+        &app,
+        admin,
+        Role::Writer,
+        "only-reads",
+        vec![grant(elsewhere, Role::Writer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .submit_memory(&outsider.value, &submit_into("a1", "x", crew))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let err = app
+        .submit_memory(&only_reads.value, &submit_into("a2", "x", crew))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::GrantRefused { workarea_id, needed_role: Role::Writer } if workarea_id == crew
+        ),
+        "{err:?}"
+    );
+    let err = app
+        .submit_memory(&reader.value, &submit_into("a3", "x", crew))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A supersession, a retirement included, of a promoted tip in an area
+/// validated since is `workarea.frozen` at step 5's last check, whether the
+/// author or a dreamer proposing an edit sends it, and journals nothing;
+/// the target-dependent refusals before it still answer first
+/// (roles-and-keys.md supersede, step 5; ADR-0009 d5).
+#[tokio::test]
+async fn a_supersede_whose_target_lies_in_a_validated_workarea_is_frozen() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let open = workarea(&app, admin, "open", boot.root_workarea_id).await;
+    let writer = agent(&app, admin, "crew/agent-7", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let editor = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "eddie",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let target = promoted(
+        &app,
+        &writer.value,
+        &dora.value,
+        &submit_req("s1", "the canary drains first"),
+    )
+    .await;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for (key, req) in [
+        (
+            &writer,
+            supersede_req("s2", target, "the canary drains last"),
+        ),
+        (&writer, retire_req("s3", target, "no canary any more")),
+        (
+            &editor,
+            supersede_req("s4", target, "the canary drains twice"),
+        ),
+    ] {
+        let err = app.supersede(&key.value, &req).await.unwrap_err();
+        assert_frozen(&err, crew, FrozenOp::Write);
+    }
+
+    // A body `workarea` other than the target's is answered before freeze.
+    let err = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                workarea: Some(open.into()),
+                ..supersede_req("s5", target, "x")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::WorkareaNotTarget { .. }), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+/// A row held when its area is validated cannot be approved: the approval
+/// is `workarea.frozen` before its verdict is sealed, nothing is journalled,
+/// and the row stays held, visible to its author (ADR-0009 d5; workareas.md
+/// refusal matrix, promotion).
+#[tokio::test]
+async fn an_approval_of_a_held_row_in_a_workarea_validated_after_submission_is_frozen_and_the_row_stays_held()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "crew/agent-7", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let id = app
+        .submit_memory(&writer.value, &submit_req("h1", "the canary drains first"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let outbox = store.outbox_len(boot.tenant_id);
+
+    let err = app
+        .post_verdict(&dora.value, id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert_frozen(&err, crew, FrozenOp::Promote);
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    assert_eq!(store.outbox_len(boot.tenant_id), outbox);
+    let row = store
+        .memory(boot.tenant_id, id)
+        .await
+        .expect("read")
+        .expect("the row");
+    assert_eq!(row.status, MemoryStatus::Held);
+    let own = app.get_memory(&writer.value, id).await.expect("own row");
+    assert_eq!(own.memory.status, MemoryStatus::Held);
+}
+
+/// No child is created under a validated node, by id or by name, and
+/// nothing is journalled; a child under a committed node is still created
+/// (ADR-0009 d4; workareas.md child-status rule).
+#[tokio::test]
+async fn creating_a_child_under_a_validated_workarea_is_frozen() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let committed = workarea(&app, admin, "committed", boot.root_workarea_id).await;
+    let proposal = app
+        .propose_transition(admin, committed.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let ratifier = issue(&app, admin, Role::Dreamer, "rita", committed).await;
+    app.ratify_transition(&ratifier.value, committed.into(), proposal.transition_id)
+        .await
+        .expect("ratified");
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for parent in [Reference::from(crew), by_name("crew")] {
+        let err = app
+            .create_workarea(admin, &name("late-child"), Some(parent), None)
+            .await
+            .unwrap_err();
+        assert_frozen(&err, crew, FrozenOp::CreateChild);
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    workarea(&app, admin, "child", committed).await;
+}
+
+/// The crew-metadata update is one of the three mutations a validated area
+/// admits: the workarea is pointed at a crew record, and that record's
+/// charter is corrected, each journalled (ADR-0009 d5; workareas.md crew
+/// records).
+#[tokio::test]
+async fn a_validated_workareas_crew_record_can_still_be_updated() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let record = metals_crew(&app, admin).await;
+    freeze(&app, admin, &dora.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let pointed = app
+        .set_workarea_crew(admin, crew.into(), by_name("metals-crew"))
+        .await
+        .expect("a frozen area's crew is corrected");
+    assert_eq!(pointed.crew_id, Some(record.crew_id));
+    assert_eq!(pointed.status, WorkareaStatus::Validated);
+    let updated = app
+        .update_crew(
+            admin,
+            by_name("metals-crew"),
+            &CrewUpdate {
+                charter_uri: Some("https://crews.example.com/metals/v2.md".to_owned()),
+                external_manager: None,
+            },
+        )
+        .await
+        .expect("the record stays correctable");
+    let info = app
+        .workarea_info(admin, Some(crew.into()))
+        .await
+        .expect("read");
+    assert_eq!(info.crew, Some(updated));
+    let types: Vec<String> = journal(&store, boot.tenant_id).await[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            event_types::WORKAREA_CREW_UPDATED,
+            event_types::CREW_UPDATED
+        ]
+    );
+}
+
+/// Freezing is not archival: the recall and the get of a promoted claim
+/// answer the same after the area is validated as before (workareas.md,
+/// frozen is not read-only-dead).
+#[tokio::test]
+async fn a_validated_workarea_still_serves_recall_and_get_of_its_promoted_claims() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "crew/agent-7", crew).await;
+    let rhea = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let id = promoted(
+        &app,
+        &writer.value,
+        &dora.value,
+        &submit_req("r1", "the canary drains first"),
+    )
+    .await;
+    let read = || async {
+        let mut answers = Vec::new();
+        for key in [&writer, &rhea] {
+            let got = app.get_memory(&key.value, id).await.expect("get");
+            let hits = hit_ids(&app, &key.value, "canary").await;
+            answers.push((got.memory, hits));
+        }
+        answers
+    };
+    let open = read().await;
+    assert!(open.iter().all(|(_, hits)| hits == &vec![id]));
+
+    freeze(&app, admin, &dora.value, crew).await;
+    assert_eq!(read().await, open);
+}
+
+/// Freezing journals only its transitions: no grant is issued, edited or
+/// denied, and every key's permission epoch stays where it was
+/// (ADR-0009 d2; workareas.md permission epoch).
+#[tokio::test]
+async fn freezing_changes_no_grant_and_no_permission_epoch() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "crew/agent-7", crew).await;
+    let dora = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dora",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let access = || async {
+        let mut seen = Vec::new();
+        for key in [&writer, &dora] {
+            let detail = app.key(admin, key.key_id.into()).await.expect("key read");
+            let epoch = app
+                .workarea_info(&key.value, Some(crew.into()))
+                .await
+                .expect("a readable node")
+                .permission_epoch;
+            seen.push((detail.access, epoch));
+        }
+        seen
+    };
+    let before = access().await;
+    let seq = journal(&store, boot.tenant_id).await.len();
+
+    freeze(&app, admin, &dora.value, crew).await;
+    assert_eq!(access().await, before);
+    let types: Vec<String> = journal(&store, boot.tenant_id).await[seq..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert!(
+        types
+            .iter()
+            .all(|t| t == event_types::WORKAREA_STATUS_PROPOSED
+                || t == event_types::WORKAREA_STATUS_TRANSITION),
+        "{types:?}"
+    );
+}
+
+// -- the status read, and status events on the tail (ADR-0009 d3; ADR-0025
+// d15) --------------------------------------------------------------------
+
+/// A stored proposal as the status read serves it to a key outside the
+/// proposer's own key set: the proposing key withheld (ADR-0025 d15).
+fn seen_by_another(t: &oml_app::types::TransitionRecord) -> TransitionView {
+    TransitionView {
+        transition_id: t.transition_id,
+        workarea_id: t.workarea_id,
+        from: t.from,
+        to: t.to,
+        state: t.state,
+        proposed_by_key_id: None,
+    }
+}
+
+/// The status read serves the node's stored status, the review policy in
+/// force and its live proposals in proposal order; a ratification makes
+/// every other proposal from the old rung stale, and the read drops them
+/// (http-api.md `GET /v2/workareas/{id}/status`; workareas.md, the status
+/// read lists only live proposals; ADR-0009 d3).
+#[tokio::test]
+async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_policy_in_force() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+
+    let first = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let second = app
+        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a second proposal");
+    let third = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a third proposal");
+
+    let view = app
+        .workarea_status(&rita.value, by_name("crew"))
+        .await
+        .expect("a reader reads the status");
+    assert_eq!(view.workarea_id, crew);
+    assert_eq!(view.status, WorkareaStatus::Development);
+    assert_eq!(
+        view.policy,
+        json!({ "k": 1, "required_roles": ["dreamer"] })
+    );
+    assert_eq!(
+        view.pending,
+        [&first, &second, &third].map(seen_by_another).to_vec()
+    );
+
+    app.ratify_transition(&dora.value, crew.into(), first.transition_id)
+        .await
+        .expect("a second identity ratifies");
+    let view = app
+        .workarea_status(&rita.value, crew.into())
+        .await
+        .expect("a reader reads the status");
+    assert_eq!(view.status, WorkareaStatus::Committed);
+    assert!(view.pending.is_empty(), "stale proposals are not live");
+    let stored = store
+        .pending_transitions(boot.tenant_id, crew)
+        .await
+        .expect("read");
+    assert_eq!(stored, vec![second, third], "the stale rows stay pending");
+
+    let next = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .await
+        .expect("a proposal from the new rung");
+    let view = app
+        .workarea_status(&rita.value, crew.into())
+        .await
+        .expect("a reader reads the status");
+    assert_eq!(view.pending, vec![seen_by_another(&next)]);
+}
+
+/// An admin key reads a node's pending transitions as structure, on its key
+/// role, with no grant anywhere (roles-and-keys.md permission matrix,
+/// footnote 6; ADR-0026 d15).
+#[tokio::test]
+async fn an_admin_reads_a_nodes_pending_transitions_without_any_grant() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", quarter).await;
+    let bob = issue_with(&app, admin, Role::Admin, "bob-admin", Vec::new()).await;
+    let proposal = app
+        .propose_transition(&dora.value, quarter.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a dreamer proposes");
+
+    let view = app
+        .workarea_status(&bob.value, by_name("q1-2027"))
+        .await
+        .expect("an admin reads structure");
+    assert_eq!(
+        (view.workarea_id, view.status, view.pending),
+        (
+            quarter,
+            WorkareaStatus::Development,
+            vec![seen_by_another(&proposal)]
+        )
+    );
+    let err = app
+        .workarea_status(&bob.value, Uuid::from_u128(0xDEAD).into())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+}
+
+/// A key outside read access on the node is refused by the refusal order
+/// as `access.not_found`, by id and by name alike, so the read never tells
+/// it the node exists (roles-and-keys.md refusal order).
+#[tokio::test]
+async fn a_key_without_read_access_gets_not_found_from_the_status_read() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let outsider = issue(&app, admin, Role::Reader, "otto", other).await;
+    app.propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+
+    for node in [crew.into(), by_name("crew"), by_name("no-such-node")] {
+        let err = app
+            .workarea_status(&outsider.value, node)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+}
+
+/// A status read serves each live proposal as the served `Transition` shape
+/// (transition id, node, step, state, proposing key) and never the
+/// proposer's principal or the tenant, and it names the proposing key only
+/// to a key in the proposer's own key set, as the tail does: a reader of
+/// the node, an admin among them, learns that a proposal waits, never which
+/// key made it (workareas.md, the status read names the proposing key only
+/// to its own key set; http-api.md#events-tail; ADR-0025 d15).
+#[tokio::test]
+async fn a_status_read_never_names_the_proposers_principal_and_names_the_proposing_key_only_to_that_key()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dora-the-proposer",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let proposal = app
+        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a dreamer proposes");
+    let served = |proposed_by_key_id| TransitionView {
+        transition_id: proposal.transition_id,
+        workarea_id: crew,
+        from: WorkareaStatus::Development,
+        to: WorkareaStatus::Committed,
+        state: TransitionState::Pending,
+        proposed_by_key_id,
+    };
+
+    let own = app
+        .workarea_status(&dora.value, crew.into())
+        .await
+        .expect("the proposer reads the node");
+    assert_eq!(own.pending, vec![served(Some(dora.key_id))]);
+
+    for reader in [&rita.value, admin] {
+        let view = app
+            .workarea_status(reader, crew.into())
+            .await
+            .expect("a reader of the node");
+        assert_eq!(view.pending, vec![served(None)]);
+        let shown = format!("{view:?}");
+        assert!(!shown.contains("dora-the-proposer"), "{shown}");
+        assert!(!shown.contains(&boot.tenant_id.to_string()), "{shown}");
+        assert!(!shown.contains(&dora.key_id.to_string()), "{shown}");
+    }
+}
+
+/// The workarea read serves the status the row stores: `validated` once a
+/// second identity ratified the last rung, and the status read agrees
+/// (ADR-0009 d1, d3; ADR-0025 d14).
+#[tokio::test]
+async fn the_workarea_read_serves_validated_after_ratification() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dora",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+
+    freeze(&app, admin, &dora.value, crew).await;
+    let info = app
+        .workarea_info(&dora.value, Some(crew.into()))
+        .await
+        .expect("a readable node");
+    assert_eq!(info.workarea.status, WorkareaStatus::Validated);
+    let view = app
+        .workarea_status(&dora.value, crew.into())
+        .await
+        .expect("a readable node");
+    assert_eq!(view.status, info.workarea.status);
+    assert!(view.pending.is_empty());
+}
+
+/// The tail shows `workarea.status_proposed` and
+/// `workarea.status_transition` to a key that reads the node, judged on the
+/// payload's `workarea_id`, and neither to a key that does not
+/// (http-api.md#events-tail; event-catalog.md; ADR-0025 d15).
+#[tokio::test]
+async fn a_reader_of_the_node_sees_status_proposed_and_status_transition_on_the_tail_and_a_non_reader_sees_neither()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let otto = issue(&app, admin, Role::Reader, "otto", other).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let proposal = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    app.ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+        .await
+        .expect("ratified");
+
+    let status_events = |page: oml_app::types::TailPage| -> Vec<(String, Value)> {
+        page.events
+            .into_iter()
+            .filter(|e| e.event.envelope.event_type.starts_with("workarea.status_"))
+            .map(|e| (e.event.envelope.event_type.clone(), e.payload))
+            .collect()
+    };
+    let seen = status_events(
+        app.tail_events(&rita.value, None, 0, 100)
+            .await
+            .expect("tail"),
+    );
+    let types: Vec<&str> = seen.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(
+        types,
+        [
+            event_types::WORKAREA_STATUS_PROPOSED,
+            event_types::WORKAREA_STATUS_TRANSITION
+        ]
+    );
+    for (_, payload) in &seen {
+        assert_eq!(payload["workarea_id"], json!(crew.to_string()));
+        assert_eq!(
+            payload["transition_id"],
+            json!(proposal.transition_id.to_string())
+        );
+    }
+
+    let unseen = status_events(
+        app.tail_events(&otto.value, None, 0, 100)
+            .await
+            .expect("tail"),
+    );
+    assert!(unseen.is_empty(), "{unseen:?}");
+}
+
+/// A chain holding status proposals and their ratifications, both rungs,
+/// verifies end to end with the domain procedure (chain-format.md; ADR-0009
+/// d3).
+#[tokio::test]
+async fn the_chain_with_transition_events_verifies() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+
+    freeze(&app, admin, &dora.value, crew).await;
+    let events = journal(&store, boot.tenant_id).await;
+    let count = |t: &str| events.iter().filter(|e| e.envelope.event_type == t).count();
+    assert_eq!(count(event_types::WORKAREA_STATUS_PROPOSED), 2);
+    assert_eq!(count(event_types::WORKAREA_STATUS_TRANSITION), 2);
+
+    let head = app.verify_chain(admin).await.expect("the chain verifies");
+    assert_eq!(head.seq, events.last().expect("a chain").envelope.seq);
+    let keys = KeySet::new(vec![SigningKey::from_bytes(&TEST_SEED).verifying_key()]);
+    verify_chain(&events, &keys, None).expect("the domain procedure verifies it");
+}
+
+// ---------------------------------------------------------------------------
+// A claim edge proposed between a use-case's reads and its commit
+// ---------------------------------------------------------------------------
+
+/// A pending edge `src -> dst` in `tenant`, proposed by `proposer`.
+fn pending_edge(tenant: Uuid, proposer: &IssuedKey, src: Uuid, dst: Uuid) -> ClaimEdgeRecord {
+    ClaimEdgeRecord {
+        edge_id: Uuid::from_u128(0xED6E_0000_0000_0000_0000_0000_0000_0001),
+        tenant_id: tenant,
+        src_artifact_id: src,
+        dst_artifact_id: dst,
+        label: "acme:supports".to_owned(),
+        state: EdgeState::Pending,
+        proposer_key_id: proposer.key_id,
+        proposer_principal: proposer.principal.clone(),
+        ratifier_key_id: None,
+        // Stamped with the proposal event's at when it is committed.
+        created_at: EventTime::parse("2026-10-29T12:00:00.000000Z").expect("a fixed-width time"),
+    }
+}
+
+/// Arms `store` to commit `claim_edge.proposed` for `edge` just before the
+/// next head read: another writer's proposal landing between a use-case's
+/// earlier reads and its head read.
+fn propose_before_next_head(store: &MemStore, edge: ClaimEdgeRecord) {
+    store.commit_before_next_head(move |head| {
+        let head = head.expect("the tenant's chain");
+        let edge = ClaimEdgeRecord {
+            created_at: head.envelope.at.clone(),
+            ..edge
+        };
+        let draft = EventDraft {
+            tenant_id: edge.tenant_id,
+            event_id: Uuid::from_u128(0xED6E_0000_0000_0000_0000_0000_0000_00EE),
+            event_type: event_types::CLAIM_EDGE_PROPOSED.to_owned(),
+            principal: edge.proposer_principal.clone(),
+            api_key_id: Some(edge.proposer_key_id),
+            at: head.envelope.at.clone(),
+            payload: json!({
+                "edge_id": edge.edge_id.to_string(),
+                "src_artifact_id": edge.src_artifact_id.to_string(),
+                "dst_artifact_id": edge.dst_artifact_id.to_string(),
+                "label": edge.label,
+                "proposer_key_id": edge.proposer_key_id.to_string(),
+            }),
+        };
+        let envelope = next_envelope(Some(head), draft).expect("a lawful draft");
+        let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+        CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
+            fold: MetadataFold::ClaimEdgeProposed(edge),
+            idempotency: None,
+        }
+    });
+}
+
+/// The stored lineage principals of `memory_id`.
+async fn stored_principals(store: &MemStore, tenant: Uuid, memory_id: Uuid) -> Vec<String> {
+    store
+        .memory(tenant, memory_id)
+        .await
+        .expect("read")
+        .expect("the row")
+        .lineage_principals
+}
+
+#[tokio::test]
+async fn a_claim_edge_proposed_between_a_verdicts_reviewer_check_and_its_commit_never_promotes_past_a_reviewer_it_puts_in_the_lineage()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = issue(&app, admin, Role::Writer, "alice", crew).await;
+    let bob_writer = issue(&app, admin, Role::Writer, "bob", crew).await;
+    let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
+    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let a = app
+        .submit_memory(&alice.value, &submit_req("edge-a", "alice's fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let b = app
+        .submit_memory(&bob_writer.value, &submit_req("edge-b", "bob's fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+
+    // The edge joins bob's row to alice's while bob's verdict is in flight.
+    propose_before_next_head(&store, pending_edge(boot.tenant_id, &pat, a, b));
+    let err = app
+        .post_verdict(&bob_dreamer.value, a, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::Verdict(oml_app::domain::VerdictError::PrincipalInLineage(_))
+        ),
+        "the reviewer the edge put in the lineage is refused: {err:?}"
+    );
+    let row = store
+        .memory(boot.tenant_id, a)
+        .await
+        .expect("read")
+        .expect("the row");
+    assert_eq!(row.status, MemoryStatus::Held, "the row is not promoted");
+    assert!(row.lineage_principals.contains(&"bob".to_owned()));
+}
+
+#[tokio::test]
+async fn a_claim_edge_proposed_on_an_ancestor_between_a_captures_ancestor_read_and_its_commit_reaches_the_captured_rows_closure()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = issue(&app, admin, Role::Writer, "alice", crew).await;
+    let bob = issue(&app, admin, Role::Writer, "bob", crew).await;
+    let carol = agent(&app, admin, "carol", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let a = promoted(
+        &app,
+        &alice.value,
+        &dana.value,
+        &submit_req("anc-a", "alice's fact"),
+    )
+    .await;
+    let b = app
+        .submit_memory(&bob.value, &submit_req("anc-b", "bob's fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+
+    propose_before_next_head(&store, pending_edge(boot.tenant_id, &pat, a, b));
+    let d = app
+        .submit_memory(
+            &carol.value,
+            &SubmitRequest {
+                derives_from: vec![a],
+                ..submit_req("anc-d", "carol builds on alice")
+            },
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let principals = stored_principals(&store, boot.tenant_id, d).await;
+    assert!(
+        principals.contains(&"bob".to_owned()),
+        "the captured row holds the author the edge joined to its ancestor: {principals:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_claim_edge_proposed_on_a_target_between_a_supersedes_target_read_and_its_commit_reaches_the_successors_closure()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let carol = agent(&app, admin, "carol", crew).await;
+    let bob = issue(&app, admin, Role::Writer, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let target = promoted(
+        &app,
+        &carol.value,
+        &dana.value,
+        &submit_req("sup-t", "carol's fact"),
+    )
+    .await;
+    let b = app
+        .submit_memory(&bob.value, &submit_req("sup-b", "bob's fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+
+    propose_before_next_head(&store, pending_edge(boot.tenant_id, &pat, target, b));
+    let successor = app
+        .supersede(
+            &carol.value,
+            &supersede_req("sup-s", target, "carol's revised fact"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    let principals = stored_principals(&store, boot.tenant_id, successor).await;
+    assert!(
+        principals.contains(&"bob".to_owned()),
+        "the successor holds the author the edge joined to its target: {principals:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Proposing a claim edge (ADR-0008 d5; ADR-0012; ADR-0021 d5)
+// ---------------------------------------------------------------------------
+
+/// A dreamer-role key holding dreamer and reader on `node`: the key that
+/// proposes an edge between two of the node's versions (workareas.md, edge
+/// authority).
+async fn curator(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> IssuedKey {
+    issue_with(
+        app,
+        admin,
+        Role::Dreamer,
+        principal,
+        vec![grant(node, Role::Dreamer), grant(node, Role::Reader)],
+    )
+    .await
+}
+
+fn edge_req(from: Uuid, to: Uuid, label: &str) -> ProposeClaimEdge {
+    ProposeClaimEdge {
+        from_artifact_id: from,
+        to_artifact_id: to,
+        label: label.to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn a_dreamer_proposes_a_claim_edge_and_it_is_journalled_pending_as_claim_edge_proposed() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let bob = agent(&app, admin, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("prop-a", "a")).await;
+    let b = promoted(&app, &bob.value, &dana.value, &submit_req("prop-b", "b")).await;
+
+    let outcome = app
+        .propose_claim_edge(&pat.value, &edge_req(a, b, "acme:supports"), None)
+        .await
+        .expect("propose");
+    assert!(!outcome.replayed);
+    let proposal = outcome.proposal;
+    assert_eq!(
+        serde_json::to_value(&proposal).expect("serializes"),
+        json!({
+            "edge_id": proposal.edge_id.to_string(),
+            "from_artifact_id": a.to_string(),
+            "to_artifact_id": b.to_string(),
+            "label": "acme:supports",
+            "state": "pending",
+            "proposer_key_id": pat.key_id.to_string(),
+            "ratifier_key_id": null,
+        }),
+        "the stored response is openapi.yaml's ClaimEdge, nothing more"
+    );
+
+    let edge = store
+        .claim_edge(boot.tenant_id, proposal.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge is stored");
+    assert_eq!(edge.state, EdgeState::Pending);
+    assert_eq!((edge.src_artifact_id, edge.dst_artifact_id), (a, b));
+    assert_eq!(edge.label, "acme:supports");
+    assert_eq!(edge.proposer_key_id, pat.key_id);
+    assert_eq!(edge.proposer_principal, "pat");
+    assert_eq!(edge.ratifier_key_id, None);
+
+    let events = journal(&store, boot.tenant_id).await;
+    let last = &events.last().expect("the chain").envelope;
+    assert_eq!(last.event_type, event_types::CLAIM_EDGE_PROPOSED);
+    assert_eq!(last.api_key_id, Some(pat.key_id));
+    assert_eq!(
+        last.payload,
+        json!({
+            "edge_id": proposal.edge_id.to_string(),
+            "src_artifact_id": a.to_string(),
+            "dst_artifact_id": b.to_string(),
+            "label": "acme:supports",
+            "proposer_key_id": pat.key_id.to_string(),
+        }),
+        "the event-catalog payload, nothing more"
+    );
+}
+
+#[tokio::test]
+async fn a_writer_key_proposing_a_claim_edge_is_refused_access_verb_ceiling() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let a = held(
+        &app,
+        &alice.value,
+        &submit_req("ceil-a", "the fact of ceil-a"),
+    )
+    .await;
+    let b = held(
+        &app,
+        &alice.value,
+        &submit_req("ceil-b", "the fact of ceil-b"),
+    )
+    .await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .propose_claim_edge(&alice.value, &edge_req(a, b, "acme:supports"), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::VerbCeiling {
+                role: Role::Writer,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn a_dreamer_without_dreamer_on_either_endpoints_workarea_is_refused_access_grant_refused() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("gr-a", "a")).await;
+    let b = promoted(&app, &alice.value, &dana.value, &submit_req("gr-b", "b")).await;
+    // Reader on the endpoints' workarea, dreamer only elsewhere.
+    let rhea = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "rhea",
+        vec![grant(crew, Role::Reader), grant(other, Role::Dreamer)],
+    )
+    .await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .propose_claim_edge(&rhea.value, &edge_req(a, b, "acme:supports"), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::GrantRefused {
+                workarea_id,
+                needed_role: Role::Dreamer,
+            } if workarea_id == crew
+        ),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn an_endpoint_outside_the_keys_read_scope_answers_access_not_found_as_an_absent_one_does() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let elsewhere = workarea(&app, admin, "elsewhere", boot.root_workarea_id).await;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let erin = agent(&app, admin, "erin", elsewhere).await;
+    let eve = issue(&app, admin, Role::Dreamer, "eve", elsewhere).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("scope-a", "a")).await;
+    // Promoted, but in a workarea where pat holds no reader.
+    let unseen = promoted(&app, &erin.value, &eve.value, &submit_req("scope-u", "u")).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let outside = app
+        .propose_claim_edge(&pat.value, &edge_req(a, unseen, "acme:supports"), None)
+        .await
+        .unwrap_err();
+    let absent = app
+        .propose_claim_edge(
+            &pat.value,
+            &edge_req(a, Uuid::from_u128(0xAB5E_0000), "acme:supports"),
+            None,
+        )
+        .await
+        .unwrap_err();
+    let outside_from = app
+        .propose_claim_edge(&pat.value, &edge_req(unseen, a, "acme:supports"), None)
+        .await
+        .unwrap_err();
+    for err in [&outside, &absent, &outside_from] {
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn a_replayed_idempotency_key_answers_the_first_proposal_and_journals_once() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("idem-a", "a")).await;
+    let b = promoted(&app, &alice.value, &dana.value, &submit_req("idem-b", "b")).await;
+    let req = edge_req(a, b, "acme:supports");
+
+    let first = app
+        .propose_claim_edge(&pat.value, &req, Some("edge-1"))
+        .await
+        .expect("propose");
+    let after_first = journal(&store, boot.tenant_id).await.len();
+    let replay = app
+        .propose_claim_edge(&pat.value, &req, Some("edge-1"))
+        .await
+        .expect("replay");
+    assert!(!first.replayed);
+    assert!(replay.replayed);
+    assert_eq!(replay.proposal, first.proposal);
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), after_first);
+
+    let err = app
+        .propose_claim_edge(&pat.value, &edge_req(b, a, "acme:supports"), Some("edge-1"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::IdempotencyDigestMismatch),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), after_first);
+}
+
+/// The held row derives from `c`, which the edge connects to bob's promoted
+/// `b`: the edge widens the closure of every row that reaches `c`, so bob
+/// is in the held row's lineage once it is proposed.
+#[tokio::test]
+async fn a_pending_edge_refuses_a_verdict_on_a_held_row_deriving_from_an_endpoint_by_the_other_endpoints_author_with_review_author_in_lineage()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let carol = agent(&app, admin, "carol", crew).await;
+    let bob_writer = agent(&app, admin, "bob", crew).await;
+    let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let c = promoted(&app, &carol.value, &dana.value, &submit_req("verd-c", "c")).await;
+    let b = promoted(
+        &app,
+        &bob_writer.value,
+        &dana.value,
+        &submit_req("verd-b", "b"),
+    )
+    .await;
+    let a = held(
+        &app,
+        &alice.value,
+        &SubmitRequest {
+            derives_from: vec![c],
+            ..submit_req("verd-a", "the fact of verd-a")
+        },
+    )
+    .await;
+
+    app.propose_claim_edge(&pat.value, &edge_req(b, c, "acme:supports"), None)
+        .await
+        .expect("propose");
+    let err = app
+        .post_verdict(&bob_dreamer.value, a, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::Verdict(oml_app::domain::VerdictError::PrincipalInLineage(_))
+        ),
+        "the author the pending edge joined is refused R2: {err:?}"
+    );
+    let row = store
+        .memory(boot.tenant_id, a)
+        .await
+        .expect("read")
+        .expect("the row");
+    assert_eq!(row.status, MemoryStatus::Held);
+}
+
+#[tokio::test]
+async fn review_next_never_serves_a_held_row_deriving_from_an_endpoint_to_the_author_of_the_other_endpoint()
+ {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let carol = agent(&app, admin, "carol", crew).await;
+    let bob_writer = agent(&app, admin, "bob", crew).await;
+    let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let c = promoted(&app, &carol.value, &dana.value, &submit_req("queue-c", "c")).await;
+    let b = promoted(
+        &app,
+        &bob_writer.value,
+        &dana.value,
+        &submit_req("queue-b", "b"),
+    )
+    .await;
+    let a = held(
+        &app,
+        &alice.value,
+        &SubmitRequest {
+            derives_from: vec![c],
+            ..submit_req("queue-a", "the fact of queue-a")
+        },
+    )
+    .await;
+
+    let served = app
+        .review_next(&bob_dreamer.value)
+        .await
+        .expect("review next")
+        .map(|m| m.memory.memory_id);
+    assert_eq!(
+        served,
+        Some(a),
+        "before the edge alice's row is bob's to review"
+    );
+
+    app.propose_claim_edge(&pat.value, &edge_req(b, c, "acme:supports"), None)
+        .await
+        .expect("propose");
+    let served = app
+        .review_next(&bob_dreamer.value)
+        .await
+        .expect("review next")
+        .map(|m| m.memory.memory_id);
+    assert_eq!(served, None, "the edge put bob in alice's row's lineage");
+}
+
+/// Another author's row is in a key's read scope only once promoted
+/// (roles-and-keys.md footnote 5; `App::readable`): a held, rejected,
+/// demoted or erased one in a workarea where the key holds dreamer and
+/// reader answers as an absent row does, and journals nothing.
+#[tokio::test]
+async fn another_authors_held_rejected_demoted_or_erased_endpoint_answers_access_not_found() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let seen = promoted(&app, &alice.value, &dana.value, &submit_req("st-p", "p")).await;
+    let held_row = held(&app, &alice.value, &submit_req("st-h", "h")).await;
+    let rejected = held(&app, &alice.value, &submit_req("st-r", "r")).await;
+    app.post_verdict(&dana.value, rejected, Verdict::Reject, Some("no"))
+        .await
+        .expect("reject");
+    // This build journals no demotion or erasure: the store stands them in.
+    let demoted = promoted(&app, &alice.value, &dana.value, &submit_req("st-d", "d")).await;
+    store.set_status(boot.tenant_id, demoted, MemoryStatus::Demoted);
+    let erased = promoted(&app, &alice.value, &dana.value, &submit_req("st-e", "e")).await;
+    store.set_status(boot.tenant_id, erased, MemoryStatus::Erased);
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for row in [held_row, rejected, demoted, erased] {
+        for req in [
+            edge_req(seen, row, "acme:supports"),
+            edge_req(row, seen, "acme:supports"),
+        ] {
+            let err = app
+                .propose_claim_edge(&pat.value, &req, None)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AppError::NotFound), "{row}: {err:?}");
+        }
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn an_oml_about_proposal_is_refused_request_validation_and_journals_nothing() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("about-a", "a")).await;
+    let b = promoted(&app, &alice.value, &dana.value, &submit_req("about-b", "b")).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .propose_claim_edge(&pat.value, &edge_req(a, b, "oml:about"), Some("about-1"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::ClaimEdgeLabel {
+                field: EdgeField::Label,
+                reason: LabelRefusal::AboutNotBuilt,
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+// ---------------------------------------------------------------------------
+// Claim-edge ratification: R2 and the cycle refusal (ADR-0012, ADR-0021 d5)
+// ---------------------------------------------------------------------------
+
+/// A promoted term whose `claim_key` is `curie`, written by `writer` and
+/// approved by `dreamer` (ADR-0021 d2: a term's claim_key is its CURIE).
+async fn term(app: &TestApp, writer: &str, dreamer: &str, idem: &str, curie: &str) -> Uuid {
+    promoted(
+        app,
+        writer,
+        dreamer,
+        &SubmitRequest {
+            kind: MemoryKind::Term,
+            claim_key: Some(curie.to_owned()),
+            ..submit_req(idem, &format!("{curie}: a term"))
+        },
+    )
+    .await
+}
+
+/// The id `propose_claim_edge` gave a proposal of `src -> dst` under `label`.
+async fn proposed(app: &TestApp, proposer: &str, src: Uuid, dst: Uuid, label: &str) -> Uuid {
+    app.propose_claim_edge(proposer, &edge_req(src, dst, label), None)
+        .await
+        .expect("propose")
+        .proposal
+        .edge_id
+}
+
+/// Commits `claim_edge.proposed` for `edge` on the tenant's head, as another
+/// writer would: the edge a label no standalone proposal admits needs, such
+/// as `oml:replaced_by`, declared only inside a deprecation (ADR-0021 d3).
+async fn commit_pending_edge(store: &MemStore, edge: ClaimEdgeRecord, event_id: u128) {
+    let head_seq = store
+        .chain_head(edge.tenant_id)
+        .await
+        .expect("head")
+        .expect("the tenant's chain")
+        .seq;
+    let head = store
+        .events_range(edge.tenant_id, head_seq, 1)
+        .await
+        .expect("read")
+        .pop()
+        .expect("the head event");
+    let edge = ClaimEdgeRecord {
+        created_at: head.envelope.at.clone(),
+        ..edge
+    };
+    let draft = EventDraft {
+        tenant_id: edge.tenant_id,
+        event_id: Uuid::from_u128(event_id),
+        event_type: event_types::CLAIM_EDGE_PROPOSED.to_owned(),
+        principal: edge.proposer_principal.clone(),
+        api_key_id: Some(edge.proposer_key_id),
+        at: head.envelope.at.clone(),
+        payload: json!({
+            "edge_id": edge.edge_id.to_string(),
+            "src_artifact_id": edge.src_artifact_id.to_string(),
+            "dst_artifact_id": edge.dst_artifact_id.to_string(),
+            "label": edge.label,
+            "proposer_key_id": edge.proposer_key_id.to_string(),
+        }),
+    };
+    let envelope = next_envelope(Some(&head), draft).expect("a lawful draft");
+    let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+    store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
+            fold: MetadataFold::ClaimEdgeProposed(edge),
+            idempotency: None,
+        })
+        .await
+        .expect("commit the pending edge");
+}
+
+/// The tenant's journalled `review.ratify` events.
+async fn ratifications(store: &MemStore, tenant: Uuid) -> Vec<SignedEnvelope> {
+    journal(store, tenant)
+        .await
+        .into_iter()
+        .filter(|e| e.envelope.event_type == event_types::REVIEW_RATIFY)
+        .collect()
+}
+
+/// A tenant with two promoted claims by alice and bob, a pending
+/// `acme:supports` edge between them proposed by pat, and the keys around
+/// it.
+struct EdgeFixture {
+    store: MemStore,
+    app: TestApp,
+    boot: BootstrapResult,
+    crew: Uuid,
+    alice: IssuedKey,
+    bob: IssuedKey,
+    pat: IssuedKey,
+    a: Uuid,
+    b: Uuid,
+    edge_id: Uuid,
+}
+
+async fn edge_fixture() -> EdgeFixture {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let bob = agent(&app, admin, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("rat-a", "a")).await;
+    let b = promoted(&app, &bob.value, &dana.value, &submit_req("rat-b", "b")).await;
+    let edge_id = proposed(&app, &pat.value, a, b, "acme:supports").await;
+    EdgeFixture {
+        store,
+        app,
+        boot,
+        crew,
+        alice,
+        bob,
+        pat,
+        a,
+        b,
+        edge_id,
+    }
+}
+
+/// The sorted closure a ratification of an edge between `a` and `b` checks,
+/// digested as `review.ratify` journals it: SHA-256 over the RFC 8785 JSON
+/// of its principals and key ids, each sorted.
+fn closure_digest(principals: &[&str], key_ids: &[Uuid]) -> String {
+    let mut principals: Vec<String> = principals.iter().map(|p| (*p).to_owned()).collect();
+    principals.sort();
+    let mut key_ids: Vec<String> = key_ids.iter().map(ToString::to_string).collect();
+    key_ids.sort();
+    let doc = json!({ "principals": principals, "key_ids": key_ids });
+    sha256_digest_string(&canonical_bytes(&doc).expect("jcs"))
+}
+
+#[tokio::test]
+async fn a_second_dreamer_ratifies_a_pending_edge_and_review_ratify_names_it_with_subject_kind_claim_edge()
+ {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+
+    let outcome = f
+        .app
+        .ratify_claim_edge(&rita.value, f.edge_id, Some("rat-1"))
+        .await
+        .expect("ratify");
+    assert!(!outcome.replayed);
+    assert_eq!(
+        serde_json::to_value(&outcome.edge).expect("serializes"),
+        json!({
+            "edge_id": f.edge_id.to_string(),
+            "from_artifact_id": f.a.to_string(),
+            "to_artifact_id": f.b.to_string(),
+            "label": "acme:supports",
+            "state": "ratified",
+            "proposer_key_id": f.pat.key_id.to_string(),
+            "ratifier_key_id": rita.key_id.to_string(),
+        }),
+        "the response is openapi.yaml's ClaimEdge, ratified"
+    );
+
+    let edge = f
+        .store
+        .claim_edge(f.boot.tenant_id, f.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge");
+    assert_eq!(edge.state, EdgeState::Ratified);
+    assert_eq!(edge.ratifier_key_id, Some(rita.key_id));
+
+    let events = journal(&f.store, f.boot.tenant_id).await;
+    let last = &events.last().expect("the chain").envelope;
+    assert_eq!(last.event_type, event_types::REVIEW_RATIFY);
+    assert_eq!(outcome.journal_seq, Some(last.seq));
+    assert_eq!(last.api_key_id, Some(rita.key_id));
+    assert_eq!(last.principal, "rita");
+    assert_eq!(
+        last.payload,
+        json!({
+            "subject_kind": "claim_edge",
+            "artifact_id": null,
+            "version": null,
+            "edge_id": f.edge_id.to_string(),
+            "verdict_event_ids": [],
+            "ratifier_key_id": rita.key_id.to_string(),
+            "same_user": false,
+            "policy_snapshot": {
+                "k": 1,
+                "required_roles": ["dreamer"],
+                "independence_axis": "principal",
+                "human_required": false,
+            },
+            "lineage_closure_digest": closure_digest(
+                &["alice", "bob"],
+                &[f.alice.key_id, f.bob.key_id],
+            ),
+        }),
+        "the event-catalog payload, nothing more"
+    );
+
+    // The same Idempotency-Key replays the record and journals nothing.
+    let replay = f
+        .app
+        .ratify_claim_edge(&rita.value, f.edge_id, Some("rat-1"))
+        .await
+        .expect("replay");
+    assert!(replay.replayed);
+    assert_eq!(replay.edge, outcome.edge);
+    assert_eq!(
+        replay.journal_seq, None,
+        "the record holds the ClaimEdge alone"
+    );
+    assert_eq!(
+        journal(&f.store, f.boot.tenant_id).await.len(),
+        events.len()
+    );
+}
+
+/// `review.*` and `claim_edge.*` have no key on the events tail
+/// (http-api.md#events-tail, the per-family table; `tail_visible`): no key
+/// is served the proposal or the ratification, the proposer's and the
+/// ratifier's own keys included, while the endpoints' promotions stay on
+/// the tail.
+#[tokio::test]
+async fn claim_edge_proposed_and_an_edges_review_ratify_never_appear_on_the_events_tail() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    f.app
+        .ratify_claim_edge(&rita.value, f.edge_id, None)
+        .await
+        .expect("ratify");
+    let reader = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    // Both events are in the chain, so their absence below is the tail's.
+    let journalled: Vec<String> = journal(&f.store, f.boot.tenant_id)
+        .await
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    for edge_event in [event_types::CLAIM_EDGE_PROPOSED, event_types::REVIEW_RATIFY] {
+        assert!(
+            journalled.iter().any(|t| t == edge_event),
+            "{edge_event} is journalled"
+        );
+    }
+
+    for key in [&f.pat, &rita, &reader] {
+        let tail = f
+            .app
+            .tail_events(&key.value, Some(by_name("crew")), 0, 1000)
+            .await
+            .expect("tail");
+        let types: Vec<&str> = tail
+            .events
+            .iter()
+            .map(|e| e.event.envelope.event_type.as_str())
+            .collect();
+        assert!(
+            types.contains(&event_types::LIFECYCLE_PROMOTE),
+            "{}: the endpoints' promotions are on the tail: {types:?}",
+            key.principal
+        );
+        assert!(
+            !types
+                .iter()
+                .any(|t| t.starts_with("claim_edge.") || t.starts_with("review.")),
+            "{}: no claim_edge.* or review.* event: {types:?}",
+            key.principal
+        );
+        assert_eq!(
+            tail.next_after_seq, tail.head_seq,
+            "the scan reached the ratification"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_proposers_own_key_is_refused_review_ratifier_is_proposer() {
+    let f = edge_fixture().await;
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    let err = f
+        .app
+        .ratify_claim_edge(&f.pat.value, f.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn another_key_of_the_proposers_principal_is_refused_review_ratifier_is_proposer() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let pat_again = curator(&f.app, admin, "pat", f.crew).await;
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    let err = f
+        .app
+        .ratify_claim_edge(&pat_again.value, f.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn a_ratifier_who_authored_either_endpoint_is_refused_review_author_in_lineage() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    // Dreamer keys of each endpoint's author: alice wrote the source, bob
+    // the target.
+    let alice_dreamer = curator(&f.app, admin, "alice", f.crew).await;
+    let bob_dreamer = curator(&f.app, admin, "bob", f.crew).await;
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    for ratifier in [&alice_dreamer, &bob_dreamer] {
+        let err = f
+            .app
+            .ratify_claim_edge(&ratifier.value, f.edge_id, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::AuthorInLineage),
+            "{}: {err:?}",
+            ratifier.principal
+        );
+    }
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn a_service_key_is_refused_claim_edge_ratify_with_access_verb_ceiling_even_for_an_unknown_edge()
+ {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let repair = f
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                held_by: Some(HeldBy::Service),
+                ..issue_req(
+                    Role::Dreamer,
+                    "reconciler",
+                    vec![grant(f.crew, Role::Dreamer), grant(f.crew, Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("issue a service key");
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    for edge_id in [f.edge_id, Uuid::from_u128(0xDEAD)] {
+        let err = f
+            .app
+            .ratify_claim_edge(&repair.value, edge_id, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::VerbCeiling {
+                    role: Role::Dreamer,
+                    verb: "claim_edge.ratify",
+                }
+            ),
+            "refused before the edge is looked up: {err:?}"
+        );
+    }
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn an_unknown_edge_id_answers_access_not_found() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    // An edge whose endpoints rita cannot read answers as an absent one.
+    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let outsider = curator(&f.app, admin, "otto", elsewhere).await;
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    let err = f
+        .app
+        .ratify_claim_edge(&rita.value, Uuid::from_u128(0xDEAD), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let err = f
+        .app
+        .ratify_claim_edge(&outsider.value, f.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+/// A tenant with three promoted terms, `acme:x`, `acme:y` and `acme:z`,
+/// a proposer pat and two ratifiers, rita and ruth.
+struct TermFixture {
+    store: MemStore,
+    app: TestApp,
+    boot: BootstrapResult,
+    pat: IssuedKey,
+    rita: IssuedKey,
+    ruth: IssuedKey,
+    x: Uuid,
+    y: Uuid,
+    z: Uuid,
+}
+
+async fn term_fixture() -> TermFixture {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let rita = curator(&app, admin, "rita", crew).await;
+    let ruth = curator(&app, admin, "ruth", crew).await;
+    let x = term(&app, &alice.value, &dana.value, "t-x", "acme:x").await;
+    let y = term(&app, &alice.value, &dana.value, "t-y", "acme:y").await;
+    let z = term(&app, &alice.value, &dana.value, "t-z", "acme:z").await;
+    TermFixture {
+        store,
+        app,
+        boot,
+        pat,
+        rita,
+        ruth,
+        x,
+        y,
+        z,
+    }
+}
+
+fn is_cycle_refused(err: &AppError, label: OmlLabel) -> bool {
+    matches!(err, AppError::CycleRefused(refused) if refused.label == label)
+}
+
+#[tokio::test]
+async fn ratifying_an_is_a_edge_that_closes_a_cycle_is_refused_vocab_cycle_refused_and_journals_nothing()
+ {
+    let t = term_fixture().await;
+    let xy = proposed(&t.app, &t.pat.value, t.x, t.y, "oml:is_a").await;
+    let yz = proposed(&t.app, &t.pat.value, t.y, t.z, "oml:is_a").await;
+    let zx = proposed(&t.app, &t.pat.value, t.z, t.x, "oml:is_a").await;
+    t.app
+        .ratify_claim_edge(&t.rita.value, xy, None)
+        .await
+        .expect("x is_a y");
+    t.app
+        .ratify_claim_edge(&t.rita.value, yz, None)
+        .await
+        .expect("y is_a z");
+    let before = journal(&t.store, t.boot.tenant_id).await.len();
+
+    let err = t
+        .app
+        .ratify_claim_edge(&t.ruth.value, zx, Some("cycle-1"))
+        .await
+        .unwrap_err();
+    assert!(is_cycle_refused(&err, OmlLabel::IsA), "{err:?}");
+    assert_eq!(journal(&t.store, t.boot.tenant_id).await.len(), before);
+    let edge = t
+        .store
+        .claim_edge(t.boot.tenant_id, zx)
+        .await
+        .expect("read")
+        .expect("the edge");
+    assert_eq!(edge.state, EdgeState::Pending, "the refused edge waits");
+}
+
+#[tokio::test]
+async fn a_pending_successor_or_about_edge_is_never_ratified_apart_from_its_deprecation_and_journals_nothing()
+ {
+    let t = term_fixture().await;
+    let cases = [
+        (
+            0xED6E_0000_0000_0000_0000_0000_0000_0101_u128,
+            OmlLabel::ReplacedBy,
+            LabelRefusal::SuccessorOutsideDeprecation,
+        ),
+        (
+            0xED6E_0000_0000_0000_0000_0000_0000_0102,
+            OmlLabel::Consider,
+            LabelRefusal::SuccessorOutsideDeprecation,
+        ),
+        (
+            0xED6E_0000_0000_0000_0000_0000_0000_0103,
+            OmlLabel::About,
+            LabelRefusal::AboutNotBuilt,
+        ),
+    ];
+    for (n, (edge_id, label, _)) in cases.iter().enumerate() {
+        let edge = ClaimEdgeRecord {
+            edge_id: Uuid::from_u128(*edge_id),
+            label: label.as_str().to_owned(),
+            ..pending_edge(t.boot.tenant_id, &t.pat, t.x, t.y)
+        };
+        commit_pending_edge(&t.store, edge, 0xEE01 + n as u128).await;
+    }
+    let before = journal(&t.store, t.boot.tenant_id).await.len();
+
+    for (edge_id, label, reason) in cases {
+        let edge_id = Uuid::from_u128(edge_id);
+        let err = t
+            .app
+            .ratify_claim_edge(&t.rita.value, edge_id, Some(label.as_str()))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                AppError::ClaimEdgeLabel { field: EdgeField::Label, reason: refused }
+                    if *refused == reason
+            ),
+            "{label:?}: {err:?}"
+        );
+        let edge = t
+            .store
+            .claim_edge(t.boot.tenant_id, edge_id)
+            .await
+            .expect("read")
+            .expect("the edge");
+        assert_eq!(edge.state, EdgeState::Pending, "{label:?} waits");
+    }
+    assert_eq!(journal(&t.store, t.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn an_is_a_proposal_between_two_terms_whose_claim_keys_are_not_curies_is_refused_request_validation_and_journals_nothing()
+ {
+    let t = term_fixture().await;
+    let store = &t.store;
+    let admin = &t.boot.admin_key.value;
+    let crew = store
+        .memory(t.boot.tenant_id, t.x)
+        .await
+        .expect("read")
+        .expect("x")
+        .workarea_id;
+    let alice = agent(&t.app, admin, "alice-2", crew).await;
+    let dana = issue(&t.app, admin, Role::Dreamer, "dana-2", crew).await;
+    let plain = term(&t.app, &alice.value, &dana.value, "t-plain", "claim-plain").await;
+    let before = journal(store, t.boot.tenant_id).await.len();
+
+    for (from, to, field) in [(plain, t.x, EdgeField::From), (t.x, plain, EdgeField::To)] {
+        for label in [OmlLabel::IsA, OmlLabel::PartOf] {
+            let err = t
+                .app
+                .propose_claim_edge(&t.pat.value, &edge_req(from, to, label.as_str()), None)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    AppError::ClaimEdgeLabel { field: f, reason: LabelRefusal::EndpointNotCurie { field: r } }
+                        if *f == field && *r == field
+                ),
+                "{label:?}: {err:?}"
+            );
+        }
+    }
+    assert_eq!(journal(store, t.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn an_is_a_loop_through_a_pending_edge_is_ratified_since_only_ratified_edges_count() {
+    let t = term_fixture().await;
+    let _xy_pending = proposed(&t.app, &t.pat.value, t.x, t.y, "oml:is_a").await;
+    let yx = proposed(&t.app, &t.pat.value, t.y, t.x, "oml:is_a").await;
+
+    let outcome = t
+        .app
+        .ratify_claim_edge(&t.rita.value, yx, None)
+        .await
+        .expect("a loop closed only by a pending edge is no cycle");
+    assert_eq!(outcome.edge.state, "ratified");
+}
+
+#[tokio::test]
+async fn a_relates_to_loop_carries_no_cycle_invariant() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    let back = proposed(&f.app, &f.pat.value, f.b, f.a, "acme:relates_to").await;
+    let forth = proposed(&f.app, &f.pat.value, f.a, f.b, "acme:relates_to").await;
+    let self_edge = proposed(&f.app, &f.pat.value, f.a, f.a, "acme:relates_to").await;
+
+    for edge_id in [back, forth, self_edge] {
+        f.app
+            .ratify_claim_edge(&rita.value, edge_id, None)
+            .await
+            .expect("an open label closes no cycle");
+    }
+    assert_eq!(ratifications(&f.store, f.boot.tenant_id).await.len(), 3);
+}
+
+#[tokio::test]
+async fn ratifying_a_ratified_edge_answers_review_serve_invalid_consumed_and_journals_nothing() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    let ruth = curator(&f.app, admin, "ruth", f.crew).await;
+    f.app
+        .ratify_claim_edge(&rita.value, f.edge_id, None)
+        .await
+        .expect("ratify");
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    for key in [&rita, &ruth] {
+        let err = f
+            .app
+            .ratify_claim_edge(&key.value, f.edge_id, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::EdgeConsumed { edge_id } if edge_id == f.edge_id),
+            "{err:?}"
+        );
+    }
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+
+    // A ratification that lost the store's compare-and-set answers alike.
+    let other = proposed(&f.app, &f.pat.value, f.b, f.a, "acme:supports").await;
+    f.store.refuse_next_commit_of(
+        event_types::REVIEW_RATIFY,
+        StoreError::EdgeNotPending { edge_id: other },
+    );
+    let err = f
+        .app
+        .ratify_claim_edge(&rita.value, other, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::EdgeConsumed { edge_id } if edge_id == other),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn of_two_ratifications_racing_to_close_an_is_a_cycle_one_commits_and_the_other_is_refused() {
+    let t = term_fixture().await;
+    let xy = proposed(&t.app, &t.pat.value, t.x, t.y, "oml:is_a").await;
+    let yx = proposed(&t.app, &t.pat.value, t.y, t.x, "oml:is_a").await;
+    let head = t
+        .store
+        .chain_head(t.boot.tenant_id)
+        .await
+        .expect("head")
+        .expect("the chain")
+        .seq;
+
+    // Ruth's ratification of y is_a x reads no ratified is_a edge, passes
+    // the cycle check, and loses the head to rita's ratification of x is_a
+    // y, which commits between ruth's read and ruth's commit.
+    t.store.refuse_next_commit_of(
+        event_types::REVIEW_RATIFY,
+        StoreError::SeqConflict {
+            expected_seq: head + 2,
+            found_seq: head + 1,
+        },
+    );
+    let lost = t
+        .app
+        .ratify_claim_edge(&t.ruth.value, yx, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(lost, AppError::Store(StoreError::SeqConflict { .. })),
+        "{lost:?}"
+    );
+    t.app
+        .ratify_claim_edge(&t.rita.value, xy, None)
+        .await
+        .expect("rita's ratification commits");
+
+    // The transport's head retry runs ruth's call again: it re-reads the
+    // ratified edges and refuses.
+    let err = t
+        .app
+        .ratify_claim_edge(&t.ruth.value, yx, None)
+        .await
+        .unwrap_err();
+    assert!(is_cycle_refused(&err, OmlLabel::IsA), "{err:?}");
+
+    let ratified = ratifications(&t.store, t.boot.tenant_id).await;
+    assert_eq!(ratified.len(), 1, "one ratification commits");
+    assert_eq!(
+        ratified[0].envelope.payload["edge_id"],
+        json!(xy.to_string())
+    );
+    let edge = t
+        .store
+        .claim_edge(t.boot.tenant_id, yx)
+        .await
+        .expect("read")
+        .expect("the edge");
+    assert_eq!(edge.state, EdgeState::Pending);
+}
+
+// ---------------------------------------------------------------------------
+// The claim-edge read: GET /v2/edges?kind=claim behind its use case (http-api.md,
+// claim edges and pagination; ADR-0008 d5)
+// ---------------------------------------------------------------------------
+
+fn edges_of(artifact_id: Uuid) -> ClaimEdgeQuery {
+    ClaimEdgeQuery {
+        workarea: None,
+        artifact_id: Some(artifact_id),
+    }
+}
+
+fn edges_in(workarea: Reference) -> ClaimEdgeQuery {
+    ClaimEdgeQuery {
+        workarea: Some(workarea),
+        artifact_id: None,
+    }
+}
+
+fn edge_ids(page: &ClaimEdgePage) -> Vec<Uuid> {
+    page.items.iter().map(|e| e.edge_id).collect()
+}
+
+#[tokio::test]
+async fn the_claim_edges_read_lists_pending_and_ratified_edges_of_a_readable_artifact() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    let ratified = proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    f.app
+        .ratify_claim_edge(&rita.value, ratified, None)
+        .await
+        .expect("ratify");
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    let page = f
+        .app
+        .claim_edges(&rory.value, edges_of(f.a), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(page.next_cursor, None);
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|e| serde_json::to_value(e).expect("serializes"))
+            .collect::<Vec<_>>(),
+        vec![
+            json!({
+                "edge_id": ratified.to_string(),
+                "from_artifact_id": f.b.to_string(),
+                "to_artifact_id": f.a.to_string(),
+                "label": "acme:refutes",
+                "state": "ratified",
+                "proposer_key_id": f.pat.key_id.to_string(),
+                "ratifier_key_id": rita.key_id.to_string(),
+            }),
+            json!({
+                "edge_id": f.edge_id.to_string(),
+                "from_artifact_id": f.a.to_string(),
+                "to_artifact_id": f.b.to_string(),
+                "label": "acme:supports",
+                "state": "pending",
+                "proposer_key_id": f.pat.key_id.to_string(),
+                "ratifier_key_id": null,
+            }),
+        ],
+        "newest first, each as openapi.yaml's ClaimEdge"
+    );
+}
+
+#[tokio::test]
+async fn an_edge_with_an_endpoint_outside_read_scope_is_absent_from_the_read() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let erin = agent(&f.app, admin, "erin", elsewhere).await;
+    let eve = issue(&f.app, admin, Role::Dreamer, "eve", elsewhere).await;
+    let unseen = promoted(&f.app, &erin.value, &eve.value, &submit_req("far-u", "u")).await;
+    // A curator reading both workareas joins a to the row rory cannot read.
+    let quinn = issue_with(
+        &f.app,
+        admin,
+        Role::Dreamer,
+        "quinn",
+        vec![
+            grant(f.crew, Role::Dreamer),
+            grant(f.crew, Role::Reader),
+            grant(elsewhere, Role::Reader),
+        ],
+    )
+    .await;
+    let hidden = proposed(&f.app, &quinn.value, f.a, unseen, "acme:supports").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    let of_a = f
+        .app
+        .claim_edges(&rory.value, edges_of(f.a), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&of_a), vec![f.edge_id]);
+    let in_crew = f
+        .app
+        .claim_edges(&rory.value, edges_in(f.crew.into()), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&in_crew), vec![f.edge_id]);
+    let of_unseen = f
+        .app
+        .claim_edges(&rory.value, edges_of(unseen), None, 10)
+        .await
+        .expect("the read");
+    assert!(of_unseen.items.is_empty(), "{:?}", of_unseen.items);
+
+    // The key that reads both ends is served the edge.
+    let by_quinn = f
+        .app
+        .claim_edges(&quinn.value, edges_of(f.a), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&by_quinn), vec![hidden, f.edge_id]);
+}
+
+#[tokio::test]
+async fn an_edge_to_a_version_demoted_after_its_proposal_is_absent_for_another_reader_and_served_to_its_author()
+ {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    // No use case demotes in this build; the row turns demoted after the
+    // edge to it was proposed.
+    f.store
+        .set_status(f.boot.tenant_id, f.a, MemoryStatus::Demoted);
+
+    for query in [
+        edges_of(f.b),
+        edges_in(f.crew.into()),
+        ClaimEdgeQuery::default(),
+    ] {
+        let page = f
+            .app
+            .claim_edges(&rory.value, query, None, 10)
+            .await
+            .expect("the read");
+        assert!(page.items.is_empty(), "{:?}", page.items);
+    }
+    // Alice wrote a and holds reader on crew: her own row in any state is
+    // in her read scope, and b is promoted.
+    let by_author = f
+        .app
+        .claim_edges(&f.alice.value, edges_of(f.b), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&by_author), vec![f.edge_id]);
+}
+
+#[tokio::test]
+async fn an_edge_whose_endpoint_is_another_authors_held_row_in_a_readable_workarea_is_absent() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let held = f
+        .app
+        .submit_memory(&f.alice.value, &submit_req("held-h", "h"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    // No proposer could read alice's held row; the edge lands as another
+    // writer's commit would.
+    let edge = ClaimEdgeRecord {
+        edge_id: Uuid::from_u128(0xED6E_0000_0000_0000_0000_0000_0000_00AB),
+        ..pending_edge(f.boot.tenant_id, &f.pat, f.b, held)
+    };
+    commit_pending_edge(&f.store, edge, 0xEE0A).await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    for query in [edges_of(f.b), edges_of(held), ClaimEdgeQuery::default()] {
+        let page = f
+            .app
+            .claim_edges(&rory.value, query, None, 10)
+            .await
+            .expect("the read");
+        assert!(
+            page.items.iter().all(|e| e.to_artifact_id != held),
+            "{:?}",
+            page.items
+        );
+    }
+    assert_eq!(
+        edge_ids(
+            &f.app
+                .claim_edges(&rory.value, edges_of(f.b), None, 10)
+                .await
+                .expect("the read")
+        ),
+        vec![f.edge_id]
+    );
+}
+
+#[tokio::test]
+async fn another_tenants_key_reads_an_empty_page_by_this_tenants_artifact_and_its_cursor_answers_foreign()
+ {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    let cursor = f
+        .app
+        .claim_edges(&rory.value, edges_of(f.a), None, 1)
+        .await
+        .expect("the first page")
+        .next_cursor
+        .expect("another page");
+
+    let globex = f
+        .app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("globex"),
+            admin_key_name: name("globex-admin"),
+            admin_principal: "gina-admin".to_owned(),
+        })
+        .await
+        .expect("bootstrap another tenant");
+    let globex_admin = &globex.admin_key.value;
+    let desk = workarea(&f.app, globex_admin, "desk", globex.root_workarea_id).await;
+    let gus = issue(&f.app, globex_admin, Role::Reader, "gus", desk).await;
+
+    for query in [edges_of(f.a), edges_of(f.b), ClaimEdgeQuery::default()] {
+        let page = f
+            .app
+            .claim_edges(&gus.value, query, None, 10)
+            .await
+            .expect("the read");
+        assert!(page.items.is_empty(), "{:?}", page.items);
+        assert_eq!(page.next_cursor, None);
+    }
+    let err = f
+        .app
+        .claim_edges(&gus.value, edges_of(f.a), Some(&cursor), 1)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::Cursor(CursorError::Foreign)),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_named_workarea_the_key_holds_no_reader_on_answers_access_not_found() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    // Wes holds writer on crew and no reader anywhere: a node without
+    // reader is unreadable, so the refusal order stops at access.not_found
+    // before access.grant_refused (roles-and-keys.md refusal order).
+    let wes = issue(&f.app, admin, Role::Writer, "wes", f.crew).await;
+
+    for (key, reference) in [
+        (&rory, Reference::from(elsewhere)),
+        (&rory, by_name("elsewhere")),
+        (&wes, Reference::from(f.crew)),
+        (&wes, by_name("crew")),
+    ] {
+        let err = f
+            .app
+            .claim_edges(&key.value, edges_in(reference), None, 10)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_workarea_filter_serves_an_edge_between_two_claims_in_its_child_workareas() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let left = workarea(&f.app, admin, "left", f.crew).await;
+    let right = workarea(&f.app, admin, "right", f.crew).await;
+    let dana = issue(&f.app, admin, Role::Dreamer, "dina", f.crew).await;
+    let l = promoted(
+        &f.app,
+        &f.alice.value,
+        &dana.value,
+        &submit_into("sub-l", "l", left),
+    )
+    .await;
+    let r = promoted(
+        &f.app,
+        &f.bob.value,
+        &dana.value,
+        &submit_into("sub-r", "r", right),
+    )
+    .await;
+    let below = proposed(&f.app, &f.pat.value, l, r, "acme:supports").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    let in_crew = f
+        .app
+        .claim_edges(&rory.value, edges_in(f.crew.into()), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&in_crew), vec![below, f.edge_id]);
+    let in_left = f
+        .app
+        .claim_edges(&rory.value, edges_in(left.into()), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&in_left), vec![below]);
+}
+
+#[tokio::test]
+async fn a_page_cursor_resumes_after_the_last_edge() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let erin = agent(&f.app, admin, "erin", elsewhere).await;
+    let eve = issue(&f.app, admin, Role::Dreamer, "eve", elsewhere).await;
+    let unseen = promoted(&f.app, &erin.value, &eve.value, &submit_req("pg-u", "u")).await;
+    let quinn = issue_with(
+        &f.app,
+        admin,
+        Role::Dreamer,
+        "quinn",
+        vec![
+            grant(f.crew, Role::Dreamer),
+            grant(f.crew, Role::Reader),
+            grant(elsewhere, Role::Reader),
+        ],
+    )
+    .await;
+    // Newest first: fourth, the edge rory cannot read, second, the fixture's.
+    let second = proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    proposed(&f.app, &quinn.value, f.a, unseen, "acme:supports").await;
+    let fourth = proposed(&f.app, &f.pat.value, f.a, f.b, "acme:cites").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    let query = edges_of(f.a);
+
+    let first = f
+        .app
+        .claim_edges(&rory.value, query.clone(), None, 2)
+        .await
+        .expect("the first page");
+    assert_eq!(
+        edge_ids(&first),
+        vec![fourth, second],
+        "the page reads past the edge it filters out to fill its limit"
+    );
+    let cursor = first.next_cursor.expect("another page");
+    let next = f
+        .app
+        .claim_edges(&rory.value, query, Some(&cursor), 2)
+        .await
+        .expect("the next page");
+    assert_eq!(edge_ids(&next), vec![f.edge_id]);
+    assert_eq!(next.next_cursor, None, "the listing is exhausted");
+}
+
+#[tokio::test]
+async fn a_cursor_minted_for_another_filter_is_refused_request_validation() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    let cursor = f
+        .app
+        .claim_edges(&rory.value, edges_of(f.a), None, 1)
+        .await
+        .expect("the first page")
+        .next_cursor
+        .expect("another page");
+
+    for other in [
+        edges_of(f.b),
+        edges_in(f.crew.into()),
+        ClaimEdgeQuery {
+            workarea: Some(f.crew.into()),
+            artifact_id: Some(f.a),
+        },
+    ] {
+        let err = f
+            .app
+            .claim_edges(&rory.value, other, Some(&cursor), 1)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Cursor(CursorError::OtherFilter)),
+            "{err:?}"
+        );
+    }
+    // Under its own filter it resumes.
+    f.app
+        .claim_edges(&rory.value, edges_of(f.a), Some(&cursor), 1)
+        .await
+        .expect("its own filter resumes");
+}
+
+#[tokio::test]
+async fn an_admin_key_reading_claim_edges_is_refused_access_verb_ceiling() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    for query in [
+        edges_of(f.a),
+        edges_in(f.crew.into()),
+        ClaimEdgeQuery::default(),
+    ] {
+        let err = f.app.claim_edges(admin, query, None, 10).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::VerbCeiling {
+                    role: Role::Admin,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_workarea_named_by_its_name_reads_as_by_its_id() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    let by_id = f
+        .app
+        .claim_edges(&rory.value, edges_in(f.crew.into()), None, 1)
+        .await
+        .expect("by id");
+    let by_name = f
+        .app
+        .claim_edges(&rory.value, edges_in(by_name("crew")), None, 1)
+        .await
+        .expect("by name");
+    assert_eq!(edge_ids(&by_name), edge_ids(&by_id));
+    assert_eq!(by_id.items.len(), 1);
+    // The cursor binds the resolved node, so either spelling resumes it.
+    let cursor = by_name.next_cursor.expect("another page");
+    let rest = f
+        .app
+        .claim_edges(&rory.value, edges_in(f.crew.into()), Some(&cursor), 1)
+        .await
+        .expect("resumes by id");
+    assert_eq!(edge_ids(&rest), vec![f.edge_id]);
+}
+
+/// The workarea read carries the status read's fields, so the removed
+/// status route has one successor and the two can never disagree
+/// (ADR-0039 d9; ADR-0046 d3).
+#[tokio::test]
+async fn the_workarea_read_serves_the_policy_in_force_and_the_nodes_live_proposals_as_the_status_read_does()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = curator(&app, admin, "dora", crew).await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let proposal = app
+        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+
+    let info = app
+        .workarea_info(rita.value.as_str(), Some(crew.into()))
+        .await
+        .expect("the workarea read");
+    let status = app
+        .workarea_status(&rita.value, crew.into())
+        .await
+        .expect("the status read");
+    assert_eq!(
+        info.policy,
+        json!({ "k": 1, "required_roles": ["dreamer"] })
+    );
+    assert_eq!(info.policy, status.policy);
+    assert_eq!(info.pending_transitions, vec![seen_by_another(&proposal)]);
+    assert_eq!(info.pending_transitions, status.pending);
+
+    // The proposer's own key sees its key id, as on the status read.
+    let own = app
+        .workarea_info(dora.value.as_str(), Some(crew.into()))
+        .await
+        .expect("the workarea read");
+    assert_eq!(
+        own.pending_transitions[0].proposed_by_key_id,
+        Some(dora.key_id)
+    );
+}
+
+// -- the workarea brief: brief edges, their ratification and the brief the
+// workarea read serves (ADR-0046 d7, d8, d9) -------------------------------
+
+struct BriefRig {
+    app: TestApp,
+    store: MemStore,
+    boot: BootstrapResult,
+    crew: Uuid,
+    writer: IssuedKey,
+    dora: IssuedKey,
+    dan: IssuedKey,
+    rita: IssuedKey,
+}
+
+async fn brief_rig() -> BriefRig {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.clone();
+    let writer = agent(&app, &admin, "crew/writer", crew).await;
+    let dora = curator(&app, &admin, "dora", crew).await;
+    let dan = curator(&app, &admin, "dan", crew).await;
+    let rita = issue(&app, &admin, Role::Reader, "rita", crew).await;
+    BriefRig {
+        app,
+        store,
+        boot,
+        crew,
+        writer,
+        dora,
+        dan,
+        rita,
+    }
+}
+
+fn brief_req(artifact_id: Uuid, workarea: Uuid) -> ProposeBriefEdge {
+    ProposeBriefEdge {
+        artifact_id,
+        workarea: workarea.into(),
+    }
+}
+
+/// Proposes `artifact` into the crew's brief under dora and ratifies it
+/// under dan.
+async fn into_brief(r: &BriefRig, artifact: Uuid) -> Uuid {
+    let edge = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(artifact, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal
+        .edge_id;
+    r.app
+        .ratify_brief_edge(&r.dan.value, edge, None)
+        .await
+        .expect("a ratification");
+    edge
+}
+
+#[tokio::test]
+async fn a_dreamer_proposes_a_promoted_claim_into_a_workarea_brief_and_it_stays_pending_as_one_brief_edge_proposed()
+ {
+    let r = brief_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("b1", "the canary drains first", r.crew),
+    )
+    .await;
+    let before = journal(&r.store, r.boot.tenant_id).await.len();
+    let outcome = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal");
+    assert_eq!(outcome.proposal.state, "pending");
+    assert_eq!(outcome.proposal.label, "brief");
+    assert_eq!(outcome.proposal.to_workarea_id, r.crew);
+    let events = journal(&r.store, r.boot.tenant_id).await;
+    assert_eq!(events.len(), before + 1);
+    assert_eq!(
+        events.last().expect("the event").envelope.event_type,
+        event_types::BRIEF_EDGE_PROPOSED
+    );
+    // Pending is not a member: the brief is empty until a second identity
+    // ratifies.
+    let info = r
+        .app
+        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .await
+        .expect("the workarea read");
+    assert!(info.brief.items.is_empty());
+}
+
+#[tokio::test]
+async fn a_held_claim_cannot_join_a_brief_and_a_reader_key_cannot_propose_one() {
+    let r = brief_rig().await;
+    let held = r
+        .app
+        .submit_memory(&r.writer.value, &submit_into("b2", "still held", r.crew))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let err = r
+        .app
+        .propose_brief_edge(&r.writer.value, &brief_req(held, r.crew), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    let err = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(held, r.crew), None)
+        .await
+        .unwrap_err();
+    // A dreamer reads no other author's held row: absent, not described.
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_second_dreamer_ratifies_a_brief_edge_and_its_proposer_never_does() {
+    let r = brief_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("b3", "deploys go out on tuesdays", r.crew),
+    )
+    .await;
+    let edge = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal
+        .edge_id;
+    let err = r
+        .app
+        .ratify_brief_edge(&r.dora.value, edge, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    let ratified = r
+        .app
+        .ratify_edge(&r.dan.value, edge, None)
+        .await
+        .expect("a second identity ratifies");
+    let EdgeRatification::Brief(ratified) = ratified else {
+        panic!("a brief edge's id ratifies a brief edge");
+    };
+    assert_eq!(ratified.edge.state, "ratified");
+    assert_eq!(ratified.edge.ratifier_key_id, Some(r.dan.key_id));
+    let last = journal(&r.store, r.boot.tenant_id).await;
+    let last = &last.last().expect("the ratification").envelope;
+    assert_eq!(last.event_type, event_types::REVIEW_RATIFY);
+    assert_eq!(last.payload["subject_kind"], "brief_edge");
+    assert_eq!(last.payload["same_user"], false);
+    let err = r
+        .app
+        .ratify_brief_edge(&r.dan.value, edge, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::EdgeConsumed { .. }), "{err:?}");
+}
+
+#[tokio::test]
+async fn the_workarea_read_serves_the_ratified_brief_in_ratification_order_cut_by_brief_max_tokens()
+{
+    let store = MemStore::new();
+    // 12 budget tokens: room for the first two 20-byte members, not a third.
+    let app = app_over(store.clone()).with_brief_max_tokens(12);
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.clone();
+    let r = BriefRig {
+        writer: agent(&app, &admin, "crew/writer", crew).await,
+        dora: curator(&app, &admin, "dora", crew).await,
+        dan: curator(&app, &admin, "dan", crew).await,
+        rita: issue(&app, &admin, Role::Reader, "rita", crew).await,
+        app,
+        store,
+        boot,
+        crew,
+    };
+    let mut claims = Vec::new();
+    for (idem, text) in [
+        ("o1", "first agreed member."),
+        ("o2", "second agreed membr."),
+        ("o3", "third agreed member."),
+    ] {
+        claims.push(
+            promoted(
+                &r.app,
+                &r.writer.value,
+                &r.dora.value,
+                &submit_into(idem, text, r.crew),
+            )
+            .await,
+        );
+    }
+    // Ratified out of creation order: the brief follows ratification.
+    into_brief(&r, claims[1]).await;
+    into_brief(&r, claims[0]).await;
+    into_brief(&r, claims[2]).await;
+    let info = r
+        .app
+        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .await
+        .expect("the workarea read");
+    let ids: Vec<Uuid> = info
+        .brief
+        .items
+        .iter()
+        .map(|m| m.memory.memory_id)
+        .collect();
+    assert_eq!(ids, vec![claims[1], claims[0]]);
+    assert!(info.brief.budget.truncated);
+    assert_eq!(info.brief.budget.max_tokens, 12);
+    // An admin key reads structure and never claim content.
+    let admin_view = r
+        .app
+        .workarea_info(admin.as_str(), Some(r.crew.into()))
+        .await
+        .expect("the admin's structure read");
+    assert!(admin_view.brief.items.is_empty());
+}
+
+#[tokio::test]
+async fn a_superseded_brief_member_drops_out_of_the_brief_by_itself() {
+    let r = brief_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("s1", "the old rule", r.crew),
+    )
+    .await;
+    into_brief(&r, claim).await;
+    let successor = r
+        .app
+        .supersede(&r.writer.value, &supersede_req("s2", claim, "the new rule"))
+        .await
+        .expect("a successor")
+        .receipt
+        .memory_id;
+    r.app
+        .post_verdict(&r.dora.value, successor, Verdict::Approve, None)
+        .await
+        .expect("approve the successor");
+    let info = r
+        .app
+        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .await
+        .expect("the workarea read");
+    assert!(info.brief.items.is_empty(), "only served tips are members");
+}
+
+#[tokio::test]
+async fn a_page_of_brief_edges_lists_pending_and_ratified_newest_first_to_a_reader() {
+    let r = brief_rig().await;
+    let a = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("l1", "one", r.crew),
+    )
+    .await;
+    let b = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("l2", "two", r.crew),
+    )
+    .await;
+    let first = into_brief(&r, a).await;
+    let second = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(b, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal
+        .edge_id;
+    let page = r
+        .app
+        .brief_edges(&r.rita.value, r.crew.into(), None, 1)
+        .await
+        .expect("a page");
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].edge_id, second);
+    let next = r
+        .app
+        .brief_edges(&r.rita.value, r.crew.into(), page.next_cursor.as_deref(), 1)
+        .await
+        .expect("the next page");
+    assert_eq!(next.items[0].edge_id, first);
+    assert_eq!(next.items[0].state, "ratified");
+    assert!(next.next_cursor.is_none());
 }

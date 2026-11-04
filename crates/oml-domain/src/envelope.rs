@@ -19,6 +19,12 @@ pub mod event_types {
     pub const WORKAREA_CREATE: &str = "workarea.create";
     /// A workarea now names another crew record (ADR-0026 d8).
     pub const WORKAREA_CREW_UPDATED: &str = "workarea.crew_updated";
+    /// A forward ladder step proposed by a dreamer or admin; pending until
+    /// a second identity ratifies it (ADR-0009 d3).
+    pub const WORKAREA_STATUS_PROPOSED: &str = "workarea.status_proposed";
+    /// The ratification of a pending `workarea.status_proposed` by a second
+    /// identity, with the policy snapshot (ADR-0009 d3, d4).
+    pub const WORKAREA_STATUS_TRANSITION: &str = "workarea.status_transition";
     /// A named crew record, created by an admin (ADR-0026 d8).
     pub const CREW_CREATED: &str = "crew.created";
     /// A crew record's charter URI or external manager, corrected by an
@@ -49,6 +55,11 @@ pub mod event_types {
     pub const REVIEW_REJECT: &str = "review.reject";
     /// The act that finds the review policy satisfied.
     pub const REVIEW_RATIFY: &str = "review.ratify";
+    /// A dreamer(propose) key proposes a labelled claim↔claim edge; pending,
+    /// it confers nothing (event-catalog.md, claim-edge family).
+    pub const CLAIM_EDGE_PROPOSED: &str = "claim_edge.proposed";
+    /// A claim proposed into a workarea's brief (ADR-0046 d7).
+    pub const BRIEF_EDGE_PROPOSED: &str = "brief_edge.proposed";
     /// Ratified content becomes readable by others.
     pub const LIFECYCLE_PROMOTE: &str = "lifecycle.promote";
     /// A promoted supersession takes the tip from the version it replaces.

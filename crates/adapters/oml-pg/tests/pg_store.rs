@@ -21,7 +21,11 @@
 //! The serving role's privilege laws sit beside the journal guard law, which
 //! runs as the owner (ADR-0034 d3, d6), and the role split's boot checks
 //! refuse each of their reasons by name and accept a minted, migrated pair
-//! (ADR-0034 d5).
+//! (ADR-0034 d5). The status ladder runs end to end through the use cases
+//! over the serving login: a proposal and its ratification move the stored
+//! status and journal both events under row security, and a child create
+//! racing a ratification to `validated` never leaves a validated node over
+//! an unvalidated child (ADR-0009 d3, d4).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -30,23 +34,25 @@ use oml_app::App;
 use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::ConnectionState;
+use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::{
-    Envelope, EventDraft, EventTime, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, event_types, next_envelope, sign, verify_chain,
+    Envelope, EventDraft, EventTime, FrozenOp, KeySet, LadderRefusal, MemoryKind, MemoryStatus,
+    Role, Sha256Hash, SignedEnvelope, WorkareaStatus, event_types, next_envelope, sign,
+    verify_chain,
 };
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, JournalStore, MetadataFold, OutboxRow,
     StoreError,
 };
-use oml_app::types::{AppError, BootstrapRequest, KeyRecord, PROVIDER_TENANT};
+use oml_app::types::{AppError, BootstrapRequest, ClaimEdgeRecord, KeyRecord, PROVIDER_TENANT};
 use oml_pg::{
     ForkCheckError, MIGRATOR, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
 };
 use oml_port_contracts::{
     ChainRig, auth_code_hash, authorization_request, connect_code, connect_grant, connector_key,
-    handle_hash, held_memory, key_record, name, run_connection_store_suite,
+    handle_hash, held_memory, key_record, name, pending_transition, run_connection_store_suite,
     run_journal_store_suite, test_signing_key, token_pair, workarea_record,
 };
 use serde_json::{Value, json};
@@ -3821,6 +3827,289 @@ async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
     drop_dbs(&created).await;
 }
 
+/// The partitions of `memories` an `EXPLAIN (FORMAT JSON)` plan scans or
+/// updates; an UPDATE's ModifyTable names the parent itself, and its
+/// target partitions under "Target Tables".
+fn plan_memories_partitions(plan: &Value) -> Vec<String> {
+    let mut relations = std::collections::BTreeSet::new();
+    plan_relations(plan, &mut relations);
+    relations
+        .into_iter()
+        .filter(|r| r.starts_with("memories_t_"))
+        .collect()
+}
+
+/// The `memories` partitions an `EXPLAIN (FORMAT JSON)` plan scans: every
+/// plan node's relation, the UPDATE's "Target Tables" left out.
+fn plan_memories_scanned(plan: &Value) -> Vec<String> {
+    fn walk(plan: &Value, found: &mut std::collections::BTreeSet<String>) {
+        match plan {
+            Value::Object(node) => {
+                if node.get("Node Type").and_then(Value::as_str) != Some("ModifyTable")
+                    && let Some(Value::String(relation)) = node.get("Relation Name")
+                {
+                    found.insert(relation.clone());
+                }
+                for (key, value) in node {
+                    if key != "Target Tables" {
+                        walk(value, found);
+                    }
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|i| walk(i, found)),
+            _ => {}
+        }
+    }
+    let mut found = std::collections::BTreeSet::new();
+    walk(plan, &mut found);
+    found
+        .into_iter()
+        .filter(|r| r.starts_with("memories_t_"))
+        .collect()
+}
+
+/// Each scan of a `memories` partition in an `EXPLAIN (FORMAT JSON)`
+/// plan, as its alias and the conditions it carries ("Index Cond",
+/// "Recheck Cond" and "Filter", joined).
+fn plan_memories_scans(plan: &Value, found: &mut Vec<(String, String)>) {
+    match plan {
+        Value::Object(node) => {
+            if let (Some(Value::String(relation)), Some(_)) =
+                (node.get("Relation Name"), node.get("Node Type"))
+                && relation.starts_with("memories_t_")
+            {
+                let conditions = ["Index Cond", "Recheck Cond", "Filter"]
+                    .iter()
+                    .filter_map(|c| node.get(*c).and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let alias = node.get("Alias").and_then(Value::as_str).unwrap_or("");
+                found.push((alias.to_owned(), conditions));
+            }
+            for value in node.values() {
+                plan_memories_scans(value, found);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                plan_memories_scans(item, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A claim edge's lineage widening names its tenant on every statement on
+/// `memories`: planned under tenant A over the serving login, the
+/// adapter's statement scans tenant A's partition alone under a custom plan
+/// and a generic one, planned and executed, and its custom plan, the one
+/// the adapter runs it under, targets that partition alone; each scan of it
+/// under the custom plan carries the bound tenant, not row security's
+/// alone; run through the proposal fold, it widens tenant A's rows
+/// and leaves tenant B's rows with the same ids, the same authors and the
+/// same derivation exactly as they were held (ADR-0034 d11, d13; ADR-0001
+/// d2).
+#[tokio::test]
+async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_rows() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (x, y, z) = (
+        Uuid::from_u128(0xC230_0001),
+        Uuid::from_u128(0xC230_0002),
+        Uuid::from_u128(0xC230_0003),
+    );
+    let (ann, bob) = (Uuid::from_u128(0xD230_000A), Uuid::from_u128(0xD230_000B));
+    let workarea = Uuid::from_u128(0xB230);
+    let mut rigs = Vec::new();
+    let mut held = Vec::new();
+    for seed in [230_u64, 231] {
+        let mut rig = ChainRig::new(seed);
+        rig.seed_chain(&store, 0).await;
+        let tenant = rig.tenant_id;
+        let proposer = key_record(
+            tenant,
+            Uuid::from_u128((u128::from(seed) << 32) | 0x02),
+            Role::Dreamer,
+            None,
+        );
+        rig.issue_key(&store, proposer.clone()).await;
+        let mut child = held_memory(tenant, workarea, z, "carol", ann, "child");
+        child.derives_from = vec![x];
+        child.lineage_principals = vec!["ann".to_owned(), "carol".to_owned()];
+        for memory in [
+            held_memory(tenant, workarea, x, "ann", ann, "source"),
+            held_memory(tenant, workarea, y, "bob", bob, "target"),
+            child,
+        ] {
+            rig.commit(
+                &store,
+                event_types::SUBMISSION_REMEMBER,
+                json!({ "artifact_id": memory.memory_id.to_string() }),
+                MetadataFold::MemoryHeld {
+                    memory: memory.clone(),
+                    enqueue: false,
+                },
+                None,
+            )
+            .await
+            .expect("commit held");
+            held.push(memory);
+        }
+        rigs.push((rig, proposer));
+    }
+    let (a, b) = (rigs[0].0.tenant_id, rigs[1].0.tenant_id);
+
+    let mut conn = store.pool().acquire().await.expect("serving connection");
+    for mode in ["force_custom_plan", "force_generic_plan"] {
+        let mut tx = conn.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(a.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        tx.execute(format!("SET LOCAL plan_cache_mode = {mode}").as_str())
+            .await
+            .expect("plan cache mode");
+        tx.execute(
+            format!(
+                "PREPARE oml_widen_probe (uuid, uuid, uuid) AS {}",
+                oml_pg::WIDEN_LINEAGE
+            )
+            .as_str(),
+        )
+        .await
+        .expect("prepare the adapter's statement");
+        let plan: Value = sqlx::query_scalar(&format!(
+            "EXPLAIN (FORMAT JSON) EXECUTE oml_widen_probe ('{a}', '{x}', '{y}')"
+        ))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("explain");
+        let analyzed: Value = sqlx::query_scalar(&format!(
+            "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE oml_widen_probe ('{a}', '{x}', '{y}')"
+        ))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("explain analyze");
+        let version: i32 = sqlx::query_scalar("SELECT current_setting('server_version_num')::int")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("server version");
+        tx.execute("DEALLOCATE oml_widen_probe")
+            .await
+            .expect("deallocate");
+        tx.rollback().await.expect("rollback");
+        // Every scan of `memories`, planned and executed, is tenant A's
+        // partition: under a generic plan by executor-start pruning, each
+        // Append's other subplans removed.
+        assert_eq!(
+            plan_memories_scanned(&plan),
+            vec![partition_of(a)],
+            "{mode}: {plan}"
+        );
+        assert_eq!(
+            plan_memories_scanned(&analyzed),
+            vec![partition_of(a)],
+            "{mode}, executed: {analyzed}"
+        );
+        // The UPDATE's target list: the custom plan, which the adapter runs
+        // the statement under, names tenant A's partition alone on every
+        // version. A generic plan names it alone from PostgreSQL 18, which
+        // prunes result relations at executor start; PostgreSQL 17 lists
+        // every partition as a target there, opened and never scanned, which
+        // the executed plan above shows.
+        if mode == "force_custom_plan" || version >= 180_000 {
+            assert_eq!(
+                plan_memories_partitions(&plan),
+                vec![partition_of(a)],
+                "{mode} on {version}: {plan}"
+            );
+        }
+        // Row security alone would prune the same way, so the custom plan's
+        // scans must each carry the bound tenant itself: the statement's own
+        // `m.tenant_id = $1`, not the policy's `current_setting` (ADR-0034
+        // d13).
+        if mode == "force_custom_plan" {
+            let mut scans = Vec::new();
+            plan_memories_scans(&plan, &mut scans);
+            assert!(!scans.is_empty(), "the widening scans memories: {plan}");
+            let named = format!("tenant_id = '{a}'::uuid");
+            for (alias, conditions) in scans {
+                assert!(
+                    conditions.contains(&named),
+                    "scan {alias} names its tenant: {conditions}"
+                );
+            }
+        }
+    }
+    drop(conn);
+
+    let (rig, proposer) = &mut rigs[0];
+    let event = rig.next_event(
+        event_types::CLAIM_EDGE_PROPOSED,
+        json!({ "edge_id": Uuid::from_u128(0xE230).to_string() }),
+    );
+    let edge = ClaimEdgeRecord {
+        edge_id: Uuid::from_u128(0xE230),
+        tenant_id: a,
+        src_artifact_id: x,
+        dst_artifact_id: y,
+        label: "acme:supports".to_owned(),
+        state: EdgeState::Pending,
+        proposer_key_id: proposer.key_id,
+        proposer_principal: proposer.principal.clone(),
+        ratifier_key_id: None,
+        created_at: event.envelope.at.clone(),
+    };
+    store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
+            fold: MetadataFold::ClaimEdgeProposed(edge),
+            idempotency: None,
+        })
+        .await
+        .expect("the proposal commits");
+
+    let closure = |m: oml_app::types::MemoryRecord| (m.lineage_principals, m.lineage_key_ids);
+    for id in [x, y, z] {
+        let widened = store.memory(a, id).await.expect("read").expect("held");
+        assert_eq!(
+            closure(widened),
+            (
+                if id == z {
+                    vec!["ann".to_owned(), "bob".to_owned(), "carol".to_owned()]
+                } else {
+                    vec!["ann".to_owned(), "bob".to_owned()]
+                },
+                vec![ann, bob]
+            ),
+            "tenant A's {id} gains the authors the edge joins"
+        );
+    }
+    for memory in held.into_iter().filter(|m| m.tenant_id == b) {
+        let stored = store
+            .memory(b, memory.memory_id)
+            .await
+            .expect("read")
+            .expect("held");
+        assert_eq!(
+            closure(stored),
+            closure(memory.clone()),
+            "tenant B's {} is as it was held",
+            memory.memory_id
+        );
+    }
+    drop_dbs(&created).await;
+}
+
 /// No partition's statistics reach the serving role: it holds no privilege
 /// on a partition, and the parent's row security hides the parent's, while
 /// the owner's view, the control, shows each partition's FTS index's
@@ -5185,10 +5474,13 @@ async fn a_key_issued_before_users_folds_as_a_tenant_key() {
         .execute(&mut *tx)
         .await
         .expect("tenant");
+    // Every build stored the root `committed` and every other node
+    // `development`, as 0017's workareas_universe_committed then holds.
     for (w, parent, w_name) in [(universe, None, "universe"), (crew, Some(universe), "crew")] {
         sqlx::query(
             "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status) \
-             VALUES ($1, $2, $3, $4, text2ltree($5), 'development')",
+             VALUES ($1, $2, $3, $4, text2ltree($5), \
+                     CASE WHEN $3::uuid IS NULL THEN 'committed' ELSE 'development' END)",
         )
         .bind(w)
         .bind(tenant)
@@ -5273,5 +5565,1164 @@ async fn a_key_issued_before_users_folds_as_a_tenant_key() {
         .expect("count");
     assert_eq!(journal, 0, "the upgrade journals nothing");
     drop(conn);
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Status-ladder proposals (migrations/0017_workarea_transitions.sql;
+// ADR-0009 d1, d3)
+// ---------------------------------------------------------------------------
+
+/// Runs `sql` as the serving role in `tenant`'s context, binding the
+/// transition `id`, the `workarea`, the proposer and the ratifier keys in
+/// that order, and commits when it succeeds.
+async fn transition_statement(
+    store: &PgStore,
+    tenant: Uuid,
+    sql: &str,
+    ids: [Option<Uuid>; 4],
+) -> Result<sqlx::postgres::PgQueryResult, sqlx::Error> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let mut query = sqlx::query(sql).bind(tenant);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let result = query.execute(&mut *tx).await;
+    if result.is_ok() {
+        tx.commit().await.expect("commit");
+    }
+    result
+}
+
+/// A proposal is one rung forward, a ratified row names its ratifier and
+/// its event's seq, the ratifier is never the proposer, and the node and
+/// keys it names are its own tenant's; the serving role inserts, ratifies
+/// and reads a row under its tenant's row security, and another tenant
+/// sees none (ADR-0009 d1, d3; ADR-0034 d3, d12).
+#[tokio::test]
+async fn the_schema_holds_a_transition_to_one_rung_forward_ratified_by_another_key_in_its_own_tenant()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut a = ChainRig::new(101);
+    a.seed_chain(&store, 0).await;
+    let t = a.tenant_id;
+    let root = Uuid::from_u128(0xB1010);
+    a.create_workarea(&store, workarea_record(t, root, None, "universe"))
+        .await;
+    let node = Uuid::from_u128(0xB1011);
+    a.create_workarea(&store, workarea_record(t, node, Some(root), "procurement"))
+        .await;
+    let (proposer, ratifier) = (Uuid::from_u128(0xD1010), Uuid::from_u128(0xD1011));
+    for key in [proposer, ratifier] {
+        a.issue_key(&store, key_record(t, key, Role::Admin, None))
+            .await;
+    }
+    let mut b = ChainRig::new(102);
+    b.seed_chain(&store, 0).await;
+    let theirs = Uuid::from_u128(0xB1020);
+    b.create_workarea(
+        &store,
+        workarea_record(b.tenant_id, theirs, None, "universe"),
+    )
+    .await;
+
+    // $1 tenant, $2 id, $3 workarea, $4 proposer, $5 ratifier.
+    let row = |from: &str, to: &str, state: &str, ratified_seq: Option<i64>| {
+        let ratified_seq = ratified_seq.map_or_else(|| "NULL".to_owned(), |s| s.to_string());
+        format!(
+            "INSERT INTO workarea_transitions (tenant_id, id, workarea_id, proposer_key_id, \
+             ratifier_key_id, from_status, to_status, state, proposer_principal, proposed_seq, \
+             ratified_seq) VALUES ($1, $2, $3, $4, $5, '{from}', '{to}', '{state}', 'p', 7, \
+             {ratified_seq})"
+        )
+    };
+    let pending = Uuid::from_u128(0xE1010);
+    transition_statement(
+        &store,
+        t,
+        &row("development", "committed", "pending", None),
+        [Some(pending), Some(node), Some(proposer), None],
+    )
+    .await
+    .expect("a pending proposal one rung forward");
+
+    let refusals = [
+        (
+            "a skipped rung",
+            row("development", "validated", "pending", None),
+            [
+                Some(Uuid::from_u128(0xE1011)),
+                Some(node),
+                Some(proposer),
+                None,
+            ],
+            "23514",
+        ),
+        (
+            "a backward step",
+            row("committed", "development", "pending", None),
+            [
+                Some(Uuid::from_u128(0xE1012)),
+                Some(node),
+                Some(proposer),
+                None,
+            ],
+            "23514",
+        ),
+        (
+            "a ratification by its proposer",
+            row("development", "committed", "ratified", Some(8)),
+            [
+                Some(Uuid::from_u128(0xE1013)),
+                Some(node),
+                Some(proposer),
+                Some(proposer),
+            ],
+            "23514",
+        ),
+        (
+            "a ratified row with no ratifier",
+            row("development", "committed", "ratified", Some(8)),
+            [
+                Some(Uuid::from_u128(0xE1014)),
+                Some(node),
+                Some(proposer),
+                None,
+            ],
+            "23514",
+        ),
+        (
+            "a ratified row with no seq",
+            row("development", "committed", "ratified", None),
+            [
+                Some(Uuid::from_u128(0xE1015)),
+                Some(node),
+                Some(proposer),
+                Some(ratifier),
+            ],
+            "23514",
+        ),
+        (
+            "another tenant's node",
+            row("development", "committed", "pending", None),
+            [
+                Some(Uuid::from_u128(0xE1016)),
+                Some(theirs),
+                Some(proposer),
+                None,
+            ],
+            "23503",
+        ),
+    ];
+    for (what, sql, ids, code) in refusals {
+        assert_eq!(
+            refused_code(transition_statement(&store, t, &sql, ids).await, what),
+            code,
+            "{what}"
+        );
+    }
+
+    transition_statement(
+        &store,
+        t,
+        "UPDATE workarea_transitions SET state = 'ratified', ratifier_key_id = $5, \
+         ratified_seq = 9 WHERE tenant_id = $1 AND id = $2 AND workarea_id = $3 \
+         AND proposer_key_id = $4",
+        [Some(pending), Some(node), Some(proposer), Some(ratifier)],
+    )
+    .await
+    .expect("the serving role ratifies a pending row");
+    for (tenant, seen) in [(t, 1_i64), (b.tenant_id, 0)] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM workarea_transitions")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("count");
+        assert_eq!(n, seen, "tenant {tenant} sees {seen}");
+    }
+    drop_dbs(&created).await;
+}
+
+/// The serving role's transition reads answer under the asking tenant's
+/// row security: another tenant reads none of a tenant's proposals by id
+/// or by node, and under its own context, or none, the table shows it no
+/// row, while the owning tenant reads its own (ADR-0009 d3; ADR-0034 d3;
+/// postgres-schema.md row-level security).
+#[tokio::test]
+async fn the_serving_role_reads_no_other_tenants_transitions() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut a = ChainRig::new(103);
+    a.seed_chain(&store, 0).await;
+    let t = a.tenant_id;
+    let root = Uuid::from_u128(0xB1030);
+    a.create_workarea(&store, workarea_record(t, root, None, "universe"))
+        .await;
+    let node = Uuid::from_u128(0xB1031);
+    a.create_workarea(&store, workarea_record(t, node, Some(root), "procurement"))
+        .await;
+    let proposer = Uuid::from_u128(0xD1030);
+    a.issue_key(&store, key_record(t, proposer, Role::Admin, None))
+        .await;
+    let proposal = pending_transition(
+        t,
+        Uuid::from_u128(0xE1030),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    a.propose_transition(&store, proposal.clone())
+        .await
+        .expect("proposal");
+    let mut b = ChainRig::new(104);
+    b.seed_chain(&store, 0).await;
+
+    assert_eq!(
+        store.transition(t, proposal.transition_id).await,
+        Ok(Some(proposal.clone())),
+        "the owning tenant reads its proposal"
+    );
+    assert_eq!(
+        store.pending_transitions(t, node).await,
+        Ok(vec![proposal.clone()]),
+        "the owning tenant lists its proposal"
+    );
+    assert_eq!(
+        store.transition(b.tenant_id, proposal.transition_id).await,
+        Ok(None),
+        "another tenant reads none by id"
+    );
+    assert_eq!(
+        store.pending_transitions(b.tenant_id, node).await,
+        Ok(Vec::new()),
+        "another tenant lists none by node"
+    );
+    for (tenant, seen) in [(Some(t), 1_i64), (Some(b.tenant_id), 0), (None, 0)] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        if let Some(tenant) = tenant {
+            sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+                .bind(tenant.to_string())
+                .execute(&mut *tx)
+                .await
+                .expect("set tenant");
+        }
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM workarea_transitions")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("count");
+        tx.rollback().await.expect("rollback");
+        assert_eq!(n, seen, "under {tenant:?} the table shows {seen}");
+    }
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// The status ladder end to end over the serving role (ADR-0009 d3, d4)
+// ---------------------------------------------------------------------------
+
+type PgApp = App<PgStore, MemSigner, FixedClock, SeqIdGen, MarkerScanner>;
+
+/// The use cases over `store`, signing with the committed test key.
+fn app_over_pg(store: &PgStore) -> PgApp {
+    App::new(
+        store.clone(),
+        MemSigner::new(oml_port_contracts::TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+}
+
+/// A tenant bootstrapped through the use cases under `tenant_name`, its
+/// first admin key named `root-admin` and held by `alice-admin`.
+async fn bootstrap_pg(app: &PgApp, tenant_name: &str) -> oml_app::types::BootstrapResult {
+    app.bootstrap_tenant(&BootstrapRequest {
+        tenant_name: name(tenant_name),
+        admin_key_name: name("root-admin"),
+        admin_principal: "alice-admin".to_owned(),
+    })
+    .await
+    .expect("bootstrap")
+}
+
+/// A workarea `child` under `parent`, created by `admin`; its id.
+async fn workarea_pg(app: &PgApp, admin: &str, child: &str, parent: Uuid) -> Uuid {
+    app.create_workarea(admin, &name(child), Some(parent.into()), None)
+        .await
+        .expect("create workarea")
+        .workarea
+        .workarea_id
+}
+
+/// A dreamer key held by `principal` with one dreamer grant on `node`.
+async fn dreamer_pg(
+    app: &PgApp,
+    admin: &str,
+    key_name: &str,
+    principal: &str,
+    node: Uuid,
+) -> oml_app::types::IssuedKey {
+    app.issue_key(
+        admin,
+        &oml_app::types::IssueKeyRequest {
+            role: Role::Dreamer,
+            name: name(key_name),
+            principal: principal.to_owned(),
+            held_by: None,
+            default_workarea: None,
+            crew: None,
+            connect_code: false,
+            user: None,
+            guardrail_scope: None,
+            grants: vec![oml_app::types::GrantRequest {
+                node: node.into(),
+                role: Role::Dreamer,
+                deny: Vec::new(),
+                covers: oml_app::domain::access::Covers::Subtree,
+            }],
+        },
+    )
+    .await
+    .expect("issue a dreamer key")
+}
+
+/// The stored state of transition `id` as the serving role reads it under
+/// `tenant`'s row security: (state, ratifier, proposed seq, ratified seq).
+async fn transition_row(
+    store: &PgStore,
+    tenant: Uuid,
+    id: Uuid,
+) -> Option<(String, Option<Uuid>, i64, Option<i64>)> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let row = sqlx::query_as(
+        "SELECT state, ratifier_key_id, proposed_seq, ratified_seq \
+           FROM workarea_transitions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .expect("the transition row");
+    tx.rollback().await.expect("rollback");
+    row
+}
+
+/// Propose then ratify through the use cases over the serving login: the
+/// node's stored status moves to the proposal's `to`, the journal holds one
+/// `workarea.status_proposed` signed by the proposer and one
+/// `workarea.status_transition` signed by the ratifier, the row is ratified
+/// at the second event's seq, the stored chain verifies, and another tenant
+/// reads none of it under row security (ADR-0009 d3; ADR-0010 R2; ADR-0034
+/// d3).
+#[tokio::test]
+async fn propose_then_ratify_through_the_serving_role_moves_status_and_journals_both_events_under_rls()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let app = app_over_pg(&store);
+    let boot = bootstrap_pg(&app, "acme").await;
+    let (t, admin) = (boot.tenant_id, boot.admin_key.value.clone());
+    let crew = workarea_pg(&app, &admin, "crew", boot.root_workarea_id).await;
+    let dora = dreamer_pg(&app, &admin, "dora-key", "dora", crew).await;
+    let other = bootstrap_pg(&app, "globex").await;
+
+    let proposal = app
+        .propose_transition(&admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("the admin proposes");
+    let pending = app
+        .workarea_status(&admin, crew.into())
+        .await
+        .expect("the status read");
+    assert_eq!(pending.status, WorkareaStatus::Development);
+    assert_eq!(
+        pending
+            .pending
+            .iter()
+            .map(|p| p.transition_id)
+            .collect::<Vec<_>>(),
+        vec![proposal.transition_id],
+        "the proposal waits, the node unmoved"
+    );
+    let record = app
+        .ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+        .await
+        .expect("a second identity ratifies");
+    assert_eq!(record.status, WorkareaStatus::Committed);
+    assert_eq!(
+        store
+            .workarea(t, crew)
+            .await
+            .expect("read")
+            .expect("the node")
+            .status,
+        WorkareaStatus::Committed,
+        "the stored status moved"
+    );
+    assert!(
+        store
+            .pending_transitions(t, crew)
+            .await
+            .expect("read")
+            .is_empty(),
+        "nothing pending"
+    );
+
+    let events = store.events_range(t, 1, 1000).await.expect("the journal");
+    let ladder: Vec<&SignedEnvelope> = events
+        .iter()
+        .filter(|e| e.envelope.event_type.starts_with("workarea.status_"))
+        .collect();
+    assert_eq!(ladder.len(), 2, "both events journalled");
+    let (proposed, ratified) = (ladder[0], ladder[1]);
+    assert_eq!(
+        (
+            proposed.envelope.event_type.as_str(),
+            proposed.envelope.principal.as_str(),
+            proposed.envelope.api_key_id,
+        ),
+        (
+            event_types::WORKAREA_STATUS_PROPOSED,
+            "alice-admin",
+            Some(boot.admin_key.key_id),
+        )
+    );
+    assert_eq!(
+        (
+            ratified.envelope.event_type.as_str(),
+            ratified.envelope.principal.as_str(),
+            ratified.envelope.api_key_id,
+        ),
+        (
+            event_types::WORKAREA_STATUS_TRANSITION,
+            "dora",
+            Some(dora.key_id),
+        )
+    );
+    assert_eq!(
+        ratified.envelope.payload,
+        json!({
+            "workarea_id": crew.to_string(),
+            "from": "development",
+            "to": "committed",
+            "transition_id": proposal.transition_id.to_string(),
+            "proposed_by_key_id": boot.admin_key.key_id.to_string(),
+            "ratified_by_key_id": dora.key_id.to_string(),
+            "same_user": false,
+            "policy_snapshot": { "k": 1, "required_roles": ["dreamer"] },
+        })
+    );
+    assert_eq!(
+        transition_row(&store, t, proposal.transition_id).await,
+        Some((
+            "ratified".to_owned(),
+            Some(dora.key_id),
+            i64::try_from(proposed.envelope.seq).expect("a seq"),
+            Some(i64::try_from(ratified.envelope.seq).expect("a seq")),
+        )),
+        "the row is ratified at the transition's seq"
+    );
+    let keys = KeySet::new(vec![test_signing_key().verifying_key()]);
+    let head = store
+        .verify_stored_chain(t, &keys)
+        .await
+        .expect("the chain verifies");
+    assert_eq!(head.seq, ratified.envelope.seq);
+
+    // Another tenant reads none of it under row security.
+    let theirs = other.tenant_id;
+    assert_eq!(store.workarea(theirs, crew).await.expect("read"), None);
+    assert_eq!(
+        store.transition(theirs, proposal.transition_id).await,
+        Ok(None)
+    );
+    assert_eq!(
+        transition_row(&store, theirs, proposal.transition_id).await,
+        None
+    );
+    assert!(
+        store
+            .events_range(theirs, 1, 1000)
+            .await
+            .expect("their journal")
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("workarea.status_")),
+        "their journal holds no ladder event"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Every workarea of `tenant` stored `validated` with a child that is not,
+/// as `parent/child` names; the tree invariant holds when it is empty
+/// (ADR-0009 d4).
+async fn validated_over_unvalidated(store: &PgStore, tenant: Uuid) -> Vec<String> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let found = sqlx::query_scalar(
+        "SELECT p.name::text || '/' || c.name::text FROM workareas p \
+           JOIN workareas c ON c.tenant_id = p.tenant_id AND c.parent_id = p.id \
+          WHERE p.tenant_id = $1 AND p.status = 'validated' AND c.status <> 'validated' \
+          ORDER BY 1",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("the invariant query");
+    tx.rollback().await.expect("rollback");
+    found
+}
+
+/// Whether `result` lost a race on the chain head, by seq or by
+/// `prev_hash`, and may be retried as the HTTP transport answers it.
+fn lost_the_head<T>(result: &Result<T, AppError>) -> bool {
+    matches!(
+        result,
+        Err(AppError::Store(
+            StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. }
+        ))
+    )
+}
+
+/// A child create under a committed node and the ratification of that
+/// node's proposal to `validated` run as two tasks on the serving login,
+/// each retrying a lost chain head: exactly one of them lands, the other is
+/// refused by name (`workarea.frozen` for the create, `children_not_validated`
+/// for the ratification), and after both no validated node has a child that
+/// is not validated (ADR-0009 d4, d5; workareas.md, ratification
+/// re-checks).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_concurrent_child_create_and_a_validated_ratification_never_leave_a_validated_node_with_an_unvalidated_child()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let app = Arc::new(app_over_pg(&store));
+    let boot = bootstrap_pg(&app, "acme").await;
+    let (t, admin) = (boot.tenant_id, boot.admin_key.value.clone());
+    let dora = dreamer_pg(&app, &admin, "dora-key", "dora", boot.root_workarea_id).await;
+
+    let (mut created_won, mut ratified_won) = (0, 0);
+    for round in 0..8 {
+        let node = workarea_pg(
+            &app,
+            &admin,
+            &format!("area-{round}"),
+            boot.root_workarea_id,
+        )
+        .await;
+        let to_committed = app
+            .propose_transition(&admin, node.into(), WorkareaStatus::Committed)
+            .await
+            .expect("propose committed");
+        app.ratify_transition(&dora.value, node.into(), to_committed.transition_id)
+            .await
+            .expect("ratify committed");
+        let to_validated = app
+            .propose_transition(&admin, node.into(), WorkareaStatus::Validated)
+            .await
+            .expect("propose validated with no child");
+
+        let create = {
+            let (app, admin) = (Arc::clone(&app), admin.clone());
+            let child = name(&format!("child-{round}"));
+            tokio::spawn(async move {
+                loop {
+                    let result = app
+                        .create_workarea(&admin, &child, Some(node.into()), None)
+                        .await;
+                    if !lost_the_head(&result) {
+                        return result.map(|c| c.workarea.workarea_id);
+                    }
+                }
+            })
+        };
+        let ratify = {
+            let (app, dreamer) = (Arc::clone(&app), dora.value.clone());
+            let id = to_validated.transition_id;
+            tokio::spawn(async move {
+                loop {
+                    let result = app.ratify_transition(&dreamer, node.into(), id).await;
+                    if !lost_the_head(&result) {
+                        return result.map(|w| w.status);
+                    }
+                }
+            })
+        };
+        let (create, ratify) = (
+            create.await.expect("the create task"),
+            ratify.await.expect("the ratify task"),
+        );
+
+        match (&create, &ratify) {
+            (Ok(_), Err(err)) => {
+                assert!(
+                    matches!(
+                        err,
+                        AppError::TransitionRefused {
+                            reason: LadderRefusal::ChildrenNotValidated,
+                            ..
+                        } | AppError::Store(StoreError::ChildrenNotValidated { .. })
+                    ),
+                    "round {round}: the ratification after the child: {err:?}"
+                );
+                created_won += 1;
+            }
+            (Err(err), Ok(status)) => {
+                assert_eq!(*status, WorkareaStatus::Validated);
+                assert!(
+                    matches!(
+                        err,
+                        AppError::WorkareaFrozen {
+                            op: FrozenOp::CreateChild,
+                            ..
+                        }
+                    ),
+                    "round {round}: the create after the ratification: {err:?}"
+                );
+                ratified_won += 1;
+            }
+            other => panic!("round {round}: exactly one lands, got {other:?}"),
+        }
+        assert_eq!(
+            validated_over_unvalidated(&store, t).await,
+            Vec::<String>::new(),
+            "round {round}: no validated node over an unvalidated child"
+        );
+    }
+    println!("the create landed {created_won} times, the ratification {ratified_won}");
+    let keys = KeySet::new(vec![test_signing_key().verifying_key()]);
+    store
+        .verify_stored_chain(t, &keys)
+        .await
+        .expect("the chain verifies after the races");
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// claim_edges (0018): the keys, the checks, the fence and the grant
+// ---------------------------------------------------------------------------
+
+/// One tenant's two memories and two writer keys, under its `universe`, for
+/// the claim-edge laws: the edge's endpoints and its proposer and ratifier.
+struct EdgeTenant {
+    rig: ChainRig,
+    src: Uuid,
+    dst: Uuid,
+    proposer: Uuid,
+    ratifier: Uuid,
+}
+
+/// Seeds `seed`'s chain with a `universe`, two keys and two held memories,
+/// ids drawn from `base` so two tenants in one database never share one.
+async fn edge_tenant(store: &PgStore, seed: u64, base: u128) -> EdgeTenant {
+    let mut rig = ChainRig::new(seed);
+    rig.seed_chain(store, 0).await;
+    let root = Uuid::from_u128(base);
+    rig.create_workarea(
+        store,
+        workarea_record(rig.tenant_id, root, None, "universe"),
+    )
+    .await;
+    let (proposer, ratifier) = (Uuid::from_u128(base + 1), Uuid::from_u128(base + 2));
+    for key in [proposer, ratifier] {
+        rig.issue_key(store, key_record(rig.tenant_id, key, Role::Writer, None))
+            .await;
+    }
+    let (src, dst) = (Uuid::from_u128(base + 3), Uuid::from_u128(base + 4));
+    hold(store, &mut rig, root, src, proposer, false).await;
+    hold(store, &mut rig, root, dst, proposer, false).await;
+    EdgeTenant {
+        rig,
+        src,
+        dst,
+        proposer,
+        ratifier,
+    }
+}
+
+/// One `claim_edges` row as the serving login inserts it under `tenant`.
+struct EdgeRow {
+    id: Uuid,
+    src: Uuid,
+    dst: Uuid,
+    state: &'static str,
+    proposer: Uuid,
+    ratifier: Option<Uuid>,
+}
+
+/// Inserts `edge` over the serving login under `tenant`, committed when
+/// `commit` is set and rolled back otherwise; the refusal's SQLSTATE and
+/// constraint, or the rows it inserted.
+async fn edge_under(
+    store: &PgStore,
+    tenant: Uuid,
+    edge: &EdgeRow,
+    commit: bool,
+) -> Result<u64, (String, Option<String>)> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let result = sqlx::query(
+        "INSERT INTO claim_edges (id, tenant_id, src_artifact_id, dst_artifact_id, label, \
+                                  state, proposer_key_id, ratifier_key_id) \
+         VALUES ($1, $2, $3, $4, 'relates_to', $5, $6, $7)",
+    )
+    .bind(edge.id)
+    .bind(tenant)
+    .bind(edge.src)
+    .bind(edge.dst)
+    .bind(edge.state)
+    .bind(edge.proposer)
+    .bind(edge.ratifier)
+    .execute(&mut *tx)
+    .await;
+    match result {
+        Ok(done) => {
+            if commit {
+                tx.commit().await.expect("commit");
+            } else {
+                tx.rollback().await.expect("rollback");
+            }
+            Ok(done.rows_affected())
+        }
+        Err(e) => {
+            let db = e
+                .as_database_error()
+                .unwrap_or_else(|| panic!("not a database error: {e}"));
+            Err((
+                db.code().map(|c| c.into_owned()).unwrap_or_default(),
+                db.constraint().map(str::to_owned),
+            ))
+        }
+    }
+}
+
+/// A pending edge between `t`'s two memories, proposed by its proposer.
+fn pending_edge(t: &EdgeTenant, id: u128) -> EdgeRow {
+    EdgeRow {
+        id: Uuid::from_u128(id),
+        src: t.src,
+        dst: t.dst,
+        state: "pending",
+        proposer: t.proposer,
+        ratifier: None,
+    }
+}
+
+/// Under tenant A, a claim edge whose endpoint or key is tenant B's row is
+/// refused as one naming no row is: `23503`, from the one constraint, so
+/// the edge neither stores a cross-tenant id nor answers whether another
+/// tenant holds one; tenant A's own rows are accepted. A foreign-key check
+/// runs without row-level security, so each key carries `tenant_id`
+/// (postgres-schema.md "Keys into tenant tables"; ADR-0034 d12, ADR-0008).
+#[tokio::test]
+async fn a_claim_edge_naming_tenant_bs_memory_is_refused_as_one_naming_no_memory() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 300, 0x3000).await;
+    let b = edge_tenant(&store, 301, 0x3100).await;
+    let tenant = a.rig.tenant_id;
+    let nothing = Uuid::from_u128(0x0BAD_0011);
+
+    let own = EdgeRow {
+        ratifier: Some(a.ratifier),
+        state: "ratified",
+        ..pending_edge(&a, 0x3E00)
+    };
+    assert_eq!(
+        edge_under(&store, tenant, &own, false).await,
+        Ok(1),
+        "tenant A's own memories and keys are accepted"
+    );
+
+    type Point = fn(&mut EdgeRow, Uuid);
+    let references: [(&str, Point, Uuid); 4] = [
+        ("claim_edges_src_artifact_id_fkey", |e, v| e.src = v, b.src),
+        ("claim_edges_dst_artifact_id_fkey", |e, v| e.dst = v, b.dst),
+        (
+            "claim_edges_proposer_key_id_fkey",
+            |e, v| e.proposer = v,
+            b.proposer,
+        ),
+        (
+            "claim_edges_ratifier_key_id_fkey",
+            |e, v| e.ratifier = Some(v),
+            b.ratifier,
+        ),
+    ];
+    for (constraint, point, foreign) in references {
+        let mut random_row = EdgeRow {
+            ratifier: Some(a.ratifier),
+            state: "ratified",
+            ..pending_edge(&a, 0x3E01)
+        };
+        point(&mut random_row, nothing);
+        let mut foreign_row = EdgeRow {
+            ratifier: Some(a.ratifier),
+            state: "ratified",
+            ..pending_edge(&a, 0x3E02)
+        };
+        point(&mut foreign_row, foreign);
+        let random = edge_under(&store, tenant, &random_row, false).await;
+        assert_eq!(
+            random,
+            Err(("23503".to_owned(), Some(constraint.to_owned()))),
+            "{constraint}: an id no row holds is refused by the one constraint"
+        );
+        assert_eq!(
+            edge_under(&store, tenant, &foreign_row, false).await,
+            random,
+            "{constraint}: tenant B's row is refused as an id no row holds is"
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+/// 0018 grants `claim_edges` SELECT, INSERT and UPDATE alone: nothing
+/// deletes an edge, so the serving role's DELETE fails on privilege
+/// (`42501`) while its insert, ratifying update and read succeed
+/// (postgres-schema.md "Privileges"; ADR-0034 d3).
+#[tokio::test]
+async fn the_serving_role_is_refused_delete_on_claim_edges_by_privilege() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 302, 0x3200).await;
+    let tenant = a.rig.tenant_id;
+    let edge = pending_edge(&a, 0x3E10);
+    assert_eq!(edge_under(&store, tenant, &edge, true).await, Ok(1));
+
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let ratified = sqlx::query(
+        "UPDATE claim_edges SET state = 'ratified', ratifier_key_id = $1 WHERE id = $2",
+    )
+    .bind(a.ratifier)
+    .bind(edge.id)
+    .execute(&mut *tx)
+    .await
+    .expect("the serving role ratifies an edge")
+    .rows_affected();
+    assert_eq!(ratified, 1);
+    let read: i64 = sqlx::query_scalar("SELECT count(*) FROM claim_edges WHERE state = 'ratified'")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the serving role reads its edges");
+    assert_eq!(read, 1);
+    let result = sqlx::query("DELETE FROM claim_edges WHERE id = $1")
+        .bind(edge.id)
+        .execute(&mut *tx)
+        .await;
+    assert_eq!(
+        refused_code(result, "DELETE FROM claim_edges"),
+        "42501",
+        "the serving role is refused DELETE on claim_edges"
+    );
+    drop(tx);
+    drop_dbs(&created).await;
+}
+
+/// `claim_edges` carries the FORCE `tenant_isolation` policy 0009 gave
+/// `memories`: under tenant A's `oml.tenant_id`, or none, no row of tenant
+/// B's shows, while tenant B reads its own (postgres-schema.md "Row-level
+/// security"; security.md).
+#[tokio::test]
+async fn tenant_as_context_reads_none_of_tenant_bs_claim_edges() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 304, 0x3400).await;
+    let b = edge_tenant(&store, 305, 0x3500).await;
+    assert_eq!(
+        edge_under(&store, b.rig.tenant_id, &pending_edge(&b, 0x3E20), true).await,
+        Ok(1)
+    );
+
+    let flags: (bool, bool) = sqlx::query_as(
+        "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'claim_edges'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .expect("table flags");
+    assert_eq!(flags, (true, true), "row security is enabled and forced");
+
+    let mut seen = Vec::new();
+    for tenant in [Some(a.rig.tenant_id), None, Some(b.rig.tenant_id)] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        if let Some(tenant) = tenant {
+            sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+                .bind(tenant.to_string())
+                .execute(&mut *tx)
+                .await
+                .expect("set tenant");
+        }
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM claim_edges")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("count");
+        tx.rollback().await.expect("rollback");
+        seen.push(n);
+    }
+    assert_eq!(
+        seen,
+        vec![0, 0, 1],
+        "tenant A and no tenant read none of tenant B's edges; tenant B reads its own"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The key-inequality CHECK is R2's cheap spelling on edges: a ratifier key
+/// equal to the proposer key is refused (`23514`) by
+/// `claim_edges_ratifier_is_not_proposer`; the principal rule is the
+/// ratification transaction's (postgres-schema.md; ADR-0012).
+#[tokio::test]
+async fn a_claim_edge_whose_ratifier_is_its_proposer_is_refused_by_its_check() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 306, 0x3600).await;
+    let selfish = EdgeRow {
+        state: "ratified",
+        ratifier: Some(a.proposer),
+        ..pending_edge(&a, 0x3E30)
+    };
+    assert_eq!(
+        edge_under(&store, a.rig.tenant_id, &selfish, false).await,
+        Err((
+            "23514".to_owned(),
+            Some("claim_edges_ratifier_is_not_proposer".to_owned())
+        ))
+    );
+    drop_dbs(&created).await;
+}
+
+/// An edge is ratified exactly when it names a ratifier: a ratified row
+/// without one, and a pending row with one, are refused (`23514`) by
+/// `claim_edges_ratified_has_ratifier` (postgres-schema.md; ADR-0008).
+#[tokio::test]
+async fn a_ratified_claim_edge_without_a_ratifier_is_refused_by_its_check() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 307, 0x3700).await;
+    let refusal = Err((
+        "23514".to_owned(),
+        Some("claim_edges_ratified_has_ratifier".to_owned()),
+    ));
+    let unratified = EdgeRow {
+        state: "ratified",
+        ..pending_edge(&a, 0x3E40)
+    };
+    assert_eq!(
+        edge_under(&store, a.rig.tenant_id, &unratified, false).await,
+        refusal,
+        "a ratified edge without a ratifier"
+    );
+    let premature = EdgeRow {
+        ratifier: Some(a.ratifier),
+        ..pending_edge(&a, 0x3E41)
+    };
+    assert_eq!(
+        edge_under(&store, a.rig.tenant_id, &premature, false).await,
+        refusal,
+        "a pending edge with a ratifier"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The planner's row estimate, as `EXPLAIN (FORMAT JSON)` gives it, for
+/// `query` over the serving login under `tenant`, beside the rows it returns.
+async fn estimate_under(store: &PgStore, tenant: Uuid, query: &str) -> (f64, i64) {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let plan: Value = sqlx::query_scalar(&format!("EXPLAIN (FORMAT JSON) {query}"))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("explain");
+    let rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM ({query}) q"))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the rows");
+    tx.rollback().await.expect("rollback");
+    let estimated = plan[0]["Plan"]["Plan Rows"]
+        .as_f64()
+        .unwrap_or_else(|| panic!("no Plan Rows in {plan}"));
+    (estimated, rows)
+}
+
+/// After the owner analyses `claim_edges`, each probe pair's estimate and
+/// rows under `tenant`: another tenant's value first, an unused one second.
+async fn edge_estimates(
+    store: &PgStore,
+    owner: &mut PgConnection,
+    tenant: Uuid,
+    probes: &[(String, String)],
+) -> Vec<((f64, i64), (f64, i64))> {
+    owner
+        .execute("ANALYZE claim_edges")
+        .await
+        .expect("the owner analyses");
+    let mut found = Vec::new();
+    for (theirs, unused) in probes {
+        found.push((
+            estimate_under(store, tenant, theirs).await,
+            estimate_under(store, tenant, unused).await,
+        ));
+    }
+    found
+}
+
+/// Under tenant A, EXPLAIN estimates as many claim edges for a label only
+/// tenant B's edges carry, and for one of tenant B's endpoints, as for a
+/// label and an id no tenant holds: 0018 keeps no column statistics on
+/// `claim_edges`, whose labels are tenant text, so the estimate cannot tell
+/// tenant A whether another tenant uses an edge label (FR-45; ADR-0034 d1,
+/// d11; spike 3's S3.4/estimate). The control restores the default target,
+/// and the same estimates then differ.
+#[tokio::test]
+async fn under_tenant_a_explain_estimates_tenant_bs_edge_label_as_it_estimates_an_unused_one() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 304, 0x3400).await;
+    let b = edge_tenant(&store, 305, 0x3500).await;
+    let mut owner = owner_conn(&store).await;
+    // Each tenant holds as many edges, each under a label of its own, so the
+    // default statistics, the control's, tell the two tenants' values apart.
+    for (t, label) in [(&a, "own:relates_to"), (&b, "acme:merger_target")] {
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, false)")
+            .bind(t.rig.tenant_id.to_string())
+            .execute(&mut owner)
+            .await
+            .expect("the owner set to the tenant");
+        sqlx::query(
+            "INSERT INTO claim_edges (id, tenant_id, src_artifact_id, dst_artifact_id, label, \
+                                      state, proposer_key_id, ratifier_key_id) \
+             SELECT gen_random_uuid(), $1, $2, $3, $4, 'ratified', $5, $6 \
+               FROM generate_series(1, 2000)",
+        )
+        .bind(t.rig.tenant_id)
+        .bind(t.src)
+        .bind(t.dst)
+        .bind(label)
+        .bind(t.proposer)
+        .bind(t.ratifier)
+        .execute(&mut owner)
+        .await
+        .expect("the tenant's edges");
+    }
+
+    let probes = [
+        (
+            "SELECT id FROM claim_edges \
+              WHERE state = 'ratified' AND label = 'acme:merger_target'"
+                .to_owned(),
+            "SELECT id FROM claim_edges \
+              WHERE state = 'ratified' AND label = 'zzz:unused_label'"
+                .to_owned(),
+        ),
+        (
+            format!(
+                "SELECT id FROM claim_edges WHERE src_artifact_id = '{}'",
+                b.src
+            ),
+            format!(
+                "SELECT id FROM claim_edges WHERE src_artifact_id = '{}'",
+                Uuid::from_u128(0x0BAD_0011)
+            ),
+        ),
+    ];
+    let tenant = a.rig.tenant_id;
+    for ((theirs, unused), (query, _)) in edge_estimates(&store, &mut owner, tenant, &probes)
+        .await
+        .into_iter()
+        .zip(&probes)
+    {
+        assert_eq!(
+            theirs.1, 0,
+            "tenant A reads none of tenant B's edges: {query}"
+        );
+        assert_eq!(
+            theirs.0, unused.0,
+            "under tenant A, {query} is estimated as an unused value is \
+             (estimated, returned: {theirs:?} and {unused:?})"
+        );
+    }
+
+    // Control: with the default statistics target the same estimates differ,
+    // so the law above measures 0018's setting, not an empty table.
+    for column in ["label", "src_artifact_id", "state", "tenant_id"] {
+        owner
+            .execute(
+                format!("ALTER TABLE claim_edges ALTER COLUMN {column} SET STATISTICS -1").as_str(),
+            )
+            .await
+            .expect("the owner restores the default target");
+    }
+    for ((theirs, unused), (query, _)) in edge_estimates(&store, &mut owner, tenant, &probes)
+        .await
+        .into_iter()
+        .zip(&probes)
+    {
+        assert_ne!(
+            theirs.0, unused.0,
+            "control: with column statistics, {query} is estimated apart from an unused value"
+        );
+    }
+    drop(owner);
     drop_dbs(&created).await;
 }

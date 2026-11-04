@@ -315,6 +315,17 @@ the rule under the version's DEK waits for the encrypted body store.
 
 ## workareas and edges
 
+**Status:** built for the status ladder: `workareas.status` is one stored column, written at
+create (`development`, and `committed` on the universe root), moved by a ratified transition and
+served back by every workarea read; `workarea_transitions` is built in
+`migrations/0017_workarea_transitions.sql`, which also adds `workareas_universe_committed`, so a
+root on any other rung is refused; a proposal inserts its pending row and a ratification turns it
+`ratified` and writes the node's status in the commit that journals the event, after the chain
+lock's re-checks ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4) · its checks run only
+where a superuser mints the suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8) · re-parent, the
+`path` rewrite and `workarea_edges` are decided, not built.
+
 The governed tree (one per tenant, rooted at `universe`) plus the two edge tables. The algebra —
 node-id grants, deny semantics, status ladder — is declared in
 [workareas](../architecture/workareas.md); this page holds only the shapes.
@@ -356,7 +367,9 @@ CREATE TABLE workareas (
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
     FOREIGN KEY (tenant_id, namespace_root_id) REFERENCES workareas (tenant_id, id),
     CHECK ((parent_id IS NULL) = (name = 'universe')),  -- the root, and only the root, is universe
-    CHECK (NOT user_root OR (parent_id IS NOT NULL AND namespace_root_id IS NULL))
+    CHECK (NOT user_root OR (parent_id IS NOT NULL AND namespace_root_id IS NULL)),
+    CONSTRAINT workareas_universe_committed             -- the root is permanently committed
+        CHECK (parent_id IS NOT NULL OR status = 'committed')   -- (ADR-0009 d1; added by 0017)
 );
 
 -- unique within the shared namespace: universe, every user root and every
@@ -383,16 +396,38 @@ CREATE TABLE workarea_edges (
     CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id)
 );
 
-CREATE TABLE claim_edges (
-    id              uuid PRIMARY KEY,
-    tenant_id       uuid NOT NULL,
-    src_artifact_id uuid NOT NULL,
-    dst_artifact_id uuid NOT NULL,
-    label           text NOT NULL,     -- derives_from | relates_to | …
-    state           text NOT NULL CHECK (state IN ('pending', 'ratified')),
-    proposer_key_id uuid NOT NULL,
-    ratifier_key_id uuid
+-- Built in migrations/0017_workarea_transitions.sql: status-ladder proposals (ADR-0009
+-- d3), the build's reading on architecture/workareas.md. Several pending rows may share a workarea; ratification,
+-- under the chain lock, re-checks from_status against workareas.status (a stale row is
+-- refused) and, for a step to validated, that every child is validated. A stale row stays
+-- 'pending'; the status read lists only pending rows whose from_status is the node's status.
+CREATE TABLE workarea_transitions (
+    id                 uuid   PRIMARY KEY,           -- the events' transition_id
+    tenant_id          uuid   NOT NULL,
+    workarea_id        uuid   NOT NULL,
+    from_status        text   NOT NULL
+        CHECK (from_status IN ('development', 'committed', 'validated')),
+    to_status          text   NOT NULL
+        CHECK (to_status IN ('development', 'committed', 'validated')),
+    state              text   NOT NULL CHECK (state IN ('pending', 'ratified')),
+    proposer_key_id    uuid   NOT NULL,
+    proposer_principal text   NOT NULL,              -- R2 is checked on the principal too
+    ratifier_key_id    uuid,
+    proposed_seq       bigint NOT NULL,              -- seq of workarea.status_proposed
+    ratified_seq       bigint,                       -- seq of workarea.status_transition
+    UNIQUE (tenant_id, id),
+    FOREIGN KEY (tenant_id, workarea_id) REFERENCES workareas (tenant_id, id),
+    FOREIGN KEY (tenant_id, proposer_key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, ratifier_key_id) REFERENCES api_keys (tenant_id, id),
+    CHECK ((from_status, to_status) IN (('development', 'committed'),
+                                        ('committed', 'validated'))),
+    CHECK ((state = 'ratified') = (ratifier_key_id IS NOT NULL)),
+    CHECK ((state = 'ratified') = (ratified_seq IS NOT NULL)),
+    CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id)
 );
+CREATE INDEX workarea_transitions_by_state                  -- the status read's pending list
+    ON workarea_transitions (tenant_id, workarea_id, state);
+
 ```
 
 The key-inequality `CHECK` is the cheap spelling of R2 on edges; the full rule — ratifier principal
@@ -403,6 +438,118 @@ the names, so a re-parent is a single-transaction descendant rewrite rather than
 Every name is a valid `ltree` label — PostgreSQL 17 admits "alphanumeric characters, underscores,
 and hyphens" up to 1000 characters per label
 ([ltree](https://www.postgresql.org/docs/17/ltree.html), fetched 2026-10-30) — so every path is.
+
+### claim_edges
+
+**Status:** built in `migrations/0018_claim_edges.sql` · its checks run only where a superuser
+mints the suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8). `oml-pg`'s
+claim-edge statements and `oml-app`'s proposal, ratification and page use cases that write and
+read it are built; no HTTP route or MCP tool reaches them yet.
+
+A labelled edge between two claims ([ADR-0008](../adr/ADR-0008-workarea-algebra.md) d5), `pending`
+until a key that is not its proposer ratifies it, and never deleted:
+
+```sql
+CREATE TABLE claim_edges (
+    id              uuid NOT NULL PRIMARY KEY,
+    tenant_id       uuid NOT NULL REFERENCES tenants (id),
+    src_artifact_id uuid NOT NULL,
+    dst_artifact_id uuid NOT NULL,
+    label           text NOT NULL,     -- derives_from | relates_to | oml:is_a | …
+    state           text NOT NULL
+        CONSTRAINT claim_edges_state CHECK (state IN ('pending', 'ratified')),
+    proposer_key_id uuid NOT NULL,
+    ratifier_key_id uuid,
+    created_at      timestamptz(6) NOT NULL DEFAULT now(),  -- its claim_edge.proposed's at
+    UNIQUE (tenant_id, id),
+    FOREIGN KEY (tenant_id, src_artifact_id) REFERENCES memories (tenant_id, id),
+    FOREIGN KEY (tenant_id, dst_artifact_id) REFERENCES memories (tenant_id, id),
+    FOREIGN KEY (tenant_id, proposer_key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, ratifier_key_id) REFERENCES api_keys (tenant_id, id),
+    CONSTRAINT claim_edges_ratifier_is_not_proposer
+        CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id),
+    CONSTRAINT claim_edges_ratified_has_ratifier
+        CHECK ((state = 'ratified') = (ratifier_key_id IS NOT NULL))
+);
+
+-- Statistics target 0 on every column, before any ANALYZE (FR-45).
+ALTER TABLE claim_edges
+    ALTER COLUMN id SET STATISTICS 0, ALTER COLUMN tenant_id SET STATISTICS 0,
+    ALTER COLUMN src_artifact_id SET STATISTICS 0, ALTER COLUMN dst_artifact_id SET STATISTICS 0,
+    ALTER COLUMN label SET STATISTICS 0, ALTER COLUMN state SET STATISTICS 0,
+    ALTER COLUMN proposer_key_id SET STATISTICS 0, ALTER COLUMN ratifier_key_id SET STATISTICS 0,
+    ALTER COLUMN created_at SET STATISTICS 0;
+
+CREATE INDEX claim_edges_src ON claim_edges (tenant_id, src_artifact_id);
+CREATE INDEX claim_edges_dst ON claim_edges (tenant_id, dst_artifact_id);
+CREATE INDEX claim_edges_ratified_label ON claim_edges (tenant_id, label)
+    WHERE state = 'ratified';                -- the cycle refusal's read (ADR-0021)
+CREATE INDEX claim_edges_listing ON claim_edges (tenant_id, created_at DESC, id DESC);
+                                             -- the graph read, newest first
+```
+
+- **Keys.** Each key into `memories` and `api_keys` carries `tenant_id`, so an edge naming
+  another tenant's memory or key is refused as one naming no row is: `23503`, from the one
+  constraint ([Keys into tenant tables](#keys-into-tenant-tables)). A NOT NULL `tenant_id` never
+  matches a provider-level key, so an operator key neither proposes nor ratifies.
+- **Checks.** `claim_edges_ratifier_is_not_proposer` is R2's key-inequality spelling
+  ([ADR-0012](../adr/ADR-0012-admission-and-review.md)); the principal and lineage rule is
+  the ratification transaction's. `claim_edges_ratified_has_ratifier` makes a row ratified
+  exactly when it names a ratifier. Each refuses with `23514`.
+- **Order.** `created_at` is the `at` of the edge's `claim_edge.proposed` event, and
+  `GET /v2/edges?kind=claim` lists by it newest first, then by `id` descending, as every list
+  endpoint does ([http-api.md](../api/http-api.md#pagination)).
+- **States.** `pending` and `ratified` only. A `rejected` state and a `term_curie` column belong
+  to ADR-0027, which is not accepted; the domain's `EdgeState::Rejected` is not stored.
+- **Fence.** Row-level security is enabled and forced, under the `tenant_isolation` policy
+  `memories` carries ([Row-level security](#row-level-security)); the serving role holds
+  `SELECT`, `INSERT` and `UPDATE`, and no `DELETE` ([Privileges](#privileges)).
+- **Not partitioned; no column statistics.** A label is tenant text: the domain admits any
+  non-empty NFC label outside `oml:` ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) d5),
+  such as `acme:merger_target`. In one unpartitioned table a column's statistics span every
+  tenant, and EXPLAIN's estimate reads them under row security, since `texteq` and `uuid_eq` are
+  leakproof, so a session set to tenant A would learn whether another tenant uses a label or
+  holds an endpoint id: the FR-45 channel ADR-0034 d11 closed for `memories` with partitions.
+  0018 sets statistics target 0 on every column before any `ANALYZE`; ANALYZE then collects
+  nothing, and each predicate takes PostgreSQL's default selectivity whatever any tenant stores
+  (`under_tenant_a_explain_estimates_tenant_bs_edge_label_as_it_estimates_an_unused_one`, with
+  the default target as its control). The cost: edge reads plan on defaults, never on a label's
+  or an endpoint's skew. **Stays open** (FR-45): `pg_class`'s `reltuples` and `relpages` count
+  every tenant's edges together. This is a reading 0018's header records, not a decision of
+  ADR-0034, which lists target 0 as an FR-45 candidate.
+
+### brief_edges
+
+**Status:** built in `migrations/0019_brief_edges.sql` since v0.5.2
+([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d7, d8) · its checks run only where a superuser mints the suites'
+role pairs, CI's `cargo test (Postgres)`.
+
+```sql
+CREATE TABLE brief_edges (
+    id              uuid NOT NULL PRIMARY KEY,
+    tenant_id       uuid NOT NULL,
+    artifact_id     uuid NOT NULL,              -- the member claim's version
+    workarea_id     uuid NOT NULL,              -- the workarea whose brief it joins
+    state           text NOT NULL CHECK (state IN ('pending', 'ratified')),
+    proposer_key_id uuid NOT NULL,
+    ratifier_key_id uuid,
+    ratified_seq    bigint,                     -- the review.ratify's seq: the brief's order
+    created_at      timestamptz(6) NOT NULL,    -- brief_edge.proposed's at: the listing's order
+    -- keys carry tenant_id into tenants, memories, workareas and api_keys;
+    -- ratifier <> proposer; ratified <=> a ratifier <=> a ratified_seq
+);
+CREATE INDEX brief_edges_workarea ON brief_edges (tenant_id, workarea_id, created_at DESC, id DESC);
+```
+
+- **Apart from `claim_edges`.** A brief edge joins a claim to a workarea, not two claims, and its
+  fold widens no lineage closure: membership in a brief says where a claim is read first, not
+  what it derives from. Its label is `brief`, fixed, and not stored.
+- **Fence, keys and statistics** as `claim_edges`: row security forced under
+  `tenant_isolation`, `SELECT`, `INSERT` and `UPDATE` granted and no `DELETE`, every key carrying
+  `tenant_id`, statistics target 0 on every column.
+- **Limit.** The brief and the listing read a workarea's edges whole; the count per workarea is
+  unbounded, tracked with the brief's budget as FR-77.
 
 ## api_keys, grants, key_denials, bans
 
@@ -545,6 +692,8 @@ constraint (ADR-0034 d12). The keys built this way:
 | `workareas.namespace_root_id` | `(tenant_id, namespace_root_id)` | `workareas (tenant_id, id)` |
 | `memories.created_event_id` | `(tenant_id, created_event_id)` | `journal (tenant_id, event_id)` |
 | `review_queue.memory_id` | `(tenant_id, memory_id)` | `memories (tenant_id, id)` |
+| `claim_edges.src_artifact_id`, `dst_artifact_id` | `(tenant_id, src_artifact_id)`, `(tenant_id, dst_artifact_id)` | `memories (tenant_id, id)` (0018) |
+| `claim_edges.proposer_key_id`, `ratifier_key_id` | `(tenant_id, proposer_key_id)`, `(tenant_id, ratifier_key_id)` | `api_keys (tenant_id, id)` (0018) |
 
 - **The targets.** 0008 adds `UNIQUE (tenant_id, event_id)` on `journal` and `UNIQUE (tenant_id,
   id)` on `memories`; `workareas` and `api_keys` have theirs from 0004. Each key keeps its 0001
@@ -1243,6 +1392,9 @@ serving role until that migration grants its row here, under the sync rule.
 | `oauth_tokens` | ✓ | ✓ | ✓ | ✓ | |
 | `oauth_clients` | ✓ | ✓ | ✓ | ✓ | |
 | `oauth_authorizations` | ✓ | ✓ | | ✓ | |
+| `workarea_transitions` | ✓ | ✓ | ✓ | | |
+| `claim_edges` | ✓ | ✓ | ✓ | | |
+| `brief_edges` | ✓ | ✓ | ✓ | | |
 | `_sqlx_migrations` | | | | | |
 
 - **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
@@ -1255,6 +1407,8 @@ serving role until that migration grants its row here, under the sync rule.
   after a row lapses unused (0013). An `oauth_authorizations` row is never updated.
 - **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the
   `bigserial` sequence.
+- **`workarea_transitions`** is granted by its own migration, 0017, in 0007's form: the
+  proposal's `INSERT`, the ratification's `UPDATE` and the status read's `SELECT`.
 - **No table** grants `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`, whole-table operations
   row security does not bind.
 - **`_sqlx_migrations`** is the one table without row-level security: sqlx's record of which
@@ -1281,6 +1435,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
 | `tenants` | the provider chain's `tenant.created`, `system.names_assigned` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
+| `workarea_transitions` | `workarea.status_proposed`, `workarea.status_transition` |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |
 | `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |

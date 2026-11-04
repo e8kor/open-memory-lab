@@ -4,7 +4,7 @@
     "spec_revision_targeted": "2025-06-18",
     "catalog_page": "mcp-plugin.md",
     "designed_annex": "mcp-tools.designed.json",
-    "design_spec_version": "0.5.1-design",
+    "design_spec_version": "0.5.2-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
       "oml_read": "ADR-0039 d4 and ADR-0013 d1, d2, ADR-0025 d9: the lineage mode's lineage and depth are designed (mcp-tools.designed.json) and refused with request.validation naming the field until the lineage read is routed. mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log; the build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet.",
@@ -175,7 +175,7 @@
     },
     {
       "name": "oml_workarea",
-      "description": "One workarea as the calling key is allowed to see it: identity, derived path, status, crew record, readable immediate children, and the verbs this key's effective access carries there, with the permission epoch. A node, not claim items. Rides GET /v2/workareas/{workarea}, one call.",
+      "description": "One workarea as the calling key is allowed to see it: identity, derived path, status, crew record, readable immediate children, the verbs this key's effective access carries there with the permission epoch, the review policy in force, the status proposals waiting for a second identity, and the workarea's brief: the claims its reviewers agreed an agent entering it reads first, as claim items with their text, within the brief's token budget. Rides GET /v2/workareas/{workarea}, one call.",
       "annotations": {
         "readOnlyHint": true,
         "idempotentHint": true,

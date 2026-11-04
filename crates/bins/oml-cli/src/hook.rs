@@ -144,8 +144,14 @@ pub fn session_start(
         .collect();
     seed_session_cache(var, session.session_id.as_deref(), &served);
 
+    // The default workarea's brief, read after the two answers the context
+    // needs; a failure here costs the brief alone, never the context
+    // (ADR-0046 d9).
+    let brief = default_brief(&client);
+
     let context = render(&Rendered {
         server: client.server(),
+        brief: &brief,
         own,
         steering,
         hits,
@@ -163,6 +169,27 @@ pub fn session_start(
         }
     });
     Ok(document.to_string())
+}
+
+/// The items of the key's default workarea's brief: `GET /v2/whoami` names
+/// the default, and the workarea read serves its brief, already cut by the
+/// server's `brief.max_tokens` (ADR-0046 d8, d9). Empty when the key has no
+/// default, the brief has no member, or either read fails.
+fn default_brief(client: &Client) -> Vec<Value> {
+    let Ok((_, me)) = client.get("/v2/whoami") else {
+        return Vec::new();
+    };
+    let Some(default) = me["default_workarea"]["id"].as_str() else {
+        return Vec::new();
+    };
+    let Ok(segment) = crate::client::segment(default) else {
+        return Vec::new();
+    };
+    client
+        .get(&format!("/v2/workareas/{segment}"))
+        .ok()
+        .and_then(|(_, node)| node["brief"]["items"].as_array().cloned())
+        .unwrap_or_default()
 }
 
 /// The server and the agent's key the hook sends to it, from one source.
@@ -300,6 +327,9 @@ pub fn query_words(cwd: Option<&str>) -> String {
 /// The two answers, as the context needs them.
 struct Rendered<'a> {
     server: &'a str,
+    /// The default workarea's brief, empty when it has none or it could not
+    /// be read (ADR-0046 d9).
+    brief: &'a [Value],
     own: &'a [Value],
     steering: &'a [Value],
     hits: &'a [Value],
@@ -369,6 +399,16 @@ fn render(r: &Rendered<'_>) -> String {
         );
     }
     out.push(FRAMING.to_owned());
+
+    if !r.brief.is_empty() {
+        out.push(String::new());
+        out.push("Brief of this workarea, agreed by its reviewers:".to_owned());
+        out.extend(
+            r.brief
+                .iter()
+                .map(|m| format!("- {}: {}", r.key_of(m), r.text(m, "text"))),
+        );
+    }
 
     out.push(String::new());
     out.push("Steering in force:".to_owned());
@@ -1639,6 +1679,7 @@ mod tests {
         let redact = |text: &str| text.to_owned();
         let context = render(&Rendered {
             server: "https://oml.example",
+            brief: &[],
             own: &[],
             steering: std::slice::from_ref(&item),
             hits: &[json!({ "memory": item })],

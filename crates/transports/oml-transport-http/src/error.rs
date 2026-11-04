@@ -210,6 +210,29 @@ fn tip_conflict(message: &str) -> ApiError {
     )
 }
 
+/// `workarea.transition_refused` with its `{workarea_id, from, to, reason}`
+/// details (errors.md, workarea structure and status refusals).
+fn transition_refused(
+    workarea_id: uuid::Uuid,
+    from: &str,
+    to: &str,
+    reason: &str,
+    message: String,
+) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "workarea.transition_refused",
+        "The status ladder moves forward only — development → committed → validated — and an area becomes validated only when all its children are.",
+        message,
+    )
+    .with_details(json!({
+        "workarea_id": workarea_id.to_string(),
+        "from": from,
+        "to": to,
+        "reason": reason,
+    }))
+}
+
 /// Which endpoint family the refusal surfaced on — a refused status
 /// transition means different things to a verdict (the serve no longer names
 /// a held row) and to a write (the target is not the current tip).
@@ -412,6 +435,38 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             if several { "several" } else { "no" }
         ))
         .with_details(json!({ "field": "/serve_id" })),
+        // A brief serves only promoted served tips (ADR-0046 d8).
+        AppError::BriefMemberNotServed { artifact_id } => ApiError::validation(format!(
+            "artifact {artifact_id} is not a promoted served tip: only a claim review promoted joins a brief"
+        ))
+        .with_details(json!({ "field": "/from_artifact_id" })),
+        // A claim-edge label the domain refused, naming the body field
+        // (errors.md request.validation; ADR-0021 d5).
+        AppError::ClaimEdgeLabel { field, reason } => {
+            ApiError::validation(reason.to_string()).with_details(json!({ "field": field.as_str() }))
+        }
+        AppError::AuthorInLineage => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.author_in_lineage",
+            "R2: the reviewer is never the author — enforced against the full lineage closure.",
+            "the ratifying key or principal is in an endpoint's lineage closure",
+        ),
+        // A decided edge answers as a verdict on a decided row does: errors.md
+        // declares no edge-specific code (ADR-0021 d5).
+        AppError::EdgeConsumed { edge_id } => ApiError::serve_invalid("consumed")
+            .with_details(json!({ "reason": "consumed", "edge_id": edge_id.to_string() })),
+        AppError::CycleRefused(refused) => ApiError::new(
+            StatusCode::CONFLICT,
+            "vocab.cycle_refused",
+            "Term hierarchy and supersession chains are acyclic by domain invariant — a deterministic transaction-time check at ratification (ADR-0021).",
+            refused.to_string(),
+        )
+        .with_details(json!({ "label": refused.label.as_str() })),
+        // A stored term edge whose endpoint has no CURIE is a defect; the
+        // ratification journalled nothing (ADR-0021 d2, d5).
+        AppError::TermEndpoint { claim_key } => {
+            ApiError::internal(format!("term edge endpoint {claim_key:?} is not a term's CURIE"))
+        }
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
             "submission.claim_key_conflict",
@@ -460,6 +515,73 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         }
         AppError::Store(StoreError::TipMoved { .. }) => {
             tip_conflict("the supersede target stopped being the served tip before ratification")
+        }
+        // The ratifying commit's re-checks refused it and journalled nothing
+        // (errors.md `workarea.transition_refused`, `review.ratifier_is_proposer`;
+        // workareas.md, ratification re-checks; ADR-0009 d3, d4).
+        AppError::Store(StoreError::TransitionStale {
+            transition_id,
+            workarea_id,
+            from,
+            to,
+        }) => transition_refused(
+            workarea_id,
+            from.as_str(),
+            to.as_str(),
+            "stale",
+            format!("transition {transition_id} is no longer live on its node"),
+        ),
+        AppError::Store(StoreError::ChildrenNotValidated {
+            transition_id,
+            workarea_id,
+        }) => transition_refused(
+            workarea_id,
+            "committed",
+            "validated",
+            "children_not_validated",
+            format!("transition {transition_id}'s node has a child not validated"),
+        ),
+        AppError::Store(StoreError::RatifierIsProposer { transition_id }) => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.ratifier_is_proposer",
+            "R2 extends to edges and transitions: proposal and ratification are two identities or they are nothing.",
+            format!("the key or principal ratifying transition {transition_id} proposed it"),
+        ),
+        // The ladder refused a proposal before anything was sealed
+        // (errors.md `workarea.transition_refused`; ADR-0009 d1, d3, d4).
+        AppError::TransitionRefused {
+            workarea_id,
+            from,
+            to,
+            reason,
+        } => transition_refused(
+            workarea_id,
+            from.as_str(),
+            to.as_str(),
+            reason.reason(),
+            format!(
+                "{} to {} is refused on workarea {workarea_id}: {reason}",
+                from.as_str(),
+                to.as_str()
+            ),
+        ),
+        AppError::WorkareaFrozen { workarea_id, op } => ApiError::new(
+            StatusCode::CONFLICT,
+            "workarea.frozen",
+            "`validated` is frozen: the only mutations it admits are demote, erasure, and crew-metadata update, each journalled.",
+            format!("workarea {workarea_id} is validated and refuses {op:?}"),
+        ),
+        AppError::RatifierIsProposer => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.ratifier_is_proposer",
+            "R2 extends to edges and transitions: proposal and ratification are two identities or they are nothing.",
+            "the key or principal ratifying this proposal proposed it",
+        ),
+        // The ratify use case answers a lost edge compare-and-set as
+        // `AppError::EdgeConsumed`, so one reaching a transport is a defect
+        // (ADR-0021 d5).
+        AppError::Store(StoreError::EdgeNotPending { edge_id }) => {
+            ApiError::internal(format!("claim edge {edge_id} is not pending"))
         }
         AppError::Store(StoreError::IdempotencyRecorded) => {
             // Surfaces only when the record a concurrent attempt committed
@@ -877,5 +999,181 @@ mod tests {
             "roles-and-keys.md names {:?}",
             &flat[at..at + 12]
         );
+    }
+}
+
+#[cfg(test)]
+mod ladder_tests {
+    use oml_app::domain::{FrozenOp, LadderRefusal, WorkareaStatus};
+    use uuid::Uuid;
+
+    use super::*;
+
+    fn mapped(e: StoreError) -> ApiError {
+        map_app_error(AppError::Store(e), ErrorContext::Write)
+    }
+
+    #[test]
+    fn a_ratification_refused_by_its_commits_re_check_answers_transition_refused_with_its_reason() {
+        let (transition_id, workarea_id) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let stale = mapped(StoreError::TransitionStale {
+            transition_id,
+            workarea_id,
+            from: WorkareaStatus::Development,
+            to: WorkareaStatus::Committed,
+        });
+        assert_eq!(
+            (stale.status, stale.code, stale.details),
+            (
+                StatusCode::CONFLICT,
+                "workarea.transition_refused",
+                Some(json!({
+                    "workarea_id": workarea_id.to_string(),
+                    "from": "development",
+                    "to": "committed",
+                    "reason": "stale",
+                }))
+            )
+        );
+        let children = mapped(StoreError::ChildrenNotValidated {
+            transition_id,
+            workarea_id,
+        });
+        assert_eq!(
+            (children.status, children.code, children.details),
+            (
+                StatusCode::CONFLICT,
+                "workarea.transition_refused",
+                Some(json!({
+                    "workarea_id": workarea_id.to_string(),
+                    "from": "committed",
+                    "to": "validated",
+                    "reason": "children_not_validated",
+                }))
+            )
+        );
+    }
+
+    #[test]
+    fn a_proposal_the_ladder_refuses_answers_transition_refused_with_its_reason_and_freeze_answers_frozen()
+     {
+        let workarea_id = Uuid::from_u128(2);
+        let refused = map_app_error(
+            AppError::TransitionRefused {
+                workarea_id,
+                from: WorkareaStatus::Development,
+                to: WorkareaStatus::Validated,
+                reason: LadderRefusal::Skipped,
+            },
+            ErrorContext::Write,
+        );
+        assert_eq!(
+            (refused.status, refused.code, refused.details),
+            (
+                StatusCode::CONFLICT,
+                "workarea.transition_refused",
+                Some(json!({
+                    "workarea_id": workarea_id.to_string(),
+                    "from": "development",
+                    "to": "validated",
+                    "reason": "skipped",
+                }))
+            )
+        );
+        let frozen = map_app_error(
+            AppError::WorkareaFrozen {
+                workarea_id,
+                op: FrozenOp::Write,
+            },
+            ErrorContext::Write,
+        );
+        assert_eq!(
+            (frozen.status, frozen.code),
+            (StatusCode::CONFLICT, "workarea.frozen")
+        );
+        let ratifier = map_app_error(AppError::RatifierIsProposer, ErrorContext::Review);
+        assert_eq!(
+            (ratifier.status, ratifier.code),
+            (StatusCode::FORBIDDEN, "review.ratifier_is_proposer")
+        );
+    }
+
+    #[test]
+    fn a_ratification_by_the_proposers_key_or_principal_answers_ratifier_is_proposer() {
+        let e = mapped(StoreError::RatifierIsProposer {
+            transition_id: Uuid::from_u128(1),
+        });
+        assert_eq!(
+            (e.status, e.code),
+            (StatusCode::FORBIDDEN, "review.ratifier_is_proposer")
+        );
+    }
+}
+
+#[cfg(test)]
+mod claim_edge_tests {
+    use super::*;
+    use oml_app::domain::claim_edges::{EdgeField, LabelRefusal};
+    use oml_app::domain::vocab::OmlLabel;
+    use oml_app::domain::vocab_edges::CycleRefused;
+    use uuid::Uuid;
+
+    const EDGE_ID: Uuid = Uuid::from_u128(7);
+
+    /// A refusal, and the status, code and details it answers on the wire.
+    type Case = (fn() -> AppError, StatusCode, &'static str, Option<Value>);
+
+    /// Each claim-edge refusal reaches the wire as its errors.md code and
+    /// status, in either context, with the details the code declares.
+    #[test]
+    fn the_transport_maps_every_claim_edge_app_error_to_its_errors_md_code() {
+        let cases: [Case; 5] = [
+            (
+                || AppError::ClaimEdgeLabel {
+                    field: EdgeField::Label,
+                    reason: LabelRefusal::Empty,
+                },
+                StatusCode::BAD_REQUEST,
+                "request.validation",
+                Some(json!({ "field": "label" })),
+            ),
+            (
+                || AppError::RatifierIsProposer,
+                StatusCode::FORBIDDEN,
+                "review.ratifier_is_proposer",
+                None,
+            ),
+            (
+                || AppError::AuthorInLineage,
+                StatusCode::FORBIDDEN,
+                "review.author_in_lineage",
+                None,
+            ),
+            (
+                || {
+                    AppError::CycleRefused(CycleRefused {
+                        label: OmlLabel::IsA,
+                    })
+                },
+                StatusCode::CONFLICT,
+                "vocab.cycle_refused",
+                Some(json!({ "label": OmlLabel::IsA.as_str() })),
+            ),
+            (
+                || AppError::EdgeConsumed { edge_id: EDGE_ID },
+                StatusCode::CONFLICT,
+                "review.serve_invalid",
+                Some(json!({ "reason": "consumed", "edge_id": EDGE_ID.to_string() })),
+            ),
+        ];
+        for (err, status, code, details) in cases {
+            let label = format!("{:?}", err());
+            for ctx in [ErrorContext::Review, ErrorContext::Write] {
+                let wire = map_app_error(err(), ctx);
+                assert_eq!((wire.status, wire.code), (status, code), "{label}");
+                assert!(!wire.retryable, "{label}: a refusal is not retryable");
+                assert_eq!(wire.details, details, "{label}");
+            }
+        }
     }
 }

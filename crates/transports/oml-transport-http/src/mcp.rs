@@ -774,11 +774,31 @@ where
             ("edges", "edges"),
             ("my_effective_verbs", "my_effective_verbs"),
             ("permission_epoch", "permission_epoch"),
+            ("policy", "policy"),
+            ("pending_transitions", "pending_transitions"),
         ] {
             if let Some(value) = view.get(from) {
                 out.insert(to.to_owned(), value.clone());
             }
         }
+        // The brief's members are claim items, as every tool returns a claim
+        // version, each with its text (ADR-0046 d9; ADR-0025 d12).
+        let items: Vec<Value> = view["brief"]["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|m| {
+                let mut item = claim_item(m);
+                if let Some(text) = m.get("text") {
+                    item.insert("text".to_owned(), text.clone());
+                }
+                Value::Object(item)
+            })
+            .collect();
+        out.insert(
+            "brief".to_owned(),
+            json!({ "items": items, "budget": view["brief"]["budget"] }),
+        );
         Ok(Value::Object(out))
     }
 }

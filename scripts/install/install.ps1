@@ -34,7 +34,7 @@ function Install-Oml {
     # The release installed when no version is named: the workspace version of
     # the commit this script is served from (scripts/check_release.py holds the
     # two equal).
-    $DefaultVersion = '0.5.1'
+    $DefaultVersion = '0.5.2'
     $Issuer = 'https://token.actions.githubusercontent.com'
     $Docs = 'https://e8kor.github.io/open-memory-lab'
     $Target = 'x86_64-pc-windows-msvc'

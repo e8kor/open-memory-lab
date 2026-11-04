@@ -188,7 +188,7 @@ from the file ([security](../architecture/security.md)).
 | Verb | Does |
 |---|---|
 | `oml login <url>` | Prompt for the key on the terminal and read it without echo, or read the first line of stdin when stdin is not a terminal, so the key never reaches argv. Call `GET /v2/whoami` under it, and only on success write `url` and `api_key`, nothing else, to the [owner-only](#installing-oml-and-what-differs-on-windows) credentials file, replacing what it held, and print the key's name, role, tenant and default workarea. A refusal writes nothing and exits `1` with the envelope's code; an empty key sends nothing (exit `2`). The flags and the environment still win over the stored pair. *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d11):* it also prints the key's user root, or that the key is a tenant key. |
-| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)); and the server's version, from `/readyz`'s `build.version`, since v0.4.1. *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d14):* under a user key it prints the user root and warns `universe: this key does not read universe's claims` when the key holds no reader on `universe`; under a tenant key it prints `user: none (tenant key: names resolve in the shared namespace)`. |
+| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)); and the server's version, from `/readyz`'s `build.version`, since v0.4.1. *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d14):* under a user key it prints the user root and warns `universe: this key does not read universe's claims` when the key holds no reader on `universe`; under a tenant key it prints `user: none (tenant key: names resolve in the shared namespace)`. It also names the default workarea's brief, `empty` when it has no ratified member, and the status transitions waiting there for a second identity (*since v0.5.2*; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)). |
 
 ## `oml setup claude-code` and `oml quickstart` — the quick start
 
@@ -387,7 +387,7 @@ a ban would refuse — without journalling anything.
 
 ## `oml workareas` — tree, edges, status
 
-*Available since v0.1.0 (`create`) and v0.3.0 (`show`, `tree`, `crew set`); edges and status planned for v0.5.2 · [releases](../product/releases.md)*
+*Available since v0.1.0 (`create`) and v0.3.0 (`show`, `tree`, `crew set`); status since v0.5.2; workarea edges not scheduled · [releases](../product/releases.md)*
 
 The algebra — one tree per tenant under `universe`, labelled `related` edges conferring zero
 access, forward-only status ladder — is declared in [workareas](../architecture/workareas.md).
@@ -404,12 +404,27 @@ them into `propose` and `ratify` run under different keys.
 | `oml workareas tree [--root <workarea>] [--status]` | The tenant tree from `universe` down, or from `--root`, with status and crew per node. The verb as built takes `--root` and not `--status`, and reads every page of `GET /v2/workareas/{workarea}/tree`; `--json` prints their items as one page. Under a key with reader effective access, a node it cannot read is absent. |
 | `oml workareas show <workarea>` | One node, by id or name: name, id, path (derived), status, crew record, edges, policy snapshot in force. |
 | `oml workareas crew set <workarea> --crew <crew>` | Journalled crew-metadata update: point the workarea at another crew record. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
-| `oml workareas relate propose <a> <b> --label <relates_to\|continues\|derived_from\|mirrors>` | Propose an edge. Requires dreamer(propose) on ≥1 endpoint and reader on both. |
-| `oml workareas relate ratify <edge-id>` | Ratify under a different key with dreamer(review) on **both** endpoints; ratifier ≠ proposer, refused otherwise. |
+| `oml workareas relate propose <a> <b> --label <relates_to\|continues\|derived_from\|mirrors>` | Propose an edge. Requires dreamer(propose) on ≥1 endpoint and reader on both. *Designed, not built: workarea edges are not in v0.5.2.* |
+| `oml workareas relate ratify <edge-id>` | Ratify under a different key with dreamer(review) on **both** endpoints; ratifier ≠ proposer, refused otherwise. *Designed, not built.* |
 | `oml workareas re-parent <workarea> --new-parent <target> [--apply]` | Journalled admin act; the server performs the single-transaction descendant path rewrite. Mass-reach act: defaults to `--dry-run` showing the paths that would be rewritten and the grants whose derived paths change; `--apply` performs the rewrite. |
-| `oml workareas status propose <workarea> --to <committed\|validated>` | Propose the next forward rung; the proposal is itself journalled (`workarea.status_proposed`). The ladder has no skips: `--to validated` is proposable only from `committed`, and a rung-skipping or out-of-ladder proposal is refused as `workarea.transition_refused` — the same code that refuses proposing `validated` while any child is not `validated`. Backward transitions do not exist; there is no flag for them. |
-| `oml workareas status ratify <transition-id>` | Second, non-proposing dreamer or admin ratifies; the journal records the transition with its policy snapshot. The [freeze transcript](sessions.md#4-freezing-a-workarea) shows the full ceremony. |
-| `oml workareas status pending` | Transitions awaiting a ratifier. |
+| `oml workareas status propose <workarea> --to <committed\|validated>` | Propose the next forward rung; the proposal is itself journalled (`workarea.status_proposed`). The ladder has no skips: `--to validated` is proposable only from `committed`, and a rung-skipping or out-of-ladder proposal is refused as `workarea.transition_refused` — the same code that refuses proposing `validated` while any child is not `validated`. Backward transitions do not exist; there is no flag for them. *Since v0.5.2*; a user root is refused `validated` once user roots are built ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d3). |
+| `oml workareas status ratify <workarea> <transition-id>` | Second, non-proposing dreamer or admin ratifies; the journal records the transition with its policy snapshot. The [freeze transcript](sessions.md#4-freezing-a-workarea) shows the full ceremony. *Since v0.5.2* ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3). |
+| `oml workareas status pending <workarea>` | The workarea's live proposals and the review policy in force, read from `GET /v2/workareas/{workarea}`; `--json` prints `{workarea_id, status, policy, pending_transitions}`. *Since v0.5.2* ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3). |
+
+## `oml edges` — claim links and the brief
+
+*Built for v0.5.2, not released · [releases](../product/releases.md) · [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d4, d7*
+
+The `/v2/edges` family for `kind` claim and `kind` brief ([HTTP API](../api/http-api.md#edges)).
+Each edge is a two-party ceremony: one key proposes, a key with another principal ratifies. An
+edge confers no access. No agent tool proposes one; an `oml_write` field for it is planned.
+
+| Verb | Does |
+|---|---|
+| `oml edges propose claim <from> <to> --label <label>` | Propose a link from one claim to another, both readable to the key, under dreamer on at least one endpoint. The label is open; `supports`, `contradicts`, `relates_to` and `continues` are recommended, and `oml:` labels join terms only. |
+| `oml edges propose brief <artifact> <workarea>` | Propose a promoted claim into a workarea's brief, under dreamer on the workarea; a held claim is refused. |
+| `oml edges ratify <edge-id>` | Ratify a pending edge of either kind under a key that did not propose it (`review.ratifier_is_proposer` otherwise). A ratified brief edge puts its claim in the workarea's brief, which the workarea read and the session-start hook serve. |
+| `oml edges list --kind <claim\|brief> [--workarea <workarea>] [--artifact <artifact-id>] [--limit <n>] [--cursor <cursor>]` | One page of one kind's edges, pending and ratified, newest first; `--workarea` is required for `brief`. |
 
 ## `oml crews` — crew records
 
@@ -636,7 +651,7 @@ shows it ([FR-33](../product/roadmap.md)).
 
 | Verb | Does |
 |---|---|
-| `oml hook session-start` | Reads the SessionStart JSON object on stdin, sends `GET /v1/memories?own=true&limit=10`, then `POST /v1/memories/recall` with `{"query": <query>, "k": 10, "include_text": true, "include_unreviewed": true, "max_tokens": <budget>}` on the key's default workarea, and prints one SessionStart hook document on stdout. It sends no other request, and exits `0` on every failure below. |
+| `oml hook session-start` | Reads the SessionStart JSON object on stdin, sends `GET /v1/memories?own=true&limit=10`, then `POST /v1/memories/recall` with `{"query": <query>, "k": 10, "include_text": true, "include_unreviewed": true, "max_tokens": <budget>}` on the key's default workarea, then, for the default workarea's brief, `GET /v2/whoami` and `GET /v2/workareas/{default}` (*since v0.5.2*; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d9), and prints one SessionStart hook document on stdout. It sends no other request, and exits `0` on every failure below; a failure of the two brief reads drops only the brief. The brief, when it has a member, is the section `Brief of this workarea, agreed by its reviewers:` before the steering, one `- <claim_key>: <text>` line per member. |
 
 **Its environment**, and nothing else:
 
