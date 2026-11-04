@@ -1,7 +1,8 @@
 //! The key tool's local half (ADR-0028; cli/reference.md `oml keys`): the
 //! reader grant the issuing verbs send beside a writer grant, the shell
-//! quoting of the two export lines `oml keys issue-agent` prints, and the
-//! owner-only file `--out` writes the key value to. Everything here runs on
+//! quoting of the two export lines `oml keys issue-agent` prints, the
+//! `claude plugin configure` line it adds with `--out`, and the owner-only
+//! file `--out` writes the key value to. Everything here runs on
 //! the operator's machine; the server takes exactly the grants it is sent
 //! (ADR-0025 d2).
 
@@ -43,6 +44,21 @@ pub fn with_reader_beside_writers(
 #[must_use]
 pub fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+/// The line `oml keys issue-agent --out` prints beside its two export lines:
+/// `jq` reads the key file and pipes `url` and `api_key` into `claude plugin
+/// configure --values-stdin`, so the value reaches Claude Code's keychain
+/// without entering argv or a transcript (ADR-0040 d4, amending ADR-0028
+/// d1). `server` is the plugin's `url` option, without `/mcp`.
+#[must_use]
+pub fn configure_line(server: &str, key_file: &str) -> String {
+    format!(
+        "jq -n --arg u {} --rawfile k {} '{{url: $u, api_key: ($k | rtrimstr(\"\\n\"))}}' \
+         | claude plugin configure oml@open-memory-lab --values-stdin",
+        sh_quote(server),
+        sh_quote(key_file),
+    )
 }
 
 /// The file `oml keys issue-agent --out` writes the key value to: created
@@ -153,7 +169,7 @@ impl KeyFile {
 mod tests {
     use std::path::PathBuf;
 
-    use super::KeyFile;
+    use super::{KeyFile, configure_line};
 
     /// An empty directory of this test's own, under the OS temp directory.
     fn scratch(test: &str) -> PathBuf {
@@ -218,5 +234,22 @@ mod tests {
         );
         key_file.discard().expect("discarded");
         std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
+    /// The configure line pipes the key file through `jq` into `claude
+    /// plugin configure --values-stdin`, naming the server and the file,
+    /// each single-quoted, so the value never enters argv (ADR-0040 d4).
+    #[test]
+    fn the_configure_line_reads_the_key_file_into_claude_plugin_configure() {
+        assert_eq!(
+            configure_line(
+                "https://oml.example.com",
+                "/home/op/.config/oml/keys/crew-agent-7"
+            ),
+            "jq -n --arg u 'https://oml.example.com' --rawfile k \
+             '/home/op/.config/oml/keys/crew-agent-7' \
+             '{url: $u, api_key: ($k | rtrimstr(\"\\n\"))}' \
+             | claude plugin configure oml@open-memory-lab --values-stdin"
+        );
     }
 }

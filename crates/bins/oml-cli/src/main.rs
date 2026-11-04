@@ -21,7 +21,7 @@ use uuid::Uuid;
 use oml_cli::client::{CallOpts, CliError, Client, encode, new_idempotency_key, segment};
 use oml_cli::creds::{self, Credentials};
 use oml_cli::hook;
-use oml_cli::issue::{KeyFile, sh_quote, with_reader_beside_writers};
+use oml_cli::issue::{KeyFile, configure_line, sh_quote, with_reader_beside_writers};
 use oml_cli::verify::parse_verifying_key;
 
 #[derive(Parser)]
@@ -175,9 +175,10 @@ enum Command {
 
 #[derive(Subcommand)]
 enum HookCommand {
-    /// Print the SessionStart context from OML_URL and OML_API_KEY alone —
-    /// steering, this key's recent submissions, the matching memories — or
-    /// nothing; always exits 0 (ADR-0029).
+    /// Print the SessionStart context from the plugin's url and api_key
+    /// options, else OML_URL and OML_API_KEY — steering, this key's recent
+    /// submissions, the matching memories — or nothing; always exits 0
+    /// (ADR-0029, ADR-0040 d3).
     SessionStart,
 }
 
@@ -214,7 +215,9 @@ enum KeysCommand {
     /// Issue a key; the value is printed exactly once.
     Issue(KeysIssueArgs),
     /// Issue the one key the agent plugin needs, in one POST /v2/keys, and
-    /// print the OML_URL and OML_API_KEY export lines it reads (ADR-0028 d1).
+    /// print the OML_URL and OML_API_KEY export lines, and with --out the
+    /// claude plugin configure line that reads the file (ADR-0028 d1,
+    /// ADR-0040 d4).
     IssueAgent(IssueAgentArgs),
     /// One key, by id or name, a revoked key's included: grants, denials,
     /// crew and epoch, never its value.
@@ -783,9 +786,9 @@ fn main() -> ExitCode {
     reason = "one flat dispatch arm per CLI verb; splitting it would only scatter the verb table"
 )]
 fn run(cli: &Cli) -> Result<ExitCode, CliError> {
-    // The hook reads OML_URL and OML_API_KEY itself, so it runs before the
-    // stored admin credentials are loaded, and ignores --url and --api-key
-    // (ADR-0029 d4).
+    // The hook reads the plugin's options or OML_URL and OML_API_KEY itself,
+    // so it runs before the stored admin credentials are loaded, and ignores
+    // --url and --api-key (ADR-0029 d4, ADR-0040 d3).
     if let Command::Hook {
         command: HookCommand::SessionStart,
     } = &cli.command
@@ -1617,11 +1620,13 @@ fn run_verdict(
 /// One `POST /v2/keys` for a writer key named `<key-name>`, with writer and
 /// reader grants on the workarea, that workarea as its default and the
 /// `--crew` when one is given, each reference as the operator spelled it,
-/// then exactly two lines on stdout: `export OML_URL=…` and `export
+/// then two lines on stdout: `export OML_URL=…` and `export
 /// OML_API_KEY=…`, the second reading the value back from the `--out` file
-/// when one is named. Every other line goes to stderr, and no key value
-/// reaches either stream once `--out` is given (cli/reference.md `oml keys
-/// issue-agent`; ADR-0028 d1; ADR-0026 d12).
+/// when one is named, and with `--out` a third, the `claude plugin configure
+/// --values-stdin` line that reads the same file (ADR-0040 d4). Every other
+/// line goes to stderr, and no key value reaches either stream once `--out`
+/// is given (cli/reference.md `oml keys issue-agent`; ADR-0028 d1; ADR-0026
+/// d12).
 fn run_issue_agent(
     cli: &Cli,
     stored: &Credentials,
@@ -1694,17 +1699,23 @@ fn run_issue_agent(
     let value = response["value"]
         .as_str()
         .ok_or_else(|| lost("the 201 carried no value"))?;
-    let key_line = match key_file {
-        None => format!("export OML_API_KEY={}", sh_quote(value)),
+    let (key_line, configure) = match key_file {
+        None => (format!("export OML_API_KEY={}", sh_quote(value)), None),
         Some(file) => {
             let shown = file.shown().to_owned();
             file.write_value(value)
                 .map_err(|e| lost(&format!("writing {shown} failed ({e})")))?;
-            format!("export OML_API_KEY=\"$(cat {})\"", sh_quote(&shown))
+            (
+                format!("export OML_API_KEY=\"$(cat {})\"", sh_quote(&shown)),
+                Some(configure_line(client.server(), &shown)),
+            )
         }
     };
     println!("export OML_URL={}", sh_quote(client.server()));
     println!("{key_line}");
+    if let Some(configure) = configure {
+        println!("{configure}");
+    }
 
     let granted: Vec<String> = response["grants"]
         .as_array()
@@ -1724,8 +1735,8 @@ fn run_issue_agent(
     );
     match &args.out {
         Some(_) => eprintln!(
-            "the value is only in the key file (0600); delete it once the key is in the \
-             environment that needs it"
+            "the value is only in the key file (0600); delete it once `claude plugin \
+             configure` has succeeded and no shell still reads it"
         ),
         None => eprintln!("the value is shown once, above, and never again"),
     }

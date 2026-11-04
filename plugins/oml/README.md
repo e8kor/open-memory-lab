@@ -36,7 +36,8 @@ jq -n --arg u 'https://oml.example.com' --rawfile k "$HOME/.config/oml/keys/crew
   | claude plugin configure oml@open-memory-lab --values-stdin
 ```
 
-Until both settings are set the plugin serves no tools.
+Until both settings are set the plugin serves no tools. The session-start hook below reads the
+same two settings.
 
 ### One release, or offline
 
@@ -110,7 +111,8 @@ their own work, both depend on it. To issue keys and run a server, see "Quicksta
 `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea>` issues an
 agent's key in one call: a writer key named `<key-name>`, with a writer and a reader grant on the
 workarea, given by its name or id, which is also its default. With `--out <path>` the value goes
-to a new owner-only file, the file the shell path under "Install" reads; the `oml-admin` plugin
+to a new owner-only file, the file the shell path under "Install" reads, and the CLI prints
+that path's `jq | claude plugin configure` line, filled in; the `oml-admin` plugin
 in this marketplace runs it that way from inside Claude Code, so the value never enters the
 conversation. See the
 [CLI reference](../../docs/cli/reference.md#oml-keys-issuance-revocation-rotation).
@@ -170,10 +172,10 @@ sends two requests with the agent's key, both to that one server: `GET
 (`open memory lab` for `~/src/open-memory-lab`, never the rest of the path), and which answers
 the workarea's steering and at most 800 budget tokens of matching memories. It adds what comes
 back to the session as stored data to check. After a compaction it also asks Claude to record the
-summary's durable facts with `oml_write`. In this release the hook reads its server and key from
-`OML_URL` and `OML_API_KEY`, not yet from the plugin's two settings, and never from the CLI's own
-credentials; with either variable unset it sends nothing, and it prints nothing when the server
-does not answer. Set `OML_SESSION_CONTEXT=off` to turn it off, or
+summary's durable facts with `oml_write`. The hook reads its server and key from the plugin's two
+settings, the ones the tools use; with neither set, it reads `OML_URL` and `OML_API_KEY`, for a
+hook run outside the plugin, and never one value from each, nor the CLI's own credentials. With
+no whole pair it sends nothing, and it prints nothing when the server does not answer. Set `OML_SESSION_CONTEXT=off` to turn it off, or
 `OML_SESSION_CONTEXT_MAX_TOKENS` to change the budget. Without the CLI the hook does nothing. See
 the [CLI reference](../../docs/cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
 
@@ -229,8 +231,9 @@ Release 0.4.0 reads the server and the key from the plugin's two settings, not f
 `OML_API_KEY`: a 0.3 install that only exported the variables gets no tools after the update until
 you configure the plugin once. Run `claude plugin update oml@open-memory-lab` (auto-update is off
 by default for a third-party marketplace), then set `url` to the old `OML_URL` and `api_key` to
-the old key, in the dialog or through the shell path under "Install". The exported variables can
-then leave your shell profile, unless the session-start hook or the `oml` CLI still reads them.
+the old key, in the dialog or through the shell path under "Install". The session-start hook
+reads the same two settings first, so the exported variables can then leave your shell profile,
+unless the `oml` CLI or another client still reads them.
 
 Release 0.4.0 also replaces the eight 0.3 tools with these three. The `permissions.allow` rules
 you wrote for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_workarea_info` and

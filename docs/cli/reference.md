@@ -244,14 +244,16 @@ exactly the grant it names.
 | Verb | Does |
 |---|---|
 | `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. |
-| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file and neither line carries it ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). |
+| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file, neither line carries it, and a third line pipes the file to `claude plugin configure` ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1; [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). |
 | `oml keys revoke <key>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
 | `oml keys rotate <key> <new-key-name> [--grace <duration>]` | Mint a successor key named `<new-key-name>` — new key id and name, since both keys are live through the grace window, linked by `rotated_from`, grants and crew reproduced from the journalled records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `oml keys list [--role …] [--expiring <duration>]` | Key names, ids, roles, principals, labels, expiries. Never values. |
 | `oml keys show <key>` | One key, by id or name — a revoked or expired key's name still resolves: grants, denials, crew, epoch, issuance and revocation events. The verb as built prints the key's revocation time on a `revoked` line, or `no (live)` for a live key, and no issuance or revocation event, which the key read does not serve. |
 
-**`oml keys issue-agent` output.** On success the verb prints exactly two lines on stdout, the ones
-the `oml` plugin reads, and every other line on stderr:
+**`oml keys issue-agent` output.** On success the verb prints two lines on stdout, the pair the
+CLI, another MCP client and the session-start hook run outside the plugin read, and every other
+line on stderr; with `--out` it adds a third, below. The `oml` plugin reads neither variable: it
+takes its `url` and `api_key` settings ([agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent)).
 
 ```console
 export OML_URL='https://oml.example.com'
@@ -268,15 +270,21 @@ will start the agent without the value entering shell history. With `--json` the
 **`--out <path>`** writes the value to a file instead of printing it. Before it sends anything the
 CLI creates `<path>` exclusively, with mode 0600; a path that already exists is refused (exit `2`)
 and nothing is sent, so no file is ever overwritten. After the `201` the CLI writes the value and
-one newline to the file and prints only, with the path made absolute:
+one newline to the file and prints only these three lines, with the path made absolute:
 
 ```console
 export OML_URL='https://oml.example.com'
 export OML_API_KEY="$(cat '/home/op/.config/oml/keys/crew-agent-7')"
+jq -n --arg u 'https://oml.example.com' --rawfile k '/home/op/.config/oml/keys/crew-agent-7' '{url: $u, api_key: ($k | rtrimstr("\n"))}' | claude plugin configure oml@open-memory-lab --values-stdin
 ```
 
-No key value reaches stdout, stderr or the terminal; the second line reads it from the file when
-the operator's shell runs it. A refused issuance removes the empty file the CLI created. If the
+The third line gives the `oml` plugin its two settings: `jq` reads the file, and `claude plugin
+configure --values-stdin`, which needs Claude Code 2.1.285 or later, stores the server as `url`
+and the key in the system keychain as `api_key`, so the value enters no argv and no transcript
+([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4, d5).
+
+No key value reaches stdout, stderr or the terminal; the second and third lines read it from the
+file when the operator's shell runs them. A refused issuance removes the empty file the CLI created. If the
 value cannot be written once the key is issued, the value is lost: the CLI removes the partial
 file, names the key's name and id on stderr, says to revoke it, and exits `2`; until key
 revocation is built, `oml deny set <key> universe` keeps the key from every workarea.
@@ -290,7 +298,8 @@ containing a quote or a newline is refused (exit `2`) before anything is sent, s
 is always safe to run, and `--out` with `--json` is refused (exit `2`), because the `201` body
 carries the value. The file is the one place the
 [key format rule](../architecture/roles-and-keys.md#key-format) lets a value rest outside the
-show-once response; the operator deletes it once the key is in the environment that needs it.
+show-once response; the operator deletes it once `claude plugin configure` has succeeded and any
+export line they chose has run.
 
 ## `oml grants`, `oml deny`, `oml bans` — scope and refusal
 
@@ -485,10 +494,12 @@ ADR-0014 d2).
   repository — and creates its directory owner-only if it is missing; states the reader grant it
   adds ([above](#oml-keys-issuance-revocation-rotation)); runs `oml keys issue-agent <key-name>
   --principal <principal> --workarea <workarea> --out <path>` itself, with `--held-by human`,
-  `--crew` or `--write-only` when the operator asks for them; hands the operator the two printed
-  lines, which carry a path and no value, to run in the shell that will start the agent, together
-  with the key's name and id the CLI printed on stderr; and tells the operator to delete the key
-  file once the key is in that environment.
+  `--crew` or `--write-only` when the operator asks for them; hands the operator the printed
+  `claude plugin configure` line, which carries a path and no value, to run where Claude Code
+  runs the agent, together with the key's name and id the CLI printed on stderr, and the two
+  export lines only for the CLI, another client or the hook run outside the plugin; and tells the
+  operator to delete the key file only after `claude plugin configure` has succeeded
+  ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4).
 - **What it never does.** It runs `oml keys issue-agent` only with `--out`, and never with
   `--json`. It never runs any other verb whose output carries a key value — `keys issue`,
   `keys rotate`, `tenants issue-admin`, `bootstrap claim` — never reads the key file, and never
@@ -516,14 +527,16 @@ shows it ([FR-33](../product/roadmap.md)).
 
 | Variable | Read as |
 |---|---|
-| `OML_URL` | The server, without `/mcp`: the value the plugin's MCP entry reads. Unset or empty, the verb prints nothing. |
-| `OML_API_KEY` | The agent's own plugin key, the bearer of both requests. Unset or empty, the verb prints nothing; a value holding whitespace or a character outside printable ASCII is refused before anything is sent, with a stderr line that names the variable and never the value. |
+| `CLAUDE_PLUGIN_OPTION_URL` | The plugin's `url` setting, which Claude Code exports to the plugin's hooks: the server, without `/mcp`, the one the plugin's MCP entry reaches. When it or `CLAUDE_PLUGIN_OPTION_API_KEY` is set and non-empty, the verb uses these two and never the `OML_` pair; set alone, the verb prints nothing and names the unset one ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d3). |
+| `CLAUDE_PLUGIN_OPTION_API_KEY` | The plugin's `api_key` setting, read under the same rule and refused like `OML_API_KEY` below. |
+| `OML_URL` | The server, without `/mcp`, when neither plugin setting is set: a hook run by hand or by another harness. Unset or empty, the verb prints nothing. |
+| `OML_API_KEY` | The agent's own key, the bearer of both requests, when neither plugin setting is set. Unset or empty, the verb prints nothing; a value holding whitespace or a character outside printable ASCII is refused before anything is sent, with a stderr line that names the variable and never the value. |
 | `OML_SESSION_CONTEXT` | Unset, empty or `on` runs the verb; `off` prints nothing; any other value prints nothing and names the variable on stderr. |
 | `OML_SESSION_CONTEXT_MAX_TOKENS` | The recall's `max_tokens`: default `800`, an integer from 1 to 2000; any other value prints nothing and names the variable on stderr. Steering is never cut, so the budget bounds the hits ([token budgets](../architecture/retrieval.md#token-budgets)). At the ceiling the hit bodies are at most 8,000 bytes; with the frame, the capped claim keys and uncut steering on top, a context can still pass Claude Code's 10,000-character cap on hook context, and the header, the record lines and the framing line come first, so the 2,000-character preview Claude Code then shows still holds them ([ADR-0029](../adr/ADR-0029-session-start-hook.md) d2, d6). |
 
 The verb never uses `--url` or `--api-key`, nor the hidden `--server` and `--key`, and never
 reads the stored credentials, so an admin key never feeds an agent's context. It prints no key
-value: every occurrence of the `OML_API_KEY` value in what it prints, stored text included, is replaced by
+value: every occurrence of the key value in what it prints, from either pair, stored text included, is replaced by
 `[OML_API_KEY]`, in each stored field before that field is flattened or cut.
 
 **The query** is the last component of the stdin `cwd`, split at every character that is not a
@@ -535,7 +548,7 @@ the PoC, names every word of it. The `cwd` is redacted before its words are take
 **It fails open.** Each of these ends with no stdout and exit `0`, and at most one stderr line
 naming the reason in at most 200 characters, with the key value redacted: `OML_SESSION_CONTEXT=off`; a refused variable
 value above, an `OML_API_KEY` that is not all printable ASCII among them; a missing `OML_URL` or
-`OML_API_KEY`; stdin that is not a JSON object, or whose `source` or `cwd` is not a string; an
+`OML_API_KEY`, or one plugin setting set alone; stdin that is not a JSON object, or whose `source` or `cwd` is not a string; an
 unreachable server; a typed refusal; a request, its TCP connect included, that takes longer than
 3 seconds; anything that holds the verb past 8 seconds, such as a DNS lookup, which has no
 deadline of its own; an `https` server whose certificate does not chain to the public roots the

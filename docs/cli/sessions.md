@@ -174,7 +174,7 @@ provider-ring (`/v1`) request from 9c44b7e8-… that names no workarea targets 4
 ([ADR-0022](../adr/ADR-0022-two-ring-api.md)). The
 key values above appeared exactly once; `oml keys list` and the journal know only names, ids and
 hashes. `oml keys issue-agent` printed its value only into the two export lines the `eval`
-consumed, which the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) reads. The
+consumed, which the CLI and a hook run outside the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) read. The
 exported pair wins over any credentials file, so the shell that is to go on as the admin unsets both
 variables ([start settings](reference.md#start-settings)).
 

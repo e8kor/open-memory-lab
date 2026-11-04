@@ -1,6 +1,6 @@
 ---
 name: issue-agent-key
-description: Use when the operator asks to issue, create or set up an Open Memory Lab key for an agent, such as the key the oml plugin reads from OML_API_KEY. Runs the oml CLI's issue-agent verb with --out, so the key value goes to an owner-only file and never into this conversation.
+description: Use when the operator asks to issue, create or set up an Open Memory Lab key for an agent, such as the key the oml plugin keeps in its api_key setting. Runs the oml CLI's issue-agent verb with --out, so the key value goes to an owner-only file and never into this conversation.
 ---
 
 # Issue an agent key without seeing it
@@ -11,13 +11,13 @@ the key's default workarea. It runs the `oml` CLI on this machine, under the ser
 the CLI already uses, and the server journals the issuance like any other.
 
 The key value must never enter this conversation. The CLI writes it to a file only the operator's
-user can read and prints two lines that carry the file's path, not the value. Every rule below
+user can read and prints three lines that carry the file's path, not the value. Every rule below
 follows from that.
 
 ## Rules
 
 - Run `issue-agent` only with `--out`, and never with `--json`: the JSON response carries the value.
-- Never read, print or copy the key file, and never run the two printed lines yourself.
+- Never read, print or copy the key file, and never run the printed lines yourself.
 - Never run another command whose output carries a key value: `oml keys issue` and
   `oml bootstrap claim` print one.
 - Never pass `--api-key` on a command line. The CLI takes its server and admin key as one pair,
@@ -62,24 +62,31 @@ follows from that.
     oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workarea metals-crew --out "$HOME/.config/oml/keys/crew-agent-7"
     ```
 
-    On success stdout holds two `export` lines and stderr names the key id, its grants and its
-    default workarea. Exit `1` is the server refusing the issuance, with the reason and the rule
+    On success stdout holds two `export` lines and one `claude plugin configure` line, and stderr
+    names the key id, its grants and its default workarea. Exit `1` is the server refusing the issuance, with the reason and the rule
     it names, and nothing was issued; `name.taken` means a key of the tenant, live or revoked,
     already has that name, so ask for another. Exit `2` is a local failure: a refusal such as an
     existing file or no server configured, where nothing was issued, or one of the two cases at
     the end of this page. Report what the CLI printed and stop; never retry without `--out`.
 
-5. Give the operator the two printed lines exactly as the CLI printed them, to run in the shell
-   that will start the agent, together with the key's name and the key id from stderr. They
-   look like this:
+5. Give the operator the third printed line exactly as the CLI printed it, together with the
+   key's name and the key id from stderr. Run in a shell on the machine where Claude Code runs
+   the agent, after `claude plugin install oml@open-memory-lab`, it stores the server as the
+   `oml` plugin's `url` setting and the key in the system keychain as its `api_key` setting; it
+   needs `jq` and Claude Code 2.1.285 or later. The plugin's tools and its session-start hook
+   both read those settings. It looks like this:
 
     ```sh
-    export OML_URL='https://oml.example.com'
-    export OML_API_KEY="$(cat '/home/op/.config/oml/keys/crew-agent-7')"
+    jq -n --arg u 'https://oml.example.com' --rawfile k '/home/op/.config/oml/keys/crew-agent-7' '{url: $u, api_key: ($k | rtrimstr("\n"))}' | claude plugin configure oml@open-memory-lab --values-stdin
     ```
 
-6. Tell the operator to delete the key file once the key is in that environment: the file is the
-   only copy of the value, and the server keeps only its hash.
+   The two `export` lines before it are for the `oml` CLI, another MCP client, or the hook run
+   outside the plugin, all of which read `OML_URL` and `OML_API_KEY`; pass them on only if the
+   operator wants one of those.
+
+6. Tell the operator to delete the key file only after `claude plugin configure` has succeeded,
+   and after any `export` line they chose has run: the file is the only copy of the value, and
+   the server keeps only its hash.
 
 If the CLI says the key was issued but its value could not be written, the value is lost and the
 key is live. Pass on the key's name and id and the remedy the CLI prints, and issue a new key,

@@ -1583,7 +1583,8 @@ Operational notes:
   ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)), and the
   [`oml-admin` plugin](../cli/reference.md#the-oml-admin-plugin) runs it for an
   operator with `--out`, so the value lands in an owner-only file and never in
-  a transcript, the file the plugin's shell configuration reads; this plugin
+  a transcript, the file the plugin's shell configuration reads, and prints
+  that configuration's `claude plugin configure` line (ADR-0040 d4); this plugin
   cannot issue keys, since key issuance is an admin verb (R1). Never put the
   key in a config file you commit.
 - **One key does the agent's whole loop.** An agent that writes and recalls
@@ -1610,9 +1611,9 @@ Operational notes:
 - **Start each session from memory.** In Claude Code the `oml` plugin's
   SessionStart hook runs `oml hook session-start` when the CLI is on `PATH`,
   which injects the workarea's steering, the key's recent submissions and the
-  memories matching the working directory's name, under a token budget; in
-  this release it reads `OML_URL` and `OML_API_KEY`, not yet the plugin's
-  two settings (ADR-0040 d3 is not built); it is
+  memories matching the working directory's name, under a token budget; it
+  reads the plugin's two settings first and `OML_URL` and `OML_API_KEY`
+  second, as one pair, never one value from each (ADR-0040 d3); it is
   declared, with its variables and how it fails open, on the
   [CLI reference](../cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin)
   ([ADR-0029](../adr/ADR-0029-session-start-hook.md)).

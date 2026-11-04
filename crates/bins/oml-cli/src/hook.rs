@@ -1,6 +1,7 @@
 //! `oml hook session-start` (ADR-0029; cli/reference.md `oml hook
 //! session-start`): the `oml` plugin's SessionStart hook. Under the agent's
-//! own key, from `OML_URL` and `OML_API_KEY` alone, it reads the own-work
+//! own key, from the plugin's two options or else `OML_URL` and
+//! `OML_API_KEY`, one pair from one source (ADR-0040 d3), it reads the own-work
 //! listing and one budgeted recall on the provider ring and returns the
 //! SessionStart hook document Claude Code adds to the session, or the reason
 //! it prints nothing. It never reads the CLI's stored credentials, and every
@@ -14,6 +15,12 @@ use serde_json::{Value, json};
 
 use crate::client::{CallOpts, CliError, Client};
 
+/// The plugin's `url` option, as Claude Code exports it to a plugin hook
+/// (ADR-0040 d1, d3).
+pub const OPTION_URL: &str = "CLAUDE_PLUGIN_OPTION_URL";
+/// The plugin's sensitive `api_key` option, as Claude Code exports it to a
+/// plugin hook (ADR-0040 d1, d3).
+pub const OPTION_API_KEY: &str = "CLAUDE_PLUGIN_OPTION_API_KEY";
 /// The recall budget when `OML_SESSION_CONTEXT_MAX_TOKENS` is unset (d2).
 pub const DEFAULT_MAX_TOKENS: u64 = 800;
 /// The largest budget the variable takes. 2000 budget tokens are at most
@@ -63,16 +70,16 @@ pub fn session_start(
     // is refused before anything is sent: a header error would carry it raw,
     // and a server that trims it would authenticate a value the redaction
     // below no longer matches (ADR-0029 d4).
-    let api_key = set("OML_API_KEY");
+    let (url_var, key_var) = pair_source(&set);
+    let api_key = set(key_var);
     if api_key
         .as_ref()
         .is_some_and(|key| !key.bytes().all(|b| b.is_ascii_graphic()))
     {
-        return Err(Some(
-            "OML_API_KEY holds whitespace or a character outside printable ASCII, so it was not \
+        return Err(Some(format!(
+            "{key_var} holds whitespace or a character outside printable ASCII, so it was not \
              sent and no context was loaded"
-                .to_owned(),
-        ));
+        )));
     }
     // Every line this prints, a refused variable's value included, goes
     // through the redaction, and before it is flattened, so the flattening
@@ -104,8 +111,8 @@ pub fn session_start(
                 ))
             })?,
     };
-    let url = set("OML_URL").ok_or_else(|| quiet(unset("OML_URL")))?;
-    let key = api_key.clone().ok_or_else(|| quiet(unset("OML_API_KEY")))?;
+    let url = set(url_var).ok_or_else(|| quiet(unset(url_var)))?;
+    let key = api_key.clone().ok_or_else(|| quiet(unset(key_var)))?;
 
     let session = read_session(stdin).map_err(|why| {
         quiet(format!(
@@ -160,6 +167,19 @@ pub fn session_start(
         }
     });
     Ok(document.to_string())
+}
+
+/// The variables the server and key come from, as one pair: the plugin's
+/// two options when either is set and non-empty, else `OML_URL` and
+/// `OML_API_KEY`. One option set alone is not configured, and the unset one
+/// is then named rather than the environment pair tried, so a key never goes
+/// to a URL from another source (ADR-0040 d3; ADR-0039 d15).
+fn pair_source(set: &dyn Fn(&str) -> Option<String>) -> (&'static str, &'static str) {
+    if set(OPTION_URL).is_some() || set(OPTION_API_KEY).is_some() {
+        (OPTION_URL, OPTION_API_KEY)
+    } else {
+        ("OML_URL", "OML_API_KEY")
+    }
 }
 
 /// The recall's request body: the query, the item count and the budget,
@@ -360,7 +380,7 @@ fn push_or_none(out: &mut Vec<String>, lines: Vec<String>, none: &str) {
 }
 
 /// The server as the context names it: scheme, host and port alone, so no
-/// userinfo, path, query or fragment of `OML_URL` enters the context
+/// userinfo, path, query or fragment of the server variable enters the context
 /// (ADR-0029 d6).
 #[must_use]
 pub fn origin(url: &str) -> String {
@@ -421,6 +441,51 @@ mod tests {
         assert_eq!(body["query"], "open memory lab");
         assert_eq!(body["max_tokens"], 800);
         assert_eq!(body["k"], COUNT);
+    }
+
+    /// A key from the plugin's option that is not printable ASCII is refused
+    /// by the option's name before anything is sent, and the environment pair
+    /// is not tried instead (ADR-0040 d3; ADR-0029 d4).
+    #[test]
+    fn the_session_start_hook_refuses_a_plugin_option_key_by_the_options_name() {
+        let var = |name: &str| match name {
+            "CLAUDE_PLUGIN_OPTION_URL" => Some("http://127.0.0.1:9".to_owned()),
+            "CLAUDE_PLUGIN_OPTION_API_KEY" => Some("two words".to_owned()),
+            "OML_URL" => Some("http://127.0.0.1:9".to_owned()),
+            "OML_API_KEY" => Some("environment-pair-key".to_owned()),
+            _ => None,
+        };
+        let refused = session_start(&var, &mut "{}".as_bytes());
+        let Err(Some(line)) = refused else {
+            panic!("refused with a line: {refused:?}");
+        };
+        assert!(
+            line.starts_with("CLAUDE_PLUGIN_OPTION_API_KEY holds whitespace"),
+            "{line}"
+        );
+        assert!(!line.contains("two words"), "{line}");
+    }
+
+    /// One plugin option set alone is a plugin not configured: the hook
+    /// names the unset option and does not fall back to a whole environment
+    /// pair (ADR-0040 d3).
+    #[test]
+    fn the_session_start_hook_refuses_one_plugin_option_set_alone() {
+        let var = |name: &str| match name {
+            "CLAUDE_PLUGIN_OPTION_API_KEY" => Some("option-key-0123".to_owned()),
+            "OML_URL" => Some("http://127.0.0.1:9".to_owned()),
+            "OML_API_KEY" => Some("environment-pair-key".to_owned()),
+            _ => None,
+        };
+        let refused = session_start(&var, &mut "{}".as_bytes());
+        let Err(Some(line)) = refused else {
+            panic!("refused with a line: {refused:?}");
+        };
+        assert!(
+            line.starts_with("CLAUDE_PLUGIN_OPTION_URL is not set"),
+            "{line}"
+        );
+        assert!(!line.contains("option-key-0123"), "{line}");
     }
 
     /// A recall hit and a steering item print their `text`, the v0.4.0

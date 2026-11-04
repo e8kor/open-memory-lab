@@ -34,6 +34,23 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The session-start hook reads the plugin's options before the environment pair, and issue-agent --out prints the plugin configure line (ADR-0040 d3, d4, implementation)
+
+`oml hook session-start` takes its server and key from `CLAUDE_PLUGIN_OPTION_URL` and
+`CLAUDE_PLUGIN_OPTION_API_KEY` when either is set and non-empty, and otherwise from `OML_URL` and
+`OML_API_KEY`; one option set alone sends nothing and names the unset one, so a key never goes
+to a URL from another source. The printable-ASCII refusal names whichever key variable it read,
+and the redaction covers either pair. `oml keys issue-agent --out` prints a third stdout line, the
+`jq … | claude plugin configure oml@open-memory-lab --values-stdin` pipeline that reads the key
+file, amending ADR-0028 d1's two-line output; the value still enters neither stream. With the
+previous entry, an install that follows the plugin README gets its tools and its session context
+from the two settings alone; no release carries that entry without this one.
+
+- **Pages:** the [CLI reference](cli/reference.md) for the hook's variables, the issue-agent
+  output and the `oml-admin` plugin; [mcp-plugin.md](api/mcp-plugin.md); [the CLI
+  sessions](cli/sessions.md); the plugin README; the `oml-admin` skill, which now hands over the
+  configure line and has the key file deleted only after it succeeds.
+
 ### 2026-11-04 — The plugin's userConfig and .mcp.json read the url and api_key options alone (ADR-0040 d1, d2, d5, d6, implementation)
 
 `plugins/oml/.claude-plugin/plugin.json` declares two `userConfig` options, `url` and a

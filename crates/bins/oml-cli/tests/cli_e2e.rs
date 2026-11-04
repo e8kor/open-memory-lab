@@ -923,11 +923,11 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
     ]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
-        stdout,
-        format!(
-            "export OML_URL='{}'\nexport OML_API_KEY=\"$(cat '{shown}')\"\n",
-            lab.server
-        )
+        stdout.lines().take(2).collect::<Vec<_>>(),
+        [
+            format!("export OML_URL='{}'", lab.server),
+            format!("export OML_API_KEY=\"$(cat '{shown}')\""),
+        ]
     );
     let written = std::fs::read_to_string(&path).expect("the key file");
     let value = written
@@ -947,6 +947,47 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
         lab.json(Some(value), &["write", "The key from the file remembers."]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(accepted["state"], "held", "{log}");
+    lab.stop().await;
+}
+
+/// With `--out`, the third stdout line is the `claude plugin configure
+/// --values-stdin` pipeline that reads the key file through `jq`, naming the
+/// server and the file and never the value (ADR-0040 d4, amending ADR-0028
+/// d1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_agent_out_prints_the_plugin_configure_line_that_reads_the_key_file() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+    let path = lab.dir.join("keys").join("crew-agent-8");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("key directory");
+    let shown = path.to_str().expect("a UTF-8 path");
+
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-8",
+        "--principal",
+        "crew/agent-8",
+        "--workarea",
+        &wa,
+        "--out",
+        shown,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "{stdout}");
+    assert_eq!(
+        lines[2],
+        format!(
+            "jq -n --arg u '{}' --rawfile k '{shown}' '{{url: $u, api_key: ($k | rtrimstr(\"\\n\"))}}' \
+             | claude plugin configure oml@open-memory-lab --values-stdin",
+            lab.server
+        )
+    );
+    let value = std::fs::read_to_string(&path).expect("the key file");
+    assert!(!stdout.contains(value.trim_end()), "no value: {stdout}");
     lab.stop().await;
 }
 
@@ -1893,7 +1934,9 @@ async fn a_reference_spelled_empty_dot_or_dot_dot_is_refused_before_anything_is_
 /// Every variable the hook or the CLI could read: each is removed before a
 /// run sets its own, so the live environment, a live `OML_API_KEY` among it,
 /// never reaches a test.
-const HOOK_VARIABLES: [&str; 9] = [
+const HOOK_VARIABLES: [&str; 11] = [
+    "CLAUDE_PLUGIN_OPTION_URL",
+    "CLAUDE_PLUGIN_OPTION_API_KEY",
     "OML_URL",
     "OML_API_KEY",
     "OML_SESSION_CONTEXT",
@@ -2111,6 +2154,71 @@ impl Crew {
     fn hook(&self, extra: &[(&str, &str)], stdin: &str) -> (i32, String, String) {
         self.hook_as(&self.agent, extra, stdin)
     }
+}
+
+/// With the plugin's two options set, the hook sends both requests to the
+/// option's server under the option's key and never to the environment
+/// pair (ADR-0040 d3).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_start_hook_reads_the_plugin_options_before_oml_url_and_oml_api_key() {
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
+    crew.lab.take_requests();
+    let (code, stdout, stderr) = hook(
+        &[
+            ("CLAUDE_PLUGIN_OPTION_URL", crew.lab.server.as_str()),
+            ("CLAUDE_PLUGIN_OPTION_API_KEY", crew.agent.as_str()),
+            ("OML_URL", "http://127.0.0.1:9"),
+            ("OML_API_KEY", "oml_environmentpair0123456789abcdefghijklm"),
+        ],
+        &session("startup", "/home/op/src/accra-metals"),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let seen = crew.lab.take_requests();
+    assert_eq!(
+        routes(&seen),
+        ["GET /v1/memories", "POST /v1/memories/recall"]
+    );
+    let bearer = format!("Bearer {}", crew.agent);
+    assert!(
+        seen.iter()
+            .all(|s| s.authorization.as_deref() == Some(bearer.as_str())),
+        "every request carries the option's key"
+    );
+    let context = context_of(&stdout);
+    assert!(
+        context.starts_with(&format!(
+            "OML memory for this session, from {}",
+            crew.lab.server
+        )),
+        "{context}"
+    );
+    crew.lab.stop().await;
+}
+
+/// One plugin option set alone means the plugin is not configured: the hook
+/// sends nothing, even with a whole environment pair, and names the unset
+/// option (ADR-0040 d3).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_start_hook_sends_nothing_when_one_plugin_option_is_set_alone() {
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
+    crew.lab.take_requests();
+    let (code, stdout, stderr) = crew.hook(
+        &[("CLAUDE_PLUGIN_OPTION_API_KEY", crew.agent.as_str())],
+        &session("startup", "/home/op/src/accra-metals"),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "", "no context");
+    assert!(crew.lab.take_requests().is_empty(), "nothing was sent");
+    assert!(
+        stderr.contains("CLAUDE_PLUGIN_OPTION_URL is not set"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains(&crew.agent), "no key value: {stderr}");
+    crew.lab.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
