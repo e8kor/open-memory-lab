@@ -24,7 +24,7 @@ use unicode_normalization::is_nfc;
 use uuid::Uuid;
 
 use crate::model::{LineageClosure, MemoryKind, Role, check_reviewer};
-use crate::vocab::{OML_PREFIX, OmlLabel};
+use crate::vocab::{Curie, OML_PREFIX, OmlLabel};
 
 /// The request field a [`LabelRefusal`] names as `details.field`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +93,14 @@ pub enum LabelRefusal {
     /// (ADR-0021 d5).
     #[error("{} of an oml: term edge is not a term (request.validation)", field.as_str())]
     EndpointNotTerm { field: EdgeField },
+    /// An `oml:` term relation with a term endpoint whose `claim_key` is not
+    /// a CURIE: a term's `claim_key` is its CURIE, and the cycle check at
+    /// ratification reads the relation over CURIEs (ADR-0021 d2, d5).
+    // reading: capture does not hold a term's claim_key to the CURIE
+    // grammar, so the proposal refuses the edge rather than admit one that
+    // no ratification could check.
+    #[error("{} of an oml: term edge has a claim_key that is not a CURIE (request.validation)", field.as_str())]
+    EndpointNotCurie { field: EdgeField },
 }
 
 impl LabelRefusal {
@@ -102,12 +110,15 @@ impl LabelRefusal {
         "request.validation"
     }
 
-    /// `details.field`: the endpoint for [`LabelRefusal::EndpointNotTerm`],
-    /// the label for every other refusal.
+    /// `details.field`: the endpoint for [`LabelRefusal::EndpointNotTerm`]
+    /// and [`LabelRefusal::EndpointNotCurie`], the label for every other
+    /// refusal.
     #[must_use]
     pub fn field(&self) -> EdgeField {
         match self {
-            LabelRefusal::EndpointNotTerm { field } => *field,
+            LabelRefusal::EndpointNotTerm { field } | LabelRefusal::EndpointNotCurie { field } => {
+                *field
+            }
             _ => EdgeField::Label,
         }
     }
@@ -158,6 +169,22 @@ pub fn check_label(
         None if both_terms => Err(LabelRefusal::TermEdgeNeedsOmlLabel),
         None => Ok(()),
     }
+}
+
+/// The endpoints' `claim_key`s of an `oml:` term relation, after
+/// [`check_label`] admitted the label: each is a CURIE, `from` first
+/// (ADR-0021 d2, d5). `oml:about` and every open label pass, as their
+/// endpoints need not both be terms.
+pub fn check_term_curies(label: &str, src_key: &str, dst_key: &str) -> Result<(), LabelRefusal> {
+    if matches!(OmlLabel::parse(label), None | Some(OmlLabel::About)) {
+        return Ok(());
+    }
+    for (key, field) in [(src_key, EdgeField::From), (dst_key, EdgeField::To)] {
+        if Curie::parse(key).is_err() {
+            return Err(LabelRefusal::EndpointNotCurie { field });
+        }
+    }
+    Ok(())
 }
 
 fn is_oml_prefixed(label: &str) -> bool {
