@@ -108,7 +108,7 @@ MEMORY_READERS = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md"
                   *sorted((ROOT / "scripts").glob("*.sh"))]
 # A host such as https://memory.doublegate.io, the default server (ADR-0043
 # d1), is no field read: a match right after `//` is skipped.
-MEMORY_READ_RE = re.compile(r"(?<!//)\bmemory\??\.([a-z_]+)\b")
+MEMORY_READ_RE = re.compile(r"(?<!//)\bmemory\??\.([a-z_]+)\b(?!\.[a-z])")
 CONTRACT_MARKS = {"served", "designed"}
 RETIRED_VERB_RE = re.compile(r"\boml context (?:add|use|list|show|remove)\b")
 RETIRED_VERB_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "docs" / "changelog.md"]
