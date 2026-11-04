@@ -60,7 +60,7 @@ use oml_domain::{
     transition,
 };
 
-use crate::cursor::{ListingCursor, NameCursor, PathCursor};
+use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
@@ -86,6 +86,7 @@ use crate::types::{
     TransitionRecord, TransitionState,
     TransitionView,
     ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeRecord, ProposeClaimEdge,
+    ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition, ClaimEdgeQuery,
     WorkareaStatusView,
 };
 
@@ -5141,6 +5142,120 @@ where
                 })
             }
         }
+    }
+
+    /// `GET /v2/claim-edges` (http-api.md claim edges and pagination;
+    /// ADR-0008 d5): one page of the tenant's claim edges, pending and
+    /// ratified, newest first, narrowed to `query`'s workarea, by id or name
+    /// (ADR-0026), and its version at either endpoint. A reader key is
+    /// needed: an admin key answers `access.verb_ceiling`, since an edge joins
+    /// content and an admin structure read never includes it (ADR-0026 d15).
+    /// A named workarea asks reader effective there by the refusal order. An
+    /// edge is served only when both its endpoints are in the key's read
+    /// scope, reader on the endpoint's workarea and `readable`, so the read
+    /// never names an unreadable version's id; the page reads past the edges
+    /// it filters out until it holds `limit` of them or the store has no
+    /// more. The cursor is bound to the key, to `api.cursor_ttl` and to the
+    /// filter, its workarea resolved, so either spelling of the workarea
+    /// resumes it.
+    pub async fn claim_edges(
+        &self,
+        api_key: &str,
+        query: ClaimEdgeQuery,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<ClaimEdgePage, AppError> {
+        const VERB: &str = "claim_edge.list";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        let tenant_id = key.tenant_id;
+        require_admissible(key, Role::Reader, VERB)?;
+        let workarea_id = self
+            .resolve_opt(key, NamedKind::Workarea, query.workarea.as_ref())
+            .await?;
+        if let Some(node) = workarea_id {
+            self.require_access(&caller, node, Role::Reader, VERB)
+                .await?;
+        }
+        let filter = ClaimEdgeFilter {
+            artifact_id: query.artifact_id,
+            workarea_id,
+        };
+        let now = self.clock.now();
+        let mut after = cursor
+            .map(|cursor| ClaimEdgeCursor::resume(cursor, key.key_id, &filter, &now))
+            .transpose()?;
+
+        // One edge past the page says whether another page exists.
+        let want = limit.saturating_add(1);
+        let mut readable: BTreeMap<Uuid, bool> = BTreeMap::new();
+        let mut served = Vec::with_capacity(want.min(64));
+        'pages: loop {
+            let batch = self
+                .journal
+                .claim_edges(tenant_id, &filter, after.as_ref(), want)
+                .await?;
+            let exhausted = batch.len() < want;
+            for edge in batch {
+                after = Some(ClaimEdgePosition {
+                    created_at: edge.created_at.clone(),
+                    edge_id: edge.edge_id,
+                });
+                let mut both = true;
+                for id in [edge.src_artifact_id, edge.dst_artifact_id] {
+                    let in_scope = match readable.get(&id) {
+                        Some(known) => *known,
+                        None => {
+                            let known = self.endpoint_readable(&caller, id).await?;
+                            readable.insert(id, known);
+                            known
+                        }
+                    };
+                    both &= in_scope;
+                }
+                if both {
+                    served.push(edge);
+                    if served.len() == want {
+                        break 'pages;
+                    }
+                }
+            }
+            if exhausted {
+                break;
+            }
+        }
+        let more = served.len() > limit;
+        served.truncate(limit);
+        let next_cursor = served.last().filter(|_| more).map(|last| {
+            ClaimEdgeCursor {
+                key_id: key.key_id,
+                position: ClaimEdgePosition {
+                    created_at: last.created_at.clone(),
+                    edge_id: last.edge_id,
+                },
+                filter,
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        Ok(ClaimEdgePage {
+            items: served.iter().map(ClaimEdgeProposal::from).collect(),
+            next_cursor,
+        })
+    }
+
+    /// Whether the version `id` is in the caller's read scope as a claim
+    /// endpoint: present, reader effective on its workarea, and `readable`
+    /// (roles-and-keys.md footnote 5).
+    async fn endpoint_readable(&self, caller: &Caller, id: Uuid) -> Result<bool, AppError> {
+        let Some(memory) = self.journal.memory(caller.key.tenant_id, id).await? else {
+            return Ok(false);
+        };
+        let ancestry = self
+            .ancestry(caller.key.tenant_id, memory.workarea_id)
+            .await?;
+        Ok(caller.effective(&ancestry).contains(&Role::Reader)
+            && self.readable(caller, &memory).await?)
     }
 
     /// Verify the tenant chain end to end with the domain procedure

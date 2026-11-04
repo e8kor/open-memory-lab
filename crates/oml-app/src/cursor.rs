@@ -2,11 +2,13 @@
 //! base64url (no padding) over JSON — the memory listing's
 //! `{key_id, created_at, artifact_id, issued_at}` (ADR-0025 d13), the
 //! crew listing's `{key_id, after_name, issued_at}` (ADR-0026 d8), and the
-//! workarea tree's `{key_id, after_path, issued_at}` (ADR-0026 d15). A cursor
-//! carries a position only — every page re-applies the listing's predicates
-//! — so a client that forges one for its own key learns nothing a fresh
-//! first page would not. It answers only the key it was issued to, and only
-//! within `api.cursor_ttl` of its issue.
+//! workarea tree's `{key_id, after_path, issued_at}` (ADR-0026 d15), and the
+//! claim-edge read's `{key_id, created_at, edge_id, workarea_id,
+//! artifact_id, issued_at}`. A cursor carries a position — every page
+//! re-applies the listing's predicates — so a client that forges one for its
+//! own key learns nothing a fresh first page would not. It answers only the
+//! key it was issued to, only within `api.cursor_ttl` of its issue, and the
+//! claim-edge cursor only the filter it was minted under.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -14,7 +16,7 @@ use uuid::Uuid;
 use oml_domain::EventTime;
 use oml_domain::name::Name;
 
-use crate::types::ListingPosition;
+use crate::types::{ClaimEdgeFilter, ClaimEdgePosition, ListingPosition};
 
 /// `api.cursor_ttl`, whose deployment default configuration.md leaves to
 /// FR-22: until settings are built, this code constant is the lifetime of
@@ -31,6 +33,8 @@ pub enum CursorError {
     Foreign,
     #[error("the cursor expired: cursors live {CURSOR_TTL_SECS} s (api.cursor_ttl)")]
     Stale,
+    #[error("the cursor was issued for another filter")]
+    OtherFilter,
 }
 
 /// A decoded listing cursor.
@@ -268,6 +272,87 @@ impl PathCursor {
         let cursor = Self::decode(text)?;
         answers(cursor.key_id, &cursor.issued_at, key_id, now)?;
         Ok(cursor.after)
+    }
+}
+
+/// A decoded claim-edge cursor: the `created_at` and id of the last edge a
+/// page served, in the read's newest-first order, and the filter the page
+/// answered, its workarea resolved to an id (http-api.md claim edges and
+/// pagination). The edge was served, so both its endpoints were readable to
+/// the key, and the position discloses nothing it had not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEdgeCursor {
+    /// The key the cursor answers.
+    pub key_id: Uuid,
+    pub position: ClaimEdgePosition,
+    /// The filter the cursor answers.
+    pub filter: ClaimEdgeFilter,
+    pub issued_at: EventTime,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimEdgeWire {
+    key_id: Uuid,
+    created_at: String,
+    edge_id: Uuid,
+    workarea_id: Option<Uuid>,
+    artifact_id: Option<Uuid>,
+    issued_at: String,
+}
+
+impl ClaimEdgeCursor {
+    /// The opaque string a page's `next_cursor` carries.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        let wire = ClaimEdgeWire {
+            key_id: self.key_id,
+            created_at: self.position.created_at.as_str().to_owned(),
+            edge_id: self.position.edge_id,
+            workarea_id: self.filter.workarea_id,
+            artifact_id: self.filter.artifact_id,
+            issued_at: self.issued_at.as_str().to_owned(),
+        };
+        let json = serde_json::to_vec(&wire).expect("a cursor serializes");
+        encode_b64url(&json)
+    }
+
+    /// Decodes a cursor string; anything an encoder did not write, another
+    /// listing's cursor among them, is [`CursorError::Malformed`].
+    pub fn decode(text: &str) -> Result<Self, CursorError> {
+        let bytes = decode_b64url(text).ok_or(CursorError::Malformed)?;
+        let wire: ClaimEdgeWire =
+            serde_json::from_slice(&bytes).map_err(|_| CursorError::Malformed)?;
+        let time = |s: &str| EventTime::parse(s).map_err(|_| CursorError::Malformed);
+        Ok(Self {
+            key_id: wire.key_id,
+            position: ClaimEdgePosition {
+                created_at: time(&wire.created_at)?,
+                edge_id: wire.edge_id,
+            },
+            filter: ClaimEdgeFilter {
+                artifact_id: wire.artifact_id,
+                workarea_id: wire.workarea_id,
+            },
+            issued_at: time(&wire.issued_at)?,
+        })
+    }
+
+    /// The position `text` resumes at for `key_id` under `filter` at `now`,
+    /// under the rules of [`ListingCursor::resume`]; one minted under another
+    /// filter is [`CursorError::OtherFilter`].
+    pub fn resume(
+        text: &str,
+        key_id: Uuid,
+        filter: &ClaimEdgeFilter,
+        now: &EventTime,
+    ) -> Result<ClaimEdgePosition, CursorError> {
+        let cursor = Self::decode(text)?;
+        answers(cursor.key_id, &cursor.issued_at, key_id, now)?;
+        if cursor.filter != *filter {
+            return Err(CursorError::OtherFilter);
+        }
+        Ok(cursor.position)
     }
 }
 
