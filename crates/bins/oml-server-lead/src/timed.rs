@@ -22,11 +22,12 @@ use oml_app::ports::{
     JournalStore, StoreError, TailScan,
 };
 use oml_app::types::{
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCodeRecord, ConnectGrant,
-    ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess, KeyRecord,
-    KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
-    RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState,
+    ClientDescription, ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord,
+    CrewRecord, DocumentCaching, KeyAccess, KeyRecord, KeyReferences, ListingFilter,
+    ListingPosition, MemoryRecord, OAuthClientRecord, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,
+    WorkareaRecord,
 };
 use oml_transport_http::traffic::store_call;
 
@@ -62,6 +63,38 @@ fn timed<F: Future>(method: &'static str, call: F) -> impl Future<Output = F::Ou
 }
 
 impl<J: JournalStore> JournalStore for Timed<J> {
+    fn claim_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ClaimEdgeRecord>, StoreError>> + Send {
+        timed("claim_edge", self.inner.claim_edge(tenant_id, edge_id))
+    }
+
+    fn claim_edges(
+        &self,
+        tenant_id: Uuid,
+        selection: &ClaimEdgeSelection,
+        after: Option<&ClaimEdgePosition>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<ClaimEdgeRecord>, StoreError>> + Send {
+        timed(
+            "claim_edges",
+            self.inner.claim_edges(tenant_id, selection, after, limit),
+        )
+    }
+
+    fn ratified_term_edges(
+        &self,
+        tenant_id: Uuid,
+        label: &str,
+    ) -> impl Future<Output = Result<Vec<(String, String)>, StoreError>> + Send {
+        timed(
+            "ratified_term_edges",
+            self.inner.ratified_term_edges(tenant_id, label),
+        )
+    }
+
     fn transition(
         &self,
         tenant_id: Uuid,

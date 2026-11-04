@@ -20,8 +20,8 @@ use oml_domain::{
 };
 
 use crate::types::{
-    AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
-    ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    AuthorizationRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState,
+    ClientDescription, ConnectCode, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
     ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess, KeyRecord, KeyReferences,
     ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord, RecallCandidate, RefreshFacts,
     RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,

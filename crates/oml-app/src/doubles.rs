@@ -34,8 +34,8 @@ use crate::ports::{
     ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use crate::types::{
-    AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
-    ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    AuthorizationRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState,
+    ClientDescription, ClientKind, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
     ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
     HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts,
@@ -1315,11 +1315,7 @@ fn apply_fold(
                     "claim edge {edge_id}'s ratifier is its proposer"
                 )));
             }
-            if !state
-                .keys_by_hash
-                .values()
-                .any(|k| k.key_id == ratifier_key_id)
-            {
+            if !state.keys.contains_key(&ratifier_key_id) {
                 return Err(StoreError::Backend(format!(
                     "key {ratifier_key_id} is not held by this tenant"
                 )));
@@ -1355,11 +1351,7 @@ fn require_proposable(
             return refuse(format!("version {endpoint} is not held by this tenant"));
         }
     }
-    if !state
-        .keys_by_hash
-        .values()
-        .any(|k| k.key_id == edge.proposer_key_id)
-    {
+    if !state.keys.contains_key(&edge.proposer_key_id) {
         return refuse(format!(
             "key {} is not held by this tenant",
             edge.proposer_key_id

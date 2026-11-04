@@ -10760,7 +10760,7 @@ async fn term(app: &TestApp, writer: &str, dreamer: &str, idem: &str, curie: &st
         dreamer,
         &SubmitRequest {
             kind: MemoryKind::Term,
-            claim_key: curie.to_owned(),
+            claim_key: Some(curie.to_owned()),
             ..submit_req(idem, &format!("{curie}: a term"))
         },
     )
