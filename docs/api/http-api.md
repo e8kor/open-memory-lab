@@ -656,7 +656,7 @@ unmeasured — [FR-4](../product/roadmap.md).
 ### Search — `GET /v1/memories`
 
 Structured listing, paginated. Parameters: `workarea` (the subtree read), `claim_key`, `state`,
-`kind`, `since`, `until`, `own`. Returns memory summaries (no text), each carrying `tokens`,
+`kind`, `since` (inclusive), `until` (exclusive), `own`. Returns memory summaries (no text), each carrying `tokens`,
 `retirement`, `replaces` and `held_expires_at`. With `own=true` the listing is the **own-work
 status** read: any tenant role except operator lists every row the calling key authored
 ([own](../architecture/roles-and-keys.md#own)), in every state — held, promoted, demoted,

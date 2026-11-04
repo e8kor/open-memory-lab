@@ -2960,6 +2960,68 @@ async fn oml_read_with_no_mode_argument_lists_the_keys_own_work() {
     drop_db(&db).await;
 }
 
+/// The catalog states the bounds the listing applies: `since` takes a
+/// version written at its instant and `until` leaves it out, as the store
+/// compares (oml-port-contracts, "since is inclusive and until exclusive";
+/// ADR-0039 d4).
+#[test]
+fn the_catalog_says_since_is_inclusive_and_until_exclusive() {
+    let catalog: Value =
+        serde_json::from_str(include_str!("../../../../docs/api/mcp-tools.json")).expect("json");
+    let read = catalog["tools"]
+        .as_array()
+        .expect("catalog tools")
+        .iter()
+        .find(|t| t["name"] == "oml_read")
+        .expect("oml_read is declared");
+    let described = |field: &str| {
+        read["inputSchema"]["properties"][field]["description"]
+            .as_str()
+            .expect("described")
+            .to_owned()
+    };
+    assert_eq!(
+        described("since"),
+        "Listing: versions written at or after this RFC 3339 date-time (inclusive)."
+    );
+    assert_eq!(
+        described("until"),
+        "Listing: versions written before this RFC 3339 date-time (exclusive)."
+    );
+}
+
+#[tokio::test]
+async fn oml_read_until_leaves_out_a_version_written_at_its_instant_and_since_takes_it() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+    let stored = write(&router, &writer, 1, QUOTE).await;
+    let own = read(&router, &writer, 1, json!({})).await;
+    assert_eq!(item_ids(&own), std::slice::from_ref(&stored), "{own}");
+    let at = own["items"][0]["created_at"]
+        .as_str()
+        .expect("created_at")
+        .to_owned();
+
+    let until = read(&router, &writer, 2, json!({"until": at})).await;
+    assert_eq!(
+        until["items"],
+        json!([]),
+        "until excludes its instant: {until}"
+    );
+    let since = read(&router, &writer, 3, json!({"since": at})).await;
+    assert_eq!(
+        item_ids(&since),
+        std::slice::from_ref(&stored),
+        "since includes its instant: {since}"
+    );
+    let both = read(&router, &writer, 4, json!({"since": at, "until": at})).await;
+    assert_eq!(both["items"], json!([]), "{both}");
+
+    drop_db(&db).await;
+}
+
 #[tokio::test]
 async fn oml_read_with_own_false_lists_the_default_workarea() {
     let Some((router, db)) = fresh_router().await else {

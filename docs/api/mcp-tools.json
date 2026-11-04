@@ -152,12 +152,12 @@
           "since": {
             "type": "string",
             "format": "date-time",
-            "description": "Listing: versions written at or after this RFC 3339 date-time."
+            "description": "Listing: versions written at or after this RFC 3339 date-time (inclusive)."
           },
           "until": {
             "type": "string",
             "format": "date-time",
-            "description": "Listing: versions written at or before this RFC 3339 date-time."
+            "description": "Listing: versions written before this RFC 3339 date-time (exclusive)."
           },
           "limit": {
             "type": "integer",
