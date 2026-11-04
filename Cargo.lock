@@ -1324,6 +1324,7 @@ dependencies = [
  "oml-app",
  "oml-pg",
  "oml-server-lead",
+ "oml-transport-http",
  "rpassword",
  "serde",
  "serde_json",
