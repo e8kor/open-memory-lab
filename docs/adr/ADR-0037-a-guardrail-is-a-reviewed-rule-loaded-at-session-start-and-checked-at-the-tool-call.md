@@ -41,15 +41,15 @@ without reopening a decision above:
   `workarea` field and the `X-OML-Workarea` header is gone (its d7); a response says `text` where
   it said `body` (its d7); and `GET /v2/whoami` was built to gain "the guardrail scope when
   ADR-0037's is built" (its d15). d4, d5, d10 and d11 below speak that API.
-- **User roots** (ADR-0044, on `feat/user-roots`,
-  proposed, planned for v0.5.0). Every person works under `universe.<user>`; a user key's grants
+- **User roots** ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md),
+  accepted, introduced in v0.5.0). Every person works under `universe.<user>`; a user key's grants
   stay inside that root, and issuance adds one reader grant on the `universe` node alone (its
   d3, d4); `universe` takes claims only from curator keys, reviewed by a second identity (its
   d7), and serves them without their source (its d9). Its d10 already reads this record's
   `guardrail_scope: ancestors` as walking the same ancestry and so serving `universe`'s
   guardrails to every user key. d4 and d16 below state that composition.
-- **The web pages** (ADR-0045, on `feat/web-console`,
-  proposed, planned for v0.5.0). Every page act is a session key's, which has no value and never
+- **The web pages** ([ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md),
+  accepted, introduced in v0.5.0). Every page act is a session key's, which has no value and never
   reaches `/v1` or `/mcp` (its d6), and its d20 (g) moves this record to v0.5.1. d17 below says
   what the pages may show.
 
@@ -114,7 +114,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
       scope setting, and the `workarea` query field (ADR-0039 d7) picks N within the key's
       grants, never the scope. No
       `off` value exists: an admin who wants none issues the key with `workarea` where none is.
-    - **Under user roots** (ADR-0044, on `feat/user-roots`),
+    - **Under user roots** ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
       `ancestors` walks from the scope node through the user's root to `universe` under this
       same reader test, and reaches nothing else (d16).
     - **Order and conflicts.** Severity (`never`, `must`, `should`), then depth from the root,
@@ -335,7 +335,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
 
 - **d16 — Under user roots, `ancestors` walks from the scope node through the user's root to
   `universe`, under the same reader test, and `universe`'s guardrails are the curators'.** This
-  composes d4 with ADR-0044, on `feat/user-roots`
+  composes d4 with [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
   and changes neither:
     - **The walk.** For a scope node N inside `universe.<user>`, `ancestors` serves the
       guardrails on N, on every ancestor of N up to and including `universe.<user>`, and on
@@ -364,7 +364,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
       tenant key (ADR-0044 d12) and walks d4's ancestry exactly as before.
 
 - **d17 — The pages show guardrails and write none.** Under
-  ADR-0045, on `feat/web-console`:
+  [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md):
     - **Session keys load nothing.** A session key has no value, so it never reaches `/v1` or
       `/mcp` (ADR-0045 d6), and no hook ever runs under one; its `guardrail_scope` matters only
       to a page that reads the set through it.

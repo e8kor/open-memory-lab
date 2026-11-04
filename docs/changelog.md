@@ -110,12 +110,12 @@ two records v0.5.0 builds first.
   refuses `kind: guardrail` and a `replaces` naming a guardrail (`request.validation`, amending
   its d3); the read takes the `workarea` query field, not `X-OML-Workarea`; the item says `text`;
   `GET /v2/whoami` serves `guardrail_scope` (its d15); the MCP prompt sits beside three tools.
-- **User roots, d16** (proposed ADR-0044, on `feat/user-roots`):
+- **User roots, d16** ([ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)):
   `ancestors` walks from the scope node through `universe.<user>` to `universe` under the same
   reader test, which ADR-0044 d3's node grant satisfies, and reaches no other root; a person's
   agents propose guardrails only in their root, which `<user>-review` may ratify; `universe`'s
   guardrails are written by curator keys alone and served under ADR-0044 d9.
-- **The web pages, d17** (proposed ADR-0045, on `feat/web-console`):
+- **The web pages, d17** ([ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)):
   session keys load nothing; the user page may show the set in force at the person's root;
   a held guardrail on review carries the load warning; no page writes one.
 - **Open, d18:** ten questions the maintainer's decisions do not settle, each with the reading
