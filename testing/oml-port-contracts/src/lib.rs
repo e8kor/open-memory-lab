@@ -6148,15 +6148,14 @@ where
     )
     .await;
     every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed(&new_store().await).await;
+    run_claim_edge_suite(&new_store).await;
 }
 
 /// Every claim-edge law in one call, each against a fresh store: the edge
-/// row, the closure widening its proposal folds, and the graph read
-/// (postgres-schema.md `claim_edges`; ADR-0001 d2; ADR-0008 d5; ADR-0021).
-/// Apart from [`run_journal_store_suite`] because the Postgres store refuses
-/// the claim-edge fold and reads until it writes `claim_edges`; it joins
-/// that suite in the commit that builds them, so no store runs one suite
-/// the other fails.
+/// row, the closure widening its proposal folds, the ratification's
+/// compare-and-set and the graph reads (postgres-schema.md `claim_edges`;
+/// ADR-0001 d2; ADR-0008 d5; ADR-0021). Part of
+/// [`run_journal_store_suite`], so every store that runs it runs these.
 pub async fn run_claim_edge_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
