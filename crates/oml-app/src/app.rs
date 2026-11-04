@@ -69,6 +69,7 @@ use crate::types::{
     TenantRow, TokenPair, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest,
     VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
     TransitionRecord, TransitionState,
+    WorkareaStatusView,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -2792,6 +2793,53 @@ where
         Ok(WorkareaRecord {
             crew_id: Some(crew_id),
             ..workarea
+        })
+    }
+
+    /// The status read of the node, by id or name: its stored rung, the
+    /// review policy in force and its live proposals in proposal order, the
+    /// pending rows whose `from` is the node's status (workareas.md, the
+    /// status read lists only live proposals; ADR-0009 d3). The refusal
+    /// order: (1) the key role, an admin key passing on its role and any
+    /// other key needing reader among its admissible grant roles; (2) the
+    /// node resolves; (3) a non-admin key needs reader effective access on
+    /// it, `access.not_found` outside it. An admin key reads the pending
+    /// transitions as structure, tenant-wide and with no grant
+    /// (roles-and-keys.md permission matrix, footnote 6; ADR-0026 d15).
+    pub async fn workarea_status(
+        &self,
+        api_key: &str,
+        workarea: Reference,
+    ) -> Result<WorkareaStatusView, AppError> {
+        const VERB: &str = "workarea_status";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        let structure = key.role == Role::Admin;
+        if !structure {
+            require_admissible(key, Role::Reader, VERB)?;
+        }
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        if !structure {
+            self.require_access(&caller, workarea_id, Role::Reader, VERB)
+                .await?;
+        }
+        let node = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let pending = self
+            .journal
+            .pending_transitions(key.tenant_id, workarea_id)
+            .await?
+            .into_iter()
+            .filter(|t| t.from == node.status)
+            .collect();
+        Ok(WorkareaStatusView {
+            workarea_id,
+            status: node.status,
+            policy: review_policy(),
+            pending,
         })
     }
 
