@@ -1,5 +1,5 @@
 {
-  "description": "Start every session from what Open Memory Lab holds for this agent's key and, when opted in, recall what it holds about a failed command.",
+  "description": "Start every session from what Open Memory Lab holds for this agent's key, load its reviewed guardrails and check each matching tool call against them, and, when opted in, recall what it holds about a failed command.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,6 +9,42 @@
             "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook session-start || exit 0",
             "timeout": 10,
             "statusMessage": "Loading OML memory"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook guardrails || exit 0",
+            "timeout": 10,
+            "statusMessage": "Loading OML guardrails"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook guardrails || exit 0",
+            "timeout": 10,
+            "statusMessage": "Loading OML guardrails"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|PowerShell|Write|.*Edit|Read|Grep|Glob|WebFetch|mcp__.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-tool-use --help >/dev/null 2>&1 || exit 0; oml hook pre-tool-use",
+            "timeout": 5,
+            "onFailure": "block",
+            "statusMessage": "Checking OML guardrails"
           }
         ]
       }
