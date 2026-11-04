@@ -952,10 +952,10 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
 
 /// With `--out`, the third stdout line is the `claude plugin configure
 /// --values-stdin` pipeline that reads the key file through `jq`, naming the
-/// server and the file and never the value (ADR-0040 d4, amending ADR-0028
-/// d1).
+/// server and the file and never the value, on stdout or stderr (ADR-0040 d4,
+/// amending ADR-0028 d1).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn issue_agent_out_prints_the_plugin_configure_line_that_reads_the_key_file() {
+async fn issue_agent_out_prints_the_plugin_configure_line_naming_the_key_file_and_never_the_key() {
     let Some(lab) = Lab::start().await else {
         return;
     };
@@ -987,7 +987,52 @@ async fn issue_agent_out_prints_the_plugin_configure_line_that_reads_the_key_fil
         )
     );
     let value = std::fs::read_to_string(&path).expect("the key file");
-    assert!(!stdout.contains(value.trim_end()), "no value: {stdout}");
+    let value = value.trim_end();
+    assert!(value.starts_with("oml_"), "an oml_ key value in the file");
+    assert!(!stdout.contains(value), "no value on stdout: {stdout}");
+    assert!(!stderr.contains(value), "no value on stderr: {stderr}");
+    lab.stop().await;
+}
+
+/// The lines `--out` prints name only the pair every client reads, `OML_URL`
+/// and `OML_API_KEY`, and the plugin's own settings: no `OML_CLI_` variable,
+/// which the CLI no longer reads (ADR-0039 d15; ADR-0040 d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_agent_out_prints_no_oml_cli_variable() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+    let path = lab.dir.join("keys").join("crew-agent-9");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("key directory");
+    let shown = path.to_str().expect("a UTF-8 path");
+
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-9",
+        "--principal",
+        "crew/agent-9",
+        "--workarea",
+        &wa,
+        "--out",
+        shown,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        !stdout.contains("OML_CLI"),
+        "no OML_CLI_ variable: {stdout}"
+    );
+    assert!(
+        !stderr.contains("OML_CLI"),
+        "no OML_CLI_ variable: {stderr}"
+    );
+    let exported: Vec<&str> = stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("export "))
+        .filter_map(|assignment| assignment.split_once('=').map(|(name, _)| name))
+        .collect();
+    assert_eq!(exported, ["OML_URL", "OML_API_KEY"], "{stdout}");
     lab.stop().await;
 }
 
