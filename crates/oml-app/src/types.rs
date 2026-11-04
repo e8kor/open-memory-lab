@@ -769,6 +769,60 @@ impl WorkareaRecord {
     }
 }
 
+/// Where a status-ladder proposal stands: `pending` until a second identity
+/// ratifies it, then `ratified` for good (ADR-0009 d3; postgres-schema.md
+/// `workarea_transitions.state`). A proposal made stale by another's
+/// ratification stays `pending` as history; the status read, not the row,
+/// tells it apart (workareas.md, the status read lists only live proposals).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransitionState {
+    Pending,
+    Ratified,
+}
+
+impl TransitionState {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TransitionState::Pending => "pending",
+            TransitionState::Ratified => "ratified",
+        }
+    }
+
+    /// The state an exact word spells; `None` for any other string.
+    #[must_use]
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "pending" => Some(TransitionState::Pending),
+            "ratified" => Some(TransitionState::Ratified),
+            _ => None,
+        }
+    }
+}
+
+/// One status-ladder proposal as its `workarea_transitions` row holds it:
+/// the node, the step from one rung to the next, the proposer's key and
+/// principal, and the ratifier's key once a second identity ratified it
+/// (ADR-0009 d3; workareas.md, a pending proposal is a row). The journal
+/// seqs of the proposal and the ratification are the store's, written from
+/// the events the folds commit with, never carried here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransitionRecord {
+    /// The events' `transition_id`.
+    pub transition_id: Uuid,
+    pub tenant_id: Uuid,
+    pub workarea_id: Uuid,
+    pub from: WorkareaStatus,
+    pub to: WorkareaStatus,
+    pub state: TransitionState,
+    pub proposer_key_id: Uuid,
+    /// Kept so ratification can refuse the proposer's principal under any
+    /// of its keys, not only the proposing key (ADR-0010 R2).
+    pub proposer_principal: String,
+    /// `None` while pending; the ratifying key once ratified.
+    pub ratifier_key_id: Option<Uuid>,
+}
+
 /// A crew record: named, recorded and not operated — OML never contacts the
 /// external manager (workareas.md crews; postgres-schema.md `crews`;
 /// ADR-0026 d8). The name never changes.
