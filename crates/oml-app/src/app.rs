@@ -23,8 +23,10 @@ use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
     admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
     tail_visible,
+    LabelledGrant, Verb, VerbRefusal, effective_access, resolve_verb,
 };
 use oml_domain::budget::{budget_tokens, cut, hit_order};
+use oml_domain::claim_edges::check_label;
 use oml_domain::name::{
     Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
     assign_names, unresolved_qualified, unresolved_value,
@@ -40,6 +42,7 @@ use oml_domain::oauth::{
     decide_refresh, open_request, refresh_token_digest, select_redirect, token_kind,
     validate_document, validate_registration,
 };
+use oml_domain::vocab_edges::EdgeState;
 use oml_domain::{
     ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, HeldBy, KeySet,
     LadderRefusal, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, WorkareaStatus,
@@ -70,6 +73,7 @@ use crate::types::{
     VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
     TransitionRecord, TransitionState,
     TransitionView,
+    ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeRecord, ProposeClaimEdge,
     WorkareaStatusView,
 };
 
@@ -461,6 +465,23 @@ impl RecordedVerdict {
             replayed: true,
         })
     }
+}
+
+/// The request digest of a claim-edge proposal: SHA-256 over the RFC 8785
+/// JSON of the method, the route template, no path parameters and the body
+/// as sent (http-api.md idempotency, claim edges).
+fn claim_edge_request_digest(req: &ProposeClaimEdge) -> Result<String, AppError> {
+    let doc = json!({
+        "method": "POST",
+        "route": "/v2/claim-edges",
+        "path_params": {},
+        "body": {
+            "from_artifact_id": req.from_artifact_id.to_string(),
+            "to_artifact_id": req.to_artifact_id.to_string(),
+            "label": req.label,
+        },
+    });
+    Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
 
 /// A recall's `query_digest`: SHA-256 over the RFC 8785 JSON of an object
@@ -4367,6 +4388,174 @@ where
         committed?;
         Ok(SupersedeOutcome {
             receipt,
+            replayed: false,
+        })
+    }
+
+    /// Propose a claim edge `from_artifact_id -> to_artifact_id` carrying
+    /// `label`: journalled `claim_edge.proposed`, stored pending, and in its
+    /// own commit widening the lineage closure of every version it connects,
+    /// so R2 counts the edge while it waits (ADR-0008 d5; ADR-0012;
+    /// audit-and-lineage.md, pending and ratified alike). The refusal order:
+    /// the verb ceiling, the idempotency record, each endpoint present and in
+    /// read scope, dreamer on at least one endpoint's workarea, then the
+    /// label (workareas.md, edge authority; ADR-0021 d5). A `held_by:
+    /// service` key may propose: only ratification is review-class
+    /// (roles-and-keys.md).
+    pub async fn propose_claim_edge(
+        &self,
+        api_key: &str,
+        req: &ProposeClaimEdge,
+        idempotency_key: Option<&str>,
+    ) -> Result<ClaimEdgeProposalOutcome, AppError> {
+        const VERB: &str = "claim_edge.propose";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Dreamer, VERB)?;
+
+        // A claim-edge POST names no workarea, so the scope's workarea is
+        // nil (http-api.md idempotency); the record replays whatever the
+        // endpoints or the key's access now, as it names only the caller's
+        // own edge.
+        let request_digest = claim_edge_request_digest(req)?;
+        let scope = idempotency_key.map(|idem_key| IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: idem_key.to_owned(),
+        });
+        if let Some(scope) = &scope
+            && let Some(proposal) = self.recorded(scope, &request_digest).await?
+        {
+            return Ok(ClaimEdgeProposalOutcome {
+                proposal,
+                replayed: true,
+            });
+        }
+
+        // The head before the endpoints: a commit landing in between moves
+        // it, and the retry reads them again (ADR-0001 d2).
+        let prev = self.head_event(key.tenant_id).await?;
+
+        let grants: Vec<LabelledGrant> = caller
+            .grants
+            .iter()
+            .cloned()
+            .map(LabelledGrant::from)
+            .collect();
+        let mut endpoints = Vec::with_capacity(2);
+        for id in [req.from_artifact_id, req.to_artifact_id] {
+            let memory = self
+                .journal
+                .memory(key.tenant_id, id)
+                .await?
+                .ok_or(AppError::NotFound)?;
+            endpoints.push(memory);
+        }
+        let mut proposable = Vec::with_capacity(2);
+        for memory in &endpoints {
+            let ancestry = self.ancestry(key.tenant_id, memory.workarea_id).await?;
+            let access = effective_access(&grants, &caller.denials, &ancestry);
+            // reading: workarea edge authority asks reader on both ends;
+            // a claim endpoint is a row, so the row must also be one the
+            // key may see there: promoted, its own, or held in a workarea
+            // where it holds dreamer and so reviews held rows. Anything
+            // else is outside read scope and indistinguishable from absent.
+            let in_scope = access.roles.contains(&Role::Reader)
+                && (memory.status == MemoryStatus::Promoted
+                    || memory.author_key_id == key.key_id
+                    || access.roles.contains(&Role::Dreamer));
+            if !in_scope {
+                return Err(AppError::NotFound);
+            }
+            proposable.push(resolve_verb(key.role, &access, Verb::ClaimEdge(&req.label)));
+        }
+        if let [Err(refusal), Err(_)] = proposable.as_slice() {
+            // Both ends are readable, so the first end's refusal is
+            // `access.grant_refused` naming its workarea.
+            return Err(match refusal {
+                VerbRefusal::VerbCeiling { role, .. } => AppError::VerbCeiling {
+                    role: *role,
+                    verb: VERB,
+                },
+                VerbRefusal::GrantRefused { needed_role, .. } => AppError::GrantRefused {
+                    workarea_id: endpoints[0].workarea_id,
+                    needed_role: *needed_role,
+                },
+                VerbRefusal::NotFound => AppError::NotFound,
+            });
+        }
+        let (src, dst) = (&endpoints[0], &endpoints[1]);
+        check_label(&req.label, src.kind, dst.kind).map_err(|reason| AppError::ClaimEdgeLabel {
+            field: reason.field(),
+            reason,
+        })?;
+
+        let edge_id = self.ids.new_id();
+        let payload = json!({
+            "edge_id": edge_id.to_string(),
+            "src_artifact_id": src.memory_id.to_string(),
+            "dst_artifact_id": dst.memory_id.to_string(),
+            "label": req.label,
+            "proposer_key_id": key.key_id.to_string(),
+        });
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::CLAIM_EDGE_PROPOSED,
+            &key.principal,
+            Some(key.key_id),
+            payload,
+        )?;
+        let edge = ClaimEdgeRecord {
+            edge_id,
+            tenant_id: key.tenant_id,
+            src_artifact_id: src.memory_id,
+            dst_artifact_id: dst.memory_id,
+            label: req.label.clone(),
+            state: EdgeState::Pending,
+            proposer_key_id: key.key_id,
+            proposer_principal: key.principal.clone(),
+            ratifier_key_id: None,
+            created_at: event.envelope.at.clone(),
+        };
+        let proposal = ClaimEdgeProposal {
+            edge_id,
+            state: EdgeState::Pending.as_str().to_owned(),
+            journal_seq: event.envelope.seq,
+        };
+        let idempotency = match &scope {
+            Some(scope) => Some(IdempotencyPut {
+                scope: scope.clone(),
+                record: IdempotencyRecord {
+                    request_digest: request_digest.clone(),
+                    response: serde_json::to_value(&proposal)
+                        .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+                },
+            }),
+            None => None,
+        };
+        let committed = self
+            .commit(event, MetadataFold::ClaimEdgeProposed(edge), idempotency)
+            .await;
+        if let (Err(AppError::Store(StoreError::IdempotencyRecorded)), Some(scope)) =
+            (&committed, &scope)
+        {
+            // A concurrent attempt under the same key committed first and
+            // this one wrote nothing: its record answers (http-api.md
+            // idempotency).
+            let proposal = self
+                .recorded(scope, &request_digest)
+                .await?
+                .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
+            return Ok(ClaimEdgeProposalOutcome {
+                proposal,
+                replayed: true,
+            });
+        }
+        committed?;
+        Ok(ClaimEdgeProposalOutcome {
+            proposal,
             replayed: false,
         })
     }
