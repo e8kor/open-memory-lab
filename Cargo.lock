@@ -1247,6 +1247,7 @@ dependencies = [
  "oml-app",
  "serde",
  "serde_json",
+ "tracing",
  "uuid",
 ]
 

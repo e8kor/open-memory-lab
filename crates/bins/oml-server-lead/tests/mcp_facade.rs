@@ -3456,3 +3456,372 @@ async fn oml_workarea_returns_the_node_with_the_callers_verbs() {
 
     drop_db(&db).await;
 }
+
+// ---------------------------------------------------------------------------
+// The hidden aliases (ADR-0039 d12). These run over the in-memory doubles,
+// so they need no role pair: what they prove is the facade's, not the
+// store's.
+// ---------------------------------------------------------------------------
+
+/// The eight v0.3.0 tool names and the successor each call's log names.
+const V0_3_0_TOOLS: [(&str, &str); 8] = [
+    ("oml_remember", "oml_write"),
+    ("oml_learn", "oml_write"),
+    ("oml_recall", "oml_read"),
+    ("oml_get", "oml_read"),
+    ("oml_supersede", "oml_write"),
+    ("oml_my_work", "oml_read"),
+    ("oml_workarea_info", "oml_workarea"),
+    ("oml_events_tail", "GET /v2/events"),
+];
+
+/// The lead's router over in-memory doubles, its bootstrap open under
+/// [`ENROLLMENT`].
+fn doubles_router() -> Router {
+    use oml_app::App;
+    use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+    let store = MemStore::new();
+    let app = App::new(
+        store.clone(),
+        MemSigner::new([7; 32]),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let ping: oml_transport_http::DbPing = std::sync::Arc::new(|| Box::pin(async { true }));
+    oml_transport_http::ApiState::new(
+        std::sync::Arc::new(app),
+        store,
+        ping,
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .into_router()
+}
+
+/// A tool result's refusal code, asserting it is a refusal.
+fn alias_refusal(result: &Value) -> &str {
+    assert_eq!(result["isError"], true, "{result}");
+    result["structuredContent"]["error"]["code"]
+        .as_str()
+        .expect("a refusal code")
+}
+
+#[tokio::test]
+async fn every_v0_3_0_tool_name_answers_with_its_v0_3_0_output_shape() {
+    let fixture: Value = serde_json::from_str(include_str!("fixtures/mcp_v0_3_0_shapes.json"))
+        .expect("the v0.3.0 shapes fixture is JSON");
+    let shapes = fixture["tools"].as_object().expect("tools");
+    let fixture_names: Vec<&str> = shapes.keys().map(String::as_str).collect();
+    let mut table_names: Vec<&str> = V0_3_0_TOOLS.iter().map(|(name, _)| *name).collect();
+    table_names.sort_unstable();
+    assert_eq!(fixture_names, table_names, "the fixture holds the eight");
+
+    let router = doubles_router();
+    let (agent, dreamer, reader, crew) = agent_crew(&router).await;
+    remember_all(&router, &agent, &[(CLAIM, "memory", QUOTE)]).await;
+    approve_as(&router, &dreamer, "alias-v1").await;
+    let work = call_tool(
+        &router,
+        &agent,
+        1,
+        "oml_my_work",
+        json!({"claim_key": CLAIM}),
+    )
+    .await;
+    let promoted = work["structuredContent"]["items"][0]["artifact_id"]
+        .as_str()
+        .expect("the promoted version")
+        .to_owned();
+
+    // Each name with its v0.3.0 inputs: scope for the workarea, claim_key
+    // sent by the caller, include_own_held for unreviewed rows.
+    let table: [(&str, &str, Value); 8] = [
+        (
+            "oml_remember",
+            &agent,
+            json!({"claim_key": "alloy-quote-ta-1", "text": ALLOY, "workarea": crew,
+                   "idempotency_key": "alias/remember"}),
+        ),
+        (
+            "oml_learn",
+            &agent,
+            json!({"claim_key": "accra-anchor", "text": "Accra Metals anchors Q1-2027 pricing.",
+                   "derives_from": [promoted], "idempotency_key": "alias/learn"}),
+        ),
+        (
+            "oml_recall",
+            &reader,
+            json!({"query": "Accra Metals aluminium price", "scope": crew, "k": 5,
+                   "include_own_held": false}),
+        ),
+        ("oml_get", &reader, json!({"artifact_id": promoted})),
+        (
+            "oml_supersede",
+            &agent,
+            json!({"artifact_id": promoted, "text": REVISED, "idempotency_key": "alias/supersede"}),
+        ),
+        ("oml_my_work", &agent, json!({"workarea": crew})),
+        ("oml_workarea_info", &reader, json!({"workarea": crew})),
+        (
+            "oml_events_tail",
+            &reader,
+            json!({"scope": crew, "after_seq": 0, "limit": 200}),
+        ),
+    ];
+    for (id, (name, token, args)) in (10..).zip(table) {
+        let result = call_tool(&router, token, id, name, args).await;
+        assert_eq!(result["isError"], false, "{name}: {result}");
+        let out = &result["structuredContent"];
+        let shape = &shapes[name];
+        let expected: Vec<&str> = shape["fields"]
+            .as_array()
+            .expect("fields")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(fields(out), expected, "{name}: {out}");
+        for (array, item_fields) in shape
+            .get("items")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let first = out[array]
+                .as_array()
+                .and_then(|items| items.first())
+                .unwrap_or_else(|| panic!("{name}: {array} is empty: {out}"));
+            let expected: Vec<&str> = item_fields
+                .as_array()
+                .expect("item fields")
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            assert_eq!(fields(first), expected, "{name}.{array}: {out}");
+        }
+        // The text content is the structured output, as in v0.3.0.
+        let text: Value = serde_json::from_str(
+            result["content"][0]["text"]
+                .as_str()
+                .expect("the text content"),
+        )
+        .expect("the text is JSON");
+        assert_eq!(&text, out, "{name}");
+    }
+
+    // Each name keeps its v0.3.0 refusal codes, and a v0.4.0 spelling is
+    // outside its v0.3.0 input schema.
+    let refusals: [(&str, &str, Value, &str); 10] = [
+        (
+            "oml_remember",
+            &reader,
+            json!({"claim_key": "k", "text": "t", "idempotency_key": "alias/r-1"}),
+            "access.verb_ceiling",
+        ),
+        (
+            "oml_remember",
+            &agent,
+            json!({"text": "t", "idempotency_key": "alias/r-2"}),
+            "request.validation",
+        ),
+        (
+            "oml_learn",
+            &agent,
+            json!({"claim_key": "k", "text": "t", "derives_from": [], "idempotency_key": "alias/l-1"}),
+            "submission.lineage_required",
+        ),
+        (
+            "oml_recall",
+            &reader,
+            json!({"query": "q", "include_unreviewed": true}),
+            "request.validation",
+        ),
+        (
+            "oml_get",
+            &reader,
+            json!({"artifact_id": Uuid::from_u128(0xBEEF)}),
+            "access.not_found",
+        ),
+        (
+            "oml_supersede",
+            &reader,
+            json!({"artifact_id": promoted, "text": "t", "idempotency_key": "alias/s-1"}),
+            "access.verb_ceiling",
+        ),
+        (
+            "oml_my_work",
+            &agent,
+            json!({"own": false}),
+            "request.validation",
+        ),
+        (
+            "oml_workarea_info",
+            &reader,
+            json!({"workarea": Uuid::from_u128(0xBEEF)}),
+            "access.not_found",
+        ),
+        (
+            "oml_events_tail",
+            &reader,
+            json!({"scope": Uuid::from_u128(0xBEEF)}),
+            "access.not_found",
+        ),
+        (
+            "oml_events_tail",
+            &reader,
+            json!({"workarea": crew}),
+            "request.validation",
+        ),
+    ];
+    for (id, (name, token, args, code)) in (30..).zip(refusals) {
+        let refused = call_tool(&router, token, id, name, args).await;
+        assert_eq!(alias_refusal(&refused), code, "{name}: {refused}");
+    }
+}
+
+#[tokio::test]
+async fn no_alias_appears_in_tools_list() {
+    // The served catalog names none of the eight, so no listing can.
+    let catalog = oml_transport_http::mcp::served_catalog();
+    let served: Vec<&str> = catalog.iter().filter_map(|t| t["name"].as_str()).collect();
+    assert_eq!(served, SERVED_TOOLS);
+    for (alias, successor) in V0_3_0_TOOLS {
+        assert!(!served.contains(&alias), "{alias} is in mcp-tools.json");
+        assert!(
+            oml_transport_http::mcp::ALIASES.contains(&(alias, successor)),
+            "{alias} is not an alias of {successor}"
+        );
+    }
+    assert_eq!(oml_transport_http::mcp::ALIASES.len(), V0_3_0_TOOLS.len());
+
+    // Over the wire: tools/list names the three, and each alias still
+    // answers a tools/call, which is how it stays callable while hidden.
+    let router = doubles_router();
+    let (agent, _, _, _) = agent_crew(&router).await;
+    let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert_eq!(names, SERVED_TOOLS, "{listed}");
+    let answered = call_tool(&router, &agent, 2, "oml_workarea_info", json!({})).await;
+    assert_eq!(answered["isError"], false, "{answered}");
+}
+
+/// The log lines a [`tracing`] subscriber writes, captured in memory.
+#[derive(Clone, Default)]
+struct CapturedLog(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl CapturedLog {
+    fn take(&self) -> String {
+        let mut bytes = self.0.lock().expect("log lock");
+        String::from_utf8(std::mem::take(&mut *bytes)).expect("log lines are UTF-8")
+    }
+}
+
+impl std::io::Write for CapturedLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("log lock").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn an_alias_call_logs_mcp_alias_called_naming_its_successor() {
+    let log = CapturedLog::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::INFO)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let router = doubles_router();
+    let (agent, _, _, _) = agent_crew(&router).await;
+    log.take();
+
+    // A refused call is logged too: the log counts who still calls the old
+    // name, whatever the call's outcome.
+    for (id, (alias, successor)) in (1..).zip(V0_3_0_TOOLS) {
+        call_tool(&router, &agent, id, alias, json!({})).await;
+        let lines = log.take();
+        let logged: Vec<&str> = lines
+            .lines()
+            .filter(|line| line.contains("mcp_alias_called"))
+            .collect();
+        assert_eq!(logged.len(), 1, "{alias}: {lines}");
+        assert!(logged[0].contains(&format!("tool={alias}")), "{lines}");
+        assert!(
+            logged[0].contains(&format!("successor={successor}")),
+            "{lines}"
+        );
+    }
+
+    // A served tool is not an alias, and logs none.
+    for (id, name) in (20..).zip(SERVED_TOOLS) {
+        call_tool(&router, &agent, id, name, json!({})).await;
+        let lines = log.take();
+        assert!(!lines.contains("mcp_alias_called"), "{name}: {lines}");
+    }
+}
+
+#[tokio::test]
+async fn oml_events_tail_alias_reads_get_v2_events() {
+    let router = doubles_router();
+    let (agent, dreamer, reader, crew) = agent_crew(&router).await;
+    remember_all(&router, &agent, &[(CLAIM, "memory", QUOTE)]).await;
+    approve_as(&router, &dreamer, "tail-v1").await;
+
+    // The alias's page is GET /v2/events's page for the same key, workarea
+    // and resume point, projected: the same sequence numbers and event
+    // types, the same head and resume point (ADR-0039 d12).
+    for (id, after_seq, limit) in [(1, 0_u64, 200_u64), (2, 0, 1), (3, 2, 3)] {
+        let (status, page) = send(
+            &router,
+            "GET",
+            &format!("/v2/events?workarea={crew}&after_seq={after_seq}&limit={limit}"),
+            Some(&reader),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let tail = call_tool(
+            &router,
+            &reader,
+            id,
+            "oml_events_tail",
+            json!({"scope": crew, "after_seq": after_seq, "limit": limit}),
+        )
+        .await;
+        assert_eq!(tail["isError"], false, "{tail}");
+        let tail = &tail["structuredContent"];
+        let ring: Vec<(&Value, &Value)> = page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|e| (&e["seq"], &e["event_type"]))
+            .collect();
+        let projected: Vec<(&Value, &Value)> = tail["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .map(|e| (&e["seq"], &e["event_type"]))
+            .collect();
+        assert_eq!(projected, ring, "{tail} against {page}");
+        assert_eq!(tail["head_seq"], page["head_seq"], "{tail}");
+        assert_eq!(tail["next_after_seq"], page["next_after_seq"], "{tail}");
+        assert_eq!(
+            tail["idle"],
+            page["next_after_seq"] == page["head_seq"],
+            "{tail}"
+        );
+    }
+}

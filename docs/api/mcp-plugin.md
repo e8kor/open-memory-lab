@@ -422,12 +422,14 @@ admin key for its structure read. The output is
 - **`oml_relate_propose` and `oml_vocab` are designed**, in
   [mcp-tools.designed.json](mcp-tools.designed.json), which is never served;
   a call to either is -32602 naming that file.
-- **The eight v0.3.0 tool names are not in `tools/list`.** They answer
-  through v0.4.x, as [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
-  d12 reads its alias window, a reading the maintainer has not decided; their
-  sections [below](#the-v030-tools-not-listed) keep their contracts until the
-  aliases are built. Claude Code offers the model only what `tools/list`
-  names, so the window serves raw MCP clients. Each maps to its successor:
+- **The eight v0.3.0 tool names are not in `tools/list`.** They are hidden
+  aliases: a `tools/call` naming one answers with its v0.3.0 inputs, output
+  shape and refusal codes through v0.4.x, and v0.5.0 removes them, as
+  [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12 reads its
+  alias window, a reading the maintainer has not decided. Their sections
+  [below](#the-v030-tools-not-listed) are their contracts for that window.
+  Claude Code offers the model only what `tools/list` names, so the window
+  serves raw MCP clients. Each maps to its successor:
 
 | v0.3.0 | v0.4.0 |
 |---|---|
@@ -615,12 +617,23 @@ from one that does not exist. Example:
 
 None of these is in `tools/list`
 ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2). The eight
-served in v0.3.0 still answer under their names through v0.4.x, as d12 reads
-its alias window, and each maps to its successor in
+served in v0.3.0 are hidden aliases, each mapped to its successor in
 [What left the catalog](#what-left-the-catalog); `oml_attach` and `oml_graph`,
 listed in v0.3.0 and never served, answer -32602 naming their successors.
-Their contracts stay here as the reference for that window. Where a section
-below names a sibling old tool, read its successor.
+Where a section below names a sibling old tool, read its successor.
+
+**The alias window.** Through v0.4.x a `tools/call` naming one of the eight
+takes the v0.3.0 input below, `scope` and `include_own_held` included and
+`claim_key` required, and answers the v0.3.0 output below with the v0.3.0
+refusal codes: the facade translates `scope` to the ring's `workarea` and
+`include_own_held` to its `include_unreviewed`, and a v0.4.0 spelling such
+as `include_unreviewed` is outside the old input schema, so it is
+`request.validation`. `oml_events_tail` rides `GET /v2/events`. Every call
+logs one `mcp_alias_called` line naming the tool and its successor
+(`oml_write`, `oml_read`, `oml_workarea`, or `GET /v2/events` for the
+tail), so the operator sees who still calls an old name. **v0.5.0 removes
+the eight**, and a call to one is then -32602 like any tool not served
+(d12).
 
 ### `oml_remember`
 

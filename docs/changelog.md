@@ -34,6 +34,20 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The eight v0.3.0 tool names answer as hidden aliases with their v0.3.0 shapes until v0.5.0 (ADR-0039 d12, implementation)
+
+`oml_remember`, `oml_learn`, `oml_recall`, `oml_get`, `oml_supersede`, `oml_my_work`,
+`oml_workarea_info` and `oml_events_tail` answer only through `tools/call`, never in
+`tools/list`. Each takes its v0.3.0 input, `scope` as the ring's `workarea`, `include_own_held`
+as its `include_unreviewed` and `claim_key` still required, and answers its v0.3.0 output
+shape and refusal codes; `oml_events_tail` rides `GET /v2/events`. Every call logs
+`mcp_alias_called` naming the tool and its successor. The window is v0.4.x, and v0.5.0 removes
+the eight, as d12 reads it; the maintainer has not decided that reading.
+[mcp-plugin.md](api/mcp-plugin.md) states the window and the removal release, and the facade
+tests hold each name to a fixture of its v0.3.0 shape.
+
+- **Pages touched:** [mcp-plugin.md](api/mcp-plugin.md) and this page.
+
 ### 2026-11-04 — `tools/list` names three tools, `oml_write`, `oml_read` and `oml_workarea`, and every surface that names a tool moves with it (ADR-0039 d2, d5, d8, d13, implementation)
 
 `mcp-tools.json` declares exactly the three served tools with their annotations, and the facade
