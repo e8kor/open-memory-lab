@@ -23,6 +23,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use http_body::{Frame, SizeHint};
+use tracing::Instrument as _;
 use uuid::Uuid;
 
 use oml_app::ports::RequestObserver;
@@ -205,6 +206,18 @@ impl Resolved {
 pub struct Traffic {
     trusted: Arc<TrustedProxies>,
     metrics: Arc<Metrics>,
+    tracer: Option<Arc<dyn RequestTracer>>,
+}
+
+/// Trace export's hook into the layer, set only while the composition
+/// exports traces: it makes the request's span the child of a valid W3C
+/// `traceparent` and names the span's trace id, which every line about the
+/// request then carries (ADR-0042 d13). The transport knows no
+/// OpenTelemetry; without a tracer `traceparent` is never read.
+pub trait RequestTracer: Send + Sync + std::fmt::Debug {
+    /// Adopts `traceparent`'s trace for `span` when it is valid, and
+    /// returns the span's trace id.
+    fn adopt(&self, span: &tracing::Span, traceparent: Option<&HeaderValue>) -> Option<String>;
 }
 
 impl Traffic {
@@ -214,7 +227,15 @@ impl Traffic {
         Self {
             trusted: Arc::new(trusted),
             metrics: Arc::default(),
+            tracer: None,
         }
+    }
+
+    /// The layer while trace export is on (ADR-0042 d13).
+    #[must_use]
+    pub fn with_tracer(mut self, tracer: Arc<dyn RequestTracer>) -> Self {
+        self.tracer = Some(tracer);
+        self
     }
 
     /// The metrics the layer and the MCP facade record, which the
@@ -310,8 +331,30 @@ pub(crate) async fn layer(
             read: counter,
         })
     });
-    let scope = Arc::new(Scope::new(started, None));
-    let mut response = SCOPE.scope(Arc::clone(&scope), next.run(req)).await;
+    // One server span per request, named by method and route template; the
+    // personal fields never enter it (ADR-0042 d13).
+    let span = tracing::info_span!(
+        "http_request",
+        otel.name = %format_args!("{method} {route}"),
+        otel.kind = "server",
+        http.request.method = %method,
+        http.route = %route,
+        http.response.status_code = tracing::field::Empty,
+        oml.request_id = %ids.request_id,
+        oml.correlation_id = %ids.correlation_id,
+        oml.tenant_id = tracing::field::Empty,
+        oml.key_id = tracing::field::Empty,
+        oml.error_code = tracing::field::Empty,
+    );
+    let trace_id = traffic
+        .tracer
+        .as_ref()
+        .and_then(|t| t.adopt(&span, req.headers().get("traceparent")));
+    let scope = Arc::new(Scope::new(started, trace_id));
+    let mut response = SCOPE
+        .scope(Arc::clone(&scope), next.run(req))
+        .instrument(span.clone())
+        .await;
     let duration = started.elapsed();
 
     let headers = response.headers_mut();
@@ -326,6 +369,7 @@ pub(crate) async fn layer(
     }
 
     let status = response.status();
+    span.record("http.response.status_code", status.as_u16());
     // A probe answered 200 writes no line, so a kubelet polling every few
     // seconds does not fill the log (ADR-0042 d1).
     if PROBES.contains(&route.as_str()) && status == StatusCode::OK {
@@ -336,6 +380,13 @@ pub(crate) async fn layer(
         .get::<Resolved>()
         .cloned()
         .unwrap_or_default();
+    if let Some(identity) = &resolved.identity {
+        span.record("oml.tenant_id", tracing::field::display(identity.tenant_id));
+        span.record("oml.key_id", tracing::field::display(identity.key_id));
+    }
+    if let Some(code) = &resolved.error_code {
+        span.record("oml.error_code", code.as_str());
+    }
     let observed = scope.observed();
     let replay = response
         .headers()

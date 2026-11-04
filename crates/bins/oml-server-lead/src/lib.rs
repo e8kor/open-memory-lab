@@ -7,6 +7,7 @@
 //! startup naming and names check (ADR-0026 d11), and the start and state
 //! constructors the integration tests share with `main`.
 
+pub mod otlp;
 pub mod timed;
 
 use std::path::{Path, PathBuf};
@@ -65,6 +66,9 @@ pub struct Config {
     /// `server.metrics_listen`: the address of the listener that serves
     /// `GET /metrics` alone; unset, none binds (ADR-0042 d11).
     pub metrics_listen: Option<std::net::SocketAddr>,
+    /// `server.otlp_endpoint`: the collector spans are exported to; unset,
+    /// none are (ADR-0042 d13).
+    pub otlp_endpoint: Option<otlp::Endpoint>,
 }
 
 /// Why a configuration is refused: `postgres.owner_url` unset is the role
@@ -86,6 +90,7 @@ const KEY_KEYRING_PATH: &str = "kms.keyring_path";
 const KEY_OAUTH_ISSUER: &str = "oauth.issuer";
 const KEY_TRUSTED_PROXIES: &str = "server.trusted_proxies";
 const KEY_METRICS_LISTEN: &str = "server.metrics_listen";
+const KEY_OTLP_ENDPOINT: &str = "server.otlp_endpoint";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -206,6 +211,12 @@ impl Config {
                 Some(addr)
             }
         };
+        // Only OML's setting turns export on; OTEL_* is never read
+        // (configuration.md, server.otlp_endpoint; ADR-0042 d13).
+        let otlp_endpoint = lookup(KEY_OTLP_ENDPOINT)
+            .map(|value| otlp::Endpoint::parse(&value))
+            .transpose()
+            .map_err(ConfigError::Invalid)?;
         Ok(Self {
             postgres_url,
             postgres_owner_url,
@@ -214,6 +225,7 @@ impl Config {
             oauth_issuer,
             trusted_proxies,
             metrics_listen,
+            otlp_endpoint,
         })
     }
 
@@ -854,13 +866,30 @@ pub fn log_subscriber<W>(writer: W) -> impl tracing::Subscriber + Send + Sync
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
-    tracing_subscriber::fmt()
+    exporting_subscriber(writer, None)
+}
+
+/// [`log_subscriber`], and while trace export is on, every span exported
+/// through `tracer` as well (ADR-0042 d13).
+pub fn exporting_subscriber<W>(
+    writer: W,
+    tracer: Option<opentelemetry_sdk::trace::Tracer>,
+) -> impl tracing::Subscriber + Send + Sync
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
+{
+    use tracing_subscriber::layer::SubscriberExt as _;
+    let lines = tracing_subscriber::fmt::layer()
         .json()
         .flatten_event(true)
         .with_current_span(false)
         .with_span_list(false)
-        .with_writer(writer)
-        .finish()
+        .with_writer(writer);
+    let spans = tracer.map(|t| tracing_opentelemetry::layer().with_tracer(t));
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::LevelFilter::INFO)
+        .with(lines)
+        .with(spans)
 }
 
 /// This binary's build, as `build.rs` captured it (http-api.md "Health").

@@ -36,6 +36,8 @@ use oml_app::types::{AppError, KeyRecord};
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use std::time::Instant;
 
+use tracing::Instrument as _;
+
 use crate::traffic::Rid;
 use crate::{ApiState, bearer, finish, json_response};
 use call::McpCall;
@@ -251,7 +253,22 @@ where
         // One message per POST, so one call per HTTP request: its line goes
         // out before the request's own (ADR-0042 d10).
         let mut call = McpCall::new(started);
-        let response = Self::answer(&st, presented, &key, &rid, &body, &mut call).await;
+        // One span per call, inside the request's (ADR-0042 d13).
+        let span = tracing::info_span!(
+            "mcp_call",
+            otel.name = "mcp_call",
+            oml.mcp.tool = tracing::field::Empty,
+            oml.mcp.mode = tracing::field::Empty,
+        );
+        let response = Self::answer(&st, presented, &key, &rid, &body, &mut call)
+            .instrument(span.clone())
+            .await;
+        if let Some(tool) = call.tool {
+            span.record("oml.mcp.tool", tool);
+        }
+        if let Some(mode) = call.mode {
+            span.record("oml.mcp.mode", mode);
+        }
         call.log(&rid.0, key.tenant_id, key.key_id);
         st.traffic.metrics().mcp_call(
             call.tool.unwrap_or(""),

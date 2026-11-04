@@ -18,6 +18,7 @@ use std::sync::Arc;
 use oml_app::ports::{KeyringStore as _, Signer as _};
 use oml_fetch::PinnedFetcher;
 use oml_pg::{PgStore, RoleSplitReason};
+use oml_server_lead::otlp::Export;
 use oml_server_lead::{
     Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot, start_lead_with,
 };
@@ -93,9 +94,8 @@ fn config_path_arg() -> Result<Option<PathBuf>, String> {
     Ok(path)
 }
 
-async fn run() -> Result<(), BootError> {
-    let config_path = config_path_arg()?;
-    let config = Config::load(config_path.as_deref(), &|name| std::env::var(name).ok())?;
+async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Result<(), BootError> {
+    let config = config?;
     tracing::info!(listen = %config.listen, "oml-server-lead starting (standalone profile: always the lead of a cluster of one, ADR-0023 d16)");
     let build = oml_server_lead::build_info();
     tracing::info!(version = %build.version, commit = %build.commit, commit_time = %build.commit_time, build_time = %build.build_time, rustc = %build.rustc, target = %build.target, profile = %build.profile, "build");
@@ -132,6 +132,10 @@ async fn run() -> Result<(), BootError> {
     );
 
     let traffic = Traffic::new(config.trusted_proxies.clone());
+    let traffic = match export {
+        Some(export) => traffic.with_tracer(export.request_tracer()),
+        None => traffic,
+    };
     // /metrics on its own listener, off unless server.metrics_listen names
     // an address; the API listener never routes it (ADR-0042 d11).
     let _metrics = match config.metrics_listen {
@@ -236,9 +240,36 @@ async fn main() -> ExitCode {
     // JSON lines on stderr, the whole process: stdout is reserved for the
     // show-once ceremony (observability.md, structured logging; ADR-0042
     // d1).
-    let _ =
-        tracing::subscriber::set_global_default(oml_server_lead::log_subscriber(std::io::stderr));
-    match run().await {
+    // The configuration first, since it says whether spans are exported; a
+    // configuration that does not load is logged once the subscriber is up.
+    let config = config_path_arg().map_err(BootError::from).and_then(|path| {
+        Config::load(path.as_deref(), &|name| std::env::var(name).ok()).map_err(BootError::from)
+    });
+    let export = match config.as_ref().ok().and_then(|c| c.otlp_endpoint.as_ref()) {
+        None => Ok(None),
+        Some(endpoint) => Export::start(endpoint).map(Some),
+    };
+    let tracer = export
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .map(Export::tracer);
+    let _ = tracing::subscriber::set_global_default(oml_server_lead::exporting_subscriber(
+        std::io::stderr,
+        tracer,
+    ));
+    let outcome = match export {
+        Ok(export) => {
+            let outcome = run(config, export.as_ref()).await;
+            if let Some(export) = export {
+                // Flushes what is queued; it blocks, so off the runtime.
+                let _ = tokio::task::spawn_blocking(move || export.shutdown()).await;
+            }
+            outcome
+        }
+        Err(e) => Err(BootError::Fatal(e)),
+    };
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(BootError::RoleSplit(Refusal::Reason(reason))) => {
             tracing::error!(
