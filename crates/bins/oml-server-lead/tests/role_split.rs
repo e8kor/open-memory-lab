@@ -288,8 +288,8 @@ impl Drop for Lead {
 }
 
 /// The lead exited non-zero, logged `postgres.role_split` with `reason`
-/// as the stable structured fields `event`, `code` and `reason`
-/// (observability.md, structured logging), never logged that it serves,
+/// as the stable structured fields `event`, `code` and `reason` of a JSON
+/// line (observability.md, structured logging; ADR-0042 d1), never logged that it serves,
 /// and nothing accepts a connection on its port (ADR-0034 d5, d8).
 async fn assert_refused(lead: &mut Lead, reason: &str) {
     let status = lead.exit().await;
@@ -302,13 +302,16 @@ async fn assert_refused(lead: &mut Lead, reason: &str) {
         .lines()
         .find(|l| l.contains("postgres.role_split"))
         .unwrap_or_else(|| panic!("no postgres.role_split line; stderr:\n{stderr}"));
-    for field in [
-        "event=\"role_split_refused\"".to_owned(),
-        "code=\"postgres.role_split\"".to_owned(),
-        format!("reason=\"{reason}\""),
+    // A JSON line, the stable fields at its top level (ADR-0042 d1).
+    let line: serde_json::Value = serde_json::from_str(line)
+        .unwrap_or_else(|e| panic!("the refusal is a JSON line ({e}): {line}"));
+    for (field, value) in [
+        ("event", "role_split_refused"),
+        ("code", "postgres.role_split"),
+        ("reason", reason),
     ] {
-        assert!(
-            line.split_whitespace().any(|f| f == field),
+        assert_eq!(
+            line[field], value,
             "the refusal carries the stable field {field}; got: {line}"
         );
     }
@@ -449,17 +452,18 @@ async fn once_the_listener_binds_pg_stat_activity_shows_no_owner_connection() {
         "the serving pool's connections show, so the read sees the lead's backends"
     );
     let stderr = lead.stderr();
-    let line = stderr
+    let line: serde_json::Value = stderr
         .lines()
-        .find(|l| l.contains("event=\"role_split_booted\""))
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|l| l["event"] == "role_split_booted")
         .unwrap_or_else(|| panic!("no role_split_booted line; stderr:\n{stderr}"));
-    for field in [
-        format!("owner_role=\"{db}_owner\""),
-        format!("serving_role=\"{db}_serving\""),
+    for (field, value) in [
+        ("owner_role", format!("{db}_owner")),
+        ("serving_role", format!("{db}_serving")),
     ] {
-        assert!(
-            line.split_whitespace().any(|f| f == field),
-            "the boot logs both role names as fields (ADR-0034 d4); missing {field} in: {line}"
+        assert_eq!(
+            line[field], value,
+            "the boot logs both role names as fields (ADR-0034 d4); {field} in: {line}"
         );
     }
     drop(lead);

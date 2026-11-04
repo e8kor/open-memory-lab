@@ -16,6 +16,7 @@
 //! through v0.4.x, as ADR-0039 d12 reads its alias window: see [`ALIASES`].
 
 mod alias;
+mod call;
 
 pub use alias::ALIASES;
 
@@ -33,8 +34,12 @@ use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signe
 use oml_app::types::{AppError, KeyRecord};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
+use std::time::Instant;
+
 use crate::traffic::Rid;
 use crate::{ApiState, bearer, finish, json_response};
+use call::McpCall;
+pub use call::{EVENT_MCP_CALL, Outcome};
 
 /// The MCP specification revision this facade answers `initialize` with.
 /// A client asking for another revision is answered with this one, which the
@@ -213,6 +218,7 @@ where
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
+        let started = Instant::now();
         // No anonymous call, `tools/list` included: the key or the access
         // token is resolved before any message is read (mcp-plugin.md
         // "Authentication"), and a `401` carries the challenge (ADR-0031 d2).
@@ -242,46 +248,53 @@ where
                 );
             }
         }
-        let Ok(message) = serde_json::from_slice::<Value>(&body) else {
-            return finish(
-                &rid,
-                Ok(rpc_error(&Value::Null, PARSE_ERROR, "parse error")),
-            );
+        // One message per POST, so one call per HTTP request: its line goes
+        // out before the request's own (ADR-0042 d10).
+        let mut call = McpCall::new(started);
+        let response = Self::answer(&st, presented, &key, &rid, &body, &mut call).await;
+        call.log(&rid.0, key.tenant_id, key.key_id);
+        finish(&rid, Ok(response))
+    }
+
+    /// The one JSON-RPC message of a POST, answered, with `call` filled
+    /// with its closed values (ADR-0042 d10).
+    async fn answer(
+        st: &Self,
+        presented: Presented<'_>,
+        key: &KeyRecord,
+        rid: &str,
+        body: &Bytes,
+        call: &mut McpCall,
+    ) -> Response {
+        let Ok(message) = serde_json::from_slice::<Value>(body) else {
+            call.rpc_error(PARSE_ERROR);
+            return rpc_error(&Value::Null, PARSE_ERROR, "parse error");
         };
         if message.is_array() {
-            return finish(
-                &rid,
-                Ok(rpc_error(
-                    &Value::Null,
-                    INVALID_REQUEST,
-                    "one JSON-RPC message per POST; batches are not accepted",
-                )),
+            call.rpc_error(INVALID_REQUEST);
+            return rpc_error(
+                &Value::Null,
+                INVALID_REQUEST,
+                "one JSON-RPC message per POST; batches are not accepted",
             );
         }
         let Ok(request) = serde_json::from_value::<RpcRequest>(message) else {
-            return finish(
-                &rid,
-                Ok(rpc_error(
-                    &Value::Null,
-                    INVALID_REQUEST,
-                    "not a JSON-RPC request",
-                )),
-            );
+            call.rpc_error(INVALID_REQUEST);
+            return rpc_error(&Value::Null, INVALID_REQUEST, "not a JSON-RPC request");
         };
+        call.method(&request.method, &request.params);
         if request.jsonrpc != "2.0" {
             let id = request.id.unwrap_or(Value::Null);
-            return finish(
-                &rid,
-                Ok(rpc_error(&id, INVALID_REQUEST, "jsonrpc must be \"2.0\"")),
-            );
+            call.rpc_error(INVALID_REQUEST);
+            return rpc_error(&id, INVALID_REQUEST, "jsonrpc must be \"2.0\"");
         }
         // A notification (no id) is acknowledged and nothing is stored.
         let Some(id) = request.id else {
             let mut response = Response::new(Body::empty());
             *response.status_mut() = StatusCode::ACCEPTED;
-            return finish(&rid, Ok(response));
+            return response;
         };
-        let response = match request.method.as_str() {
+        match request.method.as_str() {
             "initialize" => rpc_result(
                 &id,
                 &json!({
@@ -294,12 +307,17 @@ where
             "ping" => rpc_result(&id, &json!({})),
             "tools/list" => rpc_result(&id, &json!({ "tools": served_catalog() })),
             "tools/call" => match serde_json::from_value::<ToolCall>(request.params) {
-                Err(_) => rpc_error(&id, INVALID_PARAMS, "tools/call takes {name, arguments}"),
-                Ok(call) => Self::call_tool(&st, presented, &key, &id, &rid, call).await,
+                Err(_) => {
+                    call.rpc_error(INVALID_PARAMS);
+                    rpc_error(&id, INVALID_PARAMS, "tools/call takes {name, arguments}")
+                }
+                Ok(tool) => Self::call_tool(st, presented, key, &id, rid, tool, call).await,
             },
-            other => rpc_error(&id, METHOD_NOT_FOUND, &format!("method not found: {other}")),
-        };
-        finish(&rid, Ok(response))
+            other => {
+                call.rpc_error(METHOD_NOT_FOUND);
+                rpc_error(&id, METHOD_NOT_FOUND, &format!("method not found: {other}"))
+            }
+        }
     }
 
     /// What `Authorization: Bearer` presents, resolved: a key value
@@ -340,10 +358,12 @@ where
         key: &KeyRecord,
         id: &Value,
         request_id: &str,
-        call: ToolCall,
+        tool: ToolCall,
+        call: &mut McpCall,
     ) -> Response {
-        let name = call.name.as_str();
-        let args = Value::Object(call.arguments);
+        let name = tool.name.as_str();
+        let args = Value::Object(tool.arguments);
+        call.tool_call(name, Some(&args));
         if let Some(successor) = alias::successor(name) {
             let caller = alias::Caller {
                 key_id: key.key_id,
@@ -351,6 +371,7 @@ where
                 request_id,
             };
             let outcome = Self::call_alias(st, presented, &caller, name, successor, args).await;
+            call.tool_result(outcome.as_ref().err());
             return rpc_result(id, &tool_result(outcome, request_id));
         }
         let outcome = match name {
@@ -358,6 +379,7 @@ where
             "oml_read" => Self::tool_read(st, presented, args).await,
             "oml_workarea" => Self::tool_workarea_info(st, presented, args).await,
             _ if DESIGNED_TOOLS.contains(&name) => {
+                call.rpc_error(INVALID_PARAMS);
                 return rpc_error(
                     id,
                     INVALID_PARAMS,
@@ -367,6 +389,7 @@ where
                 );
             }
             "oml_graph" => {
+                call.rpc_error(INVALID_PARAMS);
                 return rpc_error(
                     id,
                     INVALID_PARAMS,
@@ -374,6 +397,7 @@ where
                 );
             }
             "oml_attach" => {
+                call.rpc_error(INVALID_PARAMS);
                 return rpc_error(
                     id,
                     INVALID_PARAMS,
@@ -381,6 +405,7 @@ where
                 );
             }
             _ => {
+                call.rpc_error(INVALID_PARAMS);
                 return rpc_error(
                     id,
                     INVALID_PARAMS,
@@ -390,6 +415,7 @@ where
                 );
             }
         };
+        call.tool_result(outcome.as_ref().err());
         rpc_result(id, &tool_result(outcome, request_id))
     }
 

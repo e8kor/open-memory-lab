@@ -53,6 +53,8 @@ tokio::task_local! {
 #[derive(Debug)]
 pub struct Scope {
     started: Instant,
+    /// The request span's trace id, while trace export is on (ADR-0042 d13).
+    trace_id: Option<String>,
     observed: Mutex<Observed>,
 }
 
@@ -66,9 +68,10 @@ struct Observed {
 }
 
 impl Scope {
-    fn new(started: Instant) -> Self {
+    fn new(started: Instant, trace_id: Option<String>) -> Self {
         Self {
             started,
+            trace_id,
             observed: Mutex::new(Observed::default()),
         }
     }
@@ -82,6 +85,13 @@ impl Scope {
             f(&mut observed, self.started.elapsed());
         }
     }
+}
+
+/// The running request's trace id, while trace export is on: every line
+/// about the request carries it (ADR-0042 d13).
+#[must_use]
+pub fn trace_id() -> Option<String> {
+    SCOPE.try_with(|s| s.trace_id.clone()).ok().flatten()
 }
 
 fn in_scope(f: impl FnOnce(&Scope)) {
@@ -286,7 +296,7 @@ pub(crate) async fn layer(
             read: counter,
         })
     });
-    let scope = Arc::new(Scope::new(started));
+    let scope = Arc::new(Scope::new(started, None));
     let mut response = SCOPE.scope(Arc::clone(&scope), next.run(req)).await;
     let duration = started.elapsed();
 
@@ -319,6 +329,7 @@ pub(crate) async fn layer(
         .is_some_and(|v| v.as_bytes() == b"true");
     let line = Line {
         ids: &ids,
+        trace_id: scope.trace_id.as_deref(),
         method: method.as_str(),
         route: &route,
         status: status.as_u16(),
@@ -344,6 +355,7 @@ pub(crate) async fn layer(
 /// One `http_request` line's values (ADR-0042 d2).
 struct Line<'a> {
     ids: &'a RequestIds,
+    trace_id: Option<&'a str>,
     method: &'a str,
     route: &'a str,
     status: u16,
@@ -370,6 +382,7 @@ macro_rules! write_line {
             request_id_source = line.ids.request_id_source.as_str(),
             correlation_id = %line.ids.correlation_id,
             correlation_id_source = line.ids.correlation_id_source.as_str(),
+            trace_id = line.trace_id,
             method = line.method,
             route = line.route,
             status = line.status,

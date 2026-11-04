@@ -129,18 +129,19 @@ impl RequestIds {
     }
 }
 
-/// A handler's request id, read from the extensions the traffic layer
-/// filled, so the `X-Request-Id` header, the envelope's `request_id` and
-/// every log line about the request are one value (ADR-0042 d4). Outside
-/// the layer, as a handler called alone is, the ids are resolved here.
+/// A handler's ids, read from the extensions the traffic layer filled, so
+/// the `X-Request-Id` header, the envelope's `request_id` and every log
+/// line about the request are one value (ADR-0042 d4). It reads as the
+/// request id. Outside the layer, as a handler called alone is, the ids
+/// are resolved here.
 #[derive(Debug, Clone)]
-pub struct Rid(pub String);
+pub struct Rid(pub RequestIds);
 
 impl Deref for Rid {
     type Target = str;
 
     fn deref(&self) -> &str {
-        &self.0
+        &self.0.request_id
     }
 }
 
@@ -148,11 +149,11 @@ impl<S: Send + Sync> FromRequestParts<S> for Rid {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Infallible> {
-        let id = match parts.extensions.get::<RequestIds>() {
-            Some(ids) => ids.request_id.clone(),
-            None => RequestIds::of(&parts.headers).request_id,
+        let ids = match parts.extensions.get::<RequestIds>() {
+            Some(ids) => ids.clone(),
+            None => RequestIds::of(&parts.headers),
         };
-        Ok(Self(id))
+        Ok(Self(ids))
     }
 }
 
