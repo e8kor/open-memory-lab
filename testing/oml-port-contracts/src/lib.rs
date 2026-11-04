@@ -23,6 +23,7 @@ use oml_app::domain::oauth::{
     RefreshDecision, RefreshInvalid, RevokedCause, TokenKind, UNUSED_REGISTRATIONS_MAX,
     decide_refresh,
 };
+use oml_app::domain::vocab_edges::{ClaimEdge, DerivesFrom, EdgeState, lineage_artifacts};
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
     WorkareaStatus, event_types, key_fingerprint, next_envelope, sha256_digest_string, sign,
@@ -35,6 +36,7 @@ use oml_app::ports::{
     Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
+    ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord,
     AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
     ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
     GrantRecord, GuardrailFields, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
@@ -5146,6 +5148,571 @@ pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_ro
     );
 }
 
+// ---------------------------------------------------------------------------
+// Claim edges
+// ---------------------------------------------------------------------------
+
+/// A tenant with its root workarea and a dreamer key that proposes edges.
+struct EdgeWorld {
+    rig: ChainRig,
+    root: Uuid,
+    proposer: KeyRecord,
+}
+
+impl EdgeWorld {
+    async fn new<S: JournalStore>(store: &S, seed: u64) -> Self {
+        let mut rig = ChainRig::new(seed);
+        rig.seed_chain(store, 0).await;
+        let root = Uuid::from_u128((u128::from(seed) << 32) | 0x01);
+        rig.create_workarea(
+            store,
+            workarea_record(rig.tenant_id, root, None, "universe"),
+        )
+        .await;
+        let proposer = key_record(
+            rig.tenant_id,
+            Uuid::from_u128((u128::from(seed) << 32) | 0x02),
+            Role::Dreamer,
+            None,
+        );
+        rig.issue_key(store, proposer.clone()).await;
+        Self {
+            rig,
+            root,
+            proposer,
+        }
+    }
+
+    /// Holds a version by `author` (key derived from the name) on `node`,
+    /// deriving from `parents`, its closure the author plus each parent's
+    /// stored closure, as capture computes it.
+    async fn hold<S: JournalStore>(
+        &mut self,
+        store: &S,
+        node: Uuid,
+        memory_id: Uuid,
+        author: &str,
+        parents: &[Uuid],
+    ) -> MemoryRecord {
+        let mut memory = held_memory(
+            self.rig.tenant_id,
+            node,
+            memory_id,
+            author,
+            author_key(author),
+            "edge body",
+        );
+        let mut principals: std::collections::BTreeSet<String> =
+            memory.lineage_principals.iter().cloned().collect();
+        let mut key_ids: std::collections::BTreeSet<Uuid> =
+            memory.lineage_key_ids.iter().copied().collect();
+        for parent in parents {
+            let p = store
+                .memory(self.rig.tenant_id, *parent)
+                .await
+                .expect("read")
+                .expect("parent held");
+            principals.extend(p.lineage_principals);
+            key_ids.extend(p.lineage_key_ids);
+        }
+        memory.derives_from = parents.to_vec();
+        memory.lineage_principals = principals.into_iter().collect();
+        memory.lineage_key_ids = key_ids.into_iter().collect();
+        hold(&mut self.rig, store, memory.clone())
+            .await
+            .expect("hold");
+        memory
+    }
+
+    /// A pending edge `src -> dst` by this world's proposer.
+    fn edge(&self, edge_id: Uuid, src: Uuid, dst: Uuid) -> ClaimEdgeRecord {
+        ClaimEdgeRecord {
+            edge_id,
+            tenant_id: self.rig.tenant_id,
+            src_artifact_id: src,
+            dst_artifact_id: dst,
+            label: "acme:supports".to_owned(),
+            state: EdgeState::Pending,
+            proposer_key_id: self.proposer.key_id,
+            proposer_principal: self.proposer.principal.clone(),
+            ratifier_key_id: None,
+        }
+    }
+
+    /// Commits `claim_edge.proposed` folding `edge`.
+    async fn propose<S: JournalStore>(
+        &mut self,
+        store: &S,
+        edge: ClaimEdgeRecord,
+    ) -> Result<CommitReceipt, StoreError> {
+        self.rig
+            .commit(
+                store,
+                event_types::CLAIM_EDGE_PROPOSED,
+                json!({
+                    "edge_id": edge.edge_id.to_string(),
+                    "src_artifact_id": edge.src_artifact_id.to_string(),
+                    "dst_artifact_id": edge.dst_artifact_id.to_string(),
+                    "label": edge.label,
+                    "proposer_key_id": edge.proposer_key_id.to_string(),
+                }),
+                MetadataFold::ClaimEdgeProposed(edge),
+                None,
+            )
+            .await
+    }
+
+    /// The stored flattened closure of `memory_id`, as sets.
+    async fn closure<S: JournalStore>(
+        &self,
+        store: &S,
+        memory_id: Uuid,
+    ) -> (
+        std::collections::BTreeSet<String>,
+        std::collections::BTreeSet<Uuid>,
+    ) {
+        let m = store
+            .memory(self.rig.tenant_id, memory_id)
+            .await
+            .expect("read")
+            .expect("held");
+        (
+            m.lineage_principals.into_iter().collect(),
+            m.lineage_key_ids.into_iter().collect(),
+        )
+    }
+}
+
+/// The fixture key id of an author, derived from its principal.
+fn author_key(author: &str) -> Uuid {
+    let digest = sha256_digest_string(author.as_bytes());
+    let hex = digest.trim_start_matches("sha256:");
+    Uuid::from_u128(u128::from_str_radix(&hex[..32], 16).expect("hex digest"))
+}
+
+/// A proposed edge reads back by its id exactly as proposed, pending with
+/// its proposer's key and principal and no ratifier; another tenant and an
+/// unknown id read nothing (postgres-schema.md `claim_edges`; event-catalog.md
+/// `claim_edge.proposed`).
+pub async fn a_proposed_claim_edge_reads_back_pending_with_its_proposer<S: JournalStore>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 301).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x301A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x301B), "bob", &[])
+        .await;
+    let edge = world.edge(Uuid::from_u128(0x301E), a.memory_id, b.memory_id);
+    world.propose(store, edge.clone()).await.expect("propose");
+
+    let read = store
+        .claim_edge(world.rig.tenant_id, edge.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge is held");
+    assert_eq!(read, edge, "the edge reads back as proposed");
+    assert_eq!(read.state, EdgeState::Pending);
+    assert_eq!(read.proposer_key_id, world.proposer.key_id);
+    assert_eq!(read.proposer_principal, world.proposer.principal);
+    assert_eq!(read.ratifier_key_id, None);
+
+    let other = EdgeWorld::new(store, 302).await;
+    assert_eq!(
+        store
+            .claim_edge(other.rig.tenant_id, edge.edge_id)
+            .await
+            .expect("read"),
+        None,
+        "another tenant reads no edge of this one"
+    );
+    assert_eq!(
+        store
+            .claim_edge(world.rig.tenant_id, Uuid::from_u128(0x301F))
+            .await
+            .expect("read"),
+        None,
+        "an unknown id reads nothing"
+    );
+}
+
+/// A pending edge puts each endpoint's authors, principal and key id, in
+/// the other's stored closure, and its proposer in neither
+/// (audit-and-lineage.md, pending and ratified alike; ADR-0001 d2; ADR-0012).
+pub async fn a_pending_claim_edge_puts_each_endpoints_authors_in_the_others_lineage_closure<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 303).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x303A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x303B), "bob", &[])
+        .await;
+    world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x303E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+
+    for (row, other) in [(&a, "bob"), (&b, "alice")] {
+        let (principals, key_ids) = world.closure(store, row.memory_id).await;
+        assert!(
+            principals.contains(other) && key_ids.contains(&author_key(other)),
+            "{} holds {other}, the other endpoint's author",
+            row.author_principal
+        );
+        assert!(
+            principals.contains(&row.author_principal),
+            "a row keeps its own author"
+        );
+        assert!(
+            !principals.contains(&world.proposer.principal)
+                && !key_ids.contains(&world.proposer.key_id),
+            "the proposer enters no closure"
+        );
+    }
+}
+
+/// A held row deriving from an endpoint gains the other endpoint's authors
+/// when the edge is proposed after it, and the other endpoint does not gain
+/// the descendant's, as `derives_from` is followed toward ancestors only
+/// (audit-and-lineage.md, the derivation graph; ADR-0001 d2).
+pub async fn a_pending_claim_edge_reaches_the_closure_of_a_held_row_deriving_from_an_endpoint<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 304).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x304A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x304B), "bob", &[])
+        .await;
+    let d = world
+        .hold(
+            store,
+            root,
+            Uuid::from_u128(0x304D),
+            "carol",
+            &[a.memory_id],
+        )
+        .await;
+    world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x304E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+
+    let (principals, key_ids) = world.closure(store, d.memory_id).await;
+    assert_eq!(
+        principals,
+        ["alice", "bob", "carol"].map(str::to_owned).into(),
+        "the descendant holds both endpoints' authors and its own"
+    );
+    assert_eq!(
+        key_ids,
+        ["alice", "bob", "carol"].map(author_key).into(),
+        "and their key ids"
+    );
+    let (principals, _) = world.closure(store, b.memory_id).await;
+    assert!(
+        !principals.contains("carol"),
+        "the other endpoint does not gain its descendant's author"
+    );
+}
+
+/// A second edge from the far end of a first carries its far endpoint's
+/// authors to the first edge's near endpoint: a claim edge is followed
+/// transitively (audit-and-lineage.md, the transitive closure).
+pub async fn a_chain_of_two_edges_carries_the_far_endpoints_authors_to_the_near_one<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 305).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x305A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x305B), "bob", &[])
+        .await;
+    let c = world
+        .hold(store, root, Uuid::from_u128(0x305C), "carol", &[])
+        .await;
+    world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x305E1), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("first edge");
+    let (principals, _) = world.closure(store, a.memory_id).await;
+    assert!(!principals.contains("carol"), "no edge reaches carol yet");
+    world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x305E2), c.memory_id, b.memory_id),
+        )
+        .await
+        .expect("second edge");
+
+    for row in [&a, &b, &c] {
+        let (principals, key_ids) = world.closure(store, row.memory_id).await;
+        assert_eq!(
+            principals,
+            ["alice", "bob", "carol"].map(str::to_owned).into(),
+            "{} holds every author of the chain",
+            row.author_principal
+        );
+        assert_eq!(key_ids, ["alice", "bob", "carol"].map(author_key).into());
+    }
+}
+
+/// A small deterministic generator, so the random graph is reproducible.
+struct Lcg(u64);
+
+impl Lcg {
+    fn below(&mut self, n: u64) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.0 >> 33) % n
+    }
+}
+
+/// Two paths that must agree: over a random interleaving of held rows,
+/// each deriving from earlier ones, and pending edges between rows, every
+/// row's stored closure equals the authors of the domain's
+/// `lineage_artifacts` over the same `derives_from` and claim edges
+/// (audit-and-lineage.md; ADR-0001 d2).
+pub async fn the_stores_widened_closure_equals_the_authors_of_the_domains_lineage_artifacts<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    const AUTHORS: [&str; 5] = ["alice", "bob", "carol", "dave", "erin"];
+    for seed in 0..6_u64 {
+        let mut world = EdgeWorld::new(store, 310 + seed).await;
+        let root = world.root;
+        let mut rng = Lcg(seed.wrapping_mul(0x9E37_79B9) + 7);
+        let mut rows: Vec<MemoryRecord> = Vec::new();
+        let mut derives = Vec::new();
+        let mut edges = Vec::new();
+        for step in 0..24_u64 {
+            let id_base = (u128::from(310 + seed) << 32) | (u128::from(step) << 8);
+            if rows.len() < 2 || rng.below(3) != 0 {
+                let mut parents = Vec::new();
+                for row in &rows {
+                    if rng.below(4) == 0 {
+                        parents.push(row.memory_id);
+                    }
+                }
+                let author = AUTHORS[rng.below(AUTHORS.len() as u64) as usize];
+                let row = world
+                    .hold(
+                        store,
+                        root,
+                        Uuid::from_u128(id_base | 0xA),
+                        author,
+                        &parents,
+                    )
+                    .await;
+                for parent in &parents {
+                    derives.push(DerivesFrom {
+                        child: row.memory_id,
+                        parent: *parent,
+                    });
+                }
+                rows.push(row);
+            } else {
+                let n = rows.len() as u64;
+                let src = rows[rng.below(n) as usize].memory_id;
+                let dst = rows[rng.below(n) as usize].memory_id;
+                let edge = world.edge(Uuid::from_u128(id_base | 0xE), src, dst);
+                edges.push(ClaimEdge {
+                    edge_id: edge.edge_id,
+                    from: src,
+                    to: dst,
+                    label: edge.label.clone(),
+                    term_curie: None,
+                    state: EdgeState::Pending,
+                });
+                world.propose(store, edge).await.expect("propose");
+            }
+        }
+        let author_of: std::collections::BTreeMap<Uuid, &str> = rows
+            .iter()
+            .map(|r| (r.memory_id, r.author_principal.as_str()))
+            .collect();
+        for row in &rows {
+            let expected: std::collections::BTreeSet<String> =
+                lineage_artifacts(row.memory_id, &derives, &edges)
+                    .iter()
+                    .map(|id| author_of[id].to_owned())
+                    .collect();
+            let expected_keys: std::collections::BTreeSet<Uuid> =
+                expected.iter().map(|a| author_key(a)).collect();
+            let (principals, key_ids) = world.closure(store, row.memory_id).await;
+            assert_eq!(
+                principals, expected,
+                "seed {seed}: row {}'s stored principals are the domain closure's authors",
+                row.memory_id
+            );
+            assert_eq!(
+                key_ids, expected_keys,
+                "seed {seed}: row {}'s stored key ids are the domain closure's",
+                row.memory_id
+            );
+        }
+    }
+}
+
+/// A claim-edge page is ordered by edge id, resumes strictly after its
+/// cursor, and its artifact filter matches either endpoint, its workarea
+/// filter either endpoint's node; another tenant lists nothing
+/// (http-api.md, claim edges).
+pub async fn a_claim_edges_page_resumes_after_its_cursor_and_filters_by_either_endpoint<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 320).await;
+    let root = world.root;
+    let tenant = world.rig.tenant_id;
+    let side = Uuid::from_u128((320_u128 << 32) | 0x03);
+    world
+        .rig
+        .create_workarea(store, workarea_record(tenant, side, Some(root), "side"))
+        .await;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x320A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x320B), "bob", &[])
+        .await;
+    let c = world
+        .hold(store, side, Uuid::from_u128(0x320C), "carol", &[])
+        .await;
+    // Proposed out of id order, so the page order is the store's.
+    let e3 = world.edge(Uuid::from_u128(0x320E3), b.memory_id, c.memory_id);
+    let e1 = world.edge(Uuid::from_u128(0x320E1), a.memory_id, b.memory_id);
+    let e4 = world.edge(Uuid::from_u128(0x320E4), c.memory_id, a.memory_id);
+    let e2 = world.edge(Uuid::from_u128(0x320E2), a.memory_id, a.memory_id);
+    for edge in [&e3, &e1, &e4, &e2] {
+        world.propose(store, edge.clone()).await.expect("propose");
+    }
+    let all = ClaimEdgeFilter::default();
+
+    let first = store
+        .claim_edges(tenant, &all, None, 2)
+        .await
+        .expect("page");
+    assert_eq!(first, vec![e1.clone(), e2.clone()], "the first page, by id");
+    let after = ClaimEdgePosition {
+        edge_id: first[1].edge_id,
+    };
+    let second = store
+        .claim_edges(tenant, &all, Some(after), 2)
+        .await
+        .expect("page");
+    assert_eq!(
+        second,
+        vec![e3.clone(), e4.clone()],
+        "strictly after its cursor"
+    );
+    let last = ClaimEdgePosition {
+        edge_id: e4.edge_id,
+    };
+    assert!(
+        store
+            .claim_edges(tenant, &all, Some(last), 2)
+            .await
+            .expect("page")
+            .is_empty(),
+        "nothing after the last edge"
+    );
+
+    let on_b = ClaimEdgeFilter {
+        artifact_id: Some(b.memory_id),
+        workarea_id: None,
+    };
+    assert_eq!(
+        store
+            .claim_edges(tenant, &on_b, None, 10)
+            .await
+            .expect("page"),
+        vec![e1.clone(), e3.clone()],
+        "b is e1's target and e3's source"
+    );
+    let on_c_after_e3 = ClaimEdgeFilter {
+        artifact_id: Some(c.memory_id),
+        workarea_id: None,
+    };
+    assert_eq!(
+        store
+            .claim_edges(
+                tenant,
+                &on_c_after_e3,
+                Some(ClaimEdgePosition {
+                    edge_id: e3.edge_id
+                }),
+                10
+            )
+            .await
+            .expect("page"),
+        vec![e4.clone()],
+        "the filter and the cursor both hold"
+    );
+    let on_side = ClaimEdgeFilter {
+        artifact_id: None,
+        workarea_id: Some(side),
+    };
+    assert_eq!(
+        store
+            .claim_edges(tenant, &on_side, None, 10)
+            .await
+            .expect("page"),
+        vec![e3.clone(), e4.clone()],
+        "the workarea filter matches either endpoint's node"
+    );
+    let a_on_side = ClaimEdgeFilter {
+        artifact_id: Some(a.memory_id),
+        workarea_id: Some(side),
+    };
+    assert_eq!(
+        store
+            .claim_edges(tenant, &a_on_side, None, 10)
+            .await
+            .expect("page"),
+        vec![e4.clone()],
+        "two predicates both hold"
+    );
+
+    let other = EdgeWorld::new(store, 321).await;
+    assert!(
+        store
+            .claim_edges(other.rig.tenant_id, &all, None, 10)
+            .await
+            .expect("page")
+            .is_empty(),
+        "another tenant lists none of these edges"
+    );
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
@@ -5234,6 +5801,23 @@ where
     )
     .await;
     every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed(&new_store().await).await;
+    a_proposed_claim_edge_reads_back_pending_with_its_proposer(&new_store().await).await;
+    a_pending_claim_edge_puts_each_endpoints_authors_in_the_others_lineage_closure(
+        &new_store().await,
+    )
+    .await;
+    a_pending_claim_edge_reaches_the_closure_of_a_held_row_deriving_from_an_endpoint(
+        &new_store().await,
+    )
+    .await;
+    a_chain_of_two_edges_carries_the_far_endpoints_authors_to_the_near_one(&new_store().await)
+        .await;
+    the_stores_widened_closure_equals_the_authors_of_the_domains_lineage_artifacts(
+        &new_store().await,
+    )
+    .await;
+    a_claim_edges_page_resumes_after_its_cursor_and_filters_by_either_endpoint(&new_store().await)
+        .await;
 }
 
 // ---------------------------------------------------------------------------

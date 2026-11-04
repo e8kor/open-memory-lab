@@ -8,6 +8,7 @@ use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
+use oml_domain::vocab_edges::EdgeState;
 use oml_domain::{
     ChainError, EventTime, FrozenOp, HeldBy, JcsError, LadderRefusal, LineageClosure, MemoryKind,
     MemoryStatus, Role, Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
@@ -1532,6 +1533,52 @@ pub struct ListingFilter {
 pub struct ListingPosition {
     pub created_at: EventTime,
     pub artifact_id: Uuid,
+}
+
+/// One stored claim edge: a labelled connection from one of a tenant's
+/// versions to another, pending until a key that is not its proposer
+/// ratifies it (postgres-schema.md `claim_edges`; ADR-0008 d5; ADR-0021;
+/// ADR-0012). Nothing deletes one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEdgeRecord {
+    pub edge_id: Uuid,
+    pub tenant_id: Uuid,
+    /// The source version (`from_artifact_id` on the proposal).
+    pub src_artifact_id: Uuid,
+    /// The target version (`to_artifact_id` on the proposal).
+    pub dst_artifact_id: Uuid,
+    /// The label as proposed, admitted by the domain's label check.
+    pub label: String,
+    /// `pending` or `ratified`; this build stores no rejected edge, as
+    /// `oml:about` is refused at proposal (ADR-0027 is not accepted).
+    pub state: EdgeState,
+    pub proposer_key_id: Uuid,
+    /// The proposer key's principal, which R2 at ratification compares the
+    /// ratifier's against (errors.md `review.ratifier_is_proposer`).
+    pub proposer_principal: String,
+    /// The ratifying key; `None` while the edge is pending.
+    pub ratifier_key_id: Option<Uuid>,
+}
+
+/// `GET /v2/claim-edges`'s predicates, re-applied on every page; `None`
+/// narrows nothing, and two present predicates both hold (http-api.md,
+/// claim edges).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClaimEdgeFilter {
+    /// Only edges with this version at either endpoint.
+    pub artifact_id: Option<Uuid>,
+    /// Only edges with an endpoint version in this workarea.
+    // reading: http-api.md names `workarea_id` on the graph read but not
+    // which endpoint it constrains; an edge is a connection either way, so
+    // it matches as `artifact_id` does, at either endpoint.
+    pub workarea_id: Option<Uuid>,
+}
+
+/// Where a claim-edge page resumes: the id of the last edge the previous
+/// page served, in edge-id order (http-api.md pagination).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimEdgePosition {
+    pub edge_id: Uuid,
 }
 
 /// `GET /v1/memories` as the use-case takes it (http-api.md search;

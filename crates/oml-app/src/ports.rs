@@ -27,6 +27,7 @@ use crate::types::{
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
     UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
     TransitionRecord,
+    ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord,
 };
 use oml_domain::web::Provider;
 
@@ -353,6 +354,24 @@ pub enum MetadataFold {
         to: WorkareaStatus,
         ratifier_key_id: Uuid,
     },
+    /// `claim_edge.proposed`: the edge row, pending with no ratifier. The
+    /// store refuses an endpoint or a proposer key its tenant does not hold,
+    /// an edge id it holds already, and an edge that is not pending.
+    ///
+    /// A pending edge enters the lineage closure (audit-and-lineage.md, the
+    /// derivation graph: pending and ratified alike; ADR-0001 d2), and the
+    /// closure is flattened onto `lineage_principals` and `lineage_key_ids`,
+    /// which the review queue and the verdict read; so this fold widens them
+    /// in the same transaction. The reading: let C be the versions connected
+    /// to either endpoint through claim edges, the new one included, since
+    /// `vocab_edges::lineage_artifacts` follows a claim edge from either end
+    /// and no rejected edge is stored in this build. Every version in C, and
+    /// every version that reaches one in C through `derives_from` ancestry
+    /// and claim edges, gains the union of C's flattened principals and key
+    /// ids. The proposer enters no closure: R2 against the proposer is the
+    /// ratification's check (ADR-0012; errors.md
+    /// `review.ratifier_is_proposer`).
+    ClaimEdgeProposed(ClaimEdgeRecord),
 }
 
 /// The outbox row written in the same transaction as the event; the lake
@@ -836,6 +855,27 @@ pub trait JournalStore: Send + Sync {
         &self,
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send;
+
+    /// One claim edge of the tenant, pending or ratified; `None` for an edge
+    /// it does not hold (postgres-schema.md `claim_edges`).
+    fn claim_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ClaimEdgeRecord>, StoreError>> + Send;
+
+    /// One page of the tenant's claim edges, pending and ratified, that pass
+    /// `filter` — `artifact_id` matching either endpoint, `workarea_id`
+    /// either endpoint's workarea — ordered by edge id ascending, strictly
+    /// after `after`, at most `limit` of them (http-api.md, claim edges).
+    /// Read scope is the use-case's.
+    fn claim_edges(
+        &self,
+        tenant_id: Uuid,
+        filter: &ClaimEdgeFilter,
+        after: Option<ClaimEdgePosition>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<ClaimEdgeRecord>, StoreError>> + Send;
 }
 
 /// The web pages' rows (ADR-0045 d2, d4, d5; postgres-schema.md "web"):
