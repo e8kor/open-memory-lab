@@ -37,7 +37,10 @@ class of disagreement found:
   arguments and exits 0 even when that `oml` fails (docs/cli/reference.md,
   "oml hook session-start" and "oml hook tool-failure");
 - plugins/oml/agents/ holds exactly one subagent, librarian.md, whose
-  frontmatter names it `librarian`, sets `model: haiku`, sets only fields a
+  frontmatter is one plain-scalar `field: value` per line (no value starting
+  with a YAML indicator, holding ': ' or ' #', ending in ':' or holding a
+  tab), since frontmatter that does not parse loads the agent with every
+  field ignored and its tools inherited, and which names it `librarian`, sets `model: haiku`, sets only fields a
   plugin subagent supports, and allows exactly the one tool
   `mcp__plugin_oml_oml__oml_read`, so it reads and never writes: no
   `oml_write`, no `oml_workarea`, no built-in tool that edits a file or runs a
@@ -102,6 +105,9 @@ LIBRARIAN_TOOLS = ["mcp__plugin_oml_oml__oml_read"]
 # 2026-11-04); permissionMode, hooks, mcpServers and initialPrompt are
 # ignored there, so a librarian setting one would read as holding a rule it
 # does not.
+# The characters a plain YAML scalar may not start with (YAML 1.2, c-indicator);
+# `-`, `?` and `:` may, when a non-space follows them.
+YAML_INDICATORS = set(",[]{}#&*!|>'\"%@`")
 PLUGIN_AGENT_FIELDS = {
     "name", "description", "model", "effort", "maxTurns", "autoCompactWindow", "tools",
     "disallowedTools", "skills", "memory", "background", "omitClaudeMd", "isolation", "color",
@@ -272,10 +278,13 @@ def the_librarian_reads_and_never_writes(plugin_dir: Path, served: set[str], err
         if not sep or line[:1].isspace():
             errors.append(f"{shown}: frontmatter line {line!r} is not one `field: value` (ADR-0038 d10)")
             continue
-        if ": " in value or " #" in value:
+        fault = plain_scalar_fault(line, value)
+        if fault:
             errors.append(
-                f"{shown}: the {key.strip()} value holds ': ' or ' #', which ends a plain YAML scalar, "
-                f"so Claude Code would load the agent with every field ignored"
+                f"{shown}: the {key.strip()} line {fault}, so it is not a plain YAML scalar and Claude "
+                f"Code would load the agent with every field ignored: the librarian would lose its tools "
+                f"field and inherit every tool a subagent has, oml_write, Bash and Edit among them "
+                f"(ADR-0038 d10)"
             )
         fields[key.strip()] = value.strip()
     body = match.group(2)
@@ -308,6 +317,27 @@ def the_librarian_reads_and_never_writes(plugin_dir: Path, served: set[str], err
         )
     if "`oml:librarian`" not in (plugin_dir / "README.md").read_text():
         errors.append("plugins/oml/README.md does not name the subagent `oml:librarian` (ADR-0038 d10)")
+
+
+def plain_scalar_fault(line: str, value: str) -> str | None:
+    """Why `field: value` is not one plain YAML scalar, or None. The check
+    reads frontmatter without a YAML parser, so it admits only a subset every
+    parser reads as written: a value that cannot start, end or break a plain
+    scalar and holds no tab (YAML 1.2, 7.3.3)."""
+    if "\t" in line:
+        return "holds a tab"
+    if value and not value.startswith(" "):
+        return "has no space after its ':'"
+    stripped = value.strip()
+    if stripped[:1] in YAML_INDICATORS:
+        return f"starts its value with the indicator {stripped[0]!r}"
+    if stripped and stripped[0] in "-?:" and stripped[1:2] in ("", " "):
+        return f"starts its value with {stripped[0]!r} and a space or nothing"
+    if ": " in stripped or stripped.endswith(":"):
+        return "holds ': ' or ends in ':'"
+    if " #" in stripped:
+        return "holds ' #', which starts a comment"
+    return None
 
 
 def check_hooks(plugin_dir: Path, errors: list[str]) -> None:
