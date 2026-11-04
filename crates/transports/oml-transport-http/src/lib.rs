@@ -49,16 +49,18 @@ use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::oauth::ConnectionState;
-use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
+use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, WorkareaStatus, nfc};
 use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
     Signer, StoreError, WebStore,
 };
 use oml_app::types::{
-    AppError, Bearer, BootstrapRequest, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest,
-    CrewRecord, CrewUpdate, GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail,
-    ListRequest, NamedServe, RecallRequest, ServedMemory, SubmitRequest, SubmitVerb,
-    SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
+    AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal, ClaimEdgeQuery,
+    ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
+    EdgeRatification, GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail,
+    ListRequest, NamedServe, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
+    WorkareaInfo, WorkareaRecord,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -98,6 +100,14 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/workareas/{workarea}"),
     ("GET", "/v2/workareas/{workarea}/tree"),
     ("POST", "/v2/workareas/{workarea}/crew"),
+    ("POST", "/v2/workareas/{workarea}/transitions"),
+    (
+        "POST",
+        "/v2/workareas/{workarea}/transitions/{transition_id}/ratify",
+    ),
+    ("GET", "/v2/edges"),
+    ("POST", "/v2/edges"),
+    ("POST", "/v2/edges/{edge_id}/ratify"),
     ("GET", "/v2/events"),
     ("POST", "/v2/bootstrap/claim"),
     ("GET", "/v2/web/emails"),
@@ -291,6 +301,13 @@ where
             ("GET", "/v2/workareas/{workarea}") => get(Self::get_workarea),
             ("GET", "/v2/workareas/{workarea}/tree") => get(Self::workarea_tree),
             ("POST", "/v2/workareas/{workarea}/crew") => post(Self::set_workarea_crew),
+            ("POST", "/v2/workareas/{workarea}/transitions") => post(Self::propose_transition),
+            ("POST", "/v2/workareas/{workarea}/transitions/{transition_id}/ratify") => {
+                post(Self::ratify_transition)
+            }
+            ("GET", "/v2/edges") => get(Self::list_edges),
+            ("POST", "/v2/edges") => post(Self::propose_edge),
+            ("POST", "/v2/edges/{edge_id}/ratify") => post(Self::ratify_edge),
             ("GET", "/v2/events") => get(Self::events_tail),
             ("POST", "/v2/bootstrap/claim") => post(Self::bootstrap_claim),
             ("GET", "/v2/web/emails") => get(Self::list_web_emails),
@@ -1182,6 +1199,331 @@ where
         Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
     }
 
+    async fn propose_transition(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(workarea): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::propose_transition_inner(&st, &workarea, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/workareas/{workarea}/transitions`: a forward step proposed,
+    /// `202` and pending until a second identity ratifies it; `to` is
+    /// `committed` or `validated`, anything else `request.validation`
+    /// naming `/to` (http-api.md workareas; ADR-0009 d3; ADR-0046 d3).
+    async fn propose_transition_inner(
+        st: &Self,
+        workarea: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let node = reference("workarea", workarea)?;
+        let req: TransitionBody = parse_json(headers, body)?;
+        let to = match req.to.as_str() {
+            "committed" => WorkareaStatus::Committed,
+            "validated" => WorkareaStatus::Validated,
+            other => {
+                return Err(ApiError::validation(format!(
+                    "to must be committed or validated, not {other:?}: the ladder moves forward only"
+                ))
+                .with_details(json!({ "field": "/to" })));
+            }
+        };
+        let proposal = retry_chain(|| st.app.propose_transition(&token, node.clone(), to))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::ACCEPTED,
+            &json!({
+                "transition_id": proposal.transition_id,
+                "workarea_id": proposal.workarea_id,
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "state": proposal.state.as_str(),
+                "proposed_by_key_id": proposal.proposer_key_id,
+                "ratified_by_key_id": Value::Null,
+            }),
+        ))
+    }
+
+    async fn ratify_transition(
+        State(st): State<Self>,
+        rid: Rid,
+        Path((workarea, transition_id)): Path<(String, String)>,
+        headers: HeaderMap,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::ratify_transition_inner(&st, &workarea, &transition_id, &headers).await,
+        )
+    }
+
+    /// `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify`: a
+    /// second, non-proposing dreamer or admin ratifies, and the node takes
+    /// the proposal's `to` (http-api.md workareas; ADR-0009 d3).
+    async fn ratify_transition_inner(
+        st: &Self,
+        workarea: &str,
+        transition_id: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let node = reference("workarea", workarea)?;
+        let transition_id = Uuid::parse_str(transition_id).map_err(|_| {
+            ApiError::validation(format!("transition_id {transition_id:?} is not an id"))
+                .with_details(json!({ "field": "transition_id" }))
+        })?;
+        let ratified = retry_chain(|| {
+            st.app
+                .ratify_transition(&token, node.clone(), transition_id)
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Review))?;
+        let from = match ratified.status {
+            WorkareaStatus::Validated => WorkareaStatus::Committed,
+            _ => WorkareaStatus::Development,
+        };
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "transition_id": transition_id,
+                "workarea_id": ratified.workarea_id,
+                "from": from.as_str(),
+                "to": ratified.status.as_str(),
+                "state": "ratified",
+                "proposed_by_key_id": Value::Null,
+                "ratified_by_key_id": Value::Null,
+            }),
+        ))
+    }
+
+    async fn list_edges(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) => Self::list_edges_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/edges?kind=…`: one page of one kind's edges, pending and
+    /// ratified, newest first. `kind=claim` takes `workarea_id` as a subtree
+    /// filter and `artifact_id`; `kind=brief` takes `workarea_id`, required,
+    /// the workarea whose brief edges are read (http-api.md edges; ADR-0046
+    /// d4, d7). `kind=workarea` is designed and refused.
+    async fn list_edges_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let mut seen = HashSet::new();
+        let (mut kind, mut workarea, mut artifact, mut cursor) = (None, None, None, None);
+        let mut limit = PAGE_LIMIT_DEFAULT;
+        for (name, value) in params {
+            if !seen.insert(name.as_str()) {
+                return Err(ApiError::validation(format!(
+                    "the query parameter {name} is given more than once"
+                )));
+            }
+            match name.as_str() {
+                "kind" => kind = Some(value.as_str()),
+                "workarea_id" => workarea = Some(reference("workarea_id", value)?),
+                "artifact_id" => {
+                    artifact = Some(Uuid::parse_str(value).map_err(|_| {
+                        ApiError::validation(format!("artifact_id {value:?} is not an id"))
+                            .with_details(json!({ "field": "artifact_id" }))
+                    })?);
+                }
+                "limit" => limit = page_limit(value)?,
+                "cursor" => cursor = Some(value.as_str()),
+                other => {
+                    return Err(ApiError::validation(format!(
+                        "unknown query parameter {other:?}"
+                    )));
+                }
+            }
+        }
+        let body = match kind {
+            Some("claim") => {
+                let page = st
+                    .app
+                    .claim_edges(
+                        &token,
+                        ClaimEdgeQuery {
+                            workarea,
+                            artifact_id: artifact,
+                        },
+                        cursor,
+                        limit,
+                    )
+                    .await
+                    .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+                json!({
+                    "items": page.items.iter().map(claim_edge_json).collect::<Vec<_>>(),
+                    "next_cursor": page.next_cursor,
+                })
+            }
+            Some("brief") => {
+                if artifact.is_some() {
+                    return Err(ApiError::validation(
+                        "artifact_id narrows claim edges only; kind=brief reads one workarea",
+                    )
+                    .with_details(json!({ "field": "artifact_id" })));
+                }
+                let workarea = workarea.ok_or_else(|| {
+                    ApiError::validation("kind=brief reads one workarea: workarea_id is required")
+                        .with_details(json!({ "field": "workarea_id" }))
+                })?;
+                let page = st
+                    .app
+                    .brief_edges(&token, workarea, cursor, limit)
+                    .await
+                    .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+                json!({
+                    "items": page.items.iter().map(brief_edge_json).collect::<Vec<_>>(),
+                    "next_cursor": page.next_cursor,
+                })
+            }
+            other => return Err(edge_kind_refused(other)),
+        };
+        Ok(json_response(StatusCode::OK, &body))
+    }
+
+    async fn propose_edge(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(&rid, Self::propose_edge_inner(&st, &headers, &body).await)
+    }
+
+    /// `POST /v2/edges`: `kind: claim` `{from_artifact_id, to_artifact_id,
+    /// label}` or `kind: brief` `{from_artifact_id, to_workarea_id}`, each
+    /// `202` and pending (http-api.md edges; ADR-0046 d4, d7).
+    async fn propose_edge_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let idem = idempotency_key(headers)?;
+        // The kind first, so a designed kind's members are refused as that
+        // kind rather than as unknown fields.
+        let value: Value = parse_json(headers, body)?;
+        match value.get("kind").and_then(Value::as_str) {
+            Some("claim" | "brief") => {}
+            other => return Err(edge_kind_refused(other)),
+        }
+        let req: EdgeBody = serde_json::from_value(value).map_err(not_the_shape)?;
+        let artifact = |field: &str, value: Option<&str>| {
+            value.and_then(|v| Uuid::parse_str(v).ok()).ok_or_else(|| {
+                ApiError::validation(format!("{field} is required and must be an id"))
+                    .with_details(json!({ "field": field }))
+            })
+        };
+        let from = artifact("/from_artifact_id", req.from_artifact_id.as_deref())?;
+        let (status, body) = match req.kind.as_str() {
+            "claim" => {
+                let to = artifact("/to_artifact_id", req.to_artifact_id.as_deref())?;
+                let label = req.label.clone().ok_or_else(|| {
+                    ApiError::validation("label is required on a claim edge")
+                        .with_details(json!({ "field": "/label" }))
+                })?;
+                if req.to_workarea_id.is_some() {
+                    return Err(ApiError::validation("to_workarea_id belongs to kind brief")
+                        .with_details(json!({ "field": "/to_workarea_id" })));
+                }
+                let request = ProposeClaimEdge {
+                    from_artifact_id: from,
+                    to_artifact_id: to,
+                    label,
+                };
+                let outcome =
+                    retry_chain(|| st.app.propose_claim_edge(&token, &request, Some(&idem)))
+                        .await
+                        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+                (StatusCode::ACCEPTED, claim_edge_json(&outcome.proposal))
+            }
+            "brief" => {
+                if req.to_artifact_id.is_some() || req.label.is_some() {
+                    return Err(ApiError::validation(
+                        "a brief edge takes from_artifact_id and to_workarea_id alone; its label is brief",
+                    )
+                    .with_details(json!({
+                        "field": if req.label.is_some() { "/label" } else { "/to_artifact_id" }
+                    })));
+                }
+                let workarea = req.to_workarea_id.as_deref().ok_or_else(|| {
+                    ApiError::validation("to_workarea_id is required on a brief edge")
+                        .with_details(json!({ "field": "/to_workarea_id" }))
+                })?;
+                let request = ProposeBriefEdge {
+                    artifact_id: from,
+                    workarea: reference("/to_workarea_id", workarea)?,
+                };
+                let outcome =
+                    retry_chain(|| st.app.propose_brief_edge(&token, &request, Some(&idem)))
+                        .await
+                        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+                (StatusCode::ACCEPTED, brief_edge_json(&outcome.proposal))
+            }
+            other => return Err(edge_kind_refused(Some(other))),
+        };
+        Ok(json_response(status, &body))
+    }
+
+    async fn ratify_edge(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(edge_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        finish(&rid, Self::ratify_edge_inner(&st, &edge_id, &headers).await)
+    }
+
+    /// `POST /v2/edges/{edge_id}/ratify`: either kind, the kind following
+    /// from the id (http-api.md edges; ADR-0039 d9).
+    async fn ratify_edge_inner(
+        st: &Self,
+        edge_id: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let idem = idempotency_key(headers)?;
+        let edge_id = Uuid::parse_str(edge_id).map_err(|_| {
+            ApiError::validation(format!("edge_id {edge_id:?} is not an id"))
+                .with_details(json!({ "field": "edge_id" }))
+        })?;
+        let ratified = retry_chain(|| st.app.ratify_edge(&token, edge_id, Some(&idem)))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Review))?;
+        let body = match ratified {
+            EdgeRatification::Claim(r) => claim_edge_json(&r.edge),
+            EdgeRatification::Brief(r) => brief_edge_json(&r.edge),
+        };
+        Ok(json_response(StatusCode::OK, &body))
+    }
+
     async fn workarea_tree(
         State(st): State<Self>,
         rid: Rid,
@@ -1777,6 +2119,24 @@ struct ReviewNextBody {
     /// the filter is unbuilt. Any JSON value is the field's presence.
     #[serde(default)]
     workarea: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TransitionBody {
+    to: String,
+}
+
+/// `POST /v2/edges`'s body; which members a kind takes is checked after
+/// the parse, so each refusal names its JSON Pointer.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EdgeBody {
+    kind: String,
+    from_artifact_id: Option<String>,
+    to_artifact_id: Option<String>,
+    to_workarea_id: Option<String>,
+    label: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2655,6 +3015,47 @@ fn budget_json(budget: &Budget) -> Value {
     })
 }
 
+/// openapi.yaml `Edge` with `kind: claim` (http-api.md edges).
+fn claim_edge_json(e: &ClaimEdgeProposal) -> Value {
+    json!({
+        "kind": "claim",
+        "edge_id": e.edge_id,
+        "from_artifact_id": e.from_artifact_id,
+        "to_artifact_id": e.to_artifact_id,
+        "label": e.label,
+        "state": e.state,
+        "proposer_key_id": e.proposer_key_id,
+        "ratifier_key_id": e.ratifier_key_id,
+    })
+}
+
+/// openapi.yaml `Edge` with `kind: brief` (ADR-0046 d7).
+fn brief_edge_json(e: &BriefEdgeView) -> Value {
+    json!({
+        "kind": "brief",
+        "edge_id": e.edge_id,
+        "from_artifact_id": e.from_artifact_id,
+        "to_workarea_id": e.to_workarea_id,
+        "label": e.label,
+        "state": e.state,
+        "proposer_key_id": e.proposer_key_id,
+        "ratifier_key_id": e.ratifier_key_id,
+    })
+}
+
+/// A `kind` the served edge family does not take: `workarea` is designed,
+/// anything else unknown; either is `request.validation` naming `/kind`.
+fn edge_kind_refused(kind: Option<&str>) -> ApiError {
+    let message = match kind {
+        Some("workarea") => {
+            "kind workarea is designed and not served: claim and brief are".to_owned()
+        }
+        Some(other) => format!("kind must be claim or brief, not {other:?}"),
+        None => "kind is required: claim or brief".to_owned(),
+    };
+    ApiError::validation(message).with_details(json!({ "field": "/kind" }))
+}
+
 /// openapi.yaml `Crew`: a crew record, recorded and not operated
 /// (ADR-0026 d8).
 fn crew_json(crew: &CrewRecord) -> Value {
@@ -2716,6 +3117,18 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
                 .map(transition_json)
                 .collect(),
         );
+        obj.insert(
+            "brief".to_owned(),
+            json!({
+                "items": info
+                    .brief
+                    .items
+                    .iter()
+                    .map(|m| memory_json(m, true))
+                    .collect::<Vec<_>>(),
+                "budget": budget_json(&info.brief.budget),
+            }),
+        );
     }
     value
 }
@@ -2732,6 +3145,7 @@ pub fn transition_json(t: &oml_app::types::TransitionView) -> Value {
         "to": t.to.as_str(),
         "state": t.state.as_str(),
         "proposed_by_key_id": t.proposed_by_key_id,
+        "ratified_by_key_id": Value::Null,
     })
 }
 
