@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search in stages — mockups</title>
+<meta name="description" content="Design mockups for the proposed ADR-0048: search improves in stages, any word first and meaning last, each gated on OML's recall eval.">
+<meta name="theme-color" content="#0A0D22">
+<style>
+:root {
+  --ground: #0A0D22; --ground-alt: #0E1230; --panel: #111638; --term: #070918;
+  --ink: #EFE9DA; --ink-dim: #B7B4C6; --ink-faint: #8C8FA8;
+  --rule: #262C52; --rule-soft: #1A1F42;
+  --ice: #9FC6E6; --star: #F6A83E; --ok: #7FD1AE; --bad: #E58A8A;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+a { color: var(--ice); text-decoration: none; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+.label { font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+code, .mono { font-family: var(--mono); }
+code { font-size: .9em; background: var(--rule-soft); padding: 1px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+header.top { border-bottom: 1px solid var(--rule-soft); }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 60px; padding: 8px 0; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 600; }
+.brand svg { width: 28px; height: 28px; flex: none; }
+.pill { font: 11px var(--mono); color: var(--ink-faint); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
+.hero { padding: 40px 0 16px; }
+h1 { font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -.02em; margin: 10px 0 14px; font-weight: 650; }
+h1 em { font-style: normal; color: var(--star); }
+.lede { color: var(--ink-dim); max-width: 46em; margin: 0 0 12px; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+.toc a { display: inline-block; font: 13px var(--mono); color: var(--ink-dim); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 11px; }
+section { border-top: 1px solid var(--rule-soft); padding: 44px 0; }
+h2 { font-size: clamp(22px, 3vw, 30px); line-height: 1.2; margin: 8px 0 10px; font-weight: 620; }
+h3 { font-size: 17px; margin: 0 0 8px; }
+.sub { color: var(--ink-dim); max-width: 46em; margin: 0 0 24px; }
+.cite { font: 12px var(--mono); color: var(--ink-faint); }
+
+/* diagram */
+.fig { background: var(--ground-alt); border: 1px solid var(--rule); border-radius: 14px; padding: 16px; }
+.fig svg { width: 100%; height: auto; display: block; }
+.fig .tall { display: none; }
+@media (max-width: 760px) { .fig .wide { display: none; } .fig .tall { display: block; max-width: 380px; margin: 0 auto; } }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font: 12px var(--mono); color: var(--ink-faint); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+/* terminal */
+.term { background: var(--term); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; min-width: 0; }
+.term .tb { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--rule-soft); font: 12px var(--mono); color: var(--ink-faint); flex-wrap: wrap; }
+.term pre { margin: 0; padding: 14px 16px 16px; font: 13px/1.65 var(--mono); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.c { color: var(--ink-faint); } .p { color: var(--star); } .o { color: var(--ok); } .h { color: var(--star); } .i { color: var(--ice); } .b { color: var(--bad); }
+.you { color: var(--ink); font-weight: 600; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+
+/* pull request mock */
+.pr { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: var(--ground-alt); }
+.pr .head { padding: 12px 16px; border-bottom: 1px solid var(--rule-soft); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+.pr .head b { font-weight: 600; }
+.pr .cols { display: grid; grid-template-columns: 1fr 1fr; }
+@media (max-width: 860px) { .pr .cols { grid-template-columns: 1fr; } }
+.pr .col { padding: 14px 16px; min-width: 0; }
+.pr .col + .col { border-left: 1px solid var(--rule-soft); }
+@media (max-width: 860px) { .pr .col + .col { border-left: 0; border-top: 1px solid var(--rule-soft); } }
+.diff { font: 12.5px/1.6 var(--mono); background: var(--term); border: 1px solid var(--rule-soft); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.diff .add { color: var(--ok); } .diff .del { color: var(--bad); } .diff .ctx { color: var(--ink-faint); }
+.fact { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; margin: 0 0 10px; background: var(--panel); }
+.fact .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font: 12px var(--mono); color: var(--ink-faint); margin-bottom: 6px; }
+.fact p { margin: 0 0 8px; font-size: 14.5px; }
+.fact .old { color: var(--ink-faint); text-decoration: line-through; }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 600 13px var(--sans); border-radius: 7px; padding: 5px 12px; border: 1px solid var(--rule); color: var(--ink); background: transparent; }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: #0B1A13; }
+.btn.star { background: var(--star); border-color: var(--star); color: #1A1206; }
+.tag { display: inline-block; font: 12px var(--mono); padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; line-height: 1.6; }
+.t-add { color: var(--ok); } .t-upd { color: var(--ice); } .t-stale { color: var(--star); } .t-ret { color: var(--bad); } .t-dim { color: var(--ink-faint); }
+
+/* search */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.chip { font: 12px var(--mono); border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; color: var(--ink-dim); background: var(--panel); }
+.chip b { color: var(--ice); font-weight: 400; }
+.hit { display: grid; grid-template-columns: 36px 1fr; gap: 10px; border-top: 1px solid var(--rule-soft); padding: 12px 0; }
+.hit .n { font: 13px var(--mono); color: var(--ink-faint); }
+.hit p { margin: 0 0 6px; }
+.why { display: flex; flex-wrap: wrap; gap: 6px; font: 12px var(--mono); }
+.why span { border-radius: 6px; padding: 0 7px; background: var(--rule-soft); color: var(--ink-dim); }
+.why .kw { color: var(--ice); } .why .se { color: var(--ok); } .why .an { color: var(--star); }
+
+/* user page mock (ADR-0045 chrome) */
+.page { border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: var(--ground); }
+.page .ph { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--rule-soft); }
+.page .ph .b2 { font-weight: 600; } .page .ph .b2 b { color: var(--star); font-weight: 600; }
+.page .who { font: 12px var(--mono); color: var(--ink-faint); }
+.page main { padding: 18px; }
+nav.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--rule-soft); margin: 0 0 18px; }
+nav.tabs a { padding: 8px 12px; color: var(--ink-dim); font-size: 14px; border-bottom: 2px solid transparent; }
+nav.tabs a.on { color: var(--ink); border-bottom-color: var(--star); }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 18px; }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stat { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; background: var(--ground-alt); }
+.stat .v { font: 600 22px var(--mono); }
+table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.t th { text-align: left; font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+table.t td { padding: 9px 10px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  table.t thead { display: none; }
+  table.t tr { display: block; border: 1px solid var(--rule-soft); border-radius: 10px; margin: 0 0 10px; padding: 6px 4px; }
+  table.t td { display: flex; gap: 10px; border: 0; padding: 4px 8px; }
+  table.t td::before { content: attr(data-l); flex: 0 0 7.5em; font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); padding-top: 2px; }
+}
+.note { font-size: 13px; color: var(--ink-faint); margin: 10px 0 0; }
+footer { border-top: 1px solid var(--rule-soft); padding: 24px 0 40px; color: var(--ink-faint); font: 12px var(--mono); }
+
+/* search mockups */
+.q { border: 1px solid var(--rule); border-radius: 12px; background: var(--ground-alt); margin: 0 0 16px; overflow: hidden; }
+.qh { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; padding: 10px 14px; border-bottom: 1px solid var(--rule-soft); }
+.qh .mono { font-size: 12px; color: var(--ink-faint); }
+.qh b { font-weight: 600; overflow-wrap: anywhere; }
+.qc { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+@media (max-width: 760px) { .qc { grid-template-columns: minmax(0, 1fr); } }
+.side { padding: 10px 14px; min-width: 0; }
+.side + .side { border-left: 1px solid var(--rule-soft); }
+@media (max-width: 760px) { .side + .side { border-left: 0; border-top: 1px solid var(--rule-soft); } }
+.side .label { margin: 0 0 6px; }
+.side .hit { padding: 8px 0; grid-template-columns: 30px minmax(0, 1fr); }
+.side .hit p { font-size: 14.5px; }
+.empty { margin: 0; color: var(--bad); font: 13px/1.5 var(--mono); }
+.search { display: flex; gap: 8px; align-items: center; border: 1px solid var(--rule); border-radius: 10px; padding: 6px 6px 6px 12px; margin: 0 0 12px; background: var(--panel); justify-content: space-between; }
+.chip.on { border-color: var(--ice); color: var(--ink); }
+.dym { margin: 0 0 12px; font-size: 14.5px; }
+.dym b { color: var(--star); font-weight: 600; }
+.chart svg.one { max-width: 420px; }
+.stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.st { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; border: 1px solid var(--rule); border-radius: 12px; padding: 12px 14px; background: var(--ground-alt); }
+.st .sn { font: 600 18px var(--mono); }
+.st.go { border-color: var(--ok); } .st.go .sn { color: var(--ok); }
+.st.wait .sn { color: var(--star); }
+.st.no { opacity: .85; } .st.no .sn { color: var(--bad); }
+.st .g { margin: 4px 0 0; font: 12.5px/1.5 var(--mono); color: var(--ink-faint); }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap bar">
+  <span class="brand"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M55.29 26.19 A24 24 0 1 1 41.76 10.07" fill="none" stroke="#9FC6E6" stroke-width="6.4" stroke-linecap="round"/><circle cx="28.4" cy="35.4" r="11" fill="#F6A83E"/><circle cx="50.39" cy="16.57" r="5.6" fill="#EFE9DA"/></svg>Open Memory Lab <span class="pill">design mockups</span></span>
+  <span class="pill">ADR-0048 · proposed 2026-11-04</span>
+</div></header>
+
+<main class="wrap">
+<div class="hero">
+  <p class="label">Design artefact, not a built feature</p>
+  <h1>Search that <em>finds what was written</em>, in stages, each one measured</h1>
+  <p class="lede">Recall today needs every word of the query, exactly, and on OML's recall eval it returns nothing for 83% of the queries. Any-word matching on the index that exists, then identifier splitting, stemming and rarity, then trigrams, take success@5 from 0.17 to 0.93 on the same set. Filters, author keywords, a reranker and embeddings follow, each only when the eval shows it pays.</p>
+  <p class="note">Query results on this page are the eval's measured rankings (<code>eval/recall/</code>, data version 1, 2026-11-04). "S1–S3" results are the eval's closest offline method, <code>english</code> any-word fused with trigrams; the served S1–S3 is not built. Response fields (<code>matched</code>, <code>explain</code>) and the page layouts are illustrative.</p>
+  <ul class="toc">
+    <li><a href="#compare">Today vs S1–S3</a></li><li><a href="#session">Claude Code</a></li><li><a href="#user">User page</a></li><li><a href="#admin">Admin search</a></li><li><a href="#eval">Eval</a></li><li><a href="#roadmap">Stages</a></li>
+  </ul>
+</div>
+
+<section id="compare">
+  <p class="label">ADR-0048 d2–d4 · measured</p>
+  <h2>Five eval queries, today and after S1–S3</h2>
+  <p class="sub">Left: the served recall. Right: the eval's english-plus-trigram ranking, top three. <span class="t-add">✓</span> marks a memory labelled as the answer.</p>
+
+  <div class="q">
+    <div class="qh"><span class="tag t-dim">question</span><span class="mono">q067</span><b>“What is the maximum page size for the API?”</b></div>
+    <div class="qc">
+      <div class="side today"><p class="label">today</p><p class="empty">0 hits · “API”, “what” and “for” are not all in any memory</p></div>
+      <div class="side after"><p class="label">after S1–S3</p>
+        <div class="hit"><span class="n">#1</span><div><p><span class="t-add">✓</span> The default page size is 50 and the maximum is 200; a larger limit is refused with request.validation.</p><div class="why"><span class="kw">maximum · page · size</span><span>3 of 4 words</span></div></div></div>
+        <div class="hit"><span class="n">#2</span><div><p>The blue-green switch for the marketing site is a Cloud DNS record change with a TTL of 60 seconds.</p><div class="why"><span class="kw">1 of 4 words</span></div></div></div>
+        <div class="hit"><span class="n">#3</span><div><p>The generated API client must be regenerated with npm run gen:api after any API change…</p><div class="why"><span class="kw">api</span><span>1 of 4 words</span></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="q">
+    <div class="qh"><span class="tag t-dim">inflection</span><span class="mono">q023</span><b>“rollback deployment”</b></div>
+    <div class="qc">
+      <div class="side today"><p class="label">today</p><p class="empty">0 hits · the answer says “Rollbacks” and “redeploying”</p></div>
+      <div class="side after"><p class="label">after S1–S3</p>
+        <div class="hit"><span class="n">#1</span><div><p><span class="t-add">✓</span> Rollbacks are done with helm rollback to the previous revision, never by redeploying an older image tag by hand…</p><div class="why"><span class="kw">rollback</span><span class="an">stem: rollbacks</span><span>1 of 2 words</span></div></div></div>
+        <div class="hit"><span class="n">#2</span><div><p>Helm upgrades of the api chart fail with 'field is immutable' if the Deployment's selector labels change…</p><div class="why"><span class="kw">deployment</span><span>1 of 2 words</span></div></div></div>
+        <div class="hit"><span class="n">#3</span><div><p>The api Deployment runs 6 replicas in production with a HorizontalPodAutoscaler…</p><div class="why"><span class="kw">deployment</span><span>1 of 2 words</span></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="q">
+    <div class="qh"><span class="tag t-dim">typo</span><span class="mono">q045</span><b>“PgBouncr prepared statments”</b></div>
+    <div class="qc">
+      <div class="side today"><p class="label">today</p><p class="empty">0 hits · two misspelled words veto the third</p></div>
+      <div class="side after"><p class="label">after S1–S3</p>
+        <div class="hit"><span class="n">#1</span><div><p><span class="t-add">✓</span> With PgBouncer in transaction mode, session-level SET statements and prepared statements leak between clients; use SET LOCAL inside a transaction.</p><div class="why"><span class="kw">prepared</span><span class="an">trigram: PgBouncer</span><span class="an">trigram: statements</span><span>3 of 3 words</span></div></div></div>
+        <p class="note">The only hit. Did you mean <code>PgBouncer statements</code>?</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="q">
+    <div class="qh"><span class="tag t-dim">identifier</span><span class="mono">q060</span><b>“useInvoiceFilters”</b></div>
+    <div class="qc">
+      <div class="side today"><p class="label">today</p><p class="empty">0 hits · the memory holds <code>useInvoiceFilters.ts</code>, indexed as one token</p></div>
+      <div class="side after"><p class="label">after S1–S3</p>
+        <div class="hit"><span class="n">#1</span><div><p><span class="t-add">✓</span> React components use PascalCase file names, such as InvoiceTable.tsx, and hooks start with use, such as useInvoiceFilters.ts.</p><div class="why"><span class="kw">useinvoicefilters</span><span class="an">part of useInvoiceFilters.ts</span><span>1 of 1 word</span></div></div></div>
+        <div class="hit"><span class="n">#2</span><div><p>Row level security is enabled on every tenant table and filters by current_setting('app.tenant_id').</p><div class="why"><span class="an">trigram: filters</span></div></div></div>
+        <div class="hit"><span class="n">#3</span><div><p>BigQuery charges by bytes scanned; queries on tl_analytics.invoices must filter on the partition column…</p><div class="why"><span class="an">trigram: invoices</span></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="q">
+    <div class="qh"><span class="tag t-dim">paraphrase</span><span class="mono">q013</span><b>“where do pods get their credentials from”</b></div>
+    <div class="qc">
+      <div class="side today"><p class="label">today</p><p class="empty">0 hits</p></div>
+      <div class="side after"><p class="label">after S1–S3 · still a miss in the top 3</p>
+        <div class="hit"><span class="n">#1</span><div><p>The worker pods need terminationGracePeriodSeconds of at least 120…</p><div class="why"><span class="kw">pods</span><span>1 of 3 words</span></div></div></div>
+        <div class="hit"><span class="n">#2</span><div><p>Container images are tagged with the full git commit SHA, never with latest, so a running pod can be traced back…</p><div class="why"><span class="kw">pod</span><span>1 of 3 words</span></div></div></div>
+        <div class="hit"><span class="n">#5</span><div><p><span class="t-add">✓</span> Secrets reach pods through the External Secrets Operator from Google Secret Manager…</p><div class="why"><span class="kw">pods</span><span>1 of 3 words</span></div></div></div>
+        <p class="note">The answer says “secrets”, not “credentials”. The offline hybrid (S7) ranks it 3rd; this is the gap S5–S7 are gated on.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="session">
+  <p class="label">ADR-0048 d9, d10 · illustrative fields</p>
+  <h2>An <code>oml_read</code> answer in a Claude Code session</h2>
+  <p class="sub">Every hit names the words and the ways it matched. A thin or empty result says how many readable memories match all words and some, and offers spellings taken only from memories the key may read.</p>
+  <div class="term">
+    <div class="tb"><span>claude · ~/src/tallyline-api</span><span>mockup</span></div>
+<pre><span class="you">› Why do some partners end up with duplicate invoices?</span>
+
+<span class="p">●</span> oml_read <span class="c">{"query":"client retry creates duplicate invoice","k":3}</span>
+  <span class="c">steering 0 · hits 3 · search text</span>
+  <span class="o">#1</span> "The Idempotency-Key header is required on POST /v2/invoices; a retry
+      without it creates a duplicate invoice."
+      <span class="i">matched</span> retry · creates · duplicate · invoice <span class="c">(4 of 5; "creates" exact, "invoice" stem)</span>
+  <span class="o">#2</span> "Idempotency keys are remembered for 24 hours; a reuse after that creates a new resource."
+      <span class="i">matched</span> creates <span class="c">(1 of 5)</span>
+
+<span class="p">●</span> oml_read <span class="c">{"query":"Datastrem numeric cents","match":"all","k":3}</span>
+  <span class="h">explain</span> no memory has all of these words; 3 match some of them
+          did you mean: <span class="i">Datastream</span>
+  <span class="c">fallback any_word</span>
+  <span class="o">#1</span> "Datastream converts PostgreSQL numeric columns to BigQuery BIGNUMERIC, and dbt
+      models that cast them to FLOAT64 lose cents."
+      <span class="i">matched</span> numeric · cents <span class="c">(2 of 3) · trigram: Datastrem → Datastream</span>
+
+<span class="p">●</span> oml_read <span class="c">{"query":"kafka consumer lag","k":3}</span>
+  <span class="h">explain</span> no readable memory contains any of these words; 0 left out by filters
+          nothing to suggest
+  <span class="c">0 hits — OML holds nothing on this here; say so and move on</span>
+
+<span class="you">Answer.</span> Retries without an <span class="mono">Idempotency-Key</span> header create a second invoice;
+the key is kept for 24 hours. <span class="c">(OML, promoted)</span></pre>
+  </div>
+  <p class="note">The hooks of ADR-0038 d6 send <code>"search":"keyword"</code> and keep today's every-word gate. Memory texts and the first two rankings are the eval's; the <code>explain</code> counts and the third query are illustrative.</p>
+</section>
+
+<section id="user">
+  <p class="label">ADR-0048 d5, d9 · user page, illustrative</p>
+  <h2>Memories search on the user page</h2>
+  <div class="page">
+    <div class="ph"><span class="b2">Open <b>Memory</b> Lab</span><span class="who">alice · alice-web</span></div>
+    <main>
+      <nav class="tabs"><a>Keys</a><a>Set up</a><a class="on">Memories</a><a>Review</a><a>Workarea</a></nav>
+      <div class="search"><span class="mono">dunnig schedule</span><span class="btn">Search</span></div>
+      <div class="filters">
+        <span class="chip on">kind <b>memory</b></span><span class="chip on">workarea <b>alice.tallyline</b> ×</span><span class="chip">state <b>promoted</b></span><span class="chip">created <b>last 90 days</b></span><span class="chip">repo <b>any</b></span><span class="chip">path <b>any</b></span><span class="chip">+ filter</span>
+      </div>
+      <p class="dym">Did you mean <a><b>dunning</b> schedule</a>? <span class="t-dim">· no memory has both words · 4 match one</span></p>
+      <table class="t">
+        <thead><tr><th>#</th><th>Memory</th><th>Matched</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td data-l="#">1</td><td data-l="Memory">Dunning sends reminders at 3, 10 and 21 days after the due date, then suspends the account at 30 days.</td><td data-l="Matched" class="mono">trigram: dunning · 1 of 2</td><td data-l="State"><span class="tag t-add">promoted</span></td></tr>
+          <tr><td data-l="#">2</td><td data-l="Memory">XRechnung and ZUGFeRD support for German public sector customers is scheduled for Q2 2027…</td><td data-l="Matched" class="mono">stem: scheduled · 1 of 2</td><td data-l="State"><span class="tag t-add">promoted</span></td></tr>
+          <tr><td data-l="#">3</td><td data-l="Memory">A schema change to a table exported by Datastream needs a heads-up in the #data channel…</td><td data-l="Matched" class="mono">stem: scheduled · 1 of 2</td><td data-l="State"><span class="tag t-add">promoted</span></td></tr>
+        </tbody>
+      </table>
+      <p class="note">Order illustrative: with rarity weights (S2) the rare “dunning” ranks above the common “schedule”; the eval's unweighted proxy put it 4th. A filter narrows the scan before ranking, so a filtered search never comes back short.</p>
+    </main>
+  </div>
+</section>
+
+<section id="admin">
+  <p class="label">ADR-0048 d5 · ADR-0045 d21 · admin page, illustrative</p>
+  <h2>The admin search, with author and key filters</h2>
+  <p class="sub">Only the admin read searches by author or key, across every state, workarea and user root, and every read is journalled. Agents never get these filters.</p>
+  <div class="page">
+    <div class="ph"><span class="b2">Open <b>Memory</b> Lab · admin</span><span class="who">ops-lead · ops-lead-admin</span></div>
+    <main>
+      <nav class="tabs"><a>Allowlist</a><a>People</a><a>Queue</a><a class="on">Memories</a></nav>
+      <div class="search"><span class="mono">secret rotation</span><span class="btn">Search</span></div>
+      <div class="filters">
+        <span class="chip on">author key <b>tallyline-worker-agent</b> ×</span><span class="chip on">principal <b>crew/worker</b> ×</span><span class="chip">state <b>any</b></span><span class="chip">workarea <b>all</b></span><span class="chip">created <b>since 2026-08-01</b></span>
+      </div>
+      <table class="t">
+        <thead><tr><th>Memory</th><th>Author</th><th>State</th><th>Matched</th></tr></thead>
+        <tbody>
+          <tr><td data-l="Memory">The 2026-10-07 incident: invoice emails were delayed by 6 hours because the SendGrid API key was rotated but the ExternalSecret was not refreshed…</td><td data-l="Author" class="mono">tallyline-worker-agent</td><td data-l="State"><span class="tag t-add">promoted</span></td><td data-l="Matched" class="mono">stem: rotated, secret part</td></tr>
+          <tr><td data-l="Memory">The 2026-08-19 incident: webhook-triggered jobs failed for 25 minutes after a signing key rotation…</td><td data-l="Author" class="mono">tallyline-worker-agent</td><td data-l="State"><span class="tag t-stale">held</span></td><td data-l="Matched" class="mono">rotation</td></tr>
+        </tbody>
+      </table>
+      <p class="note">Read recorded in the history: admin.read · ops-lead-admin · 2 memories. Reading is not reviewing; review opens under ops-lead-review.</p>
+    </main>
+  </div>
+</section>
+
+<section id="eval">
+  <p class="label">ADR-0048 d1, d12 · measured</p>
+  <h2>The eval: success@5 by category</h2>
+  <p class="sub">Measured on version 1 of the recall eval: 200 memories, 121 queries, 11 per category, so one query moves a category by 0.09. Hover a bar for its value.</p>
+  <div class="fig chart">
+<svg class="wide" viewBox="0 0 1000 362" role="img" aria-label="success@5 per category for today, S1, the S1–S3 proxy and the offline hybrid"><g font-family="ui-monospace, Menlo, monospace"><text x="10" y="17" fill="#EFE9DA" font-size="13" font-weight="600">exact (n=11)</text>
+<g><title>today: success@5 1.00 (exact)</title>
+<rect x="10" y="25" width="256.0" height="11" rx="2" fill="#6B6F8A"/>
+<text x="271.0" y="34.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S1 any word: success@5 1.00 (exact)</title>
+<rect x="10" y="39" width="256.0" height="11" rx="2" fill="#3987e5"/>
+<text x="271.0" y="48.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (exact)</title>
+<rect x="10" y="53" width="256.0" height="11" rx="2" fill="#199e70"/>
+<text x="271.0" y="62.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (exact)</title>
+<rect x="10" y="67" width="256.0" height="11" rx="2" fill="#d95926"/>
+<text x="271.0" y="76.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<text x="10" y="105" fill="#EFE9DA" font-size="13" font-weight="600">paraphrase (n=11)</text>
+<g><title>today: success@5 0.00 (paraphrase)</title>
+<rect x="10" y="113" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="122.5" fill="#B7B4C6" font-size="11">0.00</text></g>
+<g><title>S1 any word: success@5 0.55 (paraphrase)</title>
+<rect x="10" y="127" width="139.5" height="11" rx="2" fill="#3987e5"/>
+<text x="154.5" y="136.5" fill="#B7B4C6" font-size="11">0.55</text></g>
+<g><title>S1–S3 proxy: success@5 0.64 (paraphrase)</title>
+<rect x="10" y="141" width="162.8" height="11" rx="2" fill="#199e70"/>
+<text x="177.8" y="150.5" fill="#B7B4C6" font-size="11">0.64</text></g>
+<g><title>S7 hybrid, offline: success@5 0.82 (paraphrase)</title>
+<rect x="10" y="155" width="209.4" height="11" rx="2" fill="#d95926"/>
+<text x="224.4" y="164.5" fill="#B7B4C6" font-size="11">0.82</text></g>
+<text x="10" y="193" fill="#EFE9DA" font-size="13" font-weight="600">inflection (n=11)</text>
+<g><title>today: success@5 0.00 (inflection)</title>
+<rect x="10" y="201" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="210.5" fill="#B7B4C6" font-size="11">0.00</text></g>
+<g><title>S1 any word: success@5 0.73 (inflection)</title>
+<rect x="10" y="215" width="186.1" height="11" rx="2" fill="#3987e5"/>
+<text x="201.1" y="224.5" fill="#B7B4C6" font-size="11">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 0.91 (inflection)</title>
+<rect x="10" y="229" width="232.7" height="11" rx="2" fill="#199e70"/>
+<text x="247.7" y="238.5" fill="#B7B4C6" font-size="11">0.91</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (inflection)</title>
+<rect x="10" y="243" width="256.0" height="11" rx="2" fill="#d95926"/>
+<text x="271.0" y="252.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<text x="10" y="281" fill="#EFE9DA" font-size="13" font-weight="600">partial (n=11)</text>
+<g><title>today: success@5 0.00 (partial)</title>
+<rect x="10" y="289" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="298.5" fill="#B7B4C6" font-size="11">0.00</text></g>
+<g><title>S1 any word: success@5 0.64 (partial)</title>
+<rect x="10" y="303" width="162.8" height="11" rx="2" fill="#3987e5"/>
+<text x="177.8" y="312.5" fill="#B7B4C6" font-size="11">0.64</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (partial)</title>
+<rect x="10" y="317" width="256.0" height="11" rx="2" fill="#199e70"/>
+<text x="271.0" y="326.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 0.91 (partial)</title>
+<rect x="10" y="331" width="232.7" height="11" rx="2" fill="#d95926"/>
+<text x="247.7" y="340.5" fill="#B7B4C6" font-size="11">0.91</text></g>
+<text x="345" y="17" fill="#EFE9DA" font-size="13" font-weight="600">typo (n=11)</text>
+<g><title>today: success@5 0.00 (typo)</title>
+<rect x="345" y="25" width="2" height="11" fill="#6B6F8A"/>
+<text x="350.0" y="34.5" fill="#B7B4C6" font-size="11">0.00</text></g>
+<g><title>S1 any word: success@5 0.82 (typo)</title>
+<rect x="345" y="39" width="209.4" height="11" rx="2" fill="#3987e5"/>
+<text x="559.4" y="48.5" fill="#B7B4C6" font-size="11">0.82</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (typo)</title>
+<rect x="345" y="53" width="256.0" height="11" rx="2" fill="#199e70"/>
+<text x="606.0" y="62.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (typo)</title>
+<rect x="345" y="67" width="256.0" height="11" rx="2" fill="#d95926"/>
+<text x="606.0" y="76.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<text x="345" y="105" fill="#EFE9DA" font-size="13" font-weight="600">identifier (n=11)</text>
+<g><title>today: success@5 0.73 (identifier)</title>
+<rect x="345" y="113" width="186.1" height="11" rx="2" fill="#6B6F8A"/>
+<text x="536.1" y="122.5" fill="#B7B4C6" font-size="11">0.73</text></g>
+<g><title>S1 any word: success@5 0.73 (identifier)</title>
+<rect x="345" y="127" width="186.1" height="11" rx="2" fill="#3987e5"/>
+<text x="536.1" y="136.5" fill="#B7B4C6" font-size="11">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (identifier)</title>
+<rect x="345" y="141" width="256.0" height="11" rx="2" fill="#199e70"/>
+<text x="606.0" y="150.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (identifier)</title>
+<rect x="345" y="155" width="256.0" height="11" rx="2" fill="#d95926"/>
+<text x="606.0" y="164.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<text x="345" y="193" fill="#EFE9DA" font-size="13" font-weight="600">question (n=11)</text>
+<g><title>today: success@5 0.00 (question)</title>
+<rect x="345" y="201" width="2" height="11" fill="#6B6F8A"/>
+<text x="350.0" y="210.5" fill="#B7B4C6" font-size="11">0.00</text></g>
+<g><title>S1 any word: success@5 0.73 (question)</title>
+<rect x="345" y="215" width="186.1" height="11" rx="2" fill="#3987e5"/>
+<text x="536.1" y="224.5" fill="#B7B4C6" font-size="11">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 0.91 (question)</title>
+<rect x="345" y="229" width="232.7" height="11" rx="2" fill="#199e70"/>
+<text x="582.7" y="238.5" fill="#B7B4C6" font-size="11">0.91</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (question)</title>
+<rect x="345" y="243" width="256.0" height="11" rx="2" fill="#d95926"/>
+<text x="606.0" y="252.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<text x="345" y="281" fill="#EFE9DA" font-size="13" font-weight="600">long (n=11)</text>
+<g><title>today: success@5 0.00 (long)</title>
+<rect x="345" y="289" width="2" height="11" fill="#6B6F8A"/>
+<text x="350.0" y="298.5" fill="#B7B4C6" font-size="11">0.00</text></g>
+<g><title>S1 any word: success@5 0.64 (long)</title>
+<rect x="345" y="303" width="162.8" height="11" rx="2" fill="#3987e5"/>
+<text x="512.8" y="312.5" fill="#B7B4C6" font-size="11">0.64</text></g>
+<g><title>S1–S3 proxy: success@5 0.91 (long)</title>
+<rect x="345" y="317" width="232.7" height="11" rx="2" fill="#199e70"/>
+<text x="582.7" y="326.5" fill="#B7B4C6" font-size="11">0.91</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (long)</title>
+<rect x="345" y="331" width="256.0" height="11" rx="2" fill="#d95926"/>
+<text x="606.0" y="340.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<text x="680" y="17" fill="#EFE9DA" font-size="13" font-weight="600">negation (n=11)</text>
+<g><title>today: success@5 0.18 (negation)</title>
+<rect x="680" y="25" width="46.6" height="11" rx="2" fill="#6B6F8A"/>
+<text x="731.6" y="34.5" fill="#B7B4C6" font-size="11">0.18</text></g>
+<g><title>S1 any word: success@5 1.00 (negation)</title>
+<rect x="680" y="39" width="256.0" height="11" rx="2" fill="#3987e5"/>
+<text x="941.0" y="48.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (negation)</title>
+<rect x="680" y="53" width="256.0" height="11" rx="2" fill="#199e70"/>
+<text x="941.0" y="62.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (negation)</title>
+<rect x="680" y="67" width="256.0" height="11" rx="2" fill="#d95926"/>
+<text x="941.0" y="76.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<text x="680" y="105" fill="#EFE9DA" font-size="13" font-weight="600">temporal (n=11)</text>
+<g><title>today: success@5 0.00 (temporal)</title>
+<rect x="680" y="113" width="2" height="11" fill="#6B6F8A"/>
+<text x="685.0" y="122.5" fill="#B7B4C6" font-size="11">0.00</text></g>
+<g><title>S1 any word: success@5 0.73 (temporal)</title>
+<rect x="680" y="127" width="186.1" height="11" rx="2" fill="#3987e5"/>
+<text x="871.1" y="136.5" fill="#B7B4C6" font-size="11">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 0.91 (temporal)</title>
+<rect x="680" y="141" width="232.7" height="11" rx="2" fill="#199e70"/>
+<text x="917.7" y="150.5" fill="#B7B4C6" font-size="11">0.91</text></g>
+<g><title>S7 hybrid, offline: success@5 0.91 (temporal)</title>
+<rect x="680" y="155" width="232.7" height="11" rx="2" fill="#d95926"/>
+<text x="917.7" y="164.5" fill="#B7B4C6" font-size="11">0.91</text></g>
+<text x="680" y="193" fill="#EFE9DA" font-size="13" font-weight="600">multihop (n=11)</text>
+<g><title>today: success@5 0.00 (multihop)</title>
+<rect x="680" y="201" width="2" height="11" fill="#6B6F8A"/>
+<text x="685.0" y="210.5" fill="#B7B4C6" font-size="11">0.00</text></g>
+<g><title>S1 any word: success@5 0.46 (multihop)</title>
+<rect x="680" y="215" width="116.5" height="11" rx="2" fill="#3987e5"/>
+<text x="801.5" y="224.5" fill="#B7B4C6" font-size="11">0.46</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (multihop)</title>
+<rect x="680" y="229" width="256.0" height="11" rx="2" fill="#199e70"/>
+<text x="941.0" y="238.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (multihop)</title>
+<rect x="680" y="243" width="256.0" height="11" rx="2" fill="#d95926"/>
+<text x="941.0" y="252.5" fill="#B7B4C6" font-size="11">1.00</text></g>
+<text x="680" y="281" fill="#EFE9DA" font-size="13" font-weight="600">overall (n=121)</text>
+<g><title>today: success@5 0.17 (overall)</title>
+<rect x="680" y="289" width="44.5" height="11" rx="2" fill="#6B6F8A"/>
+<text x="729.5" y="298.5" fill="#B7B4C6" font-size="11">0.17</text></g>
+<g><title>S1 any word: success@5 0.73 (overall)</title>
+<rect x="680" y="303" width="186.1" height="11" rx="2" fill="#3987e5"/>
+<text x="871.1" y="312.5" fill="#B7B4C6" font-size="11">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 0.93 (overall)</title>
+<rect x="680" y="317" width="239.1" height="11" rx="2" fill="#199e70"/>
+<text x="924.1" y="326.5" fill="#B7B4C6" font-size="11">0.93</text></g>
+<g><title>S7 hybrid, offline: success@5 0.97 (overall)</title>
+<rect x="680" y="331" width="247.6" height="11" rx="2" fill="#d95926"/>
+<text x="932.6" y="340.5" fill="#B7B4C6" font-size="11">0.97</text></g></g></svg>
+<svg class="tall" viewBox="0 0 360 1066" role="img" aria-label="success@5 per category for today, S1, the S1–S3 proxy and the offline hybrid"><g font-family="ui-monospace, Menlo, monospace"><text x="10" y="17" fill="#EFE9DA" font-size="15" font-weight="600">exact (n=11)</text>
+<g><title>today: success@5 1.00 (exact)</title>
+<rect x="10" y="25" width="286.0" height="11" rx="2" fill="#6B6F8A"/>
+<text x="301.0" y="34.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S1 any word: success@5 1.00 (exact)</title>
+<rect x="10" y="39" width="286.0" height="11" rx="2" fill="#3987e5"/>
+<text x="301.0" y="48.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (exact)</title>
+<rect x="10" y="53" width="286.0" height="11" rx="2" fill="#199e70"/>
+<text x="301.0" y="62.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (exact)</title>
+<rect x="10" y="67" width="286.0" height="11" rx="2" fill="#d95926"/>
+<text x="301.0" y="76.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<text x="10" y="105" fill="#EFE9DA" font-size="15" font-weight="600">paraphrase (n=11)</text>
+<g><title>today: success@5 0.00 (paraphrase)</title>
+<rect x="10" y="113" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="122.5" fill="#B7B4C6" font-size="13">0.00</text></g>
+<g><title>S1 any word: success@5 0.55 (paraphrase)</title>
+<rect x="10" y="127" width="155.9" height="11" rx="2" fill="#3987e5"/>
+<text x="170.9" y="136.5" fill="#B7B4C6" font-size="13">0.55</text></g>
+<g><title>S1–S3 proxy: success@5 0.64 (paraphrase)</title>
+<rect x="10" y="141" width="181.9" height="11" rx="2" fill="#199e70"/>
+<text x="196.9" y="150.5" fill="#B7B4C6" font-size="13">0.64</text></g>
+<g><title>S7 hybrid, offline: success@5 0.82 (paraphrase)</title>
+<rect x="10" y="155" width="233.9" height="11" rx="2" fill="#d95926"/>
+<text x="248.9" y="164.5" fill="#B7B4C6" font-size="13">0.82</text></g>
+<text x="10" y="193" fill="#EFE9DA" font-size="15" font-weight="600">inflection (n=11)</text>
+<g><title>today: success@5 0.00 (inflection)</title>
+<rect x="10" y="201" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="210.5" fill="#B7B4C6" font-size="13">0.00</text></g>
+<g><title>S1 any word: success@5 0.73 (inflection)</title>
+<rect x="10" y="215" width="207.9" height="11" rx="2" fill="#3987e5"/>
+<text x="222.9" y="224.5" fill="#B7B4C6" font-size="13">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 0.91 (inflection)</title>
+<rect x="10" y="229" width="260.0" height="11" rx="2" fill="#199e70"/>
+<text x="275.0" y="238.5" fill="#B7B4C6" font-size="13">0.91</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (inflection)</title>
+<rect x="10" y="243" width="286.0" height="11" rx="2" fill="#d95926"/>
+<text x="301.0" y="252.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<text x="10" y="281" fill="#EFE9DA" font-size="15" font-weight="600">partial (n=11)</text>
+<g><title>today: success@5 0.00 (partial)</title>
+<rect x="10" y="289" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="298.5" fill="#B7B4C6" font-size="13">0.00</text></g>
+<g><title>S1 any word: success@5 0.64 (partial)</title>
+<rect x="10" y="303" width="181.9" height="11" rx="2" fill="#3987e5"/>
+<text x="196.9" y="312.5" fill="#B7B4C6" font-size="13">0.64</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (partial)</title>
+<rect x="10" y="317" width="286.0" height="11" rx="2" fill="#199e70"/>
+<text x="301.0" y="326.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 0.91 (partial)</title>
+<rect x="10" y="331" width="260.0" height="11" rx="2" fill="#d95926"/>
+<text x="275.0" y="340.5" fill="#B7B4C6" font-size="13">0.91</text></g>
+<text x="10" y="369" fill="#EFE9DA" font-size="15" font-weight="600">typo (n=11)</text>
+<g><title>today: success@5 0.00 (typo)</title>
+<rect x="10" y="377" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="386.5" fill="#B7B4C6" font-size="13">0.00</text></g>
+<g><title>S1 any word: success@5 0.82 (typo)</title>
+<rect x="10" y="391" width="233.9" height="11" rx="2" fill="#3987e5"/>
+<text x="248.9" y="400.5" fill="#B7B4C6" font-size="13">0.82</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (typo)</title>
+<rect x="10" y="405" width="286.0" height="11" rx="2" fill="#199e70"/>
+<text x="301.0" y="414.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (typo)</title>
+<rect x="10" y="419" width="286.0" height="11" rx="2" fill="#d95926"/>
+<text x="301.0" y="428.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<text x="10" y="457" fill="#EFE9DA" font-size="15" font-weight="600">identifier (n=11)</text>
+<g><title>today: success@5 0.73 (identifier)</title>
+<rect x="10" y="465" width="207.9" height="11" rx="2" fill="#6B6F8A"/>
+<text x="222.9" y="474.5" fill="#B7B4C6" font-size="13">0.73</text></g>
+<g><title>S1 any word: success@5 0.73 (identifier)</title>
+<rect x="10" y="479" width="207.9" height="11" rx="2" fill="#3987e5"/>
+<text x="222.9" y="488.5" fill="#B7B4C6" font-size="13">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (identifier)</title>
+<rect x="10" y="493" width="286.0" height="11" rx="2" fill="#199e70"/>
+<text x="301.0" y="502.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (identifier)</title>
+<rect x="10" y="507" width="286.0" height="11" rx="2" fill="#d95926"/>
+<text x="301.0" y="516.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<text x="10" y="545" fill="#EFE9DA" font-size="15" font-weight="600">question (n=11)</text>
+<g><title>today: success@5 0.00 (question)</title>
+<rect x="10" y="553" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="562.5" fill="#B7B4C6" font-size="13">0.00</text></g>
+<g><title>S1 any word: success@5 0.73 (question)</title>
+<rect x="10" y="567" width="207.9" height="11" rx="2" fill="#3987e5"/>
+<text x="222.9" y="576.5" fill="#B7B4C6" font-size="13">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 0.91 (question)</title>
+<rect x="10" y="581" width="260.0" height="11" rx="2" fill="#199e70"/>
+<text x="275.0" y="590.5" fill="#B7B4C6" font-size="13">0.91</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (question)</title>
+<rect x="10" y="595" width="286.0" height="11" rx="2" fill="#d95926"/>
+<text x="301.0" y="604.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<text x="10" y="633" fill="#EFE9DA" font-size="15" font-weight="600">long (n=11)</text>
+<g><title>today: success@5 0.00 (long)</title>
+<rect x="10" y="641" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="650.5" fill="#B7B4C6" font-size="13">0.00</text></g>
+<g><title>S1 any word: success@5 0.64 (long)</title>
+<rect x="10" y="655" width="181.9" height="11" rx="2" fill="#3987e5"/>
+<text x="196.9" y="664.5" fill="#B7B4C6" font-size="13">0.64</text></g>
+<g><title>S1–S3 proxy: success@5 0.91 (long)</title>
+<rect x="10" y="669" width="260.0" height="11" rx="2" fill="#199e70"/>
+<text x="275.0" y="678.5" fill="#B7B4C6" font-size="13">0.91</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (long)</title>
+<rect x="10" y="683" width="286.0" height="11" rx="2" fill="#d95926"/>
+<text x="301.0" y="692.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<text x="10" y="721" fill="#EFE9DA" font-size="15" font-weight="600">negation (n=11)</text>
+<g><title>today: success@5 0.18 (negation)</title>
+<rect x="10" y="729" width="52.1" height="11" rx="2" fill="#6B6F8A"/>
+<text x="67.1" y="738.5" fill="#B7B4C6" font-size="13">0.18</text></g>
+<g><title>S1 any word: success@5 1.00 (negation)</title>
+<rect x="10" y="743" width="286.0" height="11" rx="2" fill="#3987e5"/>
+<text x="301.0" y="752.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (negation)</title>
+<rect x="10" y="757" width="286.0" height="11" rx="2" fill="#199e70"/>
+<text x="301.0" y="766.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (negation)</title>
+<rect x="10" y="771" width="286.0" height="11" rx="2" fill="#d95926"/>
+<text x="301.0" y="780.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<text x="10" y="809" fill="#EFE9DA" font-size="15" font-weight="600">temporal (n=11)</text>
+<g><title>today: success@5 0.00 (temporal)</title>
+<rect x="10" y="817" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="826.5" fill="#B7B4C6" font-size="13">0.00</text></g>
+<g><title>S1 any word: success@5 0.73 (temporal)</title>
+<rect x="10" y="831" width="207.9" height="11" rx="2" fill="#3987e5"/>
+<text x="222.9" y="840.5" fill="#B7B4C6" font-size="13">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 0.91 (temporal)</title>
+<rect x="10" y="845" width="260.0" height="11" rx="2" fill="#199e70"/>
+<text x="275.0" y="854.5" fill="#B7B4C6" font-size="13">0.91</text></g>
+<g><title>S7 hybrid, offline: success@5 0.91 (temporal)</title>
+<rect x="10" y="859" width="260.0" height="11" rx="2" fill="#d95926"/>
+<text x="275.0" y="868.5" fill="#B7B4C6" font-size="13">0.91</text></g>
+<text x="10" y="897" fill="#EFE9DA" font-size="15" font-weight="600">multihop (n=11)</text>
+<g><title>today: success@5 0.00 (multihop)</title>
+<rect x="10" y="905" width="2" height="11" fill="#6B6F8A"/>
+<text x="15.0" y="914.5" fill="#B7B4C6" font-size="13">0.00</text></g>
+<g><title>S1 any word: success@5 0.46 (multihop)</title>
+<rect x="10" y="919" width="130.1" height="11" rx="2" fill="#3987e5"/>
+<text x="145.1" y="928.5" fill="#B7B4C6" font-size="13">0.46</text></g>
+<g><title>S1–S3 proxy: success@5 1.00 (multihop)</title>
+<rect x="10" y="933" width="286.0" height="11" rx="2" fill="#199e70"/>
+<text x="301.0" y="942.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<g><title>S7 hybrid, offline: success@5 1.00 (multihop)</title>
+<rect x="10" y="947" width="286.0" height="11" rx="2" fill="#d95926"/>
+<text x="301.0" y="956.5" fill="#B7B4C6" font-size="13">1.00</text></g>
+<text x="10" y="985" fill="#EFE9DA" font-size="15" font-weight="600">overall (n=121)</text>
+<g><title>today: success@5 0.17 (overall)</title>
+<rect x="10" y="993" width="49.8" height="11" rx="2" fill="#6B6F8A"/>
+<text x="64.8" y="1002.5" fill="#B7B4C6" font-size="13">0.17</text></g>
+<g><title>S1 any word: success@5 0.73 (overall)</title>
+<rect x="10" y="1007" width="207.9" height="11" rx="2" fill="#3987e5"/>
+<text x="222.9" y="1016.5" fill="#B7B4C6" font-size="13">0.73</text></g>
+<g><title>S1–S3 proxy: success@5 0.93 (overall)</title>
+<rect x="10" y="1021" width="267.1" height="11" rx="2" fill="#199e70"/>
+<text x="282.1" y="1030.5" fill="#B7B4C6" font-size="13">0.93</text></g>
+<g><title>S7 hybrid, offline: success@5 0.97 (overall)</title>
+<rect x="10" y="1035" width="276.6" height="11" rx="2" fill="#d95926"/>
+<text x="291.6" y="1044.5" fill="#B7B4C6" font-size="13">0.97</text></g></g></svg>
+    <div class="legend"><span><i style="background:#6B6F8A"></i>today (served)</span><span><i style="background:#3987e5"></i>S1 any word</span><span><i style="background:#199e70"></i>S1–S3 proxy: english + trigram</span><span><i style="background:#d95926"></i>S7 hybrid, offline</span></div>
+  </div>
+  <h3 style="margin:28px 0 8px">Every method, overall</h3>
+  <div class="two">
+    <div class="fig chart one-wrap">
+<svg class="one" viewBox="0 0 330 352" role="img" aria-label="overall success@5 and success@1 per method"><g font-family="ui-monospace, Menlo, monospace"><g><title>served today: success@5 0.17, success@1 0.17 (measured)</title><text x="0" y="19" fill="#B7B4C6" font-size="13">served today</text><rect x="0" y="24" width="34.8" height="9" rx="2" fill="#6B6F8A"/><rect x="32.8" y="21" width="2" height="15" fill="#EFE9DA"/><text x="40.8" y="33" fill="#EFE9DA" font-size="13">0.17</text><text x="78.8" y="33" fill="#8C8FA8" font-size="12">@1 0.17</text></g>
+<g><title>served, stop words dropped: success@5 0.24, success@1 0.24 (measured)</title><text x="0" y="53" fill="#B7B4C6" font-size="13">served, stop words dropped</text><rect x="0" y="58" width="48.0" height="9" rx="2" fill="#6B6F8A"/><rect x="46.0" y="55" width="2" height="15" fill="#EFE9DA"/><text x="54.0" y="67" fill="#EFE9DA" font-size="13">0.24</text><text x="92.0" y="67" fill="#8C8FA8" font-size="12">@1 0.24</text></g>
+<g><title>S1 any word: success@5 0.73, success@1 0.49 (measured)</title><text x="0" y="87" fill="#B7B4C6" font-size="13">S1 any word</text><rect x="0" y="92" width="145.4" height="9" rx="2" fill="#3987e5"/><rect x="95.6" y="89" width="2" height="15" fill="#EFE9DA"/><text x="151.4" y="101" fill="#EFE9DA" font-size="13">0.73</text><text x="189.4" y="101" fill="#8C8FA8" font-size="12">@1 0.49</text></g>
+<g><title>+ stemming (S2 part): success@5 0.86, success@1 0.67 (measured)</title><text x="0" y="121" fill="#B7B4C6" font-size="13">+ stemming (S2 part)</text><rect x="0" y="126" width="172.0" height="9" rx="2" fill="#3987e5"/><rect x="131.8" y="123" width="2" height="15" fill="#EFE9DA"/><text x="178.0" y="135" fill="#EFE9DA" font-size="13">0.86</text><text x="216.0" y="135" fill="#8C8FA8" font-size="12">@1 0.67</text></g>
+<g><title>+ trigram (S1–S3 proxy): success@5 0.93, success@1 0.75 (measured)</title><text x="0" y="155" fill="#B7B4C6" font-size="13">+ trigram (S1–S3 proxy)</text><rect x="0" y="160" width="186.8" height="9" rx="2" fill="#3987e5"/><rect x="148.4" y="157" width="2" height="15" fill="#EFE9DA"/><text x="192.8" y="169" fill="#EFE9DA" font-size="13">0.93</text><text x="230.8" y="169" fill="#8C8FA8" font-size="12">@1 0.75</text></g>
+<g><title>BM25 baseline (S2 target): success@5 0.92, success@1 0.79 (measured)</title><text x="0" y="189" fill="#B7B4C6" font-size="13">BM25 baseline (S2 target)</text><rect x="0" y="194" width="183.4" height="9" rx="2" fill="#3987e5"/><rect x="155.0" y="191" width="2" height="15" fill="#EFE9DA"/><text x="189.4" y="203" fill="#EFE9DA" font-size="13">0.92</text><text x="227.4" y="203" fill="#8C8FA8" font-size="12">@1 0.79</text></g>
+<g><title>BM25 top 50 + reranker (S6): success@5 0.94, success@1 0.88 (scratch)</title><text x="0" y="223" fill="#B7B4C6" font-size="13">BM25 top 50 + reranker (S6) *</text><rect x="0" y="228" width="188.0" height="9" rx="2" fill="#3987e5"/><rect x="174.0" y="225" width="2" height="15" fill="#EFE9DA"/><text x="194.0" y="237" fill="#EFE9DA" font-size="13">0.94</text><text x="232.0" y="237" fill="#8C8FA8" font-size="12">@1 0.88</text></g>
+<g><title>dense, bge-small: success@5 0.95, success@1 0.79 (measured)</title><text x="0" y="257" fill="#B7B4C6" font-size="13">dense, bge-small</text><rect x="0" y="262" width="190.0" height="9" rx="2" fill="#3987e5"/><rect x="156.6" y="259" width="2" height="15" fill="#EFE9DA"/><text x="196.0" y="271" fill="#EFE9DA" font-size="13">0.95</text><text x="234.0" y="271" fill="#8C8FA8" font-size="12">@1 0.79</text></g>
+<g><title>hybrid BM25 + dense (S7): success@5 0.97, success@1 0.79 (measured)</title><text x="0" y="291" fill="#B7B4C6" font-size="13">hybrid BM25 + dense (S7)</text><rect x="0" y="296" width="193.4" height="9" rx="2" fill="#3987e5"/><rect x="155.0" y="293" width="2" height="15" fill="#EFE9DA"/><text x="199.4" y="305" fill="#EFE9DA" font-size="13">0.97</text><text x="237.4" y="305" fill="#8C8FA8" font-size="12">@1 0.79</text></g>
+<g><title>hybrid top 50 + reranker: success@5 0.98, success@1 0.89 (scratch)</title><text x="0" y="325" fill="#B7B4C6" font-size="13">hybrid top 50 + reranker *</text><rect x="0" y="330" width="196.0" height="9" rx="2" fill="#3987e5"/><rect x="176.0" y="327" width="2" height="15" fill="#EFE9DA"/><text x="202.0" y="339" fill="#EFE9DA" font-size="13">0.98</text><text x="240.0" y="339" fill="#8C8FA8" font-size="12">@1 0.89</text></g></g></svg>
+      <div class="legend"><span><i style="background:#3987e5"></i>success@5 (bar)</span><span><i style="background:#EFE9DA;border-radius:0;width:3px"></i>success@1 (tick)</span></div>
+    </div>
+    <div>
+      <p class="sub" style="margin:0 0 10px">Bootstrap 95% intervals for success@5: english any-word 0.80–0.92, with trigram 0.88–0.98, BM25 0.87–0.96, hybrid 0.93–0.99.</p>
+      <p class="sub" style="margin:0 0 10px">* The two reranker rows were measured once in scratch for ADR-0048 (cross-encoder <code>ms-marco-MiniLM-L-6-v2</code>, 8-core CPU, 33–176 ms median per query) and are not in the eval's committed results.</p>
+      <p class="sub" style="margin:0">Latency: served recall 14.4 ms median, 18.7 ms p95, end to end on 200 rows. The other methods' latencies are not comparable with it.</p>
+    </div>
+  </div>
+</section>
+
+<section id="roadmap">
+  <p class="label">ADR-0048 d1</p>
+  <h2>The stages and their gates</h2>
+  <p class="sub">Each stage is its own decision. It ships when its served form passes its gate on the eval in CI, with no category falling by more than one query and inside the latency budget.</p>
+  <ol class="stages">
+    <li class="st go"><span class="sn">S1</span><div><b>Any word</b> on today's index; <code>match: all</code> with a flagged fallback; the test store and PostgreSQL agree.<p class="g">0.17 → 0.73 measured · gate ≥ 0.70, zero results ≤ 0.05 · v0.5.3</p></div></li>
+    <li class="st go"><span class="sn">S2</span><div><b>Tokens and rarity:</b> identifier splitting, <code>simple</code> beside <code>english</code>, BM25-class weights over the readable rows.<p class="g">→ 0.86–0.92 · gate ≥ 0.86, success@1 ≥ 0.67 · v0.5.3</p></div></li>
+    <li class="st go"><span class="sn">S3</span><div><b>Typos and fragments:</b> trigrams fused by reciprocal rank; did you mean.<p class="g">→ 0.93 measured · gate ≥ 0.92 · v0.5.3</p></div></li>
+    <li class="st wait"><span class="sn">S4</span><div><b>Structure:</b> filters inside the scan, time windows, supersession for “latest”.<p class="g">unmeasured · gate: eval v2's filter and supersession queries · with ADR-0047</p></div></li>
+    <li class="st wait"><span class="sn">S5</span><div><b>Keywords at write</b>, authored and reviewed with the text.<p class="g">unmeasured · gate: paraphrase rises on eval v2 · not assigned</p></div></li>
+    <li class="st wait"><span class="sn">S6</span><div><b>Reranker</b>, off the shelf, top 50, opt-in until it fits the latency budget.<p class="g">0.92 → 0.94, @1 0.79 → 0.88 in scratch · gate: FR-85's latency · not assigned</p></div></li>
+    <li class="st wait"><span class="sn">S7</span><div><b>Meaning:</b> embeddings fused with the keyword lists.<p class="g">0.93 → 0.97 offline · gate: a paraphrase gap left after S1–S6, ≥ 30 queries · not assigned</p></div></li>
+    <li class="st no"><span class="sn">×</span><div><b>Not taken:</b> graph retrieval, a hosted query rewriter, a generative answerer, fine-tuning.<p class="g">revisit on the conditions ADR-0048 names</p></div></li>
+  </ol>
+  <div class="fig" style="margin-top:16px">
+    <p class="label" style="margin:0 0 8px">What holds at every stage</p>
+    <p style="margin:0;color:var(--ink-dim);font-size:15px">Only rows the key may read are ranked, and rarity is counted over them alone. A held row is a candidate only for its author or inside an in-progress workarea, scored as if promoted. No ranking term reads a verdict. Steering comes first, unranked. Three MCP tools, and <code>search: keyword</code> returns today's results exactly.</p>
+  </div>
+</section>
+</main>
+<footer><div class="wrap">Open Memory Lab · design mockups for proposed ADR-0048 · 2026-11-04 · query rankings and eval numbers measured; fields and layouts illustrative</div></footer>
+</body>
+</html>

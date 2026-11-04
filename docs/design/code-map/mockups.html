@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Project knowledge and hybrid search — mockups</title>
-<meta name="description" content="Design mockups for the proposed ADR-0047 (project knowledge and a code skeleton that follow the development lifecycle) and ADR-0048 (hybrid search).">
+<meta name="description" content="Design mockups for the proposed ADR-0047 (project knowledge and a code skeleton that follow the development lifecycle) and ADR-0048 (search in stages; hybrid is its last).">
 <meta name="theme-color" content="#0A0D22">
 <style>
 :root {
@@ -226,7 +226,7 @@ footer { border-top: 1px solid var(--rule-soft); padding: 24px 0 40px; color: va
 
 <span class="you">› The lead refuses to start after the role split. Fix it.</span>
 
-<span class="p">●</span> oml_read <span class="c">{"query":"lead refuses start role split","mode":"hybrid","kinds":["code"],"workareas":["alice.open-memory-lab","alice.open-memory-lab-b-fix-lead-boot-3c1f2aa"]}</span>
+<span class="p">●</span> oml_read <span class="c">{"query":"lead refuses start role split","search":"hybrid","kinds":["code"],"workareas":["alice.open-memory-lab","alice.open-memory-lab-b-fix-lead-boot-3c1f2aa"]}</span>
   <span class="o">2 hits</span> · #1 <span class="c">keyword 1 · semantic 1</span> "One URL for both roles is refused at startup as postgres.role_split…"
 <span class="p">●</span> Read crates/bins/oml-server-lead/src/config.rs
 <span class="p">●</span> Edit crates/bins/oml-server-lead/src/config.rs  <span class="c">(+9 −3)</span>
@@ -315,18 +315,18 @@ transition ......... development → committed
 </section>
 
 <section id="search">
-  <p class="label">ADR-0048 d1, d5, d6</p>
-  <h2>Hybrid search: filters, then keywords and meaning, fused</h2>
+  <p class="label">ADR-0048 S7: d8, d9, d10 · <a href="../search/mockups.html">the staged search mockups</a></p>
+  <h2>Hybrid search, the last stage: filters, then keywords and meaning, fused</h2>
   <p class="sub">The filters decide what may be a candidate before anything is ranked. Each hit says which list found it and at what rank. No score is shown, because scores from different lists do not compare.</p>
   <div class="fig">
     <p class="label" style="margin:0 0 8px">oml_read · recall</p>
     <p style="margin:0 0 10px;font-family:var(--mono);font-size:14px">“server won't boot after splitting the database roles”</p>
-    <div class="filters"><span class="chip">mode <b>hybrid</b></span><span class="chip">kinds <b>code, memory</b></span><span class="chip">workareas <b>2</b></span><span class="chip">anchor_repo <b>open-memory-lab</b></span><span class="chip">k <b>5</b></span><span class="chip">max_tokens <b>600</b></span></div>
+    <div class="filters"><span class="chip">search <b>hybrid</b></span><span class="chip">kinds <b>code, memory</b></span><span class="chip">workareas <b>2</b></span><span class="chip">anchor_repo <b>open-memory-lab</b></span><span class="chip">k <b>5</b></span><span class="chip">max_tokens <b>600</b></span></div>
     <div class="hit"><span class="n">#1</span><div><p>One URL for both roles is refused at startup as <code>postgres.role_split</code>; set <code>postgres.owner_url</code> for migrations.</p><div class="why"><span class="kw">keyword 2</span><span class="se">semantic 1</span><span class="an">anchor config.rs</span><span>promoted</span></div></div></div>
     <div class="hit"><span class="n">#2</span><div><p>postgres.owner_url must point at the same database as postgres.url; a different database name fails at the first migration.</p><div class="why"><span class="se">semantic 2</span><span class="an">anchor config.rs#Config::validate</span><span style="color:var(--star)">held · this branch</span></div></div></div>
     <div class="hit"><span class="n">#3</span><div><p>After the live host's role split of 2026-11-03, the serving role needs CONNECT on the database.</p><div class="why"><span class="kw">keyword 1</span><span class="se">semantic 4</span><span>memory · operational</span><span>promoted</span></div></div></div>
     <div class="hit"><span class="n">#4</span><div><p>Lead startup order: fork check, migrations as owner, then serve as the role that owns nothing.</p><div class="why"><span class="se">semantic 3</span><span>code · skeleton</span><span>promoted</span></div></div></div>
-    <p class="note">Hit #2 is held: it is served only because this key reads the branch's in-progress workarea, and it ranks where it would rank once promoted. With <code>mode: keyword</code>, hits #2 and #4 would not appear: their words differ from the query's.</p>
+    <p class="note">Hit #2 is held: it is served only because this key reads the branch's in-progress workarea, and it ranks where it would rank once promoted. With <code>search: keyword</code>, hits #2 and #4 would not appear: their words differ from the query's.</p>
   </div>
 </section>
 
