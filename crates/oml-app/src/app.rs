@@ -2494,6 +2494,35 @@ where
         })
     }
 
+    /// The user root of `user`, admin by key role: the root's record when a
+    /// user root holds the name, `None` when no workarea of the shared
+    /// namespace does. A shared workarea holding the name is `name.taken`,
+    /// as an issuance naming that user would be. It journals nothing; only
+    /// the issuance of the first key naming a user creates its root
+    /// (ADR-0044 d1, d2).
+    pub async fn user_root(
+        &self,
+        api_key: &str,
+        user: &Name,
+    ) -> Result<Option<WorkareaRecord>, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "user_root")?;
+        let Some(id) = self
+            .journal
+            .resolve_name(admin.tenant_id, NamedKind::Workarea, user)
+            .await?
+        else {
+            return Ok(None);
+        };
+        match self.journal.workarea(admin.tenant_id, id).await? {
+            Some(root) if root.user_root => Ok(Some(root)),
+            _ => Err(AppError::NameTaken {
+                kind: NamedKind::Workarea,
+                name: user.clone(),
+            }),
+        }
+    }
+
     /// The calling key's own record, which any live key reads, whatever its
     /// role: its row, its tenant, its default workarea with its derived path
     /// and its crew record, each by id and name, and its stored grants. It

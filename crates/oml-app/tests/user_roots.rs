@@ -1137,3 +1137,32 @@ async fn whoami_and_the_key_read_serve_the_users_root() {
     let admin = app.whoami(&boot.admin_key.value).await.expect("whoami");
     assert_eq!(admin.user, None);
 }
+
+#[tokio::test]
+async fn an_admin_reads_a_users_root_by_the_users_name_and_creates_none() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    assert_eq!(
+        app.user_root(admin, &name("alice")).await.expect("read"),
+        None
+    );
+    app.create_workarea(admin, &name("crew"), Some(by_name("universe")), None)
+        .await
+        .expect("a shared workarea");
+    assert!(matches!(
+        app.user_root(admin, &name("crew")).await,
+        Err(AppError::NameTaken { .. })
+    ));
+    let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let root = app
+        .user_root(admin, &name("alice"))
+        .await
+        .expect("read")
+        .expect("the root the first key created");
+    assert_eq!(Some(root.workarea_id), alice.user.map(|u| u.id));
+    assert!(matches!(
+        app.user_root(&alice.value, &name("alice")).await,
+        Err(AppError::VerbCeiling { .. })
+    ));
+}
