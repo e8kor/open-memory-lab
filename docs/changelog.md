@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design and 0.5.1-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design and 0.5.2-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.1-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.2-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,137 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.5.2-design
+
+Opened for release v0.5.2, which carries this revision: the workarea lifecycle, labelled links
+between memories and the workarea brief
+([ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)).
+`info.version` moved to `0.5.2-design` once, at the release: the lab ring gained the transition
+routes, the `/v2/edges` family for `kind` claim and brief, and the workarea read's `policy`,
+`pending_transitions` and `brief`. The entries below were kept apart until this release, newest
+first.
+
+### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.2, and the spec is 0.5.2-design
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.2; every reader page fetches the
+installer at `v0.5.2`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents move to `0.5.2-design`.
+
+### 2026-11-04 — v0.5.2 rebased onto v0.5.0 and v0.5.1, with the user-root rules wired (implementation)
+
+The v0.5.2 work is rebased onto release 0.5.0 (ADR-0044's user roots and ADR-0045's web pages)
+and then onto release 0.5.1 (guardrails, migration 0016), its migrations kept at 0017 to 0019.
+The brief prints in the session-start context, before the steering, and the guardrails in their
+own frame from their own hook, as ADR-0037 has them.
+[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2 and d5 now read what v0.5.0 stores. `info.version` does not move.
+
+- **A user root climbs to `committed` at most** (d1): `workarea.transition_refused` with reason
+  `user_root` on a proposal or ratification of `validated`.
+- **`same_user`** (d2) on `workarea.status_transition` and a claim or brief edge's `review.ratify`
+  is `true` when the proposing key's `user`, read from its key row, is the ratifier's.
+- **No user-key edge into `universe`** (d5): a claim edge with an endpoint in `universe`, or a
+  brief edge whose claim or workarea is `universe`, is `access.grant_refused` with `needed_role:
+  dreamer` from a user key, and nothing is journalled.
+- **Rebase fixes.** A narrowed dreamer grant reaches a node grant's node alone, as every grant
+  does under ADR-0044 d4; the pre-users migration fixture stores the root `committed`, as every
+  build did, which 0017's `workareas_universe_committed` holds.
+- **Not built:** a view of the lifecycle, edges or the brief on the web pages, planned.
+
+### 2026-11-04 — v0.5.2 built: the lifecycle, claim edges and the brief served, ADR-0046's answers recorded (implementation)
+
+The maintainer answered ADR-0046's nine questions on 2026-11-04 by taking each recommendation;
+[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) records them as decisions and stays proposed. The build serves what the replay
+left unrouted. The lab ring's `/v2` contract grows and the provider ring's does not, so
+`info.version` stays `0.4.0-design`.
+
+- **The lifecycle on HTTP and the CLI** (d1–d3). `POST /v2/workareas/{workarea}/transitions` and
+  its ratify route; the workarea read and `oml_workarea` serve `policy` and
+  `pending_transitions`; `oml workareas status propose|ratify|pending`. A user root is refused
+  `validated` with reason `user_root`, and a ratification event carries `same_user`; both read
+  facts ADR-0044 adds, so neither fires on this branch.
+- **Edges** (d4–d6). `GET` and `POST /v2/edges` and `POST /v2/edges/{edge_id}/ratify` for `kind`
+  `claim` and `brief`; `kind: workarea` is refused naming `/kind`. `oml edges
+  propose|ratify|list`. No agent tool proposes an edge.
+- **The brief** (d7–d9). A brief edge joins one promoted claim to one workarea, in
+  `0019_brief_edges.sql`, journalled `brief_edge.proposed` and ratified as `review.ratify` with
+  `subject_kind: "brief_edge"` by a key that did not propose it. The workarea read, `oml_workarea`
+  and the session-start hook serve the ratified members the key reads that are still served
+  tips, in ratification order, cut by `brief.max_tokens` (default 400, unmeasured, FR-77).
+- **Reject in a validated area** (d10): admitted; approve stays refused.
+- **Doctor.** `oml doctor` names an empty brief on the default workarea and the transitions
+  waiting there.
+- **Contract.** The five operations move from `openapi-designed.yaml` to `openapi.yaml`, and both
+  SDKs' generated layers are regenerated from it.
+- **Not built:** workarea edges; the `oml_write` `links` field; the user-root and user-key checks,
+  which wait on ADR-0044's build.
+- **Pages touched:** ADR-0046, the register, [http-api](api/http-api.md),
+  [mcp-plugin](api/mcp-plugin.md), [errors](api/errors.md),
+  [event catalog](data/event-catalog.md), [postgres-schema](data/postgres-schema.md),
+  [configuration](operations/configuration.md), [workareas](architecture/workareas.md),
+  [CLI reference](cli/reference.md), [roadmap](product/roadmap.md) (FR-77),
+  [releases](product/releases.md), [use cases](product/use-cases.md), the use-case call map,
+  [llms.txt](llms.txt) and this page.
+
+### 2026-11-04 — The status ladder and claim edges replayed for v0.5.2, and ADR-0046 proposed (implementation)
+
+An implementation milestone and one proposed record. The status ladder of
+[ADR-0009](adr/ADR-0009-status-ladder.md) and the claim edges of
+[ADR-0008](adr/ADR-0008-workarea-algebra.md) d5 and [ADR-0021](adr/ADR-0021-ai-human-ontologies.md)
+d5, built on two branches before the v0.4.0 rewrite, are replayed onto v0.4.1 on `feat/v0.5.2`
+in the domain, the use cases and the Postgres store. No route, tool or CLI verb serves them, so
+`info.version` stays `0.4.0-design`.
+[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md),
+proposed, reconciles both with the proposed user roots (ADR-0044) and ADR-0039's three tools, and
+leaves the brief and eight other points to the maintainer.
+
+- **The ladder** (ADR-0009 d1, d3, d4). A workarea's status is one stored column; an admin, or a dreamer
+  with dreamer access on the node, proposes one rung forward as a pending `workarea_transitions`
+  row and one `workarea.status_proposed`; a second identity ratifies it as one
+  `workarea.status_transition` carrying the policy snapshot, and the node takes its `to` in that
+  commit. The ratifying transaction re-checks the proposal and the children under the chain lock,
+  so a child created concurrently with a ratification to `validated` leaves either the child or
+  the validated node, never both. Refusals are `workarea.transition_refused` with a reason and
+  `review.ratifier_is_proposer` ([errors](api/errors.md)); the readings are on
+  [workareas](architecture/workareas.md#readings-the-build-takes).
+- **The freeze** (ADR-0009 d5). A `validated` workarea refuses a submit, a supersede, an approval and a
+  child create as `workarea.frozen`, while its crew record stays correctable.
+- **The table** (ADR-0034 d1, d11, d12). Migration `0018_claim_edges.sql` builds `claim_edges` as
+  [postgres-schema](data/postgres-schema.md#claim_edges) states it: pending or ratified, its keys
+  carrying `tenant_id`, R2's key inequality and a ratified row's ratifier as `CHECK`s, row security
+  forced, no `DELETE` granted, not partitioned and with statistics target 0 on every column.
+- **The proposal** (ADR-0008 d5, ADR-0021 d5, ADR-0012). A dreamer key holding reader on both
+  endpoints' workareas, each endpoint in its read scope, and dreamer on at least one, proposes an
+  edge journalled `claim_edge.proposed`; the same commit widens the lineage closure of every
+  version the edge connects, and of each version deriving from one, so R2 counts a pending edge.
+  `oml:about` is refused `request.validation` until classification (ADR-0027) is built, and
+  `oml:replaced_by` and `oml:consider` belong to a deprecation's verdict (ADR-0021 d3).
+- **The ratification** (ADR-0012 R2, ADR-0021 d5). A dreamer key that is not `held_by: service`,
+  holding dreamer on both endpoints' workareas, ratifies a pending edge, journalled `review.ratify`
+  with `subject_kind: "claim_edge"`, `k: 1` and empty `verdict_event_ids`, under a compare-and-set
+  on the pending state. It is refused `review.ratifier_is_proposer` for the proposer's key or
+  principal, `review.author_in_lineage` for a key or principal in either endpoint's closure,
+  `review.serve_invalid` with `details.reason` `consumed` for a decided edge, and
+  `vocab.cycle_refused` for an `oml:is_a` edge closing a cycle; each journals nothing.
+- **The page.** A reader key reads claim edges newest first under a cursor bound to its key and
+  filter, served only when both endpoints are in its read scope; an admin key is refused
+  `access.verb_ceiling`. Neither `claim_edge.*` nor an edge's `review.ratify` reaches the events
+  tail.
+- **Reconciled with v0.4.x** (ADR-0039 d9, ADR-0046 d4). The claim-edge use cases digest their
+  requests as `POST /v2/edges` with `kind: claim` and `POST /v2/edges/{edge_id}/ratify`, the
+  designed family, in place of the branch's `/v2/claim-edges`. One `RatifierIsProposer` refusal
+  covers a transition and an edge. The migrations are renumbered `0017_workarea_transitions.sql`
+  and `0018_claim_edges.sql`, after 0014 and 0015 (v0.5.0) and 0016 (guardrails, v0.5.1).
+- **Not built:** the transition and edge routes, the workarea read's `policy` and
+  `pending_transitions` fields, the CLI verbs, a `rejected` edge state, `oml:about`,
+  reassignment, re-parent, demote, erasure, the simulation fence and the brief. The Postgres
+  end-to-end laws run only where a superuser mints the suites' role pairs, CI's
+  `cargo test (Postgres)`.
+- **Pages touched:** the new record, the [register](adr/index.md), `mkdocs.yml`,
+  [llms.txt](llms.txt), [releases](product/releases.md), [workareas](architecture/workareas.md),
+  [postgres-schema](data/postgres-schema.md), [event catalog](data/event-catalog.md),
+  [errors](api/errors.md), and the pages whose release lines move from v0.5.0 to v0.5.1 or v0.5.2.
 
 ## 0.5.1-design
 
@@ -358,118 +489,6 @@ Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-f
 records. `info.version` moved to `0.4.0-design` with the contract split below; entries landed
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
-
-### 2026-11-04 — v0.5.2 rebased onto v0.5.0, with the user-root rules wired (implementation)
-
-The v0.5.2 work is rebased onto release 0.5.0 (ADR-0044's user roots and ADR-0045's web pages)
-on `feat/v0.5.2-r2`, its migrations kept at 0017 to 0019 with 0016 left to guardrails.
-[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2 and d5 now read what v0.5.0 stores. `info.version` does not move.
-
-- **A user root climbs to `committed` at most** (d1): `workarea.transition_refused` with reason
-  `user_root` on a proposal or ratification of `validated`.
-- **`same_user`** (d2) on `workarea.status_transition` and a claim or brief edge's `review.ratify`
-  is `true` when the proposing key's `user`, read from its key row, is the ratifier's.
-- **No user-key edge into `universe`** (d5): a claim edge with an endpoint in `universe`, or a
-  brief edge whose claim or workarea is `universe`, is `access.grant_refused` with `needed_role:
-  dreamer` from a user key, and nothing is journalled.
-- **Rebase fixes.** A narrowed dreamer grant reaches a node grant's node alone, as every grant
-  does under ADR-0044 d4; the pre-users migration fixture stores the root `committed`, as every
-  build did, which 0017's `workareas_universe_committed` holds.
-- **Not built:** a view of the lifecycle, edges or the brief on the web pages, planned.
-
-### 2026-11-04 — v0.5.2 built: the lifecycle, claim edges and the brief served, ADR-0046's answers recorded (implementation)
-
-The maintainer answered ADR-0046's nine questions on 2026-11-04 by taking each recommendation;
-[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) records them as decisions and stays proposed. The build serves what the replay
-left unrouted. The lab ring's `/v2` contract grows and the provider ring's does not, so
-`info.version` stays `0.4.0-design`.
-
-- **The lifecycle on HTTP and the CLI** (d1–d3). `POST /v2/workareas/{workarea}/transitions` and
-  its ratify route; the workarea read and `oml_workarea` serve `policy` and
-  `pending_transitions`; `oml workareas status propose|ratify|pending`. A user root is refused
-  `validated` with reason `user_root`, and a ratification event carries `same_user`; both read
-  facts ADR-0044 adds, so neither fires on this branch.
-- **Edges** (d4–d6). `GET` and `POST /v2/edges` and `POST /v2/edges/{edge_id}/ratify` for `kind`
-  `claim` and `brief`; `kind: workarea` is refused naming `/kind`. `oml edges
-  propose|ratify|list`. No agent tool proposes an edge.
-- **The brief** (d7–d9). A brief edge joins one promoted claim to one workarea, in
-  `0019_brief_edges.sql`, journalled `brief_edge.proposed` and ratified as `review.ratify` with
-  `subject_kind: "brief_edge"` by a key that did not propose it. The workarea read, `oml_workarea`
-  and the session-start hook serve the ratified members the key reads that are still served
-  tips, in ratification order, cut by `brief.max_tokens` (default 400, unmeasured, FR-77).
-- **Reject in a validated area** (d10): admitted; approve stays refused.
-- **Doctor.** `oml doctor` names an empty brief on the default workarea and the transitions
-  waiting there.
-- **Contract.** The five operations move from `openapi-designed.yaml` to `openapi.yaml`, and both
-  SDKs' generated layers are regenerated from it.
-- **Not built:** workarea edges; the `oml_write` `links` field; the user-root and user-key checks,
-  which wait on ADR-0044's build.
-- **Pages touched:** ADR-0046, the register, [http-api](api/http-api.md),
-  [mcp-plugin](api/mcp-plugin.md), [errors](api/errors.md),
-  [event catalog](data/event-catalog.md), [postgres-schema](data/postgres-schema.md),
-  [configuration](operations/configuration.md), [workareas](architecture/workareas.md),
-  [CLI reference](cli/reference.md), [roadmap](product/roadmap.md) (FR-77),
-  [releases](product/releases.md), [use cases](product/use-cases.md), the use-case call map,
-  [llms.txt](llms.txt) and this page.
-
-### 2026-11-04 — The status ladder and claim edges replayed for v0.5.2, and ADR-0046 proposed (implementation)
-
-An implementation milestone and one proposed record. The status ladder of
-[ADR-0009](adr/ADR-0009-status-ladder.md) and the claim edges of
-[ADR-0008](adr/ADR-0008-workarea-algebra.md) d5 and [ADR-0021](adr/ADR-0021-ai-human-ontologies.md)
-d5, built on two branches before the v0.4.0 rewrite, are replayed onto v0.4.1 on `feat/v0.5.2`
-in the domain, the use cases and the Postgres store. No route, tool or CLI verb serves them, so
-`info.version` stays `0.4.0-design`.
-[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md),
-proposed, reconciles both with the proposed user roots (ADR-0044) and ADR-0039's three tools, and
-leaves the brief and eight other points to the maintainer.
-
-- **The ladder** (ADR-0009 d1, d3, d4). A workarea's status is one stored column; an admin, or a dreamer
-  with dreamer access on the node, proposes one rung forward as a pending `workarea_transitions`
-  row and one `workarea.status_proposed`; a second identity ratifies it as one
-  `workarea.status_transition` carrying the policy snapshot, and the node takes its `to` in that
-  commit. The ratifying transaction re-checks the proposal and the children under the chain lock,
-  so a child created concurrently with a ratification to `validated` leaves either the child or
-  the validated node, never both. Refusals are `workarea.transition_refused` with a reason and
-  `review.ratifier_is_proposer` ([errors](api/errors.md)); the readings are on
-  [workareas](architecture/workareas.md#readings-the-build-takes).
-- **The freeze** (ADR-0009 d5). A `validated` workarea refuses a submit, a supersede, an approval and a
-  child create as `workarea.frozen`, while its crew record stays correctable.
-- **The table** (ADR-0034 d1, d11, d12). Migration `0018_claim_edges.sql` builds `claim_edges` as
-  [postgres-schema](data/postgres-schema.md#claim_edges) states it: pending or ratified, its keys
-  carrying `tenant_id`, R2's key inequality and a ratified row's ratifier as `CHECK`s, row security
-  forced, no `DELETE` granted, not partitioned and with statistics target 0 on every column.
-- **The proposal** (ADR-0008 d5, ADR-0021 d5, ADR-0012). A dreamer key holding reader on both
-  endpoints' workareas, each endpoint in its read scope, and dreamer on at least one, proposes an
-  edge journalled `claim_edge.proposed`; the same commit widens the lineage closure of every
-  version the edge connects, and of each version deriving from one, so R2 counts a pending edge.
-  `oml:about` is refused `request.validation` until classification (ADR-0027) is built, and
-  `oml:replaced_by` and `oml:consider` belong to a deprecation's verdict (ADR-0021 d3).
-- **The ratification** (ADR-0012 R2, ADR-0021 d5). A dreamer key that is not `held_by: service`,
-  holding dreamer on both endpoints' workareas, ratifies a pending edge, journalled `review.ratify`
-  with `subject_kind: "claim_edge"`, `k: 1` and empty `verdict_event_ids`, under a compare-and-set
-  on the pending state. It is refused `review.ratifier_is_proposer` for the proposer's key or
-  principal, `review.author_in_lineage` for a key or principal in either endpoint's closure,
-  `review.serve_invalid` with `details.reason` `consumed` for a decided edge, and
-  `vocab.cycle_refused` for an `oml:is_a` edge closing a cycle; each journals nothing.
-- **The page.** A reader key reads claim edges newest first under a cursor bound to its key and
-  filter, served only when both endpoints are in its read scope; an admin key is refused
-  `access.verb_ceiling`. Neither `claim_edge.*` nor an edge's `review.ratify` reaches the events
-  tail.
-- **Reconciled with v0.4.x** (ADR-0039 d9, ADR-0046 d4). The claim-edge use cases digest their
-  requests as `POST /v2/edges` with `kind: claim` and `POST /v2/edges/{edge_id}/ratify`, the
-  designed family, in place of the branch's `/v2/claim-edges`. One `RatifierIsProposer` refusal
-  covers a transition and an edge. The migrations are renumbered `0017_workarea_transitions.sql`
-  and `0018_claim_edges.sql`, after 0014 and 0015 (v0.5.0) and 0016 (guardrails, v0.5.1).
-- **Not built:** the transition and edge routes, the workarea read's `policy` and
-  `pending_transitions` fields, the CLI verbs, a `rejected` edge state, `oml:about`,
-  reassignment, re-parent, demote, erasure, the simulation fence and the brief. The Postgres
-  end-to-end laws run only where a superuser mints the suites' role pairs, CI's
-  `cargo test (Postgres)`.
-- **Pages touched:** the new record, the [register](adr/index.md), `mkdocs.yml`,
-  [llms.txt](llms.txt), [releases](product/releases.md), [workareas](architecture/workareas.md),
-  [postgres-schema](data/postgres-schema.md), [event catalog](data/event-catalog.md),
-  [errors](api/errors.md), and the pages whose release lines move from v0.5.0 to v0.5.1 or v0.5.2.
 
 ### 2026-11-04 — ADR-0043 proposed: the maintainer's public server as the default, planned for v0.4.1
 
