@@ -475,22 +475,16 @@ impl RecordedVerdict {
     }
 }
 
-/// What `node` is to the ladder (ADR-0046 d1): the universe root, or an
-/// ordinary node. A user root is `LadderNode::UserRoot` once the workarea
-/// row carries ADR-0044's `user_root`; until that build no node is one.
+/// What `node` is to the ladder (ADR-0046 d1): the universe root, a user
+/// root (ADR-0044 d1), or an ordinary node.
 fn ladder_node(node: &WorkareaRecord) -> LadderNode {
     if node.parent_id.is_none() {
         LadderNode::Universe
+    } else if node.user_root {
+        LadderNode::UserRoot
     } else {
         LadderNode::Ordinary
     }
-}
-
-/// The `user` a key names (ADR-0044 d2), which `same_user` compares
-/// (ADR-0046 d2); every key is a tenant key until ADR-0044's build adds the
-/// field, so this is `None`.
-fn key_user(_key: &KeyRecord) -> Option<Uuid> {
-    None
 }
 
 /// The request digest of a claim-edge proposal: SHA-256 over the RFC 8785
@@ -2955,6 +2949,42 @@ where
         })
     }
 
+    /// The user a key of the tenant names, read from its key row; `None`
+    /// for a tenant key or a key the tenant does not hold (ADR-0044 d2;
+    /// ADR-0046 d2).
+    async fn key_user(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<Uuid>, AppError> {
+        Ok(self
+            .journal
+            .key(tenant_id, key_id)
+            .await?
+            .and_then(|k| k.user))
+    }
+
+    /// A user key's edge with an endpoint in `universe` is refused
+    /// `access.grant_refused` naming that endpoint's workarea, before
+    /// anything is journalled: users neither write nor propose to
+    /// `universe` (ADR-0046 d5; ADR-0044 Context, decision 3). A tenant key
+    /// passes.
+    async fn refuse_user_edge_into_universe(
+        &self,
+        key: &KeyRecord,
+        workareas: &[Uuid],
+    ) -> Result<(), AppError> {
+        if key.user.is_none() {
+            return Ok(());
+        }
+        for workarea_id in workareas {
+            let node = self.journal.workarea(key.tenant_id, *workarea_id).await?;
+            if node.is_some_and(|n| n.parent_id.is_none()) {
+                return Err(AppError::GrantRefused {
+                    workarea_id: *workarea_id,
+                    needed_role: Role::Dreamer,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// The live proposals on `node` as `key` may see them: the pending rows
     /// whose `from` is the node's status, in proposal order, each naming its
     /// proposing key only to that key (workareas.md, the status read lists
@@ -3275,9 +3305,10 @@ where
                 "proposed_by_key_id": proposal.proposer_key_id.to_string(),
                 "ratified_by_key_id": key.key_id.to_string(),
                 "policy_snapshot": policy_snapshot,
-                // The proposer's user is read from its key row once keys
-                // carry ADR-0044's `user`; until then no key names one.
-                "same_user": same_user(None, key_user(key)),
+                "same_user": same_user(
+                    self.key_user(key.tenant_id, proposal.proposer_key_id).await?,
+                    key.user,
+                ),
             }),
         )?;
         self.commit(
@@ -4683,6 +4714,8 @@ where
             });
         }
         let (src, dst) = (&endpoints[0], &endpoints[1]);
+        self.refuse_user_edge_into_universe(key, &[src.workarea_id, dst.workarea_id])
+            .await?;
         check_edge_label(&req.label, src, dst)?;
 
         let edge_id = self.ids.new_id();
@@ -4798,6 +4831,8 @@ where
         if !self.readable(&caller, &memory).await? {
             return Err(AppError::NotFound);
         }
+        self.refuse_user_edge_into_universe(key, &[memory.workarea_id, workarea_id])
+            .await?;
         if memory.status != MemoryStatus::Promoted || !memory.is_tip {
             return Err(AppError::BriefMemberNotServed {
                 artifact_id: memory.memory_id,
@@ -4921,7 +4956,10 @@ where
                 "workarea_id": edge.workarea_id.to_string(),
                 "verdict_event_ids": [],
                 "ratifier_key_id": key.key_id.to_string(),
-                "same_user": same_user(None, key_user(key)),
+                "same_user": same_user(
+                    self.key_user(key.tenant_id, edge.proposer_key_id).await?,
+                    key.user,
+                ),
                 "policy_snapshot": review_policy(),
             }),
         )?;
@@ -5216,7 +5254,10 @@ where
             // verdict precedes it.
             "verdict_event_ids": [],
             "ratifier_key_id": key.key_id.to_string(),
-            "same_user": same_user(None, key_user(key)),
+            "same_user": same_user(
+                    self.key_user(key.tenant_id, edge.proposer_key_id).await?,
+                    key.user,
+                ),
             "policy_snapshot": {
                 "k": 1,
                 "required_roles": ["dreamer"],

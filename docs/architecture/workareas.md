@@ -502,8 +502,8 @@ the rule it follows; none is a new decision about the ladder.
   ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2, proposed, after the proposed ADR-0044 d1 and d8). Whether a user
   root may reach `validated`: no, it climbs to `committed` at most and is refused `user_root`;
   a ratification by another key of the same user is admitted and marked `same_user`
-  (ADR-0046 d1, d2, answered on 2026-11-04). Both read facts ADR-0044 adds, so on this build
-  no node is a user root and `same_user` is `false`.
+  (ADR-0046 d1, d2, answered on 2026-11-04), read from the workarea row's `user_root` and
+  the keys' `user`.
 - **No simulation is fenced, vacuously.** Simulations are not built, so "no
   simulation is fenced on the subtree" holds of every subtree today; the build
   says so in a comment where the check would sit, and the check lands with

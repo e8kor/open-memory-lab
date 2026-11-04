@@ -1166,3 +1166,220 @@ async fn an_admin_reads_a_users_root_by_the_users_name_and_creates_none() {
         Err(AppError::VerbCeiling { .. })
     ));
 }
+
+// ---------------------------------------------------------------------------
+// The lifecycle and edges inside user roots (ADR-0046 d1, d2, d5)
+// ---------------------------------------------------------------------------
+
+/// A dreamer key of `user` that also reads its root: it proposes, ratifies
+/// and reads the claims it links.
+async fn user_curator(app: &TestApp, admin: &str, user: &str, principal: &str) -> IssuedKey {
+    app.issue_key(
+        admin,
+        &user_req(
+            Role::Dreamer,
+            user,
+            principal,
+            vec![
+                grant(by_name(user), Role::Dreamer),
+                grant(by_name(user), Role::Reader),
+            ],
+        ),
+    )
+    .await
+    .expect("issue a user dreamer key that reads its root")
+}
+
+#[tokio::test]
+async fn a_user_root_climbs_to_committed_and_validated_is_refused_on_it_as_user_root() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    let first = user_curator(&app, admin, "alice", "alice/first").await;
+    let second = user_curator(&app, admin, "alice", "alice/second").await;
+    let committed = app
+        .propose_transition(
+            &first.value,
+            by_name("alice"),
+            oml_app::domain::WorkareaStatus::Committed,
+        )
+        .await
+        .expect("a user root climbs to committed");
+    app.ratify_transition(&second.value, by_name("alice"), committed.transition_id)
+        .await
+        .expect("another key of alice ratifies");
+    let err = app
+        .propose_transition(
+            &first.value,
+            by_name("alice"),
+            oml_app::domain::WorkareaStatus::Validated,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::TransitionRefused {
+                reason: oml_app::domain::LadderRefusal::UserRoot,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_ratification_by_another_key_of_the_same_user_is_journalled_same_user() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    let first = user_curator(&app, admin, "alice", "alice/first").await;
+    let second = user_curator(&app, admin, "alice", "alice/second").await;
+    let project = app
+        .create_workarea(
+            user_writer(&app, admin, "alice", "alice/laptop")
+                .await
+                .value
+                .as_str(),
+            &name("project"),
+            None,
+            None,
+        )
+        .await
+        .expect("alice creates a workarea")
+        .workarea
+        .workarea_id;
+    let proposal = app
+        .propose_transition(
+            &first.value,
+            project.into(),
+            oml_app::domain::WorkareaStatus::Committed,
+        )
+        .await
+        .expect("a proposal");
+    app.ratify_transition(&second.value, project.into(), proposal.transition_id)
+        .await
+        .expect("a ratification");
+    let events = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    let ratified = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::WORKAREA_STATUS_TRANSITION)
+        .expect("the ratification");
+    assert_eq!(ratified.envelope.payload["same_user"], true);
+
+    // A tenant key's ratification of another proposal is not same_user.
+    let bob = user_curator(&app, admin, "bob", "bob/first").await;
+    let tenant_reviewer = tenant_key(
+        &app,
+        admin,
+        Role::Dreamer,
+        "tenant-reviewer",
+        vec![
+            grant(by_name("bob"), Role::Dreamer),
+            grant(by_name("bob"), Role::Reader),
+        ],
+    )
+    .await;
+    let proposal = app
+        .propose_transition(
+            &bob.value,
+            by_name("bob"),
+            oml_app::domain::WorkareaStatus::Committed,
+        )
+        .await
+        .expect("bob proposes");
+    app.ratify_transition(
+        &tenant_reviewer.value,
+        by_name("bob"),
+        proposal.transition_id,
+    )
+    .await
+    .expect("a tenant key ratifies");
+    let events = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    let ratified = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::WORKAREA_STATUS_TRANSITION)
+        .expect("the ratification");
+    assert_eq!(ratified.envelope.payload["same_user"], false);
+}
+
+#[tokio::test]
+async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused_grant_refused() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    let c = curated(&app, &boot).await;
+    let alice = user_curator(&app, admin, "alice", "alice/curator").await;
+    let before = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+
+    let refused = |err: AppError| {
+        assert!(
+            matches!(
+                err,
+                AppError::GrantRefused {
+                    needed_role: Role::Dreamer,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    };
+    refused(
+        app.propose_claim_edge(
+            &alice.value,
+            &oml_app::types::ProposeClaimEdge {
+                from_artifact_id: c.source,
+                to_artifact_id: c.placed,
+                label: "supports".to_owned(),
+            },
+            None,
+        )
+        .await
+        .unwrap_err(),
+    );
+    refused(
+        app.propose_brief_edge(
+            &alice.value,
+            &oml_app::types::ProposeBriefEdge {
+                artifact_id: c.placed,
+                workarea: by_name("alice"),
+            },
+            None,
+        )
+        .await
+        .unwrap_err(),
+    );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        before,
+        "nothing is journalled"
+    );
+    // Inside its own root, the same key proposes freely.
+    app.propose_brief_edge(
+        &alice.value,
+        &oml_app::types::ProposeBriefEdge {
+            artifact_id: c.source,
+            workarea: by_name("alice"),
+        },
+        None,
+    )
+    .await
+    .expect("a brief edge inside alice's root");
+    let _ = (c.alice, c.curator);
+}
