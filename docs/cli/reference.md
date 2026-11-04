@@ -192,8 +192,8 @@ from the file ([security](../architecture/security.md)).
 The first-start Helm job never prints key material: it mints a single-use, expiring **enrollment
 secret**, stored as a Kubernetes Secret, and its logs carry progress only
 ([deployment](../operations/deployment.md)). `oml bootstrap claim` exchanges that secret over TLS
-for the root operator key. This is the one verb that takes `--url` directly: it runs before any
-context or key exists, so there is nothing for a context to resolve.
+for the root operator key. It runs before any key exists, so it sends none and takes the URL
+alone ([start settings](#start-settings)).
 
 | Verb | Does |
 |---|---|

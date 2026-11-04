@@ -35,6 +35,11 @@ This script extracts each surface and fails with a diff on any disagreement:
     and mcp-tools.json both name, or a designed tool the facade does not name as
     designed (DESIGNED_TOOLS); and a designed argument that names no served
     tool or that the served tool's inputSchema already declares (ADR-0039 d2)
+  * a retired CLI verb, the designed `oml context add|use|list|show|remove`,
+    run on a reader page (README.md, an SDK README, docs/ outside adr/, atlas/
+    and changelog.md): `oml login` with one credentials file per identity
+    replaces it, and a page that still runs it contradicts the reference
+    (ADR-0039 d15)
 
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
@@ -90,6 +95,8 @@ MEMORY_READERS = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md"
                   *sorted((ROOT / "scripts").glob("*.sh"))]
 MEMORY_READ_RE = re.compile(r"\bmemory\??\.([a-z_]+)\b")
 CONTRACT_MARKS = {"served", "designed"}
+RETIRED_VERB_RE = re.compile(r"\boml context (?:add|use|list|show|remove)\b")
+RETIRED_VERB_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "docs" / "changelog.md"]
 
 CODE_RE = re.compile(r"`([a-z_]+\.[a-z_]+)`")
 SPAN_RE = re.compile(r"`([^`]+)`")
@@ -353,6 +360,20 @@ def memory_read_problems(spec: dict) -> list[str]:
     return problems
 
 
+def retired_verb_problems() -> list[str]:
+    """Each line of a reader page that runs a CLI verb ADR-0039 d15 retired."""
+    pages = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md")),
+             *sorted((ROOT / "docs").rglob("*.md"))]
+    problems: list[str] = []
+    for path in pages:
+        if any(path == e or e in path.parents for e in RETIRED_VERB_EXEMPT):
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for verb in RETIRED_VERB_RE.findall(line):
+                problems.append(f"{path.relative_to(ROOT)}:{number}: {verb}")
+    return problems
+
+
 NULL_EXEMPT = {"example", "examples", "default", "const"}
 
 
@@ -516,6 +537,10 @@ def main() -> int:
     if read_problems:
         failures.append(("a memory field read that the served Memory schema does not declare",
                          read_problems))
+
+    retired = retired_verb_problems()
+    if retired:
+        failures.append(("a reader page runs a CLI verb ADR-0039 d15 retired", retired))
 
     catalog_problems = mcp_catalog_problems()
     if catalog_problems:

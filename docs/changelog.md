@@ -42,9 +42,13 @@ stdin is not a terminal, calls `GET /v2/whoami` under it, and only on success wr
 stored pair as it was, and exits `1` with the envelope's code. The designed `oml context` verbs
 leave the reference: `oml login` replaces `context add`, `oml doctor` replaces `context show`,
 and a second server is a second file through `OML_CLI_CREDENTIALS`. The no-echo read is
-`rpassword` 7.5, the CLI's one new dependency, since std reads no terminal without echo.
+`rpassword` 7.5, the CLI's one new dependency, since std reads no terminal without echo. The
+[CLI sessions](cli/sessions.md) mockups follow: the bootstrap claim stores the operator's pair,
+each later identity runs `oml login` once into its own file, and `export OML_CLI_CREDENTIALS=…`
+switches between them. `check_contract_sync.py` fails a reader page that still runs a retired
+`oml context` verb.
 
-- **Pages touched:** [cli/reference.md](cli/reference.md#oml-login-and-oml-doctor-storing-and-checking-the-pair).
+- **Pages touched:** [cli/reference.md](cli/reference.md#oml-login-and-oml-doctor-storing-and-checking-the-pair), [cli/sessions.md](cli/sessions.md).
 
 ### 2026-11-04 — `oml doctor` reports each start setting's source and probes with a URL alone (ADR-0039 d15, implementation)
 

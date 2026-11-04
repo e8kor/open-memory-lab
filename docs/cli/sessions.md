@@ -32,8 +32,10 @@ pod log ([deployment](../operations/deployment.md)). The operator exchanges that
 for the root **operator** key with `oml bootstrap claim`
 ([reference](reference.md#oml-bootstrap-claiming-the-root-operator-key)): the key value is shown
 once in the operator's terminal and journalled as issued-without-value
-([roles and keys](../architecture/roles-and-keys.md)). The operator creates tenants and issues
-each tenant's first admin key — and can do nothing else: no reads, no writes, no verdicts.
+([roles and keys](../architecture/roles-and-keys.md)). The claim also stores the URL and the key,
+nothing else, in the default owner-only credentials file, so the operator's later verbs need no
+`oml login` ([start settings](reference.md#start-settings)). The operator creates tenants and
+issues each tenant's first admin key — and can do nothing else: no reads, no writes, no verdicts.
 
 Provider-level acts — operator key issuance, tenant creation — are journalled in the reserved
 **provider tenant's** chain, created at deployment genesis; every other chain is per tenant
@@ -60,11 +62,7 @@ root operator key — SHOWN ONCE, NOT RECOVERABLE, NOT JOURNALLED AS VALUE
     operator value  : oml_zj4Qm9tW8xKpN2rLcVbH7eGd1sYfA0uJn5iXqB3wTk6
 
 journal (provider) seq 1: key.issued {id: 05491d43-…, name: root-operator, role: operator, value_disclosed: false}
-store this value now; the server keeps only its hash.
-
-$ oml context add root --url https://oml.internal.example --key-stdin
-reading key from stdin… ok
-context "root" added (key id 05491d43-…, role operator)
+url and api_key stored in /home/ops/.config/oml/credentials (owner-only); the server keeps only the key hash.
 
 $ oml tenants create aurora
 journal (provider) seq 2: tenant.created {tenant_id: 9d41c7a0-…, name: aurora, created_by_key_id: 05491d43-…}
@@ -97,8 +95,19 @@ how a person types them, and the server resolves each name to its id
 then one `grant.issued` per grant — and the CLI sends a reader grant beside every writer grant
 unless told `--write-only` ([CLI reference](reference.md#oml-keys-issuance-revocation-rotation)).
 
+There are no named contexts. Each identity's pair lives in a credentials file of its own: `oml login`
+checks the key through `GET /v2/whoami` and stores it once, and `OML_CLI_CREDENTIALS` selects the
+file, so `export OML_CLI_CREDENTIALS=…` switches the shell from one identity to another
+([`oml login`](reference.md#oml-login-and-oml-doctor-storing-and-checking-the-pair)). The key is read
+without echo and never reaches argv.
+
 ```console
-$ oml context use aurora-admin
+$ export OML_CLI_CREDENTIALS=~/.config/oml/aurora-admin
+$ oml login https://oml.internal.example
+API key for https://oml.internal.example:
+logged in to https://oml.internal.example as key aurora-admin (a1f3e2c4-…): role admin, tenant aurora, default workarea —
+url and api_key stored in /home/ops/.config/oml/aurora-admin (owner-only); the flags and OML_URL with OML_API_KEY still win over it
+
 $ oml crews create corrosion --external-manager "crewd.example/corrosion"
 created crew corrosion (3b17c0e2-…)
 journal seq 811: crew.created
@@ -132,13 +141,18 @@ key issued — SHOWN ONCE
 journal seq 816: key.issued {id: 51d0ac3f-…, name: corrosion-reviewer-1, role: dreamer, value_disclosed: false}
 journal seq 817: grant.issued {key: 51d0ac3f-…, 4e0d9b61-…: dreamer}
 
-$ oml context use corrosion-reviewer-1
+$ export OML_CLI_CREDENTIALS=~/.config/oml/corrosion-reviewer-1
+$ oml login https://oml.internal.example
+API key for https://oml.internal.example:
+logged in to https://oml.internal.example as key corrosion-reviewer-1 (51d0ac3f-…): role dreamer, tenant aurora, default workarea —
+url and api_key stored in /home/ops/.config/oml/corrosion-reviewer-1 (owner-only); the flags and OML_URL with OML_API_KEY still win over it
+
 $ oml keys issue corrosion-agent-2 --role writer --grant corrosion:writer
 refused: access.verb_ceiling — 51d0ac3f-… (dreamer) is an agent key calling an
 admin verb (keys issue); issuance belongs to admin and operator keys (R1), and a
 key is in any case issued with a role no higher than the issuer's.
 
-$ oml context use aurora-admin
+$ export OML_CLI_CREDENTIALS=~/.config/oml/aurora-admin
 $ oml keys list --expiring 120d
 NAME                  KEY ID       ROLE     EXPIRES     GRANTS
 corrosion-agent-1     9c44b7e8-…   writer   2027-01-27  corrosion:writer, corrosion:reader
@@ -151,6 +165,7 @@ journal seq 819: grant.issued {key: 7e21d0b5-…, 4e0d9b61-…: writer}
 journal seq 820: grant.issued {key: 7e21d0b5-…, 4e0d9b61-…: reader}
 $ echo "$OML_URL"
 https://oml.internal.example
+$ unset OML_URL OML_API_KEY
 ```
 
 A writer that must also recall holds explicit reader scope — roles never imply one another. The
@@ -159,7 +174,9 @@ provider-ring (`/v1`) request from 9c44b7e8-… that names no workarea targets 4
 ([ADR-0022](../adr/ADR-0022-two-ring-api.md)). The
 key values above appeared exactly once; `oml keys list` and the journal know only names, ids and
 hashes. `oml keys issue-agent` printed its value only into the two export lines the `eval`
-consumed, which the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) reads.
+consumed, which the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) reads. The
+exported pair wins over any credentials file, so the shell that is to go on as the admin unsets both
+variables ([start settings](reference.md#start-settings)).
 
 ## 3. A review session
 
@@ -173,7 +190,7 @@ lineage-closure refusal: the reviewer proposed an edit in this row's ancestry, s
 not serve it to them.
 
 ```console
-$ oml context use corrosion-reviewer-1
+$ export OML_CLI_CREDENTIALS=~/.config/oml/corrosion-reviewer-1
 $ oml review next --workarea corrosion
 serving 1 of 3 held items
 
@@ -221,7 +238,7 @@ by a second, non-proposing one (journalled `workarea.status_transition` with the
 the `validated` proposal is refused while a child is not yet validated.
 
 ```console
-$ oml context use aurora-admin
+$ export OML_CLI_CREDENTIALS=~/.config/oml/aurora-admin
 $ oml workareas status propose corrosion --to committed
 transition trn_0a40 proposed (development -> committed); awaiting a second ratifier.
 journal seq 1198: workarea.status_proposed {4e0d9b61-…: development -> committed, proposer: a1f3e2c4-…}
@@ -230,12 +247,12 @@ $ oml workareas status ratify trn_0a40
 refused: review.ratifier_is_proposer — a transition is ratified by a second,
 non-proposing dreamer or admin (R2 extends to transitions).
 
-$ oml context use corrosion-reviewer-1
+$ export OML_CLI_CREDENTIALS=~/.config/oml/corrosion-reviewer-1
 $ oml workareas status ratify trn_0a40
 journal seq 1203: workarea.status_transition {4e0d9b61-…: development -> committed,
   proposer: a1f3e2c4-…, ratifier: 51d0ac3f-…, policy_snapshot: pol_77e2}
 
-$ oml context use aurora-admin
+$ export OML_CLI_CREDENTIALS=~/.config/oml/aurora-admin
 $ oml workareas status propose corrosion --to validated
 refused: workarea.transition_refused
   scratch (61a2f8d4-…, universe.research.corrosion.scratch) is development
@@ -247,11 +264,11 @@ $ oml workareas status propose corrosion --to validated
 transition trn_0a58 proposed (committed -> validated); awaiting a second ratifier.
 journal seq 1236: workarea.status_proposed {4e0d9b61-…: committed -> validated, proposer: a1f3e2c4-…}
 
-$ oml context use corrosion-reviewer-1
+$ export OML_CLI_CREDENTIALS=~/.config/oml/corrosion-reviewer-1
 $ oml workareas status ratify trn_0a58
 journal seq 1240: workarea.status_transition {4e0d9b61-…: committed -> validated, …}
 
-$ oml context use aurora-admin
+$ export OML_CLI_CREDENTIALS=~/.config/oml/aurora-admin
 $ oml workareas create corrosion post-mortem
 refused: workarea.frozen — a validated area accepts no new children.
 remaining mutations on 4e0d9b61-…: demote, erase, crew-metadata update.
@@ -265,7 +282,7 @@ rows and re-reviews tainted claims ([simulations](../architecture/simulations.md
 mass-reach act, so it defaults to `--dry-run`.
 
 ```console
-$ oml context use aurora-admin
+$ export OML_CLI_CREDENTIALS=~/.config/oml/aurora-admin
 $ oml simulations open --audience corrosion-agent-1,corrosion-reviewer-1 --label "what-if: 40 °C baseline"
 simulation sim_0007 opened (state: open, audience: 2 keys)
 note: audience contains 1 dreamer key — promotion inside the simulation is possible.
@@ -331,7 +348,7 @@ Bans are journalled, checked at admission, and previewed before they act — `--
 default and shows reach ([grants, denials, bans](reference.md#oml-grants-oml-deny-oml-bans-scope-and-refusal)).
 
 ```console
-$ oml context use aurora-admin
+$ export OML_CLI_CREDENTIALS=~/.config/oml/aurora-admin
 $ oml bans add --source "connector:rss/feedpulse.example" \
     --reason "feed republishing fabricated abstracts"
 dry-run (default) — banning source connector:rss/feedpulse.example would:
