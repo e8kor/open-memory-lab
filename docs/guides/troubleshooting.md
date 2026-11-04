@@ -31,7 +31,7 @@ It exits `0` on `ok` or `warn` and `1` on `fail`. Line by line:
 |---|---|---|
 | `url`, `api key` | `unset` | No source sets the value. `next` names what to set: `--url` and `--api-key`, `OML_URL` and `OML_API_KEY`, or `oml login <url>`. |
 | `next` | `… sets url without api_key`, `OML_URL is set without OML_API_KEY` | The first source that sets either value sets only one. The pair always comes from one source, so a key is never sent to a URL from another: set both in that source, or unset the one there. |
-| `next` | `OML_CLI_SERVER is not read since v0.4.0: rename it OML_URL` | A v0.3 variable. Rename it, and `OML_CLI_KEY` to `OML_API_KEY`. |
+| `next` | `… is not read since v0.4.0: rename it OML_URL` | A v0.3 variable is set. Rename both v0.3 variables to `OML_URL` and `OML_API_KEY` ([upgrading](upgrading.md)). |
 | `healthz` | `fail` | The process answered but is not healthy. |
 | `readyz` | `fail`, with `postgres`, `fork_check`, `names_assigned` below | The server is up and refuses traffic. See [`/readyz` answers 503](#server-readyz-answers-503). |
 | `whoami` | `fail (401 auth.invalid)` | The server does not know the key: a typo, a key from another server, or an expired or revoked key. Run `oml login <url>` again with the right key. |
@@ -80,8 +80,8 @@ Work down the list; each step assumes the ones above it hold.
    `claude plugin marketplace remove open-memory-lab` removes it and the plugins installed from
    it; then run `oml setup claude-code` again.
 6. **Reloaded.** Run `/reload-plugins` or restart Claude Code after configuring.
-7. **The permission rules.** A `permissions.allow` rule naming a v0.3 tool such as
-   `oml_recall` allows nothing. Allow `mcp__plugin_oml_oml__oml_read` and
+7. **The permission rules.** A `permissions.allow` rule naming a v0.3 tool allows
+   nothing. Allow `mcp__plugin_oml_oml__oml_read` and
    `mcp__plugin_oml_oml__oml_workarea` ([upgrading](upgrading.md)).
 
 With no `claude` on `PATH`, or with `--print`, `oml setup claude-code` runs nothing after

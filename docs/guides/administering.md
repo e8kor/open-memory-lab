@@ -75,7 +75,7 @@ The agent's writes now wait as `held` until `maya` approves them with `oml revie
 `oml bootstrap claim <key-name> --token-stdin [--tenant-name <name>] [--principal <text>]` sends
 `POST /v2/bootstrap/claim` with no key and takes the URL alone. `--token-stdin` is required: the
 token is read without echo from a terminal, or as the first line of piped stdin, so it never
-reaches argv or shell history. v0.3.0's `--token <secret>` is gone and refused as an unknown flag
+reaches argv or shell history; the token is never accepted as a flag argument
 ([CLI reference](../cli/reference.md#oml-bootstrap-claiming-the-root-operator-key)).
 
 On success the token is consumed, a second claim is refused, and the CLI prints the first admin
