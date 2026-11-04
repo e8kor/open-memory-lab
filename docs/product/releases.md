@@ -78,6 +78,7 @@ many memories in one request. A web console is declined, not deferred.
 | Three task-shaped agent tools in place of the eight | introduced in v0.4.0 |
 | The Claude Code plugin | introduced in v0.1.0 (two keys); one key since v0.2.0 |
 | Plugin setup through Claude Code's plugin settings, key in the keychain | introduced in v0.4.0 |
+| The plugins and the agent kit connect to the maintainer's public server unless told otherwise, so an agent needs only its key | planned for v0.4.1 |
 | Docker quickstart | introduced in v0.1.0 |
 | Signed releases with a software bill of materials | introduced in v0.1.0 |
 | Health and readiness checks | introduced in v0.1.0; the build is named since v0.2.0 |
@@ -162,3 +163,4 @@ which part is still decided, not built.
 | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) the API rewrite | accepted | Introduced in v0.4.0. |
 | [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) plugin setup | accepted | Introduced in v0.4.0. |
 | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) quick start per role | accepted | Partly in v0.4.0: the installers, `oml login`, `oml doctor`, `oml setup claude-code`, `oml quickstart` and the install page. `install.sh --quickstart` and the short install address are not in it. |
+| [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | proposed | Planned for v0.4.1. |
