@@ -7,15 +7,27 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.connect_code import ConnectCode
 from ...models.error_envelope import ErrorEnvelope
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     key: str,
     *,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
+
     headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
@@ -67,6 +79,9 @@ def sync_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ConnectCode | ErrorEnvelope]:
     """Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
@@ -83,6 +98,9 @@ def sync_detailed(
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
 
     Raises:
@@ -95,6 +113,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         key=key,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -109,6 +130,9 @@ def sync(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ConnectCode | ErrorEnvelope | None:
     """Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
@@ -125,6 +149,9 @@ def sync(
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
 
     Raises:
@@ -138,6 +165,9 @@ def sync(
     return sync_detailed(
         key=key,
         client=client,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -146,6 +176,9 @@ async def asyncio_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ConnectCode | ErrorEnvelope]:
     """Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
@@ -162,6 +195,9 @@ async def asyncio_detailed(
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
 
     Raises:
@@ -174,6 +210,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         key=key,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -186,6 +225,9 @@ async def asyncio(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ConnectCode | ErrorEnvelope | None:
     """Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
@@ -202,6 +244,9 @@ async def asyncio(
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
 
     Raises:
@@ -216,6 +261,9 @@ async def asyncio(
         await asyncio_detailed(
             key=key,
             client=client,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
             idempotency_key=idempotency_key,
         )
     ).parsed

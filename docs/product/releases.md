@@ -36,10 +36,11 @@ Four words carry the status of everything below:
 
 ## Planned releases
 
-Nothing in this section is released. Each row is the plan of 2026-11-03.
+Nothing in this section is released. Each row is the plan of 2026-11-03, except v0.4.1, planned on 2026-11-04.
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
+| **v0.4.1** | planned | Seeing the traffic. The server writes one log line for every request and every agent tool call: who sent it, from which key, organisation, workarea and client, the address it came from, how it ended and how long it took. A request carries an id the caller may choose, and every answer returns it. Logs are kept at most 30 days by whatever stores them, because they now hold addresses and names. Request counts and timings are served for Prometheus on a separate address, off unless set, so they never reach the public internet. Traces can be sent to an OpenTelemetry collector, off unless an address is set. | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) (proposed) |
 | **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. | ADR-0037 (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 | **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. | ADR-0030 (proposed) |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
@@ -104,6 +105,9 @@ many memories in one request. A web console is declined, not deferred.
 | The librarian subagent | introduced in v0.4.0 |
 | Quick start in one command per role | introduced in v0.4.0 |
 | Documentation upgrade | introduced in v0.4.0 |
+| One log line per request and per agent tool call, under an id the caller may choose | planned for v0.4.1 |
+| Request metrics for Prometheus on a separate address | planned for v0.4.1 |
+| Trace export to an OpenTelemetry collector, off by default | planned for v0.4.1 |
 | Guardrails | planned for v0.5.0 |
 | Workarea lifecycle: development, committed, validated | planned for v0.5.0 (workareas carry the development status since v0.1.0) |
 | Labelled links between memories | planned for v0.5.0 |
@@ -162,3 +166,4 @@ which part is still decided, not built.
 | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) the API rewrite | accepted | Introduced in v0.4.0. |
 | [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) plugin setup | accepted | Introduced in v0.4.0. |
 | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) quick start per role | accepted | Partly in v0.4.0: the installers, `oml login`, `oml doctor`, `oml setup claude-code`, `oml quickstart` and the install page. `install.sh --quickstart` and the short install address are not in it. |
+| [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | proposed | Planned for v0.4.1. |

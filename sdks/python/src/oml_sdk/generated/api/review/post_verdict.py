@@ -7,15 +7,27 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.verdict_request import VerdictRequest
 from ...models.verdict_result import VerdictResult
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: VerdictRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
+
     headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
@@ -79,6 +91,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: VerdictRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | VerdictResult]:
     """Verdict against a valid serve; the journalled verdict records the served digests.
@@ -99,6 +114,9 @@ def sync_detailed(
     Idempotency-Replay: true and never applies to another item.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (VerdictRequest):
 
@@ -112,6 +130,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -126,6 +147,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: VerdictRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | VerdictResult | None:
     """Verdict against a valid serve; the journalled verdict records the served digests.
@@ -146,6 +170,9 @@ def sync(
     Idempotency-Replay: true and never applies to another item.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (VerdictRequest):
 
@@ -160,6 +187,9 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -168,6 +198,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: VerdictRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | VerdictResult]:
     """Verdict against a valid serve; the journalled verdict records the served digests.
@@ -188,6 +221,9 @@ async def asyncio_detailed(
     Idempotency-Replay: true and never applies to another item.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (VerdictRequest):
 
@@ -201,6 +237,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -213,6 +252,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: VerdictRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | VerdictResult | None:
     """Verdict against a valid serve; the journalled verdict records the served digests.
@@ -233,6 +275,9 @@ async def asyncio(
     Idempotency-Replay: true and never applies to another item.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (VerdictRequest):
 
@@ -248,6 +293,9 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
             idempotency_key=idempotency_key,
         )
     ).parsed

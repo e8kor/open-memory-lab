@@ -7,12 +7,25 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.memory import Memory
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     artifact_id: str,
+    *,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -21,6 +34,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -67,6 +81,9 @@ def sync_detailed(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | Memory]:
     """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
@@ -84,6 +101,9 @@ def sync_detailed(
 
     Args:
         artifact_id (str):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -95,6 +115,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         artifact_id=artifact_id,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -108,6 +131,9 @@ def sync(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | Memory | None:
     """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
@@ -125,6 +151,9 @@ def sync(
 
     Args:
         artifact_id (str):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,6 +166,9 @@ def sync(
     return sync_detailed(
         artifact_id=artifact_id,
         client=client,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -144,6 +176,9 @@ async def asyncio_detailed(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | Memory]:
     """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
@@ -161,6 +196,9 @@ async def asyncio_detailed(
 
     Args:
         artifact_id (str):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,6 +210,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         artifact_id=artifact_id,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -183,6 +224,9 @@ async def asyncio(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | Memory | None:
     """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
@@ -200,6 +244,9 @@ async def asyncio(
 
     Args:
         artifact_id (str):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -213,5 +260,8 @@ async def asyncio(
         await asyncio_detailed(
             artifact_id=artifact_id,
             client=client,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

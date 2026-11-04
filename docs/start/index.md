@@ -21,7 +21,7 @@ You need Claude Code on your machine, and two things from your administrator: th
 address, such as `https://oml.example.com`, and an agent key.
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.0/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh
 oml login https://oml.example.com
 oml setup claude-code
 ```

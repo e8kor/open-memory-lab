@@ -22,6 +22,7 @@ pub mod error;
 pub mod mcp;
 pub mod oauth;
 pub mod time;
+pub mod traffic;
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -60,6 +61,7 @@ use oml_app::types::{
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::time::{parse_date_time, system_event_time, system_event_time_plus};
+use crate::traffic::Rid;
 
 /// How many times a write retries after a chain-head conflict before giving
 /// up — the concurrent-submitter shape the oml-pg phase prescribed: re-read
@@ -100,7 +102,7 @@ pub const ROUTES: &[(&str, &str)] = &[
 
 /// The unversioned probes among [`ROUTES`], served even while names are not
 /// assigned (http-api.md "Health").
-const PROBES: [&str; 2] = ["/healthz", "/readyz"];
+pub(crate) const PROBES: [&str; 2] = ["/healthz", "/readyz"];
 
 /// The unversioned OAuth operations outside both rings, as `(METHOD, path)`
 /// in docs/api/openapi.yaml's spelling, which [`ApiState::into_router`]
@@ -185,6 +187,8 @@ pub struct ApiState<J, S, C, I, Sc> {
     sealer: Arc<dyn HandleSealer>,
     /// The authorize page's client document fetcher (ADR-0031 d5).
     documents: oauth::Documents,
+    /// The traffic layer's configuration (ADR-0042).
+    traffic: traffic::Traffic,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -199,6 +203,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             build: Arc::clone(&self.build),
             sealer: Arc::clone(&self.sealer),
             documents: self.documents.clone(),
+            traffic: self.traffic.clone(),
         }
     }
 }
@@ -219,6 +224,7 @@ where
     /// outside both rings ([`oauth`]); only the probes while names are not
     /// assigned.
     pub fn into_router(self) -> Router {
+        let traffic = self.traffic.clone();
         let mut probes = Router::new();
         let mut rings = Router::new();
         for &(method, path) in ROUTES {
@@ -229,13 +235,20 @@ where
                 rings = rings.route(path, handler);
             }
         }
-        if !self.names_assigned {
-            return probes.fallback(names_unassigned).with_state(self);
-        }
-        let router = probes
-            .merge(rings)
-            .route("/mcp", post(Self::mcp).get(mcp::mcp_get));
-        self.with_oauth_routes(router).with_state(self)
+        let router = if self.names_assigned {
+            let router = probes
+                .merge(rings)
+                .route("/mcp", post(Self::mcp).get(mcp::mcp_get));
+            self.with_oauth_routes(router).with_state(self)
+        } else {
+            probes.fallback(names_unassigned).with_state(self)
+        };
+        // Outside every route, the fallback and axum's own 404 and 405
+        // included (ADR-0042 d1, d4).
+        router.layer(axum::middleware::from_fn_with_state(
+            traffic,
+            traffic::layer,
+        ))
     }
 
     /// The handler of one [`ROUTES`] entry. A table entry with no handler
@@ -302,6 +315,7 @@ where
             build: Arc::new(BuildInfo::unknown()),
             sealer: Arc::new(oauth::seal::AeadSealer::generate()),
             documents: oauth::Documents::default(),
+            traffic: traffic::Traffic::default(),
         }
     }
 
@@ -312,6 +326,15 @@ where
     #[must_use]
     pub fn with_document_fetcher<F: ClientDocumentFetcher + 'static>(mut self, fetcher: F) -> Self {
         self.documents = oauth::Documents::new(fetcher);
+        self
+    }
+
+    /// The traffic layer's configuration: the trusted proxies the request
+    /// line reads the client address through (ADR-0042 d7). Without it no
+    /// proxy is trusted.
+    #[must_use]
+    pub fn with_traffic(mut self, traffic: traffic::Traffic) -> Self {
+        self.traffic = traffic;
         self
     }
 
@@ -347,8 +370,7 @@ where
 
     // -- handlers -------------------------------------------------------------
 
-    async fn readyz(State(st): State<Self>) -> Response {
-        let rid = new_request_id();
+    async fn readyz(State(st): State<Self>, rid: Rid) -> Response {
         let postgres_ok = (st.db_ping)().await;
         let fork_ok = st.fork_check_ok.load(Ordering::SeqCst);
         let ready = postgres_ok && fork_ok && st.names_assigned;
@@ -373,8 +395,7 @@ where
         finish(&rid, Ok(json_response(status, &body)))
     }
 
-    async fn submit(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn submit(State(st): State<Self>, rid: Rid, headers: HeaderMap, body: Bytes) -> Response {
         finish(&rid, Self::submit_inner(&st, &headers, &body, None).await)
     }
 
@@ -462,10 +483,10 @@ where
 
     async fn list_memories(
         State(st): State<Self>,
+        rid: Rid,
         query: Result<Query<Vec<(String, String)>>, QueryRejection>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         let result = match query {
             Ok(Query(params)) => {
                 Self::list_memories_inner(&st, &params, &headers, false, None).await
@@ -511,10 +532,10 @@ where
 
     async fn get_memory(
         State(st): State<Self>,
+        rid: Rid,
         Path(artifact_id): Path<String>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             Self::get_memory_inner(&st, &artifact_id, &headers, None).await,
@@ -547,8 +568,7 @@ where
         Ok(json_response(StatusCode::OK, &memory_json(&memory, true)))
     }
 
-    async fn recall(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn recall(State(st): State<Self>, rid: Rid, headers: HeaderMap, body: Bytes) -> Response {
         finish(&rid, Self::recall_inner(&st, &headers, &body, None).await)
     }
 
@@ -652,11 +672,11 @@ where
 
     async fn supersede(
         State(st): State<Self>,
+        rid: Rid,
         Path(artifact_id): Path<String>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             // The ring supersedes a target of any kind (ADR-0025 d12).
@@ -747,8 +767,12 @@ where
         Ok(response)
     }
 
-    async fn review_next(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn review_next(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         finish(&rid, Self::review_next_inner(&st, &headers, &body).await)
     }
 
@@ -823,8 +847,12 @@ where
         }
     }
 
-    async fn review_verdicts(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn review_verdicts(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         finish(
             &rid,
             Self::review_verdicts_inner(&st, &headers, &body).await,
@@ -892,8 +920,12 @@ where
         Ok(response)
     }
 
-    async fn issue_key(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn issue_key(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         finish(&rid, Self::issue_key_inner(&st, &headers, &body).await)
     }
 
@@ -987,11 +1019,11 @@ where
 
     async fn deny_key(
         State(st): State<Self>,
+        rid: Rid,
         Path(key_id): Path<String>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             Self::deny_key_inner(&st, &key_id, &headers, &body).await,
@@ -1030,8 +1062,12 @@ where
         ))
     }
 
-    async fn create_workarea(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn create_workarea(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         finish(
             &rid,
             Self::create_workarea_inner(&st, &headers, &body).await,
@@ -1076,10 +1112,10 @@ where
 
     async fn get_workarea(
         State(st): State<Self>,
+        rid: Rid,
         Path(workarea_id): Path<String>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             Self::get_workarea_inner(&st, Some(&workarea_id), &headers, None).await,
@@ -1111,11 +1147,11 @@ where
 
     async fn workarea_tree(
         State(st): State<Self>,
+        rid: Rid,
         Path(workarea_id): Path<String>,
         query: Result<Query<Vec<(String, String)>>, QueryRejection>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         let result = match query {
             Ok(Query(params)) => {
                 Self::workarea_tree_inner(&st, &workarea_id, &params, &headers).await
@@ -1162,10 +1198,10 @@ where
 
     async fn events_tail(
         State(st): State<Self>,
+        rid: Rid,
         Query(params): Query<HashMap<String, String>>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             Self::events_tail_inner(&st, &params, &headers, None).await,
@@ -1218,8 +1254,12 @@ where
         ))
     }
 
-    async fn bootstrap_claim(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn bootstrap_claim(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         finish(
             &rid,
             Self::bootstrap_claim_inner(&st, &headers, &body).await,
@@ -1292,10 +1332,10 @@ where
 
     async fn get_key(
         State(st): State<Self>,
+        rid: Rid,
         Path(key_id): Path<String>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         finish(&rid, Self::get_key_inner(&st, &key_id, &headers).await)
     }
 
@@ -1329,10 +1369,10 @@ where
 
     async fn mint_connect_code(
         State(st): State<Self>,
+        rid: Rid,
         Path(key_id): Path<String>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             Self::mint_connect_code_inner(&st, &key_id, &headers).await,
@@ -1362,11 +1402,11 @@ where
 
     async fn revoke_connection(
         State(st): State<Self>,
+        rid: Rid,
         Path((key_id, connection_id)): Path<(String, String)>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             Self::revoke_connection_inner(&st, &key_id, &connection_id, &headers, &body).await,
@@ -1405,8 +1445,7 @@ where
         Ok(json_response(StatusCode::OK, &connection_json(&revoked)))
     }
 
-    async fn whoami(State(st): State<Self>, headers: HeaderMap) -> Response {
-        let rid = new_request_id();
+    async fn whoami(State(st): State<Self>, rid: Rid, headers: HeaderMap) -> Response {
         finish(&rid, Self::whoami_inner(&st, &headers).await)
     }
 
@@ -1423,8 +1462,12 @@ where
         Ok(json_response(StatusCode::OK, &whoami_json(&whoami)))
     }
 
-    async fn create_crew(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn create_crew(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         finish(&rid, Self::create_crew_inner(&st, &headers, &body).await)
     }
 
@@ -1454,10 +1497,10 @@ where
 
     async fn list_crews(
         State(st): State<Self>,
+        rid: Rid,
         query: Result<Query<Vec<(String, String)>>, QueryRejection>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         let result = match query {
             Ok(Query(params)) => Self::list_crews_inner(&st, &params, &headers).await,
             Err(e) => Err(ApiError::validation(format!(
@@ -1494,10 +1537,10 @@ where
 
     async fn get_crew(
         State(st): State<Self>,
+        rid: Rid,
         Path(crew_id): Path<String>,
         headers: HeaderMap,
     ) -> Response {
-        let rid = new_request_id();
         finish(&rid, Self::get_crew_inner(&st, &crew_id, &headers).await)
     }
 
@@ -1521,11 +1564,11 @@ where
 
     async fn update_crew(
         State(st): State<Self>,
+        rid: Rid,
         Path(crew_id): Path<String>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             Self::update_crew_inner(&st, &crew_id, &headers, &body).await,
@@ -1559,11 +1602,11 @@ where
 
     async fn set_workarea_crew(
         State(st): State<Self>,
+        rid: Rid,
         Path(workarea_id): Path<String>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        let rid = new_request_id();
         finish(
             &rid,
             Self::set_workarea_crew_inner(&st, &workarea_id, &headers, &body).await,
@@ -1903,8 +1946,7 @@ fn required_creation_name(field: &'static str, value: Option<&str>) -> Result<Na
     creation_name(field, value)
 }
 
-async fn healthz() -> Response {
-    let rid = new_request_id();
+async fn healthz(rid: Rid) -> Response {
     finish(
         &rid,
         Ok(json_response(StatusCode::OK, &json!({"status": "ok"}))),
@@ -1914,8 +1956,7 @@ async fn healthz() -> Response {
 /// Every route but the probes while the store holds rows that predate
 /// names: the replica cannot serve them safely, so it serves nothing
 /// (errors.md `system.unavailable`; ADR-0026 d11).
-async fn names_unassigned() -> Response {
-    let rid = new_request_id();
+async fn names_unassigned(rid: Rid) -> Response {
     finish(&rid, Err(ApiError::unavailable("names_assigned")))
 }
 
@@ -1925,20 +1966,35 @@ fn new_uuid() -> Uuid {
     uuid::Builder::from_random_bytes(bytes).into_uuid()
 }
 
-fn new_request_id() -> String {
+pub(crate) fn new_request_id() -> String {
     format!("req_{}", new_uuid().simple())
 }
 
 /// Every response carries `X-Request-Id`; error bodies already repeat it as
 /// `request_id` (http-api.md conventions).
+/// The response carries what the handler resolved, its key, target
+/// workarea and refusal code, for the request line (ADR-0042 d2).
 fn finish(request_id: &str, result: Result<Response, ApiError>) -> Response {
-    let mut response = match result {
-        Ok(response) => response,
-        Err(e) => e.into_response(request_id),
+    let (response, code) = match result {
+        Ok(response) => (response, None),
+        Err(e) => {
+            let code = e.code;
+            (e.into_response(request_id), Some(code))
+        }
     };
+    finish_coded(request_id, response, code)
+}
+
+/// [`finish`] for a response the handler already built, refused under
+/// `error_code` or not: the OAuth endpoints, whose refusals carry the RFC
+/// `error` (ADR-0042 d2).
+fn finish_coded(request_id: &str, mut response: Response, error_code: Option<&str>) -> Response {
     if let Ok(value) = HeaderValue::from_str(request_id) {
         response.headers_mut().insert("x-request-id", value);
     }
+    response
+        .extensions_mut()
+        .insert(traffic::Resolved::now(error_code));
     response
 }
 
@@ -1953,6 +2009,15 @@ fn json_response(status: StatusCode, body: &Value) -> Response {
 }
 
 fn bearer(headers: &HeaderMap) -> Result<String, ApiError> {
+    let token = bearer_value(headers);
+    if token.is_err() {
+        // Refused before any lookup: no key resolved (ADR-0042 d14).
+        traffic::credential(None, None);
+    }
+    token
+}
+
+fn bearer_value(headers: &HeaderMap) -> Result<String, ApiError> {
     let value = headers
         .get(header::AUTHORIZATION)
         .ok_or_else(ApiError::auth_missing)?;

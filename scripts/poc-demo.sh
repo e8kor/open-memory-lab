@@ -139,7 +139,7 @@ for _ in $(seq 1 100); do
 done
 [ -n "$READY" ] || fail "server never answered /healthz on $SERVER_URL"
 # tracing's fmt layer colors field separators, so strip ANSI before grepping.
-PUBKEY="$(sed 's/\x1b\[[0-9;]*m//g' "$DEMO_DIR/server.stderr" | grep -o 'public_key=[0-9a-f]\{64\}' | head -1 | cut -d= -f2)"
+PUBKEY="$(sed 's/\x1b\[[0-9;]*m//g' "$DEMO_DIR/server.stderr" | grep -oE 'public_key"?[=:]"?[0-9a-f]{64}' | head -1 | grep -oE '[0-9a-f]{64}$')"
 [ -n "$PUBKEY" ] || fail "no public_key in the server boot log"
 echo "server up (pid $SERVER_PID); enrollment token captured: ${TOKEN:0:12}…"
 echo "deployment signing public key (from the boot log, handed out of band): $PUBKEY"

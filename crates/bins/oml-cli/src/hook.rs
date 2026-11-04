@@ -107,7 +107,7 @@ pub fn session_start(
             "stdin is not the SessionStart JSON object ({why}), so no context was loaded"
         ))
     })?;
-    let client = Client::with_timeout(url, Some(key.clone()), REQUEST_TIMEOUT);
+    let client = Client::for_hook(url, Some(key.clone()), REQUEST_TIMEOUT, "session-start");
     let failed = |what: &str, e: CliError| quiet(format!("{what}: {}", describe(e)));
     let unreadable = |what: &str| quiet(format!("{what}: the answer is not its shape"));
 
@@ -697,7 +697,12 @@ pub fn tool_failure(
         .store(&path)
         .map_err(|e| quiet(format!("the session cache could not be written: {e}")))?;
 
-    let client = Client::with_timeout(url, Some(key.clone()), FAILURE_REQUEST_TIMEOUT);
+    let client = Client::for_hook(
+        url,
+        Some(key.clone()),
+        FAILURE_REQUEST_TIMEOUT,
+        "tool-failure",
+    );
     let (_, recall) = client
         .post(
             "/v1/memories/recall",

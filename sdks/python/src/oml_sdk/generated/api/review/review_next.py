@@ -13,9 +13,21 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     body: ReviewNextBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
+
     headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
@@ -79,6 +91,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ReviewNextBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[Any | ErrorEnvelope | Serve]:
     """Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under
@@ -91,6 +106,9 @@ def sync_detailed(
     refused per item on lineage collision (review.author_in_lineage).
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
             designed field (openapi-designed.yaml x-oml-designed-fields), refused with
@@ -106,6 +124,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -120,6 +141,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ReviewNextBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Any | ErrorEnvelope | Serve | None:
     """Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under
@@ -132,6 +156,9 @@ def sync(
     refused per item on lineage collision (review.author_in_lineage).
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
             designed field (openapi-designed.yaml x-oml-designed-fields), refused with
@@ -148,6 +175,9 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -156,6 +186,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ReviewNextBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[Any | ErrorEnvelope | Serve]:
     """Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under
@@ -168,6 +201,9 @@ async def asyncio_detailed(
     refused per item on lineage collision (review.author_in_lineage).
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
             designed field (openapi-designed.yaml x-oml-designed-fields), refused with
@@ -183,6 +219,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -195,6 +234,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ReviewNextBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Any | ErrorEnvelope | Serve | None:
     """Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under
@@ -207,6 +249,9 @@ async def asyncio(
     refused per item on lineage collision (review.author_in_lineage).
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
             designed field (openapi-designed.yaml x-oml-designed-fields), refused with
@@ -224,6 +269,9 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
             idempotency_key=idempotency_key,
         )
     ).parsed

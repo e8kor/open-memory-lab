@@ -8,14 +8,25 @@ from ...client import AuthenticatedClient, Client
 from ...models.client_registration import ClientRegistration
 from ...models.client_registration_request import ClientRegistrationRequest
 from ...models.o_auth_error import OAuthError
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: ClientRegistrationRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -69,6 +80,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ClientRegistrationRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ClientRegistration | OAuthError]:
     """RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only,
     redirect URIs inside the allowlist.
@@ -81,6 +95,9 @@ def sync_detailed(
     (ADR-0031 d5).
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (ClientRegistrationRequest):
 
     Raises:
@@ -93,6 +110,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -106,6 +126,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ClientRegistrationRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ClientRegistration | OAuthError | None:
     """RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only,
     redirect URIs inside the allowlist.
@@ -118,6 +141,9 @@ def sync(
     (ADR-0031 d5).
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (ClientRegistrationRequest):
 
     Raises:
@@ -131,6 +157,9 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -138,6 +167,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ClientRegistrationRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ClientRegistration | OAuthError]:
     """RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only,
     redirect URIs inside the allowlist.
@@ -150,6 +182,9 @@ async def asyncio_detailed(
     (ADR-0031 d5).
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (ClientRegistrationRequest):
 
     Raises:
@@ -162,6 +197,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -173,6 +211,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ClientRegistrationRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ClientRegistration | OAuthError | None:
     """RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only,
     redirect URIs inside the allowlist.
@@ -185,6 +226,9 @@ async def asyncio(
     (ADR-0031 d5).
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (ClientRegistrationRequest):
 
     Raises:
@@ -199,5 +243,8 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

@@ -2,10 +2,12 @@
 OML_API_KEY, taken from the first source that sets either and refused naming
 the other when that source sets one alone (ADR-0039 d15)."""
 
+import importlib.metadata
+
 import httpx
 import pytest
 
-from oml_sdk import ConfigError, OmlClient
+from oml_sdk import ApiError, ConfigError, OmlClient
 
 
 def recorder() -> tuple[list[httpx.Request], httpx.MockTransport]:
@@ -70,3 +72,17 @@ def test_the_key_is_in_no_repr():
     assert "oml_secret_value" not in repr(client)
     assert "oml_secret_value" not in str(client)
     client.close()
+
+
+def test_every_request_names_the_sdk_and_its_version_in_user_agent():
+    # The server's request log names the client by its User-Agent (ADR-0042 d9).
+    requests, transport = recorder()
+    with (
+        OmlClient(
+            url="http://oml.test", api_key="oml_sk_x", retries=0, transport=transport
+        ) as client,
+        pytest.raises(ApiError),
+    ):
+        client.read(limit=1)
+    version = importlib.metadata.version("oml-sdk")
+    assert requests and requests[0].headers["user-agent"] == f"oml-sdk-python/{version}"

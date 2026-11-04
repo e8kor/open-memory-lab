@@ -65,7 +65,7 @@ Your administrator gives you two things: the server's address and an agent key. 
 Claude Code on your machine, three lines connect your agent:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.0/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh
 oml login https://oml.example.com
 oml setup claude-code
 ```

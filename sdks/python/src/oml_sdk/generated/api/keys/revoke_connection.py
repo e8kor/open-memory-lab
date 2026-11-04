@@ -17,9 +17,21 @@ def _get_kwargs(
     connection_id: UUID,
     *,
     body: RevokeConnectionBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
+
     headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
@@ -79,6 +91,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RevokeConnectionBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[Connection | ErrorEnvelope]:
     """Journalled revocation of one connection.
@@ -92,6 +107,9 @@ def sync_detailed(
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
         connection_id (UUID):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (RevokeConnectionBody | Unset):
 
@@ -107,6 +125,9 @@ def sync_detailed(
         key=key,
         connection_id=connection_id,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -123,6 +144,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: RevokeConnectionBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Connection | ErrorEnvelope | None:
     """Journalled revocation of one connection.
@@ -136,6 +160,9 @@ def sync(
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
         connection_id (UUID):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (RevokeConnectionBody | Unset):
 
@@ -152,6 +179,9 @@ def sync(
         connection_id=connection_id,
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -162,6 +192,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RevokeConnectionBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[Connection | ErrorEnvelope]:
     """Journalled revocation of one connection.
@@ -175,6 +208,9 @@ async def asyncio_detailed(
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
         connection_id (UUID):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (RevokeConnectionBody | Unset):
 
@@ -190,6 +226,9 @@ async def asyncio_detailed(
         key=key,
         connection_id=connection_id,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -204,6 +243,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: RevokeConnectionBody | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Connection | ErrorEnvelope | None:
     """Journalled revocation of one connection.
@@ -217,6 +259,9 @@ async def asyncio(
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
         connection_id (UUID):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (RevokeConnectionBody | Unset):
 
@@ -234,6 +279,9 @@ async def asyncio(
             connection_id=connection_id,
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
             idempotency_key=idempotency_key,
         )
     ).parsed
