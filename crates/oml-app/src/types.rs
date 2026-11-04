@@ -2,6 +2,7 @@
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
+use oml_domain::claim_edges::{EdgeField, LabelRefusal};
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
@@ -1566,6 +1567,34 @@ pub struct SupersedeReceipt {
     pub body_digest: String,
 }
 
+/// `POST /v2/claim-edges` as the use-case takes it: a labelled edge from
+/// one of the tenant's versions to another (http-api.md, claim edges;
+/// ADR-0008 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposeClaimEdge {
+    pub from_artifact_id: Uuid,
+    pub to_artifact_id: Uuid,
+    pub label: String,
+}
+
+/// The stored idempotent response of a claim-edge proposal: a replay
+/// returns this byte for byte, naming only the caller's own edge
+/// (http-api.md idempotency, claim edges).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimEdgeProposal {
+    pub edge_id: Uuid,
+    /// Always `pending`: a proposal confers nothing until a key that is not
+    /// its proposer ratifies it (ADR-0008 d5; ADR-0012 R2).
+    pub state: String,
+    pub journal_seq: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClaimEdgeProposalOutcome {
+    pub proposal: ClaimEdgeProposal,
+    pub replayed: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct SupersedeOutcome {
     pub receipt: SupersedeReceipt,
@@ -1717,6 +1746,13 @@ pub enum AppError {
         "oml_supersede carries no vocabulary fields, so a {0:?} target is superseded on the HTTP API (mcp-plugin.md oml_supersede; ADR-0025 d12, request.validation)"
     )]
     VocabularyTarget(MemoryKind),
+    /// A claim-edge label the domain's label check refused; `field` is
+    /// `details.field` (errors.md `request.validation`; ADR-0021 d5).
+    #[error("{reason}")]
+    ClaimEdgeLabel {
+        field: EdgeField,
+        reason: LabelRefusal,
+    },
     #[error(
         "a sent claim_key starts auto-, the prefix only the server derives (ADR-0039 d6, request.validation)"
     )]
