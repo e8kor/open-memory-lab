@@ -31,6 +31,7 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+pub mod brief;
 pub mod budget;
 pub mod chain;
 pub mod claim_edges;

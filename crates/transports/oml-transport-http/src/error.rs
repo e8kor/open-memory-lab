@@ -421,6 +421,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             if several { "several" } else { "no" }
         ))
         .with_details(json!({ "field": "/serve_id" })),
+        // A brief serves only promoted served tips (ADR-0046 d8).
+        AppError::BriefMemberNotServed { artifact_id } => ApiError::validation(format!(
+            "artifact {artifact_id} is not a promoted served tip: only a claim review promoted joins a brief"
+        ))
+        .with_details(json!({ "field": "/from_artifact_id" })),
         // A claim-edge label the domain refused, naming the body field
         // (errors.md request.validation; ADR-0021 d5).
         AppError::ClaimEdgeLabel { field, reason } => {

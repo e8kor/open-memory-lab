@@ -37,6 +37,7 @@ use crate::ports::{SignInExchange, WebStore};
 use crate::types::{
     AdminSearch, AdminState, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
     AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WorkareaRecord, WorkareaRef,
+    BriefEdgeRecord,
 };
 use crate::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord,
@@ -161,6 +162,8 @@ struct TenantState {
     web_sessions: BTreeMap<[u8; 32], WebSessionRecord>,
     /// Claim edges by id.
     claim_edges: BTreeMap<Uuid, ClaimEdgeRecord>,
+    /// Brief edges by id (ADR-0046 d7).
+    brief_edges: BTreeMap<Uuid, BriefEdgeRecord>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -1402,6 +1405,60 @@ fn apply_fold(
                 edge.ratifier_key_id = Some(ratifier_key_id);
             }
         }
+        MetadataFold::BriefEdgeProposed(edge) => {
+            // What `brief_edges`' keys and checks refuse, the double
+            // refuses (postgres-schema.md `brief_edges`).
+            let refuse = |why: String| Err(StoreError::Backend(why));
+            if edge.tenant_id != tenant_id || state.brief_edges.contains_key(&edge.edge_id) {
+                return refuse(format!(
+                    "brief edge {} is not a new edge of this tenant",
+                    edge.edge_id
+                ));
+            }
+            if !state.memories.contains_key(&edge.artifact_id)
+                || !state.workareas.contains_key(&edge.workarea_id)
+                || !state.keys.contains_key(&edge.proposer_key_id)
+            {
+                return refuse(format!(
+                    "brief edge {} names a row this tenant does not hold",
+                    edge.edge_id
+                ));
+            }
+            if edge.state != EdgeState::Pending
+                || edge.ratifier_key_id.is_some()
+                || edge.ratified_seq.is_some()
+                || edge.created_at != *at
+            {
+                return refuse(format!(
+                    "brief edge {} is proposed pending at its event's at",
+                    edge.edge_id
+                ));
+            }
+            state.brief_edges.insert(edge.edge_id, edge);
+        }
+        MetadataFold::BriefEdgeRatified {
+            edge_id,
+            ratifier_key_id,
+        } => {
+            let Some(edge) = state
+                .brief_edges
+                .get(&edge_id)
+                .filter(|e| e.state == EdgeState::Pending)
+            else {
+                return Err(StoreError::EdgeNotPending { edge_id });
+            };
+            if edge.proposer_key_id == ratifier_key_id || !state.keys.contains_key(&ratifier_key_id)
+            {
+                return Err(StoreError::Backend(format!(
+                    "brief edge {edge_id}'s ratifier is its proposer or not this tenant's key"
+                )));
+            }
+            if let Some(edge) = state.brief_edges.get_mut(&edge_id) {
+                edge.state = EdgeState::Ratified;
+                edge.ratifier_key_id = Some(ratifier_key_id);
+                edge.ratified_seq = Some(seq);
+            }
+        }
     }
     Ok(())
 }
@@ -2499,6 +2556,37 @@ impl JournalStore for MemStore {
             .idempotency
             .get(&(scope.key_id, scope.workarea_id, scope.idem_key.clone()))
             .cloned())
+    }
+
+    async fn brief_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> Result<Option<BriefEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.brief_edges.get(&edge_id).cloned())
+    }
+
+    async fn brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut edges: Vec<BriefEdgeRecord> = state
+            .brief_edges
+            .values()
+            .filter(|e| e.workarea_id == workarea_id)
+            .cloned()
+            .collect();
+        edges.sort_by_key(|e| std::cmp::Reverse((e.created_at.as_str().to_owned(), e.edge_id)));
+        Ok(edges)
     }
 
     async fn claim_edge(
