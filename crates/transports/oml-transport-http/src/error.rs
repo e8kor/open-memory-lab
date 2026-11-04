@@ -531,6 +531,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "R2 extends to edges and transitions: proposal and ratification are two identities or they are nothing.",
             "the key or principal ratifying this proposal proposed it",
         ),
+        // No route ratifies a claim edge in this build, so a lost edge
+        // compare-and-set reaching a transport is a defect; the ratify
+        // use case answers it before any route serves one (ADR-0021 d5).
+        AppError::Store(StoreError::EdgeNotPending { edge_id }) => {
+            ApiError::internal(format!("claim edge {edge_id} is not pending"))
+        }
         AppError::Store(StoreError::IdempotencyRecorded) => {
             // Surfaces only when the record a concurrent attempt committed
             // was gone again when the use-case read it back to replay it.
