@@ -11,14 +11,15 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// The stored pair. Either field may be absent in a hand-edited file; the
-/// caller refuses a file that sets one alone. A v0.3.0 file's `server` and
-/// `key` are read as `url` and `api_key` through v0.5.0, and its `key_id`,
-/// `tenant_id` and `root_workarea_id` are ignored (ADR-0039 d15).
+/// caller refuses a file that sets one alone. A v0.3.0 file's `server`,
+/// `key`, `key_id`, `tenant_id` and `root_workarea_id` are not read: its
+/// `server` and `key` were read through v0.5.0, and v0.5.1 removed them
+/// (ADR-0039 d12, d15).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Credentials {
-    #[serde(alias = "server", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    #[serde(alias = "key", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
 }
 
