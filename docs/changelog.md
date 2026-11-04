@@ -34,6 +34,30 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-03 — The status ladder (implementation)
+
+An implementation milestone; no decision changes. The code now builds the accepted
+[ADR-0009](adr/ADR-0009-status-ladder.md)'s ladder in the domain, the use cases and the Postgres
+store. `info.version` stays `0.3.0-design`.
+
+- **The ladder** (d1, d3, d4). A workarea's status is one stored column; an admin, or a dreamer
+  with dreamer access on the node, proposes one rung forward as a pending `workarea_transitions`
+  row and one `workarea.status_proposed`; a second identity ratifies it as one
+  `workarea.status_transition` carrying the policy snapshot, and the node takes its `to` in that
+  commit. The ratifying transaction re-checks the proposal and the children under the chain lock,
+  so a child created concurrently with a ratification to `validated` leaves either the child or
+  the validated node, never both. Refusals are `workarea.transition_refused` with a reason and
+  `review.ratifier_is_proposer` ([errors](api/errors.md)); the readings are on
+  [workareas](architecture/workareas.md#readings-the-build-takes).
+- **The freeze** (d5). A `validated` workarea refuses a submit, a supersede, an approval and a
+  child create as `workarea.frozen`, while its crew record stays correctable.
+- **Not built:** reassignment, re-parent, demote, erasure and the simulation fence; no HTTP route
+  or MCP tool serves the transitions, since the proposed ADR-0039 rewrites both. The Postgres
+  end-to-end laws run only where a superuser mints the suites' role pairs, CI's
+  `cargo test (Postgres)`.
+- **Pages touched:** [workareas](architecture/workareas.md),
+  [postgres-schema](data/postgres-schema.md) and this page.
+
 ### 2026-11-04 — ADR-0043 proposed: the maintainer's public server as the default, planned for v0.4.1
 
 [ADR-0043](adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), proposed:
