@@ -782,6 +782,22 @@ pub struct TransitionRecord {
     pub ratifier_key_id: Option<Uuid>,
 }
 
+/// A workarea's status read (http-api.md workareas, `GET
+/// /v2/workareas/{id}/status`): the rung its row stores, the review policy
+/// object in force, and its live proposals in proposal order, the pending
+/// rows whose `from` is that rung; a proposal another's ratification made
+/// stale is not listed (workareas.md, the status read lists only live
+/// proposals; ADR-0009 d3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkareaStatusView {
+    pub workarea_id: Uuid,
+    pub status: WorkareaStatus,
+    /// The policy a verdict's ratification and a transition's
+    /// `policy_snapshot` read, so the three never disagree.
+    pub policy: serde_json::Value,
+    pub pending: Vec<TransitionRecord>,
+}
+
 /// A crew record: named, recorded and not operated — OML never contacts the
 /// external manager (workareas.md crews; postgres-schema.md `crews`;
 /// ADR-0026 d8). The name never changes.

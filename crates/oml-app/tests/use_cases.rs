@@ -9801,3 +9801,244 @@ async fn freezing_changes_no_grant_and_no_permission_epoch() {
         "{types:?}"
     );
 }
+
+// -- the status read, and status events on the tail (ADR-0009 d3; ADR-0025
+// d15) --------------------------------------------------------------------
+
+/// The status read serves the node's stored status, the review policy in
+/// force and its live proposals in proposal order; a ratification makes
+/// every other proposal from the old rung stale, and the read drops them
+/// (http-api.md `GET /v2/workareas/{id}/status`; workareas.md, the status
+/// read lists only live proposals; ADR-0009 d3).
+#[tokio::test]
+async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_policy_in_force() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+
+    let first = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    let second = app
+        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a second proposal");
+    let third = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a third proposal");
+
+    let view = app
+        .workarea_status(&rita.value, by_name("crew"))
+        .await
+        .expect("a reader reads the status");
+    assert_eq!(view.workarea_id, crew);
+    assert_eq!(view.status, WorkareaStatus::Development);
+    assert_eq!(
+        view.policy,
+        json!({ "k": 1, "required_roles": ["dreamer"] })
+    );
+    assert_eq!(
+        view.pending,
+        vec![first.clone(), second.clone(), third.clone()]
+    );
+
+    app.ratify_transition(&dora.value, crew.into(), first.transition_id)
+        .await
+        .expect("a second identity ratifies");
+    let view = app
+        .workarea_status(&rita.value, crew.into())
+        .await
+        .expect("a reader reads the status");
+    assert_eq!(view.status, WorkareaStatus::Committed);
+    assert!(view.pending.is_empty(), "stale proposals are not live");
+    let stored = store
+        .pending_transitions(boot.tenant_id, crew)
+        .await
+        .expect("read");
+    assert_eq!(stored, vec![second, third], "the stale rows stay pending");
+
+    let next = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .await
+        .expect("a proposal from the new rung");
+    let view = app
+        .workarea_status(&rita.value, crew.into())
+        .await
+        .expect("a reader reads the status");
+    assert_eq!(view.pending, vec![next]);
+}
+
+/// An admin key reads a node's pending transitions as structure, on its key
+/// role, with no grant anywhere (roles-and-keys.md permission matrix,
+/// footnote 6; ADR-0026 d15).
+#[tokio::test]
+async fn an_admin_reads_a_nodes_pending_transitions_without_any_grant() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", quarter).await;
+    let bob = issue_with(&app, admin, Role::Admin, "bob-admin", Vec::new()).await;
+    let proposal = app
+        .propose_transition(&dora.value, quarter.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a dreamer proposes");
+
+    let view = app
+        .workarea_status(&bob.value, by_name("q1-2027"))
+        .await
+        .expect("an admin reads structure");
+    assert_eq!(
+        (view.workarea_id, view.status, view.pending),
+        (quarter, WorkareaStatus::Development, vec![proposal])
+    );
+    let err = app
+        .workarea_status(&bob.value, Uuid::from_u128(0xDEAD).into())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+}
+
+/// A key outside read access on the node is refused by the refusal order
+/// as `access.not_found`, by id and by name alike, so the read never tells
+/// it the node exists (roles-and-keys.md refusal order).
+#[tokio::test]
+async fn a_key_without_read_access_gets_not_found_from_the_status_read() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let outsider = issue(&app, admin, Role::Reader, "otto", other).await;
+    app.propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+
+    for node in [crew.into(), by_name("crew"), by_name("no-such-node")] {
+        let err = app
+            .workarea_status(&outsider.value, node)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+}
+
+/// The workarea read serves the status the row stores: `validated` once a
+/// second identity ratified the last rung, and the status read agrees
+/// (ADR-0009 d1, d3; ADR-0025 d14).
+#[tokio::test]
+async fn the_workarea_read_serves_validated_after_ratification() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dora",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+
+    freeze(&app, admin, &dora.value, crew).await;
+    let info = app
+        .workarea_info(&dora.value, Some(crew.into()))
+        .await
+        .expect("a readable node");
+    assert_eq!(info.workarea.status, WorkareaStatus::Validated);
+    let view = app
+        .workarea_status(&dora.value, crew.into())
+        .await
+        .expect("a readable node");
+    assert_eq!(view.status, info.workarea.status);
+    assert!(view.pending.is_empty());
+}
+
+/// The tail shows `workarea.status_proposed` and
+/// `workarea.status_transition` to a key that reads the node, judged on the
+/// payload's `workarea_id`, and neither to a key that does not
+/// (http-api.md#events-tail; event-catalog.md; ADR-0025 d15).
+#[tokio::test]
+async fn a_reader_of_the_node_sees_status_proposed_and_status_transition_on_the_tail_and_a_non_reader_sees_neither()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let otto = issue(&app, admin, Role::Reader, "otto", other).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let proposal = app
+        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+    app.ratify_transition(&dora.value, crew.into(), proposal.transition_id)
+        .await
+        .expect("ratified");
+
+    let status_events = |page: oml_app::types::TailPage| -> Vec<(String, Value)> {
+        page.events
+            .into_iter()
+            .filter(|e| e.event.envelope.event_type.starts_with("workarea.status_"))
+            .map(|e| (e.event.envelope.event_type.clone(), e.payload))
+            .collect()
+    };
+    let seen = status_events(
+        app.tail_events(&rita.value, None, 0, 100)
+            .await
+            .expect("tail"),
+    );
+    let types: Vec<&str> = seen.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(
+        types,
+        [
+            event_types::WORKAREA_STATUS_PROPOSED,
+            event_types::WORKAREA_STATUS_TRANSITION
+        ]
+    );
+    for (_, payload) in &seen {
+        assert_eq!(payload["workarea_id"], json!(crew.to_string()));
+        assert_eq!(
+            payload["transition_id"],
+            json!(proposal.transition_id.to_string())
+        );
+    }
+
+    let unseen = status_events(
+        app.tail_events(&otto.value, None, 0, 100)
+            .await
+            .expect("tail"),
+    );
+    assert!(unseen.is_empty(), "{unseen:?}");
+}
+
+/// A chain holding status proposals and their ratifications, both rungs,
+/// verifies end to end with the domain procedure (chain-format.md; ADR-0009
+/// d3).
+#[tokio::test]
+async fn the_chain_with_transition_events_verifies() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+
+    freeze(&app, admin, &dora.value, crew).await;
+    let events = journal(&store, boot.tenant_id).await;
+    let count = |t: &str| events.iter().filter(|e| e.envelope.event_type == t).count();
+    assert_eq!(count(event_types::WORKAREA_STATUS_PROPOSED), 2);
+    assert_eq!(count(event_types::WORKAREA_STATUS_TRANSITION), 2);
+
+    let head = app.verify_chain(admin).await.expect("the chain verifies");
+    assert_eq!(head.seq, events.last().expect("a chain").envelope.seq);
+    let keys = KeySet::new(vec![SigningKey::from_bytes(&TEST_SEED).verifying_key()]);
+    verify_chain(&events, &keys, None).expect("the domain procedure verifies it");
+}
