@@ -66,28 +66,13 @@ pub fn session_start(
     if switch.as_deref() == Some("off") {
         return Err(None);
     }
-    // A key value is printable ASCII. One with whitespace or any other byte
-    // is refused before anything is sent: a header error would carry it raw,
-    // and a server that trims it would authenticate a value the redaction
-    // below no longer matches (ADR-0029 d4).
-    let (url_var, key_var) = pair_source(&set);
-    let api_key = set(key_var);
-    if api_key
-        .as_ref()
-        .is_some_and(|key| !key.bytes().all(|b| b.is_ascii_graphic()))
-    {
-        return Err(Some(format!(
-            "{key_var} holds whitespace or a character outside printable ASCII, so it was not \
-             sent and no context was loaded"
-        )));
-    }
+    // The pair resolves before any line that could carry a value, so every
+    // such line below has the key to redact (ADR-0040 d3).
+    let Pair { url, key } = resolve_pair(var).map_err(Some)?;
     // Every line this prints, a refused variable's value included, goes
     // through the redaction, and before it is flattened, so the flattening
     // cannot change what the redaction matches.
-    let redact = |text: &str| match &api_key {
-        Some(key) => text.replace(key.as_str(), REDACTED),
-        None => text.to_owned(),
-    };
+    let redact = |text: &str| text.replace(key.as_str(), REDACTED);
     let quiet = |reason: String| Some(cut(one_line(&redact(&reason)), LINE_CAP));
 
     match switch.as_deref() {
@@ -111,15 +96,12 @@ pub fn session_start(
                 ))
             })?,
     };
-    let url = set(url_var).ok_or_else(|| quiet(unset(url_var)))?;
-    let key = api_key.clone().ok_or_else(|| quiet(unset(key_var)))?;
-
     let session = read_session(stdin).map_err(|why| {
         quiet(format!(
             "stdin is not the SessionStart JSON object ({why}), so no context was loaded"
         ))
     })?;
-    let client = Client::with_timeout(url, Some(key), REQUEST_TIMEOUT);
+    let client = Client::with_timeout(url, Some(key.clone()), REQUEST_TIMEOUT);
     let failed = |what: &str, e: CliError| quiet(format!("{what}: {}", describe(e)));
     let unreadable = |what: &str| quiet(format!("{what}: the answer is not its shape"));
 
@@ -169,17 +151,55 @@ pub fn session_start(
     Ok(document.to_string())
 }
 
-/// The variables the server and key come from, as one pair: the plugin's
-/// two options when either is set and non-empty, else `OML_URL` and
-/// `OML_API_KEY`. One option set alone is not configured, and the unset one
-/// is then named rather than the environment pair tried, so a key never goes
-/// to a URL from another source (ADR-0040 d3; ADR-0039 d15).
-fn pair_source(set: &dyn Fn(&str) -> Option<String>) -> (&'static str, &'static str) {
-    if set(OPTION_URL).is_some() || set(OPTION_API_KEY).is_some() {
-        (OPTION_URL, OPTION_API_KEY)
+/// The server and the agent's key the hook sends to it, from one source.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Pair {
+    /// The server, without `/mcp`.
+    pub url: String,
+    /// The agent's own key, printable ASCII.
+    pub key: String,
+}
+
+/// The server and key as one pair from one source, or the stderr line
+/// saying why there is none (ADR-0040 d3). The plugin's two options are the
+/// pair when either is set and non-empty, else `OML_URL` and `OML_API_KEY`;
+/// an empty variable counts as unset. One option set alone is a plugin not
+/// configured: the unset one is named and the environment pair is not
+/// tried, so a key never goes to a URL from another source (ADR-0039 d15).
+/// It reads those four variables and nothing else, never the CLI's
+/// credentials file, which may hold an admin key.
+///
+/// A key value is printable ASCII. One with whitespace or any other byte is
+/// refused by its variable's name, never its value, before anything is
+/// sent: a header error would carry it raw, and a server that trims it
+/// would authenticate a value the redaction no longer matches (ADR-0029
+/// d4).
+///
+/// # Errors
+///
+/// A variable of the chosen pair is unset or empty, or the key is not
+/// printable ASCII.
+pub fn resolve_pair(var: &dyn Fn(&str) -> Option<String>) -> Result<Pair, String> {
+    let set = |name: &str| var(name).filter(|v| !v.is_empty());
+    let (option_url, option_key) = (set(OPTION_URL), set(OPTION_API_KEY));
+    let (url, key, url_var, key_var) = if option_url.is_some() || option_key.is_some() {
+        (option_url, option_key, OPTION_URL, OPTION_API_KEY)
     } else {
-        ("OML_URL", "OML_API_KEY")
+        (set("OML_URL"), set("OML_API_KEY"), "OML_URL", "OML_API_KEY")
+    };
+    if key
+        .as_ref()
+        .is_some_and(|key| !key.bytes().all(|b| b.is_ascii_graphic()))
+    {
+        return Err(format!(
+            "{key_var} holds whitespace or a character outside printable ASCII, so it was not \
+             sent and no context was loaded"
+        ));
     }
+    Ok(Pair {
+        url: url.ok_or_else(|| unset(url_var))?,
+        key: key.ok_or_else(|| unset(key_var))?,
+    })
 }
 
 /// The recall's request body: the query, the item count and the budget,
@@ -441,6 +461,148 @@ mod tests {
         assert_eq!(body["query"], "open memory lab");
         assert_eq!(body["max_tokens"], 800);
         assert_eq!(body["k"], COUNT);
+    }
+
+    /// `resolve_pair` over an environment of `pairs` and nothing else, and
+    /// every name it asked for.
+    fn resolve(pairs: &[(&str, &str)]) -> (Result<Pair, String>, Vec<String>) {
+        let map: std::collections::HashMap<&str, &str> = pairs.iter().copied().collect();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let var = |name: &str| {
+            asked.borrow_mut().push(name.to_owned());
+            map.get(name).map(|v| (*v).to_owned())
+        };
+        let pair = resolve_pair(&var);
+        (pair, asked.into_inner())
+    }
+
+    const ENV_URL: &str = "http://env.example:8080";
+    const ENV_KEY: &str = "env-pair-key-0123";
+    const OPT_URL: &str = "http://option.example:8080";
+    const OPT_KEY: &str = "option-key-4567";
+
+    fn pair(url: &str, key: &str) -> Result<Pair, String> {
+        Ok(Pair {
+            url: url.to_owned(),
+            key: key.to_owned(),
+        })
+    }
+
+    fn not_set(name: &str) -> Result<Pair, String> {
+        Err(format!("{name} is not set, so no context was loaded"))
+    }
+
+    /// Both plugin options set: they are the pair, and the whole
+    /// environment pair beside them is ignored (ADR-0040 d3).
+    #[test]
+    fn the_plugin_options_beat_the_environment_pair() {
+        let (resolved, _) = resolve(&[
+            (OPTION_URL, OPT_URL),
+            (OPTION_API_KEY, OPT_KEY),
+            ("OML_URL", ENV_URL),
+            ("OML_API_KEY", ENV_KEY),
+        ]);
+        assert_eq!(resolved, pair(OPT_URL, OPT_KEY));
+    }
+
+    /// One option set alone is a plugin not configured: the hook fails open
+    /// naming the unset option, and takes neither value of the environment
+    /// pair to complete it (ADR-0040 d3; ADR-0029 d5).
+    #[test]
+    fn one_plugin_option_alone_fails_open_without_borrowing_from_the_environment() {
+        for (set, unset_name) in [
+            ((OPTION_API_KEY, OPT_KEY), OPTION_URL),
+            ((OPTION_URL, OPT_URL), OPTION_API_KEY),
+        ] {
+            let (resolved, _) = resolve(&[set, ("OML_URL", ENV_URL), ("OML_API_KEY", ENV_KEY)]);
+            assert_eq!(resolved, not_set(unset_name));
+        }
+    }
+
+    /// An option set to the empty string counts as unset: with both empty
+    /// the environment pair is used, and with one empty beside the other
+    /// the plugin is not configured; an empty `OML_` variable is unset too
+    /// (ADR-0040 d3).
+    #[test]
+    fn an_empty_option_counts_as_unset() {
+        let env_pair = [("OML_URL", ENV_URL), ("OML_API_KEY", ENV_KEY)];
+        let (resolved, _) = resolve(&[
+            (OPTION_URL, ""),
+            (OPTION_API_KEY, ""),
+            env_pair[0],
+            env_pair[1],
+        ]);
+        assert_eq!(resolved, pair(ENV_URL, ENV_KEY));
+        let (resolved, _) = resolve(&[
+            (OPTION_URL, ""),
+            (OPTION_API_KEY, OPT_KEY),
+            env_pair[0],
+            env_pair[1],
+        ]);
+        assert_eq!(resolved, not_set(OPTION_URL));
+        let (resolved, _) = resolve(&[("OML_URL", ENV_URL), ("OML_API_KEY", "")]);
+        assert_eq!(resolved, not_set("OML_API_KEY"));
+    }
+
+    /// With no option set, `OML_URL` and `OML_API_KEY` are the pair, and
+    /// one of them alone names the other (ADR-0040 d3; ADR-0029 d4).
+    #[test]
+    fn the_environment_pair_is_used_when_no_option_is_set() {
+        let (resolved, _) = resolve(&[("OML_URL", ENV_URL), ("OML_API_KEY", ENV_KEY)]);
+        assert_eq!(resolved, pair(ENV_URL, ENV_KEY));
+        let (resolved, _) = resolve(&[("OML_API_KEY", ENV_KEY)]);
+        assert_eq!(resolved, not_set("OML_URL"));
+        let (resolved, _) = resolve(&[("OML_URL", ENV_URL)]);
+        assert_eq!(resolved, not_set("OML_API_KEY"));
+    }
+
+    /// The resolver asks for the four pair variables and nothing else, not
+    /// `OML_CLI_CREDENTIALS`, `HOME` or `USERPROFILE`, which locate the
+    /// CLI's credentials file, and the hook's code names no credentials
+    /// reader: a stored admin key never becomes the hook's pair, and with no
+    /// pair set the hook names `OML_URL` (ADR-0040 d3).
+    #[test]
+    fn the_hook_never_reads_the_cli_credentials_file() {
+        let (resolved, asked) = resolve(&[
+            ("OML_CLI_CREDENTIALS", "/home/op/.config/oml/credentials"),
+            ("HOME", "/home/op"),
+        ]);
+        assert_eq!(resolved, not_set("OML_URL"));
+        assert!(!asked.is_empty());
+        let pair_vars = [OPTION_URL, OPTION_API_KEY, "OML_URL", "OML_API_KEY"];
+        for name in &asked {
+            assert!(pair_vars.contains(&name.as_str()), "asked for {name}");
+        }
+        let source = include_str!("hook.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap_or(source);
+        for reader in ["creds::", "OML_CLI_CREDENTIALS", "credentials_path"] {
+            assert!(!code.contains(reader), "the hook names {reader}");
+        }
+    }
+
+    /// An option key holding whitespace or a byte outside printable ASCII
+    /// is refused by the option's name with its value never printed, and
+    /// the printable environment key beside it is not tried instead
+    /// (ADR-0040 d3; ADR-0029 d4).
+    #[test]
+    fn a_non_printable_option_key_is_refused_and_redacted() {
+        for bad in ["key with spaces", "key-1\u{7f}", "k\u{e9}y-1", " key-1"] {
+            let (resolved, _) = resolve(&[
+                (OPTION_URL, OPT_URL),
+                (OPTION_API_KEY, bad),
+                ("OML_URL", ENV_URL),
+                ("OML_API_KEY", ENV_KEY),
+            ]);
+            let Err(line) = resolved else {
+                panic!("{bad:?} resolved: {resolved:?}");
+            };
+            assert!(
+                line.starts_with(&format!("{OPTION_API_KEY} holds whitespace")),
+                "{line}"
+            );
+            assert!(!line.contains(bad.trim()), "{line}");
+            assert!(!line.contains(ENV_KEY), "{line}");
+        }
     }
 
     /// A key from the plugin's option that is not printable ASCII is refused

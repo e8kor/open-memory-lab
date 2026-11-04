@@ -1613,7 +1613,10 @@ Operational notes:
   which injects the workarea's steering, the key's recent submissions and the
   memories matching the working directory's name, under a token budget; it
   reads the plugin's two settings first and `OML_URL` and `OML_API_KEY`
-  second, as one pair, never one value from each (ADR-0040 d3); it is
+  second, as one pair, never one value from each: either setting set and
+  non-empty makes the settings the pair, one of them alone prints nothing
+  and names the other, an empty value counts as unset, and the CLI's stored
+  credentials are never read (ADR-0040 d3); it is
   declared, with its variables and how it fails open, on the
   [CLI reference](../cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin)
   ([ADR-0029](../adr/ADR-0029-session-start-hook.md)).

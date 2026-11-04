@@ -527,7 +527,7 @@ shows it ([FR-33](../product/roadmap.md)).
 
 | Variable | Read as |
 |---|---|
-| `CLAUDE_PLUGIN_OPTION_URL` | The plugin's `url` setting, which Claude Code exports to the plugin's hooks: the server, without `/mcp`, the one the plugin's MCP entry reaches. When it or `CLAUDE_PLUGIN_OPTION_API_KEY` is set and non-empty, the verb uses these two and never the `OML_` pair; set alone, the verb prints nothing and names the unset one ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d3). |
+| `CLAUDE_PLUGIN_OPTION_URL` | The plugin's `url` setting, which Claude Code exports to the plugin's hooks: the server, without `/mcp`, the one the plugin's MCP entry reaches. When it or `CLAUDE_PLUGIN_OPTION_API_KEY` is set and non-empty, the verb uses these two and never the `OML_` pair; set alone, the verb prints nothing and names the unset one. An empty setting counts as unset, as does an empty variable below ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d3). |
 | `CLAUDE_PLUGIN_OPTION_API_KEY` | The plugin's `api_key` setting, read under the same rule and refused like `OML_API_KEY` below. |
 | `OML_URL` | The server, without `/mcp`, when neither plugin setting is set: a hook run by hand or by another harness. Unset or empty, the verb prints nothing. |
 | `OML_API_KEY` | The agent's own key, the bearer of both requests, when neither plugin setting is set. Unset or empty, the verb prints nothing; a value holding whitespace or a character outside printable ASCII is refused before anything is sent, with a stderr line that names the variable and never the value. |
@@ -535,7 +535,7 @@ shows it ([FR-33](../product/roadmap.md)).
 | `OML_SESSION_CONTEXT_MAX_TOKENS` | The recall's `max_tokens`: default `800`, an integer from 1 to 2000; any other value prints nothing and names the variable on stderr. Steering is never cut, so the budget bounds the hits ([token budgets](../architecture/retrieval.md#token-budgets)). At the ceiling the hit bodies are at most 8,000 bytes; with the frame, the capped claim keys and uncut steering on top, a context can still pass Claude Code's 10,000-character cap on hook context, and the header, the record lines and the framing line come first, so the 2,000-character preview Claude Code then shows still holds them ([ADR-0029](../adr/ADR-0029-session-start-hook.md) d2, d6). |
 
 The verb never uses `--url` or `--api-key`, nor the hidden `--server` and `--key`, and never
-reads the stored credentials, so an admin key never feeds an agent's context. It prints no key
+reads the stored credentials, nor `OML_CLI_CREDENTIALS`, `HOME` or `USERPROFILE`, which locate them, so an admin key stored by `oml login` never feeds an agent's context. It prints no key
 value: every occurrence of the key value in what it prints, from either pair, stored text included, is replaced by
 `[OML_API_KEY]`, in each stored field before that field is flattened or cut.
 
