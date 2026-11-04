@@ -297,6 +297,21 @@ impl MemStore {
         self.miss_next_lookup.store(true, Ordering::SeqCst);
     }
 
+    /// Sets a stored row's status, journalling nothing: the demoted or
+    /// erased row a test needs, which no use case in this build produces.
+    /// A row the tenant does not hold is left absent.
+    pub fn set_status(&self, tenant_id: Uuid, memory_id: Uuid, status: MemoryStatus) {
+        if let Some(tenant) = self.tenant_existing(tenant_id)
+            && let Some(memory) = tenant
+                .lock()
+                .expect("tenant lock")
+                .memories
+                .get_mut(&memory_id)
+        {
+            memory.status = status;
+        }
+    }
+
     fn tenant(&self, tenant_id: Uuid) -> Arc<Mutex<TenantState>> {
         Arc::clone(
             self.tenants

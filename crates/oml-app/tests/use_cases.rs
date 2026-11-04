@@ -10358,19 +10358,10 @@ async fn a_dreamer_proposes_a_claim_edge_and_it_is_journalled_pending_as_claim_e
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
     let bob = agent(&app, admin, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
-    let a = held(
-        &app,
-        &alice.value,
-        &submit_req("prop-a", "the fact of prop-a"),
-    )
-    .await;
-    let b = held(
-        &app,
-        &bob.value,
-        &submit_req("prop-b", "the fact of prop-b"),
-    )
-    .await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("prop-a", "a")).await;
+    let b = promoted(&app, &bob.value, &dana.value, &submit_req("prop-b", "b")).await;
 
     let outcome = app
         .propose_claim_edge(&pat.value, &edge_req(a, b, "acme:supports"), None)
@@ -10378,7 +10369,19 @@ async fn a_dreamer_proposes_a_claim_edge_and_it_is_journalled_pending_as_claim_e
         .expect("propose");
     assert!(!outcome.replayed);
     let proposal = outcome.proposal;
-    assert_eq!(proposal.state, "pending");
+    assert_eq!(
+        serde_json::to_value(&proposal).expect("serializes"),
+        json!({
+            "edge_id": proposal.edge_id.to_string(),
+            "from_artifact_id": a.to_string(),
+            "to_artifact_id": b.to_string(),
+            "label": "acme:supports",
+            "state": "pending",
+            "proposer_key_id": pat.key_id.to_string(),
+            "ratifier_key_id": null,
+        }),
+        "the stored response is openapi.yaml's ClaimEdge, nothing more"
+    );
 
     let edge = store
         .claim_edge(boot.tenant_id, proposal.edge_id)
@@ -10395,7 +10398,6 @@ async fn a_dreamer_proposes_a_claim_edge_and_it_is_journalled_pending_as_claim_e
     let events = journal(&store, boot.tenant_id).await;
     let last = &events.last().expect("the chain").envelope;
     assert_eq!(last.event_type, event_types::CLAIM_EDGE_PROPOSED);
-    assert_eq!(last.seq, proposal.journal_seq);
     assert_eq!(last.api_key_id, Some(pat.key_id));
     assert_eq!(
         last.payload,
@@ -10497,16 +10499,11 @@ async fn an_endpoint_outside_the_keys_read_scope_answers_access_not_found_as_an_
     let alice = agent(&app, admin, "alice", crew).await;
     let erin = agent(&app, admin, "erin", elsewhere).await;
     let eve = issue(&app, admin, Role::Dreamer, "eve", elsewhere).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
-    let a = held(
-        &app,
-        &alice.value,
-        &submit_req("scope-a", "the fact of scope-a"),
-    )
-    .await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("scope-a", "a")).await;
+    // Promoted, but in a workarea where pat holds no reader.
     let unseen = promoted(&app, &erin.value, &eve.value, &submit_req("scope-u", "u")).await;
-    // A held row in pat's own workarea authored by someone else is in its
-    // review scope; one in a workarea it only reads is not.
     let before = journal(&store, boot.tenant_id).await.len();
 
     let outside = app
@@ -10538,19 +10535,10 @@ async fn a_replayed_idempotency_key_answers_the_first_proposal_and_journals_once
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
-    let a = held(
-        &app,
-        &alice.value,
-        &submit_req("idem-a", "the fact of idem-a"),
-    )
-    .await;
-    let b = held(
-        &app,
-        &alice.value,
-        &submit_req("idem-b", "the fact of idem-b"),
-    )
-    .await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("idem-a", "a")).await;
+    let b = promoted(&app, &alice.value, &dana.value, &submit_req("idem-b", "b")).await;
     let req = edge_req(a, b, "acme:supports");
 
     let first = app
@@ -10578,24 +10566,23 @@ async fn a_replayed_idempotency_key_answers_the_first_proposal_and_journals_once
     assert_eq!(journal(&store, boot.tenant_id).await.len(), after_first);
 }
 
+/// The held row derives from `c`, which the edge connects to bob's promoted
+/// `b`: the edge widens the closure of every row that reaches `c`, so bob
+/// is in the held row's lineage once it is proposed.
 #[tokio::test]
-async fn a_pending_edge_refuses_the_connected_rows_author_a_verdict_on_a_held_endpoint_with_review_author_in_lineage()
+async fn a_pending_edge_refuses_a_verdict_on_a_held_row_deriving_from_an_endpoint_by_the_other_endpoints_author_with_review_author_in_lineage()
  {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
+    let carol = agent(&app, admin, "carol", crew).await;
     let bob_writer = agent(&app, admin, "bob", crew).await;
     let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
     let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
-    let a = held(
-        &app,
-        &alice.value,
-        &submit_req("verd-a", "the fact of verd-a"),
-    )
-    .await;
+    let c = promoted(&app, &carol.value, &dana.value, &submit_req("verd-c", "c")).await;
     let b = promoted(
         &app,
         &bob_writer.value,
@@ -10603,8 +10590,17 @@ async fn a_pending_edge_refuses_the_connected_rows_author_a_verdict_on_a_held_en
         &submit_req("verd-b", "b"),
     )
     .await;
+    let a = held(
+        &app,
+        &alice.value,
+        &SubmitRequest {
+            derives_from: vec![c],
+            ..submit_req("verd-a", "the fact of verd-a")
+        },
+    )
+    .await;
 
-    app.propose_claim_edge(&pat.value, &edge_req(b, a, "acme:supports"), None)
+    app.propose_claim_edge(&pat.value, &edge_req(b, c, "acme:supports"), None)
         .await
         .expect("propose");
     let err = app
@@ -10627,24 +10623,32 @@ async fn a_pending_edge_refuses_the_connected_rows_author_a_verdict_on_a_held_en
 }
 
 #[tokio::test]
-async fn review_next_never_serves_a_held_row_to_the_author_of_a_row_an_edge_connects_it_to() {
+async fn review_next_never_serves_a_held_row_deriving_from_an_endpoint_to_the_author_of_the_other_endpoint()
+ {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
+    let carol = agent(&app, admin, "carol", crew).await;
     let bob_writer = agent(&app, admin, "bob", crew).await;
     let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
+    let c = promoted(&app, &carol.value, &dana.value, &submit_req("queue-c", "c")).await;
+    let b = promoted(
+        &app,
+        &bob_writer.value,
+        &dana.value,
+        &submit_req("queue-b", "b"),
+    )
+    .await;
     let a = held(
         &app,
         &alice.value,
-        &submit_req("queue-a", "the fact of queue-a"),
-    )
-    .await;
-    let b = held(
-        &app,
-        &bob_writer.value,
-        &submit_req("queue-b", "the fact of queue-b"),
+        &SubmitRequest {
+            derives_from: vec![c],
+            ..submit_req("queue-a", "the fact of queue-a")
+        },
     )
     .await;
 
@@ -10659,7 +10663,7 @@ async fn review_next_never_serves_a_held_row_to_the_author_of_a_row_an_edge_conn
         "before the edge alice's row is bob's to review"
     );
 
-    app.propose_claim_edge(&pat.value, &edge_req(a, b, "acme:supports"), None)
+    app.propose_claim_edge(&pat.value, &edge_req(b, c, "acme:supports"), None)
         .await
         .expect("propose");
     let served = app
@@ -10670,6 +10674,47 @@ async fn review_next_never_serves_a_held_row_to_the_author_of_a_row_an_edge_conn
     assert_eq!(served, None, "the edge put bob in alice's row's lineage");
 }
 
+/// Another author's row is in a key's read scope only once promoted
+/// (roles-and-keys.md footnote 5; `App::readable`): a held, rejected,
+/// demoted or erased one in a workarea where the key holds dreamer and
+/// reader answers as an absent row does, and journals nothing.
+#[tokio::test]
+async fn another_authors_held_rejected_demoted_or_erased_endpoint_answers_access_not_found() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let seen = promoted(&app, &alice.value, &dana.value, &submit_req("st-p", "p")).await;
+    let held_row = held(&app, &alice.value, &submit_req("st-h", "h")).await;
+    let rejected = held(&app, &alice.value, &submit_req("st-r", "r")).await;
+    app.post_verdict(&dana.value, rejected, Verdict::Reject, Some("no"))
+        .await
+        .expect("reject");
+    // This build journals no demotion or erasure: the store stands them in.
+    let demoted = promoted(&app, &alice.value, &dana.value, &submit_req("st-d", "d")).await;
+    store.set_status(boot.tenant_id, demoted, MemoryStatus::Demoted);
+    let erased = promoted(&app, &alice.value, &dana.value, &submit_req("st-e", "e")).await;
+    store.set_status(boot.tenant_id, erased, MemoryStatus::Erased);
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    for row in [held_row, rejected, demoted, erased] {
+        for req in [
+            edge_req(seen, row, "acme:supports"),
+            edge_req(row, seen, "acme:supports"),
+        ] {
+            let err = app
+                .propose_claim_edge(&pat.value, &req, None)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AppError::NotFound), "{row}: {err:?}");
+        }
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
 #[tokio::test]
 async fn an_oml_about_proposal_is_refused_request_validation_and_journals_nothing() {
     let store = MemStore::new();
@@ -10677,19 +10722,10 @@ async fn an_oml_about_proposal_is_refused_request_validation_and_journals_nothin
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
-    let a = held(
-        &app,
-        &alice.value,
-        &submit_req("about-a", "the fact of about-a"),
-    )
-    .await;
-    let b = held(
-        &app,
-        &alice.value,
-        &submit_req("about-b", "the fact of about-b"),
-    )
-    .await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("about-a", "a")).await;
+    let b = promoted(&app, &alice.value, &dana.value, &submit_req("about-b", "b")).await;
     let before = journal(&store, boot.tenant_id).await.len();
 
     let err = app
