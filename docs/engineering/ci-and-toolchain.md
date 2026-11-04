@@ -181,8 +181,10 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
       fetched 2026-11-03). Every form names the marketplace `open-memory-lab`, and Claude Code
       registers one marketplace per name, so a user holds one of them at a time.
     - `oml-agent-kit-X.Y.Z.tar.gz` and `.zip`: MCP configurations for OpenAI Codex CLI, Cursor,
-      Gemini CLI, VS Code and Claude Desktop, each naming `/mcp` with the key from `OML_API_KEY`;
-      an `AGENTS.md` block whose sections are the oml plugin's skill, verbatim; a Gemini CLI
+      Gemini CLI, VS Code and Claude Desktop, each naming `/mcp` with the key from `OML_API_KEY`,
+      Cursor's and Gemini CLI's at `${OML_URL}/mcp` since those two document expanding a variable
+      in a URL, the other three at the literal `http://127.0.0.1:8080/mcp` (ADR-0039 d15); an
+      `AGENTS.md` block whose sections are the oml plugin's skill, verbatim; a Gemini CLI
       `SessionStart` hook running the plugin's guarded `oml hook session-start` command; and
       `kit/README.md`, which cites each tool's documentation with its fetch date and marks what
       that documentation does not settle as unverified. Cursor's `sessionStart` hook reads and

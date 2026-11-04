@@ -34,6 +34,19 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The agent kit reads the OML_URL and OML_API_KEY pair (ADR-0039 d15, implementation)
+
+The kit's Cursor configuration reaches `${env:OML_URL}/mcp` and its Gemini CLI configuration
+`${OML_URL}/mcp`, each tool's documented form for a variable inside a URL, and every
+configuration still takes its bearer from `OML_API_KEY`. Codex, VS Code and Claude Desktop's
+`mcp-remote` bridge document no variable in a URL, so theirs keep `http://127.0.0.1:8080/mcp`,
+and the kit README's "Before you start" exports both variables and names that one edit for those
+three alone. Every page the README cites for a URL or key form was fetched again on 2026-11-04.
+`scripts/check_agent_kit.py` holds each configuration's URL to the form its tool documents and
+the README's edit to the tools that cannot expand it.
+
+- **Pages:** the kit README and [CI and toolchain](engineering/ci-and-toolchain.md).
+
 ### 2026-11-04 — The session-start hook reads the plugin's options before the environment pair, and issue-agent --out prints the plugin configure line (ADR-0040 d3, d4, implementation)
 
 `oml hook session-start` takes its server and key from `CLAUDE_PLUGIN_OPTION_URL` and
