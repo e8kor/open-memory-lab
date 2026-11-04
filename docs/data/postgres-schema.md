@@ -724,7 +724,8 @@ token expired, the answer is `invalid_grant` and nothing is revoked. Before the 
 row lock, the refresh checks that the connection is open, that the request's `client_id` is the
 connection's, and the key's state and the connection's resource; a failed check answers
 `invalid_grant` and rotates nothing. Removal is
-operational: an authorization request's row at Connect or Cancel, in that step's commit, or 24
+operational, run by the lead at its start and every hour after, journalling nothing (ADR-0031
+d5, d9, d10, d12): an authorization request's row at Connect or Cancel, in that step's commit, or 24
 hours after it lapses unused; a registered client 24 hours
 after its registration while its `connected_at` is null; an `authorized` connection row once its
 `auth_code_expires_at` has passed unexchanged; a token row only at its own `expires_at` or at its
@@ -1153,8 +1154,9 @@ serving role until that migration grants its row here, under the sync rule.
 - **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
   privilege (`42501`) before the guard trigger runs (ADR-0002 d4).
 - **`review_queue`** is deleted from at a verdict; **`oauth_connections`** and **`oauth_tokens`**
-  only by the operational removal that [connections](#connections-adr-0031) states (0012);
-  **`oauth_clients`** by the cache's eviction and the removal of an unused registration, and
+  only by the operational removal that [connections](#connections-adr-0031) states, which the lead
+  runs hourly (0012);
+  **`oauth_clients`** by the cache's eviction and that sweep's removal of an unused registration, and
   **`oauth_authorizations`** by the confirmation's `DELETE … RETURNING` and the removal 24 hours
   after a row lapses unused (0013). An `oauth_authorizations` row is never updated.
 - **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the

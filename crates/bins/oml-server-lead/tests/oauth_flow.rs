@@ -25,10 +25,11 @@ use oml_app::domain::name::Name;
 use oml_app::domain::oauth::{ConnectionState, Issuer, RevokedCause};
 use oml_app::domain::{HeldBy, Role};
 use oml_app::ed25519_dalek::SigningKey;
-use oml_app::ports::{IdGen as _, JournalStore as _};
+use oml_app::ports::{ConnectionStore as _, IdGen as _, JournalStore as _};
 use oml_app::types::{BootstrapRequest, GrantRequest, IssueKeyRequest};
 use oml_pg::PgStore;
-use oml_server_lead::{OsIds, lead_app, start_lead};
+use oml_server_lead::{OsIds, lead_app, start_lead, sweep_connections};
+use oml_transport_http::time::{system_event_time, system_event_time_plus};
 
 const ISSUER: &str = "https://oml.example.com";
 const CALLBACK: &str = "https://claude.ai/api/mcp/auth_callback";
@@ -586,6 +587,102 @@ async fn the_whole_flow_writes_exactly_connection_code_issued_connection_opened_
         revoked.payload["cause"], "refresh_reuse",
         "{}",
         revoked.payload
+    );
+
+    drop(flow);
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn the_lead_sweep_removes_a_registration_that_has_not_connected_24_hours_after_it_registered_and_keeps_a_younger_one()
+ {
+    let db = fresh_name();
+    if !mint_database(&db).await {
+        return;
+    }
+    let store = serving_store(&db).await;
+    let issuer = Issuer::parse(ISSUER).expect("a public origin");
+    let started = start_lead(
+        &store,
+        SigningKey::from_bytes(&OsIds.new_secret()),
+        Some(issuer),
+    )
+    .await
+    .expect("the start reads the store");
+    let (status, _, body) = send(
+        &started.router,
+        Request::post("/oauth/register")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "client_name": "Claude",
+                    "redirect_uris": [CALLBACK],
+                    "token_endpoint_auth_method": "none",
+                    "grant_types": ["authorization_code", "refresh_token"],
+                    "response_types": ["code"],
+                })
+                .to_string(),
+            ))
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", html(&body));
+    let client_id = json_of(&body)["client_id"]
+        .as_str()
+        .expect("a client_id")
+        .to_owned();
+
+    // An hour on, the registration is younger than 24 hours and stays.
+    let sweep = sweep_connections(&store, &system_event_time_plus(60 * 60))
+        .await
+        .expect("the sweep runs");
+    assert_eq!(sweep.registrations_removed, 0, "{sweep:?}");
+    assert!(
+        store
+            .oauth_client(&client_id)
+            .await
+            .expect("a read")
+            .is_some()
+    );
+
+    // Past 24 hours, unconnected, it is gone.
+    let sweep = sweep_connections(&store, &system_event_time_plus(24 * 60 * 60 + 60))
+        .await
+        .expect("the sweep runs");
+    assert_eq!(sweep.registrations_removed, 1, "{sweep:?}");
+    assert!(
+        store
+            .oauth_client(&client_id)
+            .await
+            .expect("a read")
+            .is_none()
+    );
+
+    drop(started);
+    drop(store);
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn the_lead_sweep_removes_a_revoked_connections_tokens_and_clears_its_code_once() {
+    let db = fresh_name();
+    let Some(flow) = run_flow(&db).await else {
+        return;
+    };
+    let sweep = sweep_connections(&flow.store, &system_event_time())
+        .await
+        .expect("the sweep runs");
+    assert_eq!(sweep.tenants, 1, "{sweep:?}");
+    assert!(sweep.tokens_removed >= 2, "{sweep:?}");
+    assert_eq!(sweep.codes_cleared, 1, "{sweep:?}");
+
+    let again = sweep_connections(&flow.store, &system_event_time())
+        .await
+        .expect("the sweep runs");
+    assert_eq!(
+        (again.tokens_removed, again.codes_cleared),
+        (0, 0),
+        "{again:?}"
     );
 
     drop(flow);

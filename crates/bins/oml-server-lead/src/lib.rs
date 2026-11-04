@@ -503,6 +503,111 @@ pub fn mint_enrollment_token() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// The connections' operational removal
+// ---------------------------------------------------------------------------
+
+/// How often [`spawn_connection_sweep`] runs [`sweep_connections`]: an hour,
+/// so a registration that never connected is gone at most an hour past its
+/// 24 hours, and a lapsed row at most an hour past its expiry (ADR-0031 d5,
+/// d9, d10).
+pub const CONNECTION_SWEEP_SECONDS: u64 = 60 * 60;
+
+/// What one [`sweep_connections`] removed, summed over the tenants it saw.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ConnectionSweep {
+    /// The tenants the sweep enumerated and swept.
+    pub tenants: usize,
+    /// Registrations that had not connected 24 hours after they registered.
+    pub registrations_removed: u64,
+    /// `authorized` connections whose authorization code lapsed unexchanged.
+    pub connections_removed: u64,
+    /// Token rows past their own expiry, or of a revoked connection.
+    pub tokens_removed: u64,
+    /// Revoked connections whose `auth_code_hash` was cleared.
+    pub codes_cleared: u64,
+    /// Authorization requests 24 hours past their expiry.
+    pub authorizations_removed: u64,
+}
+
+/// The operational removal at `at` (postgres-schema.md, connections): every
+/// registration that has not connected and registered 24 hours or more
+/// before `at`, then, for every tenant the store holds now, the store's
+/// [`sweep_expired`](oml_app::ports::ConnectionStore::sweep_expired). It
+/// journals nothing (ADR-0031 d5, d9, d10, d12). A failed enumeration or
+/// removal fails the whole sweep with its reason; what an earlier step
+/// removed stays removed, and the next sweep repeats the rest.
+pub async fn sweep_connections(store: &PgStore, at: &EventTime) -> Result<ConnectionSweep, String> {
+    use oml_app::domain::oauth::UNUSED_REGISTRATION_SECONDS;
+    use oml_app::ports::ConnectionStore as _;
+
+    let registered_by = EventTime::from_unix_micros(
+        at.unix_micros() - i64::from(UNUSED_REGISTRATION_SECONDS) * 1_000_000,
+    )
+    .ok_or_else(|| format!("{} less 24 hours is not an event time", at.as_str()))?;
+    let registrations_removed = store
+        .remove_unused_dcr(&registered_by)
+        .await
+        .map_err(|e| format!("unused registrations: {e}"))?;
+    let tenants = enumerate_tenants(store.pool())
+        .await
+        .map_err(|e| format!("tenant enumeration: {e}"))?;
+    let mut sweep = ConnectionSweep {
+        tenants: tenants.len(),
+        registrations_removed,
+        ..ConnectionSweep::default()
+    };
+    for tenant_id in tenants {
+        let report = store
+            .sweep_expired(tenant_id, at)
+            .await
+            .map_err(|e| format!("tenant {tenant_id}: {e}"))?;
+        sweep.connections_removed += report.connections_removed;
+        sweep.tokens_removed += report.tokens_removed;
+        sweep.codes_cleared += report.codes_cleared;
+        sweep.authorizations_removed += report.authorizations_removed;
+    }
+    Ok(sweep)
+}
+
+/// The `event` field of the log line each sweep writes (observability.md).
+pub const EVENT_CONNECTION_SWEEP: &str = "connection_sweep";
+/// The `event` field of the log line a failed sweep writes.
+pub const EVENT_CONNECTION_SWEEP_FAILED: &str = "connection_sweep_failed";
+
+/// Runs [`sweep_connections`] at the lead's start and every
+/// [`CONNECTION_SWEEP_SECONDS`] after, on the system clock, logging
+/// [`EVENT_CONNECTION_SWEEP`] with its counts or
+/// [`EVENT_CONNECTION_SWEEP_FAILED`] with its reason. A failed sweep never
+/// stops the lead or the next sweep.
+pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticks =
+            tokio::time::interval(std::time::Duration::from_secs(CONNECTION_SWEEP_SECONDS));
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            match sweep_connections(&store, &SystemClock.now()).await {
+                Ok(sweep) => tracing::info!(
+                    event = EVENT_CONNECTION_SWEEP,
+                    tenants = sweep.tenants,
+                    registrations_removed = sweep.registrations_removed,
+                    connections_removed = sweep.connections_removed,
+                    tokens_removed = sweep.tokens_removed,
+                    codes_cleared = sweep.codes_cleared,
+                    authorizations_removed = sweep.authorizations_removed,
+                    "connections swept (ADR-0031 d5, d9, d10)"
+                ),
+                Err(reason) => tracing::error!(
+                    event = EVENT_CONNECTION_SWEEP_FAILED,
+                    %reason,
+                    "CONNECTION SWEEP FAILED — the next sweep retries"
+                ),
+            }
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
 // The composed state
 // ---------------------------------------------------------------------------
 

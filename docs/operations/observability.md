@@ -167,6 +167,16 @@ event-specific fields. Correlation: a request's log lines carry its
 `request_id`; lines about a journalled act carry the journal `event_id`, so a
 log line can always be joined to the chain.
 
+Built: the lead's hourly removal of the connections' lapsed rows (its start, then every hour;
+[Postgres schema](../data/postgres-schema.md#connections-adr-0031)) writes `event`
+`connection_sweep` with the count of each kind of row it removed, `registrations_removed`,
+`connections_removed`, `tokens_removed`, `codes_cleared` and `authorizations_removed`, and the
+`tenants` it swept; a sweep that fails writes `connection_sweep_failed` with its `reason`, stops
+neither the lead nor the next sweep, and, repeated, means unused registrations accumulate toward
+the 10 000 at which `POST /oauth/register` answers `429 limit.rate`
+([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients);
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d5).
+
 ### The plaintext rule (a correctness rule)
 
 **No memory body, attachment content, extracted text, or recall query text
