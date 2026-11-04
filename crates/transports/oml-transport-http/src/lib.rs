@@ -2586,6 +2586,13 @@ fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError
         .iter()
         .map(|name| match MemoryKind::parse(name) {
             Some(kind @ (MemoryKind::Memory | MemoryKind::DerivedFact)) => Ok(kind),
+            // Recall never serves a guardrail; the filter that names one is
+            // refused, never answered empty, and points at the one read
+            // that serves the set (proposed ADR-0037 d5, d18 Q7).
+            Some(MemoryKind::Guardrail) => Err(ApiError::validation(
+                "recall never serves kind guardrail: GET /v1/guardrails serves the set in force",
+            )
+            .with_details(json!({ "field": "/kinds" }))),
             _ => Err(ApiError::validation(format!(
                 "kinds names memory or derived_fact, not {name:?}"
             ))),
