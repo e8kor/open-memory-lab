@@ -2435,6 +2435,52 @@ pub async fn a_workarea_read_serves_the_status_its_row_stores<S: JournalStore>(s
     );
 }
 
+/// The universe root is permanently `committed`: a root created at any
+/// other status is refused at its commit, no event and no row, so no later
+/// write can leave a tenant whose root sits on another rung (ADR-0009 d1;
+/// postgres-schema.md `workareas_universe_committed`).
+pub async fn a_universe_root_created_at_any_status_but_committed_is_refused<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(48);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let head = store.chain_head(t).await.expect("head");
+
+    for (case, raw, status) in [
+        ("development", 0xB420, WorkareaStatus::Development),
+        ("validated", 0xB421, WorkareaStatus::Validated),
+    ] {
+        let root = WorkareaRecord {
+            status,
+            ..workarea_record(t, Uuid::from_u128(raw), None, "universe")
+        };
+        let refused = rig
+            .commit(
+                store,
+                event_types::WORKAREA_CREATE,
+                json!({ "workarea_id": root.workarea_id.to_string(), "name": "universe" }),
+                MetadataFold::WorkareaCreated(root.clone()),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "a universe root stored {case} is refused, got {refused:?}"
+        );
+        assert_eq!(
+            store.workarea(t, root.workarea_id).await.expect("read"),
+            None,
+            "a universe root stored {case} writes no row"
+        );
+    }
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "a refused root journals nothing"
+    );
+}
+
 /// A crew given at create is stored with the node and read back whole by
 /// every workarea read; a node created without one reads back without one
 /// (event-catalog.md `workarea.create`; postgres-schema.md `workareas.crew`).
@@ -4120,6 +4166,7 @@ where
     workarea_children_are_immediate_and_ordered_by_name_bytes(&new_store().await).await;
     crew_round_trips_through_workarea_created(&new_store().await).await;
     a_workarea_read_serves_the_status_its_row_stores(&new_store().await).await;
+    a_universe_root_created_at_any_status_but_committed_is_refused(&new_store().await).await;
     kind_version_and_body_bytes_round_trip_through_memory_held(&new_store().await).await;
     promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
         .await;
