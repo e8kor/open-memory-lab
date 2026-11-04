@@ -15,8 +15,10 @@
 //! here: the user page shows who the person is and every action but
 //! `sign_out` answers the app's `not_built` refusal.
 
+pub mod admin_read;
 pub mod emails;
 pub mod page;
+pub mod views;
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -34,7 +36,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::app::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
-use oml_app::domain::web::{Provider, SignInRefusal, SignInState, csrf_matches, csrf_token};
+use oml_app::domain::web::{Provider, SignInRefusal, SignInState, csrf_matches};
 use oml_app::ports::{
     Clock, ConnectionStore, IdGen, JournalStore, Scanner, SignInExchange, Signer, WebStore,
 };
@@ -82,6 +84,7 @@ pub const ADMIN_ACTIONS: &[&str] = &[
     "verdict",
     "curate",
     "supersede",
+    "cut_off",
 ];
 
 /// The session cookie (ADR-0045 d5).
@@ -356,37 +359,24 @@ where
         Ok(session.map(|s| (token, s)))
     }
 
-    /// The page's view of the signed-in person.
-    async fn person_html(
-        &self,
-        token: &str,
-        session: &WebSessionRecord,
-        render: fn(&page::Person<'_>) -> String,
-    ) -> String {
-        let organisation = self
-            .store
-            .tenant_name(session.tenant_id)
-            .await
-            .ok()
-            .flatten();
-        let csrf = csrf_token(token);
-        render(&page::Person {
-            user: session.user.as_str(),
-            organisation: organisation.as_ref().map(|n| n.as_str()),
-            admin: session.admin,
-            expires_at: session.expires_at.as_str(),
-            csrf_token: &csrf,
-        })
-    }
-
     // -- GET /web ---------------------------------------------------------------
 
-    async fn user_page(State(st): State<Self>, rid: Rid, headers: HeaderMap) -> Response {
-        let answer = st.user_page_inner(&headers).await;
+    async fn user_page(State(st): State<Self>, rid: Rid, headers: HeaderMap, uri: Uri) -> Response {
+        let answer = st
+            .user_page_inner(&headers, uri.query().unwrap_or(""))
+            .await;
         Self::web_finish(&rid, answer)
     }
 
-    async fn user_page_inner(&self, headers: &HeaderMap) -> Answer {
+    /// The query's views, each field at most once.
+    fn query_fields(query: &str) -> Result<views::Fields, ApiError> {
+        form_pairs(query.as_bytes())
+            .and_then(|pairs| unique_fields(&pairs))
+            .map(views::Fields::of)
+            .map_err(|e| ApiError::validation(e.description))
+    }
+
+    async fn user_page_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
         let mut line = WebLine::default();
         if let Some(refused) = human_only(headers) {
             return self.refused(&refused, line);
@@ -400,11 +390,17 @@ where
             },
             Ok(Some((token, session))) => {
                 line.session(&session);
-                let html = self.person_html(&token, &session, page::user).await;
-                Answer {
-                    response: self.page(StatusCode::OK, html),
-                    error_code: None,
-                    line,
+                let html = match Self::query_fields(query) {
+                    Ok(q) => self.user_view(&token, &session, &q).await,
+                    Err(e) => Err(e),
+                };
+                match html {
+                    Ok(html) => Answer {
+                        response: self.page(StatusCode::OK, html),
+                        error_code: None,
+                        line,
+                    },
+                    Err(e) => self.refused(&e, line),
                 }
             }
         }
@@ -412,15 +408,22 @@ where
 
     // -- GET /web/admin -------------------------------------------------------
 
-    async fn admin_page(State(st): State<Self>, rid: Rid, headers: HeaderMap) -> Response {
-        let answer = st.admin_page_inner(&headers).await;
+    async fn admin_page(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        uri: Uri,
+    ) -> Response {
+        let answer = st
+            .admin_page_inner(&headers, uri.query().unwrap_or(""))
+            .await;
         Self::web_finish(&rid, answer)
     }
 
     /// Any session but an admin entry's, and no session, answers
     /// `access.not_found`, so the page's existence confirms nothing
     /// (ADR-0045 d10).
-    async fn admin_page_inner(&self, headers: &HeaderMap) -> Answer {
+    async fn admin_page_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
         let mut line = WebLine::default();
         if let Some(refused) = human_only(headers) {
             return self.refused(&refused, line);
@@ -429,11 +432,17 @@ where
             Err(e) => self.refused(&e, line),
             Ok(Some((token, session))) if session.admin => {
                 line.session(&session);
-                let html = self.person_html(&token, &session, page::admin).await;
-                Answer {
-                    response: self.page(StatusCode::OK, html),
-                    error_code: None,
-                    line,
+                let html = match Self::query_fields(query) {
+                    Ok(q) => self.admin_view(&token, &session, &q).await,
+                    Err(e) => Err(e),
+                };
+                match html {
+                    Ok(html) => Answer {
+                        response: self.page(StatusCode::OK, html),
+                        error_code: None,
+                        line,
+                    },
+                    Err(e) => self.refused(&e, line),
                 }
             }
             Ok(other) => {
@@ -561,13 +570,29 @@ where
                 line,
             };
         }
-        // Every other act runs as one of the person's session keys, which
-        // rest on ADR-0044's user roots: the app's seam refuses it.
-        let refusal = match self.app.web_session_keys(&session) {
-            Err(e) => map_app_error(e, ErrorContext::Write),
-            Ok(()) => ApiError::internal("the session keys answered without a key"),
+        // Every other act runs as one of the person's session keys.
+        if let Err(closed) = self.require_writes_open() {
+            return self.refused(&closed, line);
+        }
+        let fields = views::Fields::of(fields);
+        let outcome = if admin_page {
+            self.admin_page_act(&token, &session, action, &fields).await
+        } else {
+            self.user_page_act(&token, &session, action, &fields).await
         };
-        self.refused(&refusal, line)
+        match outcome {
+            Ok(views::Outcome::Redirect(location)) => Answer {
+                response: self.redirect(&location, None),
+                error_code: None,
+                line,
+            },
+            Ok(views::Outcome::Page(html)) => Answer {
+                response: self.page(StatusCode::OK, html),
+                error_code: None,
+                line,
+            },
+            Err(e) => self.refused(&e, line),
+        }
     }
 
     // -- POST /web/sign-in ------------------------------------------------------
@@ -761,6 +786,19 @@ where
                 };
             }
         };
+        // The first sign-in issues the person's session keys, and a sign-in
+        // after one that failed part way completes them (ADR-0045 d6).
+        if let Err(e) = crate::retry_chain(|| self.app.web_ensure_keys(&entry)).await {
+            sign_in_line(request_id, provider, "session_keys", None);
+            let error = map_app_error(e, ErrorContext::Write);
+            let mut response = self.refusal_page(&error);
+            append_cookie(&mut response, &clear_cookie(SIGN_IN_COOKIE));
+            return Answer {
+                response,
+                error_code: Some(error.code),
+                line,
+            };
+        }
         let old = cookie(headers, SESSION_COOKIE);
         let opened = match self
             .app

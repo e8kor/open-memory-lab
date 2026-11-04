@@ -31,6 +31,9 @@ pub const PROVIDER_TENANT: Uuid = Uuid::nil();
 pub enum Credential {
     Bearer,
     Connection,
+    /// A key the server holds for a person and acts with only from their
+    /// web session: no value, no hash, no connection (ADR-0045 d6).
+    Session,
 }
 
 impl Credential {
@@ -40,6 +43,7 @@ impl Credential {
         match self {
             Credential::Bearer => "bearer",
             Credential::Connection => "connection",
+            Credential::Session => "session",
         }
     }
 
@@ -49,6 +53,7 @@ impl Credential {
         match s {
             "bearer" => Some(Credential::Bearer),
             "connection" => Some(Credential::Connection),
+            "session" => Some(Credential::Session),
             _ => None,
         }
     }
@@ -96,6 +101,10 @@ pub struct KeyRecord {
     /// issuance folds one (postgres-schema.md `api_keys.revoked_at`;
     /// ADR-0026 d10).
     pub revoked_at: Option<EventTime>,
+    /// For a session key, the allowlist user it serves, reached only from a
+    /// live session of an entry naming that user; `None` for every other
+    /// key (ADR-0045 d6).
+    pub session_user: Option<Name>,
 }
 
 /// A connect code as `connection.code_issued` mints it, for the commit's
@@ -1527,6 +1536,9 @@ pub enum Bearer<'a> {
     /// The caller of a live connection's access token, resolved on this
     /// request.
     Connection(&'a crate::app::Caller),
+    /// A session key's caller, resolved from a live web session on this
+    /// request (ADR-0045 d6).
+    Session(&'a crate::app::Caller),
 }
 
 impl<'a> From<&'a str> for Bearer<'a> {
@@ -1759,13 +1771,19 @@ pub enum AppError {
     /// (ADR-0045 d4, d18).
     #[error(transparent)]
     WebSignIn(#[from] SignInRefusal),
-    /// The ADR-0044 seam: the act needs a person's session keys, which
-    /// rest on user keys and user roots, not built in this build
-    /// (request.validation, `details.reason: not_built`; ADR-0045 d6).
-    #[error(
-        "{what} needs the person's session keys, which rest on user roots (ADR-0044) and are not built yet"
-    )]
-    WebNotBuilt { what: &'static str },
+    /// The act needs one of the person's session keys that does not exist:
+    /// a curator key no admin designated, or a first sign-in's keys whose
+    /// issuance failed part way, issued again at the next sign-in
+    /// (`access.not_found`, `details.capacity`; ADR-0045 d6, d18).
+    #[error("the person holds no {capacity} session key")]
+    WebKeyMissing { capacity: &'static str },
+    /// A page act's field the act refuses, with the rule it breaks
+    /// (request.validation, `details.field`; ADR-0045 d9, d10).
+    #[error("{message}")]
+    WebField {
+        field: &'static str,
+        message: &'static str,
+    },
     #[error(transparent)]
     Store(StoreError),
 }
@@ -1798,6 +1816,9 @@ pub struct WebEntry {
     pub admin: bool,
     pub google_subject: Option<String>,
     pub github_subject: Option<String>,
+    /// The admin key that added the entry: the entry's first sign-in issues
+    /// the person's session keys under it (ADR-0045 d6).
+    pub added_by: Uuid,
 }
 
 impl WebEntry {
@@ -1886,4 +1907,74 @@ pub enum ProviderFailure {
     Refused(&'static str),
     /// The provider's concurrent-call cap was reached.
     Busy,
+}
+
+/// One workarea's review queue as the admin page shows it: how many held
+/// versions wait there and when the oldest was written, no content
+/// (ADR-0045 d10, amending ADR-0026 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueDepth {
+    pub workarea_id: Uuid,
+    pub held: u64,
+    pub oldest: EventTime,
+}
+
+/// What the admin read searches (ADR-0045 d21): the full-text `query`
+/// recall uses, without the visibility filter, narrowed to the subtree
+/// `nodes` and to a state; newest first after `after`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AdminSearch {
+    pub query: Option<String>,
+    pub nodes: Option<Vec<Uuid>>,
+    pub state: Option<AdminState>,
+    pub after: Option<ListingPosition>,
+    pub limit: usize,
+}
+
+/// A memory's state as the admin read names it: a promoted version that
+/// is no longer its claim's tip is `superseded` (ADR-0045 d21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminState {
+    Held,
+    Promoted,
+    Rejected,
+    Superseded,
+    Demoted,
+}
+
+impl AdminState {
+    #[must_use]
+    pub fn of(memory: &MemoryRecord) -> Self {
+        match memory.status {
+            MemoryStatus::Held => AdminState::Held,
+            MemoryStatus::Promoted if memory.is_tip => AdminState::Promoted,
+            MemoryStatus::Promoted => AdminState::Superseded,
+            MemoryStatus::Rejected => AdminState::Rejected,
+            MemoryStatus::Demoted | MemoryStatus::Erased => AdminState::Demoted,
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AdminState::Held => "held",
+            AdminState::Promoted => "promoted",
+            AdminState::Rejected => "rejected",
+            AdminState::Superseded => "superseded",
+            AdminState::Demoted => "demoted",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            AdminState::Held,
+            AdminState::Promoted,
+            AdminState::Rejected,
+            AdminState::Superseded,
+            AdminState::Demoted,
+        ]
+        .into_iter()
+        .find(|s| s.as_str() == value)
+    }
 }

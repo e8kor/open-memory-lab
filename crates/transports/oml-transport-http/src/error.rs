@@ -519,10 +519,16 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             refusal.to_string(),
         )
         .with_details(json!({ "reason": refusal.reason() })),
-        AppError::WebNotBuilt { what } => ApiError::validation(format!(
-            "{what} rest on user roots (ADR-0044), which this build does not have yet"
-        ))
-        .with_details(json!({ "field": "action", "reason": "not_built" })),
+        AppError::WebKeyMissing { capacity } => ApiError::new(
+            StatusCode::NOT_FOUND,
+            "access.not_found",
+            "Every page act runs as one of the person's session keys (ADR-0045 d6).",
+            format!("you hold no {capacity} key on this organisation"),
+        )
+        .with_details(json!({ "capacity": capacity })),
+        AppError::WebField { field, message } => {
+            ApiError::validation(message).with_details(json!({ "field": field }))
+        }
         // Denials attenuate grants, and an admin key carries none
         // (http-api.md keys, grants, denials; ADR-0026 d15).
         AppError::DenialOnAdminKey => ApiError::validation(

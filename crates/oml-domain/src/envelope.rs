@@ -80,6 +80,10 @@ pub mod event_types {
     /// An email leaves the allowlist; the commit ends its sessions, and the
     /// user's agent keys keep working (ADR-0045 d2, d13).
     pub const WEB_EMAIL_REMOVED: &str = "web.email_removed";
+    /// An admin key read memories' text and attribution: the ids served
+    /// and, for a search, a digest of the query, never either text
+    /// (ADR-0045 d21).
+    pub const MEMORY_ADMIN_READ: &str = "memory.admin_read";
 }
 
 /// A SHA-256 value. Displayed and journalled as `sha256:` + 64 lowercase hex

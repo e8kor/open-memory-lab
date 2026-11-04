@@ -3,11 +3,8 @@
 //! against it (d3, d4), and the session rows a signed-in browser acts
 //! through (d5). The pages themselves are the transport's.
 //!
-//! The person's session keys (d6) rest on ADR-0044's user keys and user
-//! roots, which another change builds; until it lands, [`App::web_session_keys`]
-//! is the one seam that answers [`AppError::WebNotBuilt`], and the user
-//! name's workarea check reads every workarea as shared, which is exactly
-//! true while no user root exists.
+//! The person's session keys and the pages' acts through them are
+//! `pages.rs`'s.
 
 use serde_json::json;
 use uuid::Uuid;
@@ -23,6 +20,7 @@ use super::{App, require_role};
 use crate::ports::{
     Clock, IdGen, MetadataFold, Scanner, SignInExchange, Signer, StoreError, WebStore,
 };
+use crate::types::Bearer;
 use crate::types::{
     AppError, OpenedSession, PinOutcome, ProviderAnswer, ProviderFailure, WebEmailOutcome,
     WebEmailRequest, WebEntry, WebSessionRecord,
@@ -72,10 +70,10 @@ where
     /// names that user, is `name.taken` kind `key`.
     pub async fn allow_web_email(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &WebEmailRequest,
     ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+        let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "web_emails")?;
         check_user(&req.user)?;
         let tenant_id = admin.tenant_id;
@@ -100,6 +98,7 @@ where
             admin: req.admin,
             google_subject: existing.as_ref().and_then(|e| e.google_subject.clone()),
             github_subject: existing.as_ref().and_then(|e| e.github_subject.clone()),
+            added_by: existing.as_ref().map_or(admin.key_id, |e| e.added_by),
         };
         let (event_type, fold) = match outcome {
             WebEmailOutcome::Changed => (
@@ -135,10 +134,10 @@ where
     /// list does not hold is absent. The user's agent keys are untouched.
     pub async fn remove_web_email(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         email: &Email,
     ) -> Result<(WebEntry, u64, Uuid), AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+        let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "web_emails")?;
         let tenant_id = admin.tenant_id;
         let email_hash = email.digest();
@@ -174,11 +173,11 @@ where
     /// `limit` (ADR-0045 d2).
     pub async fn web_emails(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         after: Option<&Sha256Hash>,
         limit: usize,
     ) -> Result<Vec<WebEntry>, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+        let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "web_emails")?;
         Ok(self
             .journal
@@ -332,18 +331,6 @@ where
             .await?)
     }
 
-    /// The person's session keys (ADR-0045 d6): `<user>-web`, a user key
-    /// that creates `universe.<user>`, and `<user>-review`, issued at the
-    /// first sign-in. They rest on ADR-0044's user keys and user roots,
-    /// which are not built in this build, so this seam answers
-    /// [`AppError::WebNotBuilt`] for every act that needs them; the
-    /// signed-in page shows who the person is without them.
-    pub fn web_session_keys(&self, _session: &WebSessionRecord) -> Result<(), AppError> {
-        Err(AppError::WebNotBuilt {
-            what: "session keys",
-        })
-    }
-
     /// Whether an entry of the tenant already names `user`: its session key
     /// names are then its own, not another key's.
     async fn web_user_known(&self, tenant_id: Uuid, user: &Name) -> Result<bool, AppError> {
@@ -363,16 +350,20 @@ where
         }
     }
 
-    /// A new user's name must not be a workarea's, nor compose a session
-    /// key name another key holds (ADR-0045 d2). Every workarea reads as
-    /// shared here, which holds until ADR-0044's user roots exist; that
-    /// change exempts the user's own root.
+    /// A new user's name must not be a shared workarea's, nor compose a
+    /// session key name another key holds (ADR-0045 d2). The user's own
+    /// root, which a user key naming them created, is theirs, and so are
+    /// session keys serving them (ADR-0044 d1, d2).
     async fn require_free_user(&self, tenant_id: Uuid, user: &Name) -> Result<(), AppError> {
-        if self
+        if let Some(id) = self
             .journal
             .resolve_name(tenant_id, NamedKind::Workarea, user)
             .await?
-            .is_some()
+            && !self
+                .journal
+                .workarea(tenant_id, id)
+                .await?
+                .is_some_and(|w| w.user_root)
         {
             return Err(AppError::NameTaken {
                 kind: NamedKind::Workarea,
@@ -380,11 +371,15 @@ where
             });
         }
         for key_name in session_key_names(user) {
-            if self
+            if let Some(id) = self
                 .journal
                 .resolve_name(tenant_id, NamedKind::Key, &key_name)
                 .await?
-                .is_some()
+                && !self
+                    .journal
+                    .key(tenant_id, id)
+                    .await?
+                    .is_some_and(|k| k.session_user.as_ref() == Some(user))
             {
                 return Err(AppError::NameTaken {
                     kind: NamedKind::Key,

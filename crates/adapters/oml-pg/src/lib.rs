@@ -27,6 +27,7 @@ use oml_app::ports::{
     JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, WebStore,
     claim_subject,
 };
+use oml_app::types::{AdminSearch, AdminState, PinOutcome, QueueDepth, WebEntry, WebSessionRecord};
 use oml_app::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
@@ -35,7 +36,6 @@ use oml_app::types::{
     PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow,
     TokenPair, TokenRecord, UnnamedRows, WorkareaRecord, WorkareaRef,
 };
-use oml_app::types::{PinOutcome, WebEntry, WebSessionRecord};
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Connection, Postgres, QueryBuilder, Row, Transaction};
@@ -891,7 +891,7 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
 /// through `to_char` in the fixed-width signed form, as a memory's
 /// `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_workarea_id, \
-     issued_by, hash, credential, name, crew_id, user_root_id, \
+     issued_by, hash, credential, name, crew_id, user_root_id, session_for, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed";
 
@@ -928,6 +928,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
             .map(EventTime::parse)
             .transpose()
             .map_err(backend)?,
+        session_user: stored_name(row, "session_for")?,
     })
 }
 
@@ -1319,7 +1320,9 @@ async fn apply_fold(
     match fold {
         // The tenants row is upserted before the journal insert (FK order);
         // a verdict short of the policy's k is journalled, metadata unchanged.
-        MetadataFold::TenantGenesis { .. } | MetadataFold::VerdictRecorded { .. } => {}
+        MetadataFold::TenantGenesis { .. }
+        | MetadataFold::VerdictRecorded { .. }
+        | MetadataFold::AdminRead => {}
         MetadataFold::WorkareaCreated(w) => {
             // No status transition is built, so the status stored is the one
             // the workarea read serves: the universe root's permanent
@@ -1376,7 +1379,7 @@ async fn apply_fold(
         MetadataFold::WebEmailAllowed(entry) => {
             sqlx::query(
                 "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
-                 created_at) VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz)",
+                 created_at, added_by) VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7)",
             )
             .bind(tenant_id)
             .bind(entry.email.digest().0.to_vec())
@@ -1384,6 +1387,7 @@ async fn apply_fold(
             .bind(entry.user.as_str())
             .bind(entry.admin)
             .bind(at.as_str())
+            .bind(entry.added_by)
             .execute(&mut **tx)
             .await
             .map_err(|e| match &e {
@@ -1513,8 +1517,8 @@ async fn apply_fold(
                 // api_keys_connector_has_no_hash holds (0012; ADR-0031 d7).
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  held_by, default_workarea_id, issued_by, issued_seq, name, crew_id, \
-                 user_root_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                 user_root_id, session_for) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
             )
             .bind(k.key_id)
             .bind(k.tenant_id)
@@ -1529,6 +1533,7 @@ async fn apply_fold(
             .bind(k.name.as_ref().map(Name::as_str))
             .bind(k.crew_id)
             .bind(k.user)
+            .bind(k.session_user.as_ref().map(Name::as_str))
             .execute(&mut **tx)
             .await
             .map_err(|e| match &k.name {
@@ -3359,7 +3364,7 @@ async fn end_entry_sessions(
 }
 
 const WEB_ENTRY_COLUMNS: &str =
-    "tenant_id, email, user_name, admin, google_subject, github_subject";
+    "tenant_id, email, user_name, admin, google_subject, github_subject, added_by";
 
 fn web_entry_from_row(row: &PgRow) -> Result<WebEntry, StoreError> {
     let email: String = row.try_get("email").map_err(backend)?;
@@ -3371,6 +3376,7 @@ fn web_entry_from_row(row: &PgRow) -> Result<WebEntry, StoreError> {
         admin: row.try_get("admin").map_err(backend)?,
         google_subject: row.try_get("google_subject").map_err(backend)?,
         github_subject: row.try_get("github_subject").map_err(backend)?,
+        added_by: row.try_get("added_by").map_err(backend)?,
     })
 }
 
@@ -3397,6 +3403,33 @@ fn web_session_from_row(row: &PgRow) -> Result<WebSessionRecord, StoreError> {
         expires_at: event_time_column(row, "expires_at_signed")?
             .ok_or_else(|| StoreError::Backend("web_sessions.expires_at is null".to_owned()))?,
     })
+}
+
+impl PgStore {
+    /// The tenant's keys a `predicate` on `$2` names, in name order.
+    async fn keys_where<B>(
+        &self,
+        tenant_id: Uuid,
+        predicate: &str,
+        bind: B,
+    ) -> Result<Vec<KeyRecord>, StoreError>
+    where
+        B: for<'q> FnOnce(
+            sqlx::query::Query<'q, Postgres, sqlx::postgres::PgArguments>,
+        ) -> sqlx::query::Query<'q, Postgres, sqlx::postgres::PgArguments>,
+    {
+        let sql = format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE tenant_id = $1 AND {predicate} ORDER BY name"
+        );
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = bind(sqlx::query(&sql).bind(tenant_id))
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(key_from_row).collect()
+    }
 }
 
 /// The web rows (ADR-0045 d2, d4, d5): the allowlist's reads and its
@@ -3556,6 +3589,95 @@ impl WebStore for PgStore {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(())
+    }
+
+    async fn web_user_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(tenant_id, "user_root_id = $2", |q| q.bind(user_root))
+            .await
+    }
+
+    async fn web_session_keys(
+        &self,
+        tenant_id: Uuid,
+        session_user: &Name,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        let user = session_user.as_str().to_owned();
+        self.keys_where(tenant_id, "session_for = $2", move |q| q.bind(user))
+            .await
+    }
+
+    async fn web_queue(&self, tenant_id: Uuid) -> Result<Vec<QueueDepth>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(concat!(
+            "SELECT workarea_id, count(*) AS held, ",
+            utc!("min(created_at)"),
+            " AS oldest_signed FROM memories WHERE tenant_id = $1 AND status = 'held' \
+             GROUP BY workarea_id ORDER BY workarea_id"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                let held: i64 = row.try_get("held").map_err(backend)?;
+                Ok(QueueDepth {
+                    workarea_id: row.try_get("workarea_id").map_err(backend)?,
+                    held: u64::try_from(held).map_err(backend)?,
+                    oldest: event_time_column(row, "oldest_signed")?.ok_or_else(|| {
+                        StoreError::Backend("a held group has no oldest row".to_owned())
+                    })?,
+                })
+            })
+            .collect()
+    }
+
+    async fn web_admin_search(
+        &self,
+        tenant_id: Uuid,
+        search: &AdminSearch,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let state = match search.state {
+            None => "TRUE",
+            Some(AdminState::Held) => "m.status = 'held'",
+            Some(AdminState::Promoted) => "m.status = 'promoted' AND m.is_tip",
+            Some(AdminState::Superseded) => "m.status = 'promoted' AND NOT m.is_tip",
+            Some(AdminState::Rejected) => "m.status = 'rejected'",
+            Some(AdminState::Demoted) => "m.status IN ('demoted', 'erased')",
+        };
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 \
+             AND ($2::text IS NULL OR to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $2)) \
+             AND ($3::uuid[] IS NULL OR m.workarea_id = ANY($3)) \
+             AND {state} \
+             AND ($4::timestamptz IS NULL OR (m.created_at, m.id) < ($4::timestamptz, $5::uuid)) \
+             ORDER BY m.created_at DESC, m.id DESC LIMIT $6"
+        );
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(search.query.as_deref())
+            .bind(search.nodes.clone())
+            .bind(
+                search
+                    .after
+                    .as_ref()
+                    .map(|a| a.created_at.as_str().to_owned()),
+            )
+            .bind(search.after.as_ref().map(|a| a.artifact_id))
+            .bind(i64::try_from(search.limit).unwrap_or(i64::MAX))
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(memory_from_row).collect()
     }
 
     async fn web_sessions_sweep(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {

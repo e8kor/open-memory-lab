@@ -17,6 +17,7 @@ use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
+use crate::types::{AdminSearch, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth};
 use crate::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess,
@@ -24,7 +25,6 @@ use crate::types::{
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
     UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
 };
-use crate::types::{PinOutcome, ProviderAnswer, ProviderFailure};
 use oml_domain::web::Provider;
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -286,6 +286,9 @@ pub enum MetadataFold {
     WebEmailRemoved {
         email_hash: Sha256Hash,
     },
+    /// `memory.admin_read`: an admin key read memories' text; nothing
+    /// changes but the journal (ADR-0045 d21).
+    AdminRead,
 }
 
 /// The outbox row written in the same transaction as the event; the lake
@@ -793,6 +796,36 @@ pub trait WebStore: JournalStore {
         tenant_id: Uuid,
         token_hash: &Sha256Hash,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The tenant's keys whose user root is `user_root`, revoked ones
+    /// included, in name order (ADR-0045 d9).
+    fn web_user_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's session keys serving `session_user` (ADR-0045 d6).
+    fn web_session_keys(
+        &self,
+        tenant_id: Uuid,
+        session_user: &Name,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's held versions per workarea: count and oldest
+    /// (ADR-0045 d10).
+    fn web_queue(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send;
+
+    /// Every memory of the tenant the search names, any state, newest
+    /// first (ADR-0045 d21).
+    fn web_admin_search(
+        &self,
+        tenant_id: Uuid,
+        search: &AdminSearch,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// Removes the tenant's session rows that expired before `at`; the
     /// count removed.

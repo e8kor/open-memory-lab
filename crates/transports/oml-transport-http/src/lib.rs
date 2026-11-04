@@ -103,6 +103,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/web/emails"),
     ("POST", "/v2/web/emails"),
     ("POST", "/v2/web/emails/remove"),
+    ("POST", "/v2/admin/memories/search"),
+    ("GET", "/v2/admin/memories/{artifact_id}"),
 ];
 
 /// The unversioned probes among [`ROUTES`], served even while names are not
@@ -294,6 +296,8 @@ where
             ("GET", "/v2/web/emails") => get(Self::list_web_emails),
             ("POST", "/v2/web/emails") => post(Self::allow_web_email),
             ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
+            ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
+            ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
             _ => panic!("{method} {path} is in ROUTES with no handler"),
         }
     }

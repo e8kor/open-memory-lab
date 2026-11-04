@@ -1444,6 +1444,7 @@ fn every_refusal_names_one_code_of_the_closed_taxonomy() {
             ConnectRefused::Expired,
             ConnectRefused::NotConfigured,
             ConnectRefused::ConnectorKey,
+            ConnectRefused::SessionKey,
         ]
         .map(ConnectRefused::as_str),
         [
@@ -1454,6 +1455,7 @@ fn every_refusal_names_one_code_of_the_closed_taxonomy() {
             "expired",
             "not_configured",
             "connector_key",
+            "session_key",
         ]
     );
 }

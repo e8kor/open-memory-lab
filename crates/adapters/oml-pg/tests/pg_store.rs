@@ -2380,9 +2380,11 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             }
             // 0012 adds credential, folded as bearer for every key it finds
             // (ADR-0031 d7); 0014 adds user_root_id, null for every key it
-            // finds (ADR-0044 d12).
+            // finds (ADR-0044 d12); 0015 adds session_for, null for every
+            // key it finds (ADR-0045 d6).
             (true, "api_keys") => {
-                "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id'"
+                "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
+                 - 'session_for'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).

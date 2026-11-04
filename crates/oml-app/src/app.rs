@@ -5,7 +5,9 @@
 //! denials on each request, in the one refusal order of roles-and-keys.md
 //! (ADR-0025 d1).
 
+mod pages;
 mod web;
+pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 
 use std::collections::btree_map::Entry;
@@ -132,6 +134,10 @@ pub struct Caller {
     denials: Vec<KeyDenial>,
     /// The epoch of the access read above (workareas.md permission epoch).
     permission_epoch: u64,
+    /// The own key set when it is wider than the key itself: a person's
+    /// `<user>-web` session key owns every key naming its user (ADR-0045
+    /// d16, amending ADR-0025 d3). Empty means the key alone.
+    own_keys: Vec<Uuid>,
 }
 
 impl Caller {
@@ -159,6 +165,16 @@ impl Caller {
         self.permission_epoch
     }
 
+    /// The own key set: the key, or every key naming a session user key's
+    /// user (ADR-0045 d16).
+    fn own_key_ids(&self) -> Vec<Uuid> {
+        if self.own_keys.is_empty() {
+            vec![self.key.key_id]
+        } else {
+            self.own_keys.clone()
+        }
+    }
+
     /// `effective_roles` at the node whose ancestry, node to root, this is.
     fn effective(&self, ancestry: &[Uuid]) -> BTreeSet<Role> {
         effective_roles(&self.grants, &self.denials, ancestry)
@@ -169,6 +185,17 @@ impl Caller {
     fn denied(&self, ancestry: &[Uuid]) -> bool {
         self.denials.iter().any(|d| ancestry.contains(&d.node))
     }
+}
+
+/// How an issuance runs once its issuer is known (ADR-0045 d6, d16).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Issuance<'a> {
+    /// An admin or operator key's issuance of a bearer or connector key.
+    Plain,
+    /// A session key for the allowlist user named: no value.
+    Session(&'a Name),
+    /// A person's `<user>-web` issuing a key in its own root.
+    PersonsOwn,
 }
 
 /// The user root an issuance names: its id, found or minted, its name, the
@@ -768,6 +795,11 @@ where
         match bearer {
             Bearer::Key(value) => self.authenticate(value).await,
             Bearer::Connection(caller) => self.caller_of(caller.key.clone()).await,
+            Bearer::Session(caller) => {
+                let mut fresh = self.caller_of(caller.key.clone()).await?;
+                fresh.own_keys.clone_from(&caller.own_keys);
+                Ok(fresh)
+            }
         }
     }
 
@@ -783,6 +815,7 @@ where
                 grants: Vec::new(),
                 denials: Vec::new(),
                 permission_epoch: 0,
+                own_keys: Vec::new(),
             });
         };
         Ok(Caller {
@@ -790,6 +823,7 @@ where
             permission_epoch: access.permission_epoch(),
             grants: access.grants.into_iter().map(|g| g.grant).collect(),
             denials: access.denials.into_iter().map(|d| d.denial).collect(),
+            own_keys: Vec::new(),
         })
     }
 
@@ -1288,6 +1322,7 @@ where
             crew_id,
             user,
             revoked_at: None,
+            session_user: None,
         };
         (record, value)
     }
@@ -1295,7 +1330,7 @@ where
     /// The catalog payload of `key.issued` (event-catalog.md): never the
     /// value (roles-and-keys.md show-once rule), and `held_by` as sent.
     fn key_issued_payload(record: &KeyRecord, held_by: Option<HeldBy>) -> Value {
-        json!({
+        let mut payload = json!({
             "key_id": record.key_id.to_string(),
             "role": record.role.as_str(),
             "principal": record.principal,
@@ -1309,7 +1344,13 @@ where
             "credential": record.credential.as_str(),
             // The user root's id, null for a tenant key (ADR-0044 d2).
             "user": record.user.map(|u| u.to_string()),
-        })
+        });
+        // The person a session key serves, absent for every other key
+        // (ADR-0045 d6).
+        if let (Some(user), Some(obj)) = (&record.session_user, payload.as_object_mut()) {
+            obj.insert("session_user".to_owned(), json!(user.as_str()));
+        }
+        payload
     }
 
     /// One `grant.issued` on `key_id`, sealed on `prev`: its payload's epoch
@@ -1728,16 +1769,32 @@ where
     /// (roles-and-keys.md issuance order, steps 7 and 8; ADR-0031 d7, d8).
     pub async fn issue_key(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &IssueKeyRequest,
     ) -> Result<IssuedKey, AppError> {
-        let issuer = self.authenticate(api_key).await?.key;
+        let issuer = self.authenticate_bearer(bearer.into()).await?.key;
         if issuer.role != Role::Admin && issuer.role != Role::Operator {
             return Err(AppError::VerbCeiling {
                 role: issuer.role,
                 verb: "issue_key",
             });
         }
+        self.issue_key_by(&issuer, req, Issuance::Plain).await
+    }
+
+    /// [`App::issue_key`] once the issuer is known and its role checked for
+    /// `how`: a plain issuance by an admin or operator key; a session key
+    /// for `session_user`, with no value (ADR-0045 d6); or a person's
+    /// `<user>-web` issuing a key in its own root, which the web use case
+    /// has bounded to reader and writer keys naming its user (ADR-0045 d9,
+    /// d16), the issuer ceiling read as an admin's for those.
+    pub(crate) async fn issue_key_by(
+        &self,
+        issuer: &KeyRecord,
+        req: &IssueKeyRequest,
+        how: Issuance<'_>,
+    ) -> Result<IssuedKey, AppError> {
+        let issuer = issuer.clone();
         let tenant_id = issuer.tenant_id;
         // The person the key acts for, and the root its references resolve
         // in, found or to be created (ADR-0044 d2, d5).
@@ -1768,7 +1825,11 @@ where
             .resolve_opt(&issuer, NamedKind::Crew, req.crew.as_ref())
             .await?;
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
-        check_issuance(issuer.role, req.role, &grants).map_err(issuance_refusal)?;
+        let ceiling = match how {
+            Issuance::PersonsOwn => Role::Admin,
+            Issuance::Plain | Issuance::Session(_) => issuer.role,
+        };
+        check_issuance(ceiling, req.role, &grants).map_err(issuance_refusal)?;
         // Step 4: every grant node and deny node is the tenant's, and so is
         // the crew record. A user root this issuance is to create sits
         // directly under `universe` (ADR-0044 d1).
@@ -1890,7 +1951,7 @@ where
 
         // Step 8, the name, is the unique index's, at the commit of
         // `key.issued` below.
-        let (record, value) = self.mint_key(
+        let (mut record, mut value) = self.mint_key(
             tenant_id,
             req,
             default_workarea,
@@ -1898,6 +1959,14 @@ where
             user.as_ref().map(|u| u.id),
             Some(issuer.key_id),
         );
+        // A session key has no value and so no hash: nothing can present it
+        // (ADR-0045 d6).
+        if let Issuance::Session(session_user) = how {
+            record.credential = Credential::Session;
+            record.key_hash = None;
+            record.session_user = Some(session_user.clone());
+            value = String::new();
+        }
         let key_id = record.key_id;
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
@@ -2001,12 +2070,25 @@ where
     /// attenuate, is refused (ADR-0026 d15).
     pub async fn deny_key(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         key: Reference,
         node: Reference,
     ) -> Result<DenialRecord, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+        let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "deny")?;
+        self.deny_key_by(&admin, key, node).await
+    }
+
+    /// [`App::deny_key`] once the issuer is known: an admin key, or a
+    /// person's `<user>-web` session key cutting off a key naming its user,
+    /// which the web use case has checked (ADR-0045 d9, d13, d16).
+    pub(crate) async fn deny_key_by(
+        &self,
+        admin: &KeyRecord,
+        key: Reference,
+        node: Reference,
+    ) -> Result<DenialRecord, AppError> {
+        let admin = admin.clone();
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         let node = self.resolve(&admin, NamedKind::Workarea, &node).await?;
@@ -2073,12 +2155,12 @@ where
     /// (ADR-0044 d5, d6).
     pub async fn create_workarea(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         name: &Name,
         parent: Option<Reference>,
         crew: Option<Reference>,
     ) -> Result<CreatedWorkarea, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         // A user key with the writer role creates inside its own root, by
         // its effective access on the parent; every other key by the admin
@@ -2250,12 +2332,12 @@ where
     /// read is one store walk and one crew read per crew the page names.
     pub async fn workarea_tree(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         node: Reference,
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<TreePage, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let structure = caller.key.role == Role::Admin;
         if !structure {
             require_admissible(&caller.key, Role::Reader, "workarea_tree")?;
@@ -2447,8 +2529,12 @@ where
     /// grants, denials; ADR-0026 d4, d9, d10). The attestation is read from
     /// the key's `key.issued`, which journals it as sent, where the row
     /// holds the schema default; never the value, which no store holds.
-    pub async fn key(&self, api_key: &str, key: Reference) -> Result<KeyDetail, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+    pub async fn key(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        key: Reference,
+    ) -> Result<KeyDetail, AppError> {
+        let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "key")?;
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
@@ -2808,7 +2894,7 @@ where
                 masked.extend(subtree_ids(denial.node).await?);
             }
             let scope = ListingScope::Own {
-                key_ids: vec![key.key_id],
+                key_ids: caller.own_key_ids(),
                 masked: masked.into_iter().collect(),
             };
             (scope, subtree)
@@ -3105,8 +3191,11 @@ where
     /// Serve the next reviewable held item to this dreamer, claiming it,
     /// from the rows within its dreamer effective access only; a
     /// `held_by: service` key is refused before any lookup (ADR-0025 d1).
-    pub async fn review_next(&self, api_key: &str) -> Result<Option<ServedMemory>, AppError> {
-        let caller = self.authenticate(api_key).await?;
+    pub async fn review_next(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+    ) -> Result<Option<ServedMemory>, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Dreamer, "review")?;
         refuse_service(key, "review")?;
@@ -3137,12 +3226,12 @@ where
     /// and queued (ADR-0025 d10).
     pub async fn post_verdict(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         memory_id: Uuid,
         verdict: Verdict,
         reason: Option<&str>,
     ) -> Result<VerdictOutcome, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         require_admissible(&caller.key, Role::Dreamer, "verdict")?;
         refuse_service(&caller.key, "verdict")?;
         self.verdict_on(&caller, memory_id, verdict, reason, None)
@@ -3163,10 +3252,10 @@ where
     /// [`App::post_verdict`]'s.
     pub async fn review_verdict(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &VerdictRequest,
     ) -> Result<VerdictOutcome, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Dreamer, "verdict")?;
         refuse_service(key, "verdict")?;
@@ -3978,7 +4067,7 @@ where
 
         // The own key set is the calling key alone until rotation is built
         // (roles-and-keys.md#own).
-        let own_keys = [key.key_id];
+        let own_keys = caller.own_key_ids();
         let tail_caller = TailCaller {
             own_keys: &own_keys,
             grants: &caller.grants,
@@ -4051,6 +4140,18 @@ where
     ) -> Result<ConnectCodeIssued, AppError> {
         let admin = self.authenticate(api_key).await?.key;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
+        self.mint_connect_code_by(&admin, key).await
+    }
+
+    /// [`App::mint_connect_code`] once the issuer is known: an admin key, or
+    /// a person's `<user>-web` session key for a key naming its user, which
+    /// the web use case has checked (ADR-0045 d9, d16).
+    pub(crate) async fn mint_connect_code_by(
+        &self,
+        admin: &KeyRecord,
+        key: Reference,
+    ) -> Result<ConnectCodeIssued, AppError> {
+        let admin = admin.clone();
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         let target = self
@@ -4060,6 +4161,9 @@ where
             .ok_or(AppError::NotFound)?;
         if target.credential == Credential::Bearer {
             return Err(connect_refused(ConnectRefused::BearerKey));
+        }
+        if target.credential == Credential::Session {
+            return Err(connect_refused(ConnectRefused::SessionKey));
         }
         if target.revoked_at.is_some() {
             return Err(connect_refused(ConnectRefused::Revoked));

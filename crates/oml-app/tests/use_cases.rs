@@ -6087,6 +6087,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         crew_id: None,
         revoked_at: None,
         user: None,
+        session_user: None,
     };
     seal_onto(
         store,

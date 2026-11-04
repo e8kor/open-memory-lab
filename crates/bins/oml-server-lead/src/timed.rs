@@ -22,6 +22,7 @@ use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
     JournalStore, StoreError, TailScan, WebStore,
 };
+use oml_app::types::{AdminSearch, PinOutcome, QueueDepth, WebEntry, WebSessionRecord};
 use oml_app::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCodeRecord, ConnectGrant,
     ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess, KeyRecord,
@@ -29,7 +30,6 @@ use oml_app::types::{
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
     UnnamedRows, WorkareaRecord,
 };
-use oml_app::types::{PinOutcome, WebEntry, WebSessionRecord};
 use oml_transport_http::traffic::store_call;
 
 /// A store whose every port call is timed into the running request.
@@ -644,6 +644,46 @@ impl<J: WebStore> WebStore for Timed<J> {
         timed(
             "web_session_end",
             self.inner.web_session_end(tenant_id, token_hash),
+        )
+    }
+
+    fn web_user_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed(
+            "web_user_keys",
+            self.inner.web_user_keys(tenant_id, user_root),
+        )
+    }
+
+    fn web_session_keys(
+        &self,
+        tenant_id: Uuid,
+        session_user: &Name,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed(
+            "web_session_keys",
+            self.inner.web_session_keys(tenant_id, session_user),
+        )
+    }
+
+    fn web_queue(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send {
+        timed("web_queue", self.inner.web_queue(tenant_id))
+    }
+
+    fn web_admin_search(
+        &self,
+        tenant_id: Uuid,
+        search: &AdminSearch,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        timed(
+            "web_admin_search",
+            self.inner.web_admin_search(tenant_id, search),
         )
     }
 

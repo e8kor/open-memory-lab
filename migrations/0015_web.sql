@@ -56,6 +56,26 @@ COMMENT ON TABLE web_sessions IS
     'Owning page: docs/data/postgres-schema.md.';
 
 ------------------------------------------------------------------------------
+-- api_keys: the session credential (ADR-0045 d6). A session key has no
+-- value, so no hash, as a connector key has none; it records the allowlist
+-- user it serves, and only a session key does.
+------------------------------------------------------------------------------
+ALTER TABLE api_keys DROP CONSTRAINT api_keys_credential_check;
+ALTER TABLE api_keys
+    ADD CONSTRAINT api_keys_credential_check
+        CHECK (credential IN ('bearer', 'connection', 'session'));
+ALTER TABLE api_keys ADD COLUMN session_for oml_name;
+ALTER TABLE api_keys
+    ADD CONSTRAINT api_keys_session_user
+        CHECK ((credential = 'session') = (session_for IS NOT NULL));
+
+------------------------------------------------------------------------------
+-- web_emails.added_by — the admin key that added the entry, under which the
+-- entry's first sign-in issues the person's session keys (ADR-0045 d6).
+------------------------------------------------------------------------------
+ALTER TABLE web_emails ADD COLUMN added_by uuid NOT NULL;
+
+------------------------------------------------------------------------------
 -- Row-level security — as 0004: FORCE, keyed by the transaction-local
 -- oml.tenant_id. An entry's email digest and a session's token digest are
 -- found before the tenant is known by 0001's key_resolution form, an exact

@@ -322,7 +322,43 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
         StatusCode::OK,
         "an admin entry opens the admin page"
     );
-    assert!(page.contains("Signed in as alice"), "{page}");
+    assert!(page.contains("alice · oml"), "{page}");
+
+    // The first sign-in issued alice's session keys under the serving role:
+    // credential `session` and `session_user` round-trip through the store.
+    let web = store
+        .resolve_name(
+            boot.tenant_id,
+            oml_app::domain::name::NamedKind::Key,
+            &Name::parse("alice-web").expect("a name"),
+        )
+        .await
+        .expect("a lookup")
+        .expect("alice-web exists");
+    let web = store.key(boot.tenant_id, web).await.unwrap().unwrap();
+    assert_eq!(web.credential.as_str(), "session");
+    assert_eq!(web.session_user.as_ref().map(Name::as_str), Some("alice"));
+    assert_eq!(web.key_hash, None);
+    // The admin read runs under the serving role and journals itself.
+    let (status, _, body) = send(
+        &router,
+        json_post(
+            "/v2/admin/memories/search",
+            &boot.admin_key.value,
+            json!({"query": "anything", "state": "held"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, page) = send(
+        &router,
+        Request::get("/web/admin?view=queue")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
 
     // A moved account is refused under Postgres's pin as under the double's.
     let (status, token) = sign_in(&router, &providers, 8, "alice@example.com").await;

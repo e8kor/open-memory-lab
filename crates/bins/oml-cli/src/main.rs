@@ -135,6 +135,12 @@ enum Command {
         #[command(subcommand)]
         command: WebCommand,
     },
+    /// An administrator's reads of every memory's text and attribution,
+    /// each recorded in the history (admin key role; ADR-0045 d21).
+    Admin {
+        #[command(subcommand)]
+        command: AdminCommand,
+    },
     /// Write a claim, held until reviewed: a submission, or with --replaces
     /// a new version of a claim or its retirement (ADR-0039 d3, d10).
     Write(WriteArgs),
@@ -447,6 +453,26 @@ enum WorkareaCrewCommand {
         /// The crew record, by id or name.
         #[arg(long)]
         crew: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminCommand {
+    /// One memory with its text and attribution, or with --query, --workarea
+    /// or --state a search over every memory of the organisation
+    /// (memory.admin_read).
+    Read {
+        /// The memory's artifact id; omitted, a search.
+        memory: Option<String>,
+        /// Full-text search, the words recall matches.
+        #[arg(long)]
+        query: Option<String>,
+        /// Only this workarea's subtree, by id, name or qualified name.
+        #[arg(long)]
+        workarea: Option<String>,
+        /// held, promoted, rejected, superseded or demoted.
+        #[arg(long)]
+        state: Option<String>,
     },
 }
 
@@ -1311,6 +1337,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
         Command::Crews { command } => run_crews(cli, &stored, command),
         Command::Web { command } => run_web(cli, &stored, command),
+        Command::Admin { command } => run_admin(cli, &stored, command),
 
         Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
         Command::Read(args) => run_read(cli, &stored, args),
@@ -2169,6 +2196,85 @@ fn run_crews(
     Ok(ExitCode::SUCCESS)
 }
 
+/// `oml admin read` (cli/reference.md `oml admin`; ADR-0045 d21): one
+/// memory by id, or every page of a search, each answer journalled by the
+/// server as `memory.admin_read`.
+fn run_admin(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &AdminCommand,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let AdminCommand::Read {
+        memory,
+        query,
+        workarea,
+        state,
+    } = command;
+    let line = |m: &Value| {
+        format!(
+            "{}  {}  {}  {}  {}",
+            field(m, "artifact_id"),
+            field(m, "state"),
+            field(m, "workarea_path"),
+            field(m, "key"),
+            field(m, "text").replace('\n', " ")
+        )
+    };
+    if let Some(memory) = memory {
+        let (_, read) = client.get(&format!("/v2/admin/memories/{}", segment(memory)?))?;
+        if cli.json {
+            print_json(&read);
+        } else {
+            println!("{}", line(&read));
+            println!("    principal   : {}", field(&read, "principal"));
+            println!("    user        : {}", field(&read, "user"));
+            println!("    derives from: {}", read["derives_from"]);
+            println!("    replaces    : {}", field(&read, "replaces"));
+            for v in read["verdicts"].as_array().into_iter().flatten() {
+                println!(
+                    "    verdict     : {} by {} at {}",
+                    field(v, "verdict"),
+                    field(v, "key"),
+                    field(v, "at")
+                );
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut body = json!({});
+    if let Some(q) = query {
+        body["query"] = json!(q);
+    }
+    if let Some(w) = workarea {
+        body["workarea"] = json!(w);
+    }
+    if let Some(s) = state {
+        body["state"] = json!(s);
+    }
+    let mut items: Vec<Value> = Vec::new();
+    loop {
+        let read = CallOpts {
+            auth: true,
+            idempotency: false, // read-shaped POST (http-api.md idempotency)
+        };
+        let (_, page) = client.post("/v2/admin/memories/search", &body, &read)?;
+        items.extend(page["items"].as_array().into_iter().flatten().cloned());
+        match page["next_cursor"].as_str() {
+            Some(cursor) => body["cursor"] = json!(cursor),
+            None => break,
+        }
+    }
+    if cli.json {
+        print_json(&json!({ "items": items, "next_cursor": Value::Null }));
+    } else {
+        for m in &items {
+            println!("{}", line(m));
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// The allowlist verbs, admin key role throughout (cli/reference.md `oml
 /// web`; http-api.md web pages; ADR-0045 d2). The email travels in a body,
 /// never a path; `oml web list` reads every page.
@@ -3016,7 +3122,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // A user key reads universe's own claims through its node grant; one
     // that cannot is warned about (ADR-0044 d14).
     let mut reads_universe: Option<bool> = None;
-    let mut admin_emails: Option<usize> = None;
+    let mut admin_emails: Option<(usize, Vec<String>)> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -3185,28 +3291,49 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
 /// How many of the tenant's allowlist entries open the admin page, read
 /// through every page of `GET /v2/web/emails`; `None` when the listing is
 /// refused or unreadable.
-fn count_admin_emails(client: &Client) -> Option<usize> {
+fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
     let mut admins = 0;
+    let mut users: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut path = "/v2/web/emails?limit=200".to_owned();
     loop {
         let (_, page) = client.get(&path).ok()?;
-        admins += page["items"]
-            .as_array()?
+        let items = page["items"].as_array()?;
+        admins += items
             .iter()
             .filter(|e| e["admin"].as_bool() == Some(true))
             .count();
+        users.extend(
+            items
+                .iter()
+                .filter_map(|e| e["user"].as_str().map(ToOwned::to_owned)),
+        );
         match page["next_cursor"].as_str() {
             Some(cursor) => path = format!("/v2/web/emails?limit=200&cursor={}", encode(cursor)),
-            None => return Some(admins),
+            None => break,
         }
     }
+    // A user whose `<user>-web` session key is absent: its first sign-in
+    // has not happened or failed part way (ADR-0045 d18).
+    let keyless = users
+        .into_iter()
+        .filter(|user| {
+            matches!(
+                client.get(&format!("/v2/keys/{user}-web")),
+                Err(CliError::Refused { status: 404, .. })
+            )
+        })
+        .collect();
+    Some((admins, keyless))
 }
 
 /// The web pages' doctor lines (ADR-0045 d18): off when `/readyz` names no
 /// provider; a warning per provider whose exchanges failed since the lead
 /// started; and, read by an admin key, a warning when no entry of the
 /// tenant's list opens the admin page.
-fn web_doctor(ready: Option<&(u16, Value)>, admin_emails: Option<usize>) -> Vec<String> {
+fn web_doctor(
+    ready: Option<&(u16, Value)>,
+    admin_emails: Option<(usize, Vec<String>)>,
+) -> Vec<String> {
     let Some((_, body)) = ready else {
         return Vec::new();
     };
@@ -3226,11 +3353,18 @@ fn web_doctor(ready: Option<&(u16, Value)>, admin_emails: Option<usize>) -> Vec<
             ));
         }
     }
-    if admin_emails == Some(0) {
-        lines.push(
-            "warn web: no admin email; add one with oml web allow <email> --user <user> --admin"
-                .to_owned(),
-        );
+    if let Some((admins, keyless)) = admin_emails {
+        if admins == 0 {
+            lines.push(
+                "warn web: no admin email; add one with oml web allow <email> --user <user> --admin"
+                    .to_owned(),
+            );
+        }
+        for user in keyless {
+            lines.push(format!(
+                "warn web: {user} has no session key; it is created at {user}'s next sign-in"
+            ));
+        }
     }
     lines
 }

@@ -34,6 +34,9 @@ use crate::ports::{
 };
 use crate::ports::{SignInExchange, WebStore};
 use crate::types::{
+    AdminSearch, AdminState, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
+};
+use crate::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord,
     DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter,
@@ -41,7 +44,6 @@ use crate::types::{
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
     UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
-use crate::types::{PinOutcome, ProviderAnswer, ProviderFailure};
 use oml_domain::web::Provider;
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -451,6 +453,7 @@ fn fold_poc_event(
                     crew_id: None,
                     user: None,
                     revoked_at: None,
+                    session_user: None,
                 },
             );
         }
@@ -720,7 +723,9 @@ fn apply_fold(
 ) -> Result<(), StoreError> {
     match fold {
         // The tenant's name is the deployment's, applied by the commit.
-        MetadataFold::TenantGenesis { .. } | MetadataFold::VerdictRecorded { .. } => {}
+        MetadataFold::TenantGenesis { .. }
+        | MetadataFold::VerdictRecorded { .. }
+        | MetadataFold::AdminRead => {}
         MetadataFold::WorkareaCreated(workarea) => {
             require_universe_root(&workarea)?;
             // Unique in its namespace: the shared one, or its user root's,
@@ -2066,6 +2071,19 @@ impl JournalStore for MemStore {
     }
 }
 
+impl MemStore {
+    /// The tenant's keys `keep` admits, in name order.
+    fn tenant_keys(&self, tenant_id: Uuid, keep: impl Fn(&KeyRecord) -> bool) -> Vec<KeyRecord> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Vec::new();
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut keys: Vec<KeyRecord> = state.keys.values().filter(|k| keep(k)).cloned().collect();
+        keys.sort_by(|a, b| a.name.cmp(&b.name));
+        keys
+    }
+}
+
 impl WebStore for MemStore {
     async fn web_entry_by_email(
         &self,
@@ -2171,6 +2189,83 @@ impl WebStore for MemStore {
                 .remove(&token_hash.0);
         }
         Ok(())
+    }
+
+    async fn web_user_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| k.user == Some(user_root)))
+    }
+
+    async fn web_session_keys(
+        &self,
+        tenant_id: Uuid,
+        session_user: &Name,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| k.session_user.as_ref() == Some(session_user)))
+    }
+
+    async fn web_queue(&self, tenant_id: Uuid) -> Result<Vec<QueueDepth>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut depths: BTreeMap<Uuid, QueueDepth> = BTreeMap::new();
+        for m in state
+            .memories
+            .values()
+            .filter(|m| m.status == MemoryStatus::Held)
+        {
+            let depth = depths.entry(m.workarea_id).or_insert_with(|| QueueDepth {
+                workarea_id: m.workarea_id,
+                held: 0,
+                oldest: m.created_at.clone(),
+            });
+            depth.held += 1;
+            if m.created_at.unix_micros() < depth.oldest.unix_micros() {
+                depth.oldest = m.created_at.clone();
+            }
+        }
+        Ok(depths.into_values().collect())
+    }
+
+    async fn web_admin_search(
+        &self,
+        tenant_id: Uuid,
+        search: &AdminSearch,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let terms = search.query.as_deref().map(words).unwrap_or_default();
+        let mut rows: Vec<MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| terms.is_subset(&words(&m.body)))
+            .filter(|m| {
+                search
+                    .nodes
+                    .as_ref()
+                    .is_none_or(|n| n.contains(&m.workarea_id))
+            })
+            .filter(|m| search.state.is_none_or(|s| AdminState::of(m) == s))
+            .filter(|m| {
+                search.after.as_ref().is_none_or(|a| {
+                    (m.created_at.unix_micros(), m.memory_id)
+                        < (a.created_at.unix_micros(), a.artifact_id)
+                })
+            })
+            .cloned()
+            .collect();
+        rows.sort_by(|a, b| {
+            (b.created_at.unix_micros(), b.memory_id)
+                .cmp(&(a.created_at.unix_micros(), a.memory_id))
+        });
+        rows.truncate(search.limit);
+        Ok(rows)
     }
 
     async fn web_sessions_sweep(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {

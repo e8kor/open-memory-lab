@@ -7203,8 +7203,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        40,
-        "the 27 routed operations, whoami, the six OAuth operations and the six web routes"
+        42,
+        "the 29 routed operations, whoami, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
