@@ -1699,6 +1699,60 @@ async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
     lab.stop().await;
 }
 
+/// `oml web allow` adds the first admin email under the tenant's admin key,
+/// sending the address in the body and never in the URL; `oml web list`
+/// reads it back and `oml web remove` takes it off (cli/reference.md
+/// `oml web`; ADR-0045 d2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_first_admin_email_is_added_by_the_cli_under_an_admin_key() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    lab.take_requests();
+    let (code, entry, log) = lab.json(
+        None,
+        &[
+            "web",
+            "allow",
+            "Alice@Example.com",
+            "--user",
+            "alice",
+            "--admin",
+        ],
+    );
+    assert_eq!(code, 0, "web allow: {log}");
+    assert_eq!(
+        entry,
+        json!({"email": "alice@example.com", "user": "alice", "admin": true})
+    );
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/web/emails"]);
+    assert_eq!(
+        seen[0].body,
+        json!({"email": "Alice@Example.com", "user": "alice", "admin": true})
+    );
+    let (code, stdout, stderr) = lab.text(&["web", "list"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("alice@example.com  user: alice  admin"),
+        "{stdout}"
+    );
+    for seen in lab.take_requests() {
+        assert!(
+            !seen.path.contains('@') && !seen.query.contains('@'),
+            "no address in a URL: {} {}",
+            seen.path,
+            seen.query
+        );
+    }
+    let (code, _, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
+    assert_eq!(code, 0, "web remove: {log}");
+    let (code, listed, log) = lab.json(None, &["web", "list"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(listed["items"], json!([]));
+    lab.stop().await;
+}
+
 /// `oml crews create <name>` creates a crew record, and `oml crews show`,
 /// `update` and `list` answer it by its name exactly as by its id
 /// (cli/reference.md `oml crews`; ADR-0026 d4, d8).

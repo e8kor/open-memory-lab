@@ -6,6 +6,7 @@ use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
+use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
     Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
@@ -1744,6 +1745,27 @@ pub enum AppError {
         "oauth.client_invalid: clients are public and send no client authentication (ADR-0031 d5)"
     )]
     ClientAuthentication { scheme: Option<String> },
+    /// An allowlist entry's email that another tenant's entry holds: the
+    /// email is unique in the deployment, and the refusal says so and
+    /// nothing more (errors.md `name.taken`, `details.kind: email`;
+    /// ADR-0045 d2).
+    #[error("the email is on another organisation's list (errors.md name.taken, kind email)")]
+    WebEmailTaken,
+    /// An allowlist entry's user longer than every session key name admits
+    /// (request.validation, field user; ADR-0045 d2).
+    #[error(transparent)]
+    WebUserTooLong(#[from] UserTooLong),
+    /// A sign-in or a session refused, `auth.invalid` with its reason
+    /// (ADR-0045 d4, d18).
+    #[error(transparent)]
+    WebSignIn(#[from] SignInRefusal),
+    /// The ADR-0044 seam: the act needs a person's session keys, which
+    /// rest on user keys and user roots, not built in this build
+    /// (request.validation, `details.reason: not_built`; ADR-0045 d6).
+    #[error(
+        "{what} needs the person's session keys, which rest on user roots (ADR-0044) and are not built yet"
+    )]
+    WebNotBuilt { what: &'static str },
     #[error(transparent)]
     Store(StoreError),
 }
@@ -1755,7 +1777,113 @@ impl From<StoreError> for AppError {
     fn from(error: StoreError) -> Self {
         match error {
             StoreError::NameTaken { kind, name } => AppError::NameTaken { kind, name },
+            StoreError::EmailTaken => AppError::WebEmailTaken,
             other => AppError::Store(other),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The web pages: allowlist entries and sessions (ADR-0045 d2, d5)
+// ---------------------------------------------------------------------------
+
+/// An allowlist entry (ADR-0045 d2): the email a person signs in with, the
+/// user they sign in as, whether it opens the admin page, and the provider
+/// subject each provider pinned at its first sign-in (d4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebEntry {
+    pub tenant_id: Uuid,
+    pub email: Email,
+    pub user: Name,
+    pub admin: bool,
+    pub google_subject: Option<String>,
+    pub github_subject: Option<String>,
+}
+
+impl WebEntry {
+    /// The subject `provider` pinned on this entry, if it did.
+    #[must_use]
+    pub fn subject(&self, provider: Provider) -> Option<&str> {
+        match provider {
+            Provider::Google => self.google_subject.as_deref(),
+            Provider::GitHub => self.github_subject.as_deref(),
+        }
+    }
+}
+
+/// What `POST /v2/web/emails` asks (ADR-0045 d2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebEmailRequest {
+    pub email: Email,
+    pub user: Name,
+    pub admin: bool,
+}
+
+/// What the allowlist act did: added the entry, changed its user or admin
+/// flag (ending its sessions), or found it as asked and journalled nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebEmailOutcome {
+    Allowed,
+    Changed,
+    Unchanged,
+}
+
+/// A pin of a provider subject on an entry, as the store answers it
+/// (ADR-0045 d4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinOutcome {
+    /// This sign-in is the entry's first through the provider; its subject
+    /// is now pinned.
+    Pinned,
+    /// The subject equals the pinned one.
+    Matched,
+    /// Another subject is pinned: the address moved to another account.
+    Differs,
+}
+
+/// A session row (ADR-0045 d5): the SHA-256 of its token, never the
+/// token, the entry and user it acts for, and its fixed lifetime. Session
+/// rows are operational state, not journalled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSessionRecord {
+    pub token_hash: Sha256Hash,
+    pub tenant_id: Uuid,
+    pub email_hash: Sha256Hash,
+    pub user: Name,
+    pub admin: bool,
+    pub created_at: EventTime,
+    pub expires_at: EventTime,
+}
+
+/// A session just opened: the token the cookie carries, shown to the
+/// browser once and stored only as its digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedSession {
+    pub token: String,
+    pub record: WebSessionRecord,
+}
+
+/// What a provider's token endpoint and, for GitHub, its API answered for
+/// one sign-in, before the server judges it (ADR-0045 d4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderAnswer {
+    /// The ID token Google's token endpoint returned.
+    GoogleIdToken(String),
+    /// GitHub's account `id` and its `GET /user/emails` list.
+    GitHub {
+        account_id: u64,
+        emails: Vec<GitHubEmail>,
+    },
+}
+
+/// Why a provider exchange answered nothing the server can judge: the
+/// provider refused or failed, or the per-provider cap was reached
+/// (ADR-0045 d15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderFailure {
+    /// The token call, or a GitHub API call, failed, timed out or answered
+    /// an error; the reason is a closed word for the doctor counter.
+    Refused(&'static str),
+    /// The provider's concurrent-call cap was reached.
+    Busy,
 }

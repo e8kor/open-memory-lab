@@ -186,6 +186,20 @@ pub struct Resolved {
     pub error_code: Option<String>,
     /// `POST /oauth/token`'s `grant_type`, as the token metric labels it.
     pub grant_type: Option<&'static str>,
+    /// A web route's session, action and provider (ADR-0045 d14).
+    pub web: Option<WebLine>,
+}
+
+/// What a web route adds to the request line (ADR-0045 d14): whether a
+/// session resolved, which makes `credential` `session`, its tenant, the
+/// form's `action` from the page's closed set, and the provider on the
+/// sign-in and callback routes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebLine {
+    pub session: bool,
+    pub tenant_id: Option<Uuid>,
+    pub action: Option<&'static str>,
+    pub provider: Option<&'static str>,
 }
 
 impl Resolved {
@@ -197,6 +211,7 @@ impl Resolved {
             workarea_id: observed.workarea_id,
             error_code: error_code.map(ToOwned::to_owned),
             grant_type: None,
+            web: None,
         }
     }
 }
@@ -449,6 +464,8 @@ macro_rules! write_line {
     ($level:ident, $line:expr) => {{
         let line = $line;
         let identity = line.resolved.identity.as_ref();
+        let web = line.resolved.web.as_ref();
+        let session = web.is_some_and(|w| w.session);
         tracing::$level!(
             event = EVENT_HTTP_REQUEST,
             request_id = %line.ids.request_id,
@@ -466,12 +483,17 @@ macro_rules! write_line {
             store_calls = line.store_calls,
             bytes_in = line.bytes_in,
             bytes_out = line.bytes_out,
-            tenant_id = identity.map(|i| tracing::field::display(i.tenant_id)),
+            tenant_id = identity
+                .map(|i| i.tenant_id)
+                .or_else(|| web.and_then(|w| w.tenant_id))
+                .map(tracing::field::display),
             key_id = identity.map(|i| tracing::field::display(i.key_id)),
             key_name = identity.and_then(|i| i.key_name.as_deref()),
             principal = identity.map(|i| i.principal.as_str()),
             role = identity.map(|i| i.role),
-            credential = identity.map(|i| i.credential),
+            credential = identity
+                .map(|i| i.credential)
+                .or(session.then_some("session")),
             connection_id = identity
                 .and_then(|i| i.connection_id)
                 .map(tracing::field::display),
@@ -480,6 +502,8 @@ macro_rules! write_line {
             client_ip = line.client.map(|(ip, _)| tracing::field::display(ip)),
             client_ip_source = line.client.map(|(_, source)| source.as_str()),
             user_agent = line.user_agent,
+            web_action = web.and_then(|w| w.action),
+            web_provider = web.and_then(|w| w.provider),
         );
     }};
 }

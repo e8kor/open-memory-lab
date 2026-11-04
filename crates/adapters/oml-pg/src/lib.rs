@@ -16,6 +16,7 @@ use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
     UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
 };
+use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, VerifyError, verify_chain,
@@ -23,7 +24,8 @@ use oml_app::domain::{
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
-    JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
+    JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, WebStore,
+    claim_subject,
 };
 use oml_app::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
@@ -33,6 +35,7 @@ use oml_app::types::{
     PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow,
     TokenPair, TokenRecord, UnnamedRows, WorkareaRecord, WorkareaRef,
 };
+use oml_app::types::{PinOutcome, WebEntry, WebSessionRecord};
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Connection, Postgres, QueryBuilder, Row, Transaction};
@@ -1369,6 +1372,68 @@ async fn apply_fold(
                 };
                 name_taken_or_backend(e, constraint, NamedKind::Workarea, &w.name)
             })?;
+        }
+        MetadataFold::WebEmailAllowed(entry) => {
+            sqlx::query(
+                "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
+                 created_at) VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz)",
+            )
+            .bind(tenant_id)
+            .bind(entry.email.digest().0.to_vec())
+            .bind(entry.email.as_str())
+            .bind(entry.user.as_str())
+            .bind(entry.admin)
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| match &e {
+                // The deployment-wide index on the digest: another
+                // tenant's entry, invisible here, holds the email
+                // (ADR-0045 d2).
+                sqlx::Error::Database(db)
+                    if db.constraint() == Some("web_emails_email_hash")
+                        || db.constraint() == Some("web_emails_pkey") =>
+                {
+                    StoreError::EmailTaken
+                }
+                _ => backend(e),
+            })?;
+        }
+        MetadataFold::WebEmailChanged(entry) => {
+            let hash = entry.email.digest().0.to_vec();
+            end_entry_sessions(tx, tenant_id, &hash).await?;
+            let changed = sqlx::query(
+                "UPDATE web_emails SET user_name = $3, admin = $4 \
+                 WHERE tenant_id = $1 AND email_hash = $2",
+            )
+            .bind(tenant_id)
+            .bind(&hash)
+            .bind(entry.user.as_str())
+            .bind(entry.admin)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if changed.rows_affected() != 1 {
+                return Err(StoreError::Backend(
+                    "web.email_changed names an entry the tenant does not hold".to_owned(),
+                ));
+            }
+        }
+        MetadataFold::WebEmailRemoved { email_hash } => {
+            let hash = email_hash.0.to_vec();
+            end_entry_sessions(tx, tenant_id, &hash).await?;
+            let removed =
+                sqlx::query("DELETE FROM web_emails WHERE tenant_id = $1 AND email_hash = $2")
+                    .bind(tenant_id)
+                    .bind(&hash)
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(backend)?;
+            if removed.rows_affected() != 1 {
+                return Err(StoreError::Backend(
+                    "web.email_removed names an entry the tenant does not hold".to_owned(),
+                ));
+            }
         }
         MetadataFold::CrewCreated(c) => {
             sqlx::query(
@@ -3275,6 +3340,239 @@ async fn set_lookup_digest(
         .await
         .map_err(backend)?;
     Ok(())
+}
+
+/// Ends every session of one allowlist entry, in the commit that changes
+/// or removes it (ADR-0045 d5).
+async fn end_entry_sessions(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    email_hash: &[u8],
+) -> Result<(), StoreError> {
+    sqlx::query("DELETE FROM web_sessions WHERE tenant_id = $1 AND email_hash = $2")
+        .bind(tenant_id)
+        .bind(email_hash)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
+const WEB_ENTRY_COLUMNS: &str =
+    "tenant_id, email, user_name, admin, google_subject, github_subject";
+
+fn web_entry_from_row(row: &PgRow) -> Result<WebEntry, StoreError> {
+    let email: String = row.try_get("email").map_err(backend)?;
+    let user: String = row.try_get("user_name").map_err(backend)?;
+    Ok(WebEntry {
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        email: Email::parse(&email).map_err(backend)?,
+        user: Name::parse_reference(&user).map_err(backend)?,
+        admin: row.try_get("admin").map_err(backend)?,
+        google_subject: row.try_get("google_subject").map_err(backend)?,
+        github_subject: row.try_get("github_subject").map_err(backend)?,
+    })
+}
+
+const WEB_SESSION_COLUMNS: &str = concat!(
+    "token_hash, tenant_id, email_hash, user_name, admin, ",
+    utc!("created_at"),
+    " AS created_at_signed, ",
+    utc!("expires_at"),
+    " AS expires_at_signed"
+);
+
+fn web_session_from_row(row: &PgRow) -> Result<WebSessionRecord, StoreError> {
+    let token_hash: Vec<u8> = row.try_get("token_hash").map_err(backend)?;
+    let email_hash: Vec<u8> = row.try_get("email_hash").map_err(backend)?;
+    let user: String = row.try_get("user_name").map_err(backend)?;
+    Ok(WebSessionRecord {
+        token_hash: hash32(&token_hash)?,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        email_hash: hash32(&email_hash)?,
+        user: Name::parse_reference(&user).map_err(backend)?,
+        admin: row.try_get("admin").map_err(backend)?,
+        created_at: event_time_column(row, "created_at_signed")?
+            .ok_or_else(|| StoreError::Backend("web_sessions.created_at is null".to_owned()))?,
+        expires_at: event_time_column(row, "expires_at_signed")?
+            .ok_or_else(|| StoreError::Backend("web_sessions.expires_at is null".to_owned()))?,
+    })
+}
+
+/// The web rows (ADR-0045 d2, d4, d5): the allowlist's reads and its
+/// pre-tenant lookup by the email's digest, the pin, and the session rows,
+/// each in a transaction of its own under `oml.tenant_id`, the digest
+/// lookups under 0015's `key_resolution` policies.
+impl WebStore for PgStore {
+    async fn web_entry_by_email(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> Result<Option<WebEntry>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_lookup_digest(&mut tx, email_hash).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {WEB_ENTRY_COLUMNS} FROM web_emails WHERE email_hash = $1"
+        ))
+        .bind(email_hash.0.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(web_entry_from_row).transpose()
+    }
+
+    async fn web_entries(
+        &self,
+        tenant_id: Uuid,
+        after: Option<&Sha256Hash>,
+        limit: usize,
+    ) -> Result<Vec<WebEntry>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {WEB_ENTRY_COLUMNS} FROM web_emails \
+             WHERE tenant_id = $1 AND ($2::bytea IS NULL OR email_hash > $2) \
+             ORDER BY email_hash LIMIT $3"
+        ))
+        .bind(tenant_id)
+        .bind(after.map(|a| a.0.to_vec()))
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(web_entry_from_row).collect()
+    }
+
+    async fn web_pin(
+        &self,
+        tenant_id: Uuid,
+        email_hash: &Sha256Hash,
+        provider: Provider,
+        subject: &str,
+    ) -> Result<PinOutcome, StoreError> {
+        let column = match provider {
+            Provider::Google => "google_subject",
+            Provider::GitHub => "github_subject",
+        };
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // One conditional update pins a first subject; the row read back
+        // says whether this call pinned it, it matched, or another is held.
+        let pinned = sqlx::query(&format!(
+            "UPDATE web_emails SET {column} = $3 \
+             WHERE tenant_id = $1 AND email_hash = $2 AND {column} IS NULL"
+        ))
+        .bind(tenant_id)
+        .bind(email_hash.0.to_vec())
+        .bind(subject)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        let held: Option<Option<String>> = sqlx::query_scalar(&format!(
+            "SELECT {column} FROM web_emails WHERE tenant_id = $1 AND email_hash = $2"
+        ))
+        .bind(tenant_id)
+        .bind(email_hash.0.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        match held {
+            None => Err(StoreError::Backend("no entry to pin".to_owned())),
+            Some(_) if pinned == 1 => Ok(PinOutcome::Pinned),
+            Some(Some(held)) if held == subject => Ok(PinOutcome::Matched),
+            Some(_) => Ok(PinOutcome::Differs),
+        }
+    }
+
+    async fn web_session_open(
+        &self,
+        session: WebSessionRecord,
+        replaces: Option<Sha256Hash>,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, session.tenant_id).await?;
+        if let Some(old) = replaces {
+            // The old row may be another tenant's after an entry moved;
+            // under this tenant's fence only its own row is ended, and a
+            // row elsewhere lapses at its expiry.
+            sqlx::query("DELETE FROM web_sessions WHERE tenant_id = $1 AND token_hash = $2")
+                .bind(session.tenant_id)
+                .bind(old.0.to_vec())
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
+        sqlx::query(
+            "INSERT INTO web_sessions (token_hash, tenant_id, email_hash, user_name, admin, \
+             created_at, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, ($7)::timestamptz)",
+        )
+        .bind(session.token_hash.0.to_vec())
+        .bind(session.tenant_id)
+        .bind(session.email_hash.0.to_vec())
+        .bind(session.user.as_str())
+        .bind(session.admin)
+        .bind(session.created_at.as_str())
+        .bind(session.expires_at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn web_session(
+        &self,
+        token_hash: &Sha256Hash,
+    ) -> Result<Option<WebSessionRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_lookup_digest(&mut tx, token_hash).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {WEB_SESSION_COLUMNS} FROM web_sessions WHERE token_hash = $1"
+        ))
+        .bind(token_hash.0.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(web_session_from_row).transpose()
+    }
+
+    async fn web_session_end(
+        &self,
+        tenant_id: Uuid,
+        token_hash: &Sha256Hash,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        sqlx::query("DELETE FROM web_sessions WHERE tenant_id = $1 AND token_hash = $2")
+            .bind(tenant_id)
+            .bind(token_hash.0.to_vec())
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn web_sessions_sweep(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let removed = sqlx::query(
+            "DELETE FROM web_sessions WHERE tenant_id = $1 AND expires_at <= ($2)::timestamptz",
+        )
+        .bind(tenant_id)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        tx.commit().await.map_err(backend)?;
+        Ok(removed)
+    }
 }
 
 /// The connection rows under the tenant's RLS, and the provider tenant's

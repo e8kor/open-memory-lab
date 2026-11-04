@@ -21,7 +21,7 @@ use axum::body::Bytes;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer};
+use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 
 use super::{
     Presented, get_item, insert_header, listing_output, parse_args, recall_output, ring_headers,
@@ -135,7 +135,7 @@ pub(super) fn successor(name: &str) -> Option<&'static str> {
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,

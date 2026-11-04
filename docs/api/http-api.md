@@ -561,7 +561,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v2/settings` · `POST /v2/settings/validate` · `POST /v2/settings/apply` | admin (key role) | designed |
 | `POST /v2/tenants` | operator (key role) | designed |
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
-| `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *planned for v0.5.0, not built* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | designed |
+| `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *built for v0.5.0, not released* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
 | `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *planned for v0.5.0, not built* ([admin read](#admin-read)) | designed |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints and
@@ -587,9 +587,9 @@ provider, and authenticated by a session cookie alone, never by a key
 
 | Endpoint | Verb ceiling (effective access unless noted) | Contract |
 |---|---|---|
-| `GET /web` · `POST /web` | none for the sign-in page; a session, acting as its `<user>-web` session key, for the user page | designed |
-| `POST /web/sign-in` · `GET /web/callback/{provider}` | none; the person proves a listed, verified email at the provider | designed |
-| `GET /web/admin` · `POST /web/admin` | a session whose allowlist entry is an admin's, acting as the session key each act needs | designed |
+| `GET /web` · `POST /web` | none for the sign-in page; a session, acting as its `<user>-web` session key, for the user page | served |
+| `POST /web/sign-in` · `GET /web/callback/{provider}` | none; the person proves a listed, verified email at the provider | served |
+| `GET /web/admin` · `POST /web/admin` | a session whose allowlist entry is an admin's, acting as the session key each act needs | served |
 
 Promote, sign and delete appear nowhere in these tables on purpose: promotion is an effect of
 ratification inside the admission pipeline, signing is `oml-server`'s alone, and deletion does not
@@ -1370,8 +1370,12 @@ page**, where a person signed in with Google or GitHub sees and issues their own
 codes, reads the setup steps, browses their memories and `universe`'s, creates workareas in
 their root, and reviews their own agents' held writes; and the **admin page**, where an admin
 keeps the email allowlist, grants review and curation, sees the review queue's depth and age,
-reads every memory's text and attribution, and reviews, curates and supersedes. Nothing below is
-routed yet.
+reads every memory's text and attribution, and reviews, curates and supersedes. *Built for v0.5.0
+on the `feat/web-console` branch, not released:* the routes, sign-in, sessions, sign-out, the
+headers and checks below, and a user page and admin page that show who is signed in. Every other
+action rests on the person's session keys, which rest on user roots
+([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
+and answers `request.validation` with `details.reason: not_built` until they are.
 
 **Routes.** Six, a closed set the router serves exactly: `GET /web`, `POST /web`,
 `POST /web/sign-in`, `GET /web/callback/{provider}`, `GET /web/admin` and `POST /web/admin`.

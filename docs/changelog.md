@@ -34,6 +34,29 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-04 — Sign-in with Google or GitHub, sessions and the email allowlist are built on the web-console branch (ADR-0045 W1, W2, implementation)
+
+The first two steps of [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md),
+built for v0.5.0 and not released. **W1:** the per-tenant email allowlist (`web_emails`,
+migration `0015_web`), its three admin routes `GET` and `POST /v2/web/emails` and
+`POST /v2/web/emails/remove`, now served, journalled as `web.email_allowed`, `web.email_changed`
+and `web.email_removed` with an email digest, and `oml web allow|list|remove`; the settings
+`web.google.*` and `web.github.*`, a provider without its secret, or without `oauth.issuer`,
+stopping the start. **W2:** the six web routes, routed where `oauth.issuer` and a provider are
+set; the code flow with S256 PKCE, `state` and a Google nonce sealed in `__Host-oml_signin`;
+Google's ID token claims and GitHub's primary verified address admitted, the provider subject
+pinned per entry; server-side sessions under a fresh token in `__Host-oml_session`; the CSRF token,
+the same-origin check, the CSP and headers; an `Authorization` header refused on every page; the
+request line's `credential: session`, `web_action` and `web_provider`, and the `web_sign_in` line;
+the `/readyz` web section and two doctor lines. The pages show who is signed in; every act other
+than sign-out waits for ADR-0044's user roots and answers `request.validation` with
+`details.reason: not_built`. No provider has been reached: every test runs against a double.
+
+- **Pages:** the [HTTP API](api/http-api.md#web-pages-the-user-page-and-the-admin-page),
+  [errors](api/errors.md), [configuration](operations/configuration.md),
+  [observability](operations/observability.md), the [Postgres schema](data/postgres-schema.md),
+  the [event catalog](data/event-catalog.md) and the [CLI reference](cli/reference.md).
+
 ### 2026-11-04 — ADR-0045 revised with the maintainer's answers: an admin reads every memory, a person reviews their own agents' work, and v0.5.0 narrows to ADR-0044 and ADR-0045
 
 [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md),

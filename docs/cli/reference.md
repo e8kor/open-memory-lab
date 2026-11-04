@@ -426,6 +426,22 @@ throughout; no agent role reaches these verbs.
 | `oml crews list` | Crew records: name, id, charter URI, external manager. Reads every page; `--json` prints their items as one page. |
 | `oml crews show <crew>` | One crew record, by id or name. |
 
+## `oml web` — the email allowlist
+
+*Built on the `feat/web-console` branch for v0.5.0, not released · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, proposed*
+
+Who may sign in to the [web pages](../api/http-api.md#web-pages-the-user-page-and-the-admin-page):
+an email address, the user it signs in as, and whether it opens the admin page. The first admin
+email comes from here, under the tenant's existing admin key; there is no other way in. Admin key
+role throughout. The email travels in a request body, never in a URL, and the journal holds its
+digest, never the address.
+
+| Verb | Does |
+|---|---|
+| `oml web allow <email> --user <user> [--admin]` | Add the address (`web.email_allowed`), or change its user or admin flag (`web.email_changed`), which ends its sessions. An address another organisation's list holds is `name.taken` (kind `email`); a user a workarea or another key's name already holds is `name.taken`; a user longer than 56 characters is `request.validation`. |
+| `oml web remove <email>` | Remove the address (`web.email_removed`) and end its sessions. The user's agent keys keep working; cut one off with `oml deny set <key> universe`. |
+| `oml web list` | The organisation's list: email, user, admin. Reads every page; `--json` prints their items as one page. |
+
 ## `oml write`, `oml read`, `oml events` — memories and the journal
 
 *Available since v0.4.0 · [releases](../product/releases.md)*

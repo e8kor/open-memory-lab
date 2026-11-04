@@ -16,10 +16,11 @@ use uuid::Uuid;
 
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::{RefreshDecision, TokenKind};
+use oml_app::domain::web::Provider;
 use oml_app::domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
-    JournalStore, StoreError, TailScan,
+    JournalStore, StoreError, TailScan, WebStore,
 };
 use oml_app::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCodeRecord, ConnectGrant,
@@ -28,6 +29,7 @@ use oml_app::types::{
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
     UnnamedRows, WorkareaRecord,
 };
+use oml_app::types::{PinOutcome, WebEntry, WebSessionRecord};
 use oml_transport_http::traffic::store_call;
 
 /// A store whose every port call is timed into the running request.
@@ -576,6 +578,83 @@ impl<J: ConnectionStore> ConnectionStore for Timed<J> {
         timed(
             "connection",
             self.inner.connection(tenant_id, connection_id),
+        )
+    }
+}
+
+impl<J: WebStore> WebStore for Timed<J> {
+    fn web_entry_by_email(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<WebEntry>, StoreError>> + Send {
+        timed(
+            "web_entry_by_email",
+            self.inner.web_entry_by_email(email_hash),
+        )
+    }
+
+    fn web_entries(
+        &self,
+        tenant_id: Uuid,
+        after: Option<&Sha256Hash>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<WebEntry>, StoreError>> + Send {
+        timed(
+            "web_entries",
+            self.inner.web_entries(tenant_id, after, limit),
+        )
+    }
+
+    fn web_pin(
+        &self,
+        tenant_id: Uuid,
+        email_hash: &Sha256Hash,
+        provider: Provider,
+        subject: &str,
+    ) -> impl Future<Output = Result<PinOutcome, StoreError>> + Send {
+        timed(
+            "web_pin",
+            self.inner.web_pin(tenant_id, email_hash, provider, subject),
+        )
+    }
+
+    fn web_session_open(
+        &self,
+        session: WebSessionRecord,
+        replaces: Option<Sha256Hash>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "web_session_open",
+            self.inner.web_session_open(session, replaces),
+        )
+    }
+
+    fn web_session(
+        &self,
+        token_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<WebSessionRecord>, StoreError>> + Send {
+        timed("web_session", self.inner.web_session(token_hash))
+    }
+
+    fn web_session_end(
+        &self,
+        tenant_id: Uuid,
+        token_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "web_session_end",
+            self.inner.web_session_end(tenant_id, token_hash),
+        )
+    }
+
+    fn web_sessions_sweep(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "web_sessions_sweep",
+            self.inner.web_sessions_sweep(tenant_id, at),
         )
     }
 }

@@ -14,7 +14,9 @@
 //! connections — the connect code, PKCE, the redirect allowlist, client
 //! identity, the fetch-address allow-list, discovery, token formats,
 //! rotation with reuse detection and the connection lifecycle (ADR-0031,
-//! proposed).
+//! proposed); `web` holds the web pages' sign-in core — the allowlist
+//! entry's email and user, the sealed sign-in state, the provider answers
+//! the server admits and the CSRF token (ADR-0045, proposed).
 
 #![forbid(unsafe_code)]
 
@@ -27,6 +29,7 @@ pub mod keys;
 pub mod model;
 pub mod name;
 pub mod oauth;
+pub mod web;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,
